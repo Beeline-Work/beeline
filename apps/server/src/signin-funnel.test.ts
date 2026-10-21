@@ -27,6 +27,64 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 const today = () => new Date().toISOString().slice(0, 10);
+it('derives anonymous Signup only from an authenticated matching new-account attempt, for either provider', async () => {
+  // Upgrade an already-created funnel ledger, rather than only testing a fresh schema.
+  await db.query(
+    `ALTER TABLE signin_funnel_events DROP CONSTRAINT signin_funnel_events_event_check`,
+  );
+  await db.query(`ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_event_check
+    CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in'))`);
+  await migrate(db);
+  for (const provider of ['github', 'google'] as const) {
+    const identity = (provider === 'github' ? 'e' : 'f').repeat(64);
+    const event = make({ event: 'provider_tapped', provider });
+    await recordSigninFunnelEvent(db, event, 'server');
+    await db.query(
+      `UPDATE signin_funnel_events SET occurred_at=now()-interval '1 minute' WHERE install_id=$1`,
+      [event.installId],
+    );
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, [
+      identity,
+    ]);
+    // A signed-in event without its matching start cannot prove account creation.
+    await recordSigninFunnelEvent(
+      db,
+      { ...event, event: 'signed_in', attemptId: randomUUID() },
+      'client',
+      identity,
+    );
+    await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client');
+    expect(
+      (
+        await db.query(
+          `SELECT * FROM signin_funnel_events WHERE event='signup' AND install_id=$1`,
+          [event.installId],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', identity);
+    await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'server', identity);
+    const completions = (
+      await db.query(`SELECT * FROM signin_funnel_events WHERE event='signup' AND install_id=$1`, [
+        event.installId,
+      ])
+    ).rows;
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({ source: 'server', provider });
+    expect(JSON.stringify(completions)).not.toContain(identity);
+  }
+  await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '91 days'`);
+  await compactSigninFunnel(db);
+  const counts = (
+    await db.query(
+      `SELECT provider,installs FROM signin_funnel_daily WHERE event='signup' ORDER BY provider`,
+    )
+  ).rows;
+  expect(counts.map((r) => ({ provider: r.provider, installs: Number(r.installs) }))).toEqual([
+    { provider: 'github', installs: 1 },
+    { provider: 'google', installs: 1 },
+  ]);
+});
 it('deduplicates client steps, gives state-bound server callbacks authority, and counts distinct installs', async () => {
   const event = make({ event: 'provider_tapped', provider: 'github' });
   await recordSigninFunnelEvent(db, event);

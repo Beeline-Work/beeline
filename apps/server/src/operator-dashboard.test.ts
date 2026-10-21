@@ -1,4 +1,6 @@
 import { AddressInfo } from 'node:net';
+import { randomUUID } from 'node:crypto';
+import { recordSigninFunnelEvent } from './signin-funnel.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -95,11 +97,97 @@ async function seed() {
 }
 
 describe('private operator dashboard', () => {
+  it('R-signup-installs: shows install-based Signup drop-off through HTTP without counting returning accounts', async () => {
+    const customer = 'c'.repeat(64),
+      returning = 'd'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name,created_at) VALUES
+      ($1,'human','New customer',(now() AT TIME ZONE 'UTC')::date-2+interval '12 hours'),
+      ($2,'human','Returning customer',now()-interval '30 days')`,
+      [customer, returning],
+    );
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+      ('signup-android',$1,'android','physical'),('signup-ios',$1,'ios','physical')`,
+      [customer],
+    );
+    // One account across two installs, plus another returning account and an abandoned attempt.
+    for (const [index, identity, platform, newAccount] of [
+      [1, customer, 'android', true],
+      [2, customer, 'ios', false],
+      [3, returning, 'android', false],
+      [4, null, 'android', false],
+    ] as const) {
+      const event = {
+        event: 'provider_tapped' as const,
+        installId: randomUUID(),
+        attemptId: randomUUID(),
+        platform,
+        provider: 'github' as const,
+        version: '0.2.22',
+        environment: 'production' as const,
+        timestamp: new Date().toISOString(),
+      };
+      await recordSigninFunnelEvent(db, event, 'server');
+      await db.query(
+        `UPDATE signin_funnel_events SET occurred_at=(now() AT TIME ZONE 'UTC')::date-2+interval '12 hours'+$2::int*interval '1 hour'
+        WHERE install_id=$1`,
+        [event.installId, newAccount ? -1 : index],
+      );
+      if (identity) {
+        await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'server', identity);
+        // A repeated authenticated notification must not add another completion.
+        await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', identity);
+        await db.query(
+          `UPDATE signin_funnel_events SET occurred_at=(now() AT TIME ZONE 'UTC')::date-2+interval '18 hours'
+          WHERE install_id=$1 AND event<>'provider_tapped'`,
+          [event.installId],
+        );
+      }
+    }
+    const through = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+    const response = await get('?platforms=android,ios');
+    expect(response.status).toBe(200);
+    const value = await response.json();
+    const total = value.signinFunnel.perPlatform.find((p: any) => p.platform === 'all');
+    expect(total.stages.find((s: any) => s.stage === 'signup')).toMatchObject({
+      count: 1,
+      denominator: 3,
+      dropOffCount: 2,
+      dropOffRate: 2 / 3,
+    });
+    expect(value.signinFunnel.from).toBe(through);
+    expect(value.signinFunnel.through).toBe(through);
+    expect(total.providers[0].series).toContainEqual({
+      period: 'weekly',
+      date: through,
+      stage: 'signup',
+      outcome: '',
+      count: 1,
+    });
+    expect(total.signup).toMatchObject({ unit: 'people', count: 1 });
+    expect(total.series).toContainEqual({
+      period: 'weekly',
+      date: through,
+      stage: 'signup',
+      count: 1,
+    });
+    const android = await (await get('?platforms=android')).json();
+    expect(
+      android.signinFunnel.perPlatform[0].stages.find((s: any) => s.stage === 'signup'),
+    ).toMatchObject({ count: 1, denominator: 2, dropOffCount: 1, dropOffRate: 0.5 });
+    const ios = await (await get('?platforms=ios')).json();
+    expect(
+      ios.signinFunnel.perPlatform[0].stages.find((s: any) => s.stage === 'signup'),
+    ).toMatchObject({ count: 0, denominator: 1, dropOffCount: 1, dropOffRate: 1 });
+    expect(value.usage.people.find((s: any) => s.stage === 'signup').count).toBe(1);
+  });
   it('validates anonymous events at the HTTP boundary and rate limits without persisting personal fields', async () => {
     const input={event:'app_opened',installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android',version:'0.2.22',environment:'production',timestamp:new Date().toISOString()};
     const send=(data:unknown,ip='funnel-proof')=>fetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});
     expect((await send({...input,email:'private@example.com'})).status).toBe(400);
     expect((await send({...input,event:'signed_in',provider:'github'})).status).toBe(401);
+    expect((await send({...input,event:'signup',provider:'github'})).status).toBe(400);
     expect((await send({...input,version:'x'.repeat(2000)})).status).toBe(400);
     expect((await send(input)).status).toBe(204);
     expect((await send(input)).status).toBe(204);

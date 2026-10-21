@@ -83,6 +83,23 @@ export async function recordSigninFunnelEvent(
         source,
       ],
     );
+    if (event.event === 'signed_in' && identityId && !internal) {
+      // Classify at authentication, then retain only the anonymous completion.
+      // An existing account on another install is a sign-in, not another signup.
+      await tx.query(
+        `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,source,occurred_at)
+        SELECT e.install_id,e.attempt_id,'signup',e.platform,e.version,e.provider,'','server',e.occurred_at
+        FROM signin_funnel_events e JOIN identities i ON i.id=$3
+        WHERE e.install_id=$1 AND e.attempt_id=$2 AND e.event='signed_in' AND e.provider=$4
+          AND i.kind='human' AND i.created_at<=e.occurred_at
+          AND EXISTS(SELECT 1 FROM signin_funnel_events start
+            WHERE start.install_id=e.install_id AND start.attempt_id=e.attempt_id
+              AND start.event='provider_tapped' AND start.provider=e.provider
+              AND start.occurred_at<=i.created_at)
+        ON CONFLICT DO NOTHING`,
+        [event.installId, event.attemptId, identityId, event.provider ?? ''],
+      );
+    }
   });
 }
 export async function observeFunnelAuth(database: SqlDatabase, input: FunnelAuthObservation) {
@@ -204,6 +221,7 @@ export async function dashboardSigninFunnel(
     'provider_tapped',
     'callback_result',
     'signed_in',
+    'signup',
   ] as const;
   const slices = ['all', ...platforms];
   const totals = rows.filter(
@@ -328,8 +346,8 @@ export async function dashboardSigninFunnel(
     },
     unit: 'installs',
     source:
-      'Client action events; validated server OAuth starts and callbacks override client reports; authenticated signed-in events exclude internal installs.',
-    note: 'Stages count distinct installs within the window, not a joined person cohort. Retries and different providers can overlap. Collection begins with this release; earlier dates are unmeasured.',
+      'Client action events; validated server OAuth starts and callbacks override client reports; authenticated signed-in events exclude internal installs and classify new-account Signup completions.',
+    note: 'Stages count distinct installs within the window, not a joined person cohort. Signup counts installs whose account was created during that same provider attempt; returning-account sign-ins do not count as Signup. Retries and different providers can overlap. Collection begins with this release; earlier dates are unmeasured.',
     coverageStart,
     perPlatform: byPlatform.map((p) => ({
       ...p,

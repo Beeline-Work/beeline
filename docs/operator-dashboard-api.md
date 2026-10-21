@@ -193,7 +193,7 @@ Authenticated events mark an install internal if its identity is hidden, fixture
 only, the fixed Play reviewer, or one of the explicitly confirmed operator
 handles (`lunchboxfortwo`, `bananaman614305`, `moonscannerai`). All earlier events
 for that install are excluded retroactively. The account identifier is used only
-for this check and is not saved in either funnel table. Review launch links and
+for this check and transient new-account classification and is not saved in either funnel table. Review launch links and
 review sessions are suppressed on the client as well. Ordinary customer Workspace
 owners are not classified as staff.
 
@@ -202,13 +202,14 @@ journey. Its `from` is the later of the requested start and first event collecti
 date. `requestedFrom` preserves the original window, and `signinFunnel.downloads`
 recounts cached downloads over that common window. Render that Downloads count
 for the expanded journey; the top-level `downloads` remains backward compatible.
-Render its five stages between Downloads and the existing Signup stage, with
+Render its six install stages after Downloads, ending in an additive `signup`
+completion stage, with
 `perPlatform` entries for `all` and each selected platform. Each stage has a
 count, denominator, signed drop-off count and fractional rate. Counts are distinct
 installs across retries and providers, never sums of platform slices.
 `providers` supplies GitHub / Google starts, completions, completion rates,
 callback outcome branches, and daily/weekly series. The platform-level `series`
-also supplies every pre-sign-in stage. Weekly counts deduplicate installs across
+also supplies every stage including install-based Signup. Weekly counts deduplicate installs across
 the full seven-day bucket. Outcome branches can overlap if one install retries.
 A zero start denominator yields a null completion rate. If the window predates
 collection, `state` is `not_measured` and stage counts are null. Consult
@@ -218,7 +219,20 @@ Downloads-to-open comparisons are available per measured mobile platform and for
 an exclusively mobile selection. An all-platform selection also contains web and
 desktop opens, whose downloads are unmeasured, so that transition's denominator
 is null. Later steps remain comparable within the selected platform window.
-Each platform also has a `signup` count of production identities over the common
+The final `stages` entry, `signup`, counts distinct installs whose authenticated
+account was created between the same install/attempt/provider's recorded
+`provider_tapped` and `signed_in` events. The server derives this completion;
+clients cannot submit `signup`. Returning-account sign-ins remain `signed_in`
+without becoming new Signup completions. Multiple devices for one account are
+counted only when they participated in the account-creation attempt. Missing
+attempt starts cannot prove signup and do not count. Signup has the preceding
+signed-in install count as its denominator, plus `dropOffCount` and
+`dropOffRate`; daily, weekly and provider series use the same window and platform
+selection. No account ID is retained with the completion. The transition measures
+new-account completion among signed-in installs; returning accounts explain some
+of that difference, so it is not exclusively abandoned signups.
+
+Each platform also retains its separate `signup` count of production identities over the common
 window, explicitly marked as people rather than installs. The original
 `usage.people` stages still count people over their original lifetime, and the
 legacy download comparison still supplies its original dated account signups; do

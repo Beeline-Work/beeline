@@ -34,6 +34,13 @@ describe('desktop native deep-link delivery', () => {
     expect(desktopDeepLinkDestination('https://example.test/review/nope')).toBeNull();
   });
 
+  it('delivers browser shares on cold native starts using only the session id', () => {
+    const id = 'a'.repeat(43);
+    const replace = vi.fn();
+    expect(deliverDesktopDeepLink(`beeline://beeline/browser-share?id=${id}&access=discarded`, { replace } as never)).toBe(true);
+    expect(replace).toHaveBeenCalledWith({ pathname: '/beeline/browser-share', params: { id } });
+  });
+
   it('still opens malformed review links so the route can explain the error', () => {
     expect(desktopDeepLinkDestination('beeline://review/short')).toEqual({
       kind: 'review',

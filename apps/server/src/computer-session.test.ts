@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -18,6 +18,9 @@ import { DaemonService } from './daemon-service.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
 import { backfillComputerObservations } from './system-line.js';
 import { PhoneService } from './phone-service.js';
+import type { TokenAuth } from './auth.js';
+import { createBeelineServer } from './server.js';
+import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/server-command-intake.js';
 import { assembleTurnPrompt } from '../../body/src/prompt-assembly.js';
 import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
@@ -108,6 +111,90 @@ describe('computer session handoff', () => {
     await database.close();
   });
 
+  it('Reproduction 2026-10-20: public links open Beeline and token failures explain access', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'public-link', upstreamUrl: 'body:',
+    });
+    const publicPage = await fetch(`${origin}/s/${share.id}/`);
+    expect(publicPage.status).toBe(200);
+    const html = await publicPage.text();
+    expect(html).toContain(`https://web.usebeeline.app/beeline/browser-share?id=${share.id}`);
+    expect(html).toContain(`beeline://beeline/browser-share?id=${share.id}`);
+    expect(html).not.toContain(ROOM);
+    const unknown = await fetch(`${origin}/s/${'z'.repeat(43)}/`);
+    expect(unknown.status).toBe(200);
+    expect(await unknown.text()).toContain('Open Beeline and sign in');
+    const invalid = await fetch(`${origin}/s/${share.id}/?access=invalid`);
+    expect(invalid.status).toBe(403);
+    expect(await invalid.text()).toContain('You do not have access');
+    const row = (await getComputerSession(database, share.id))!;
+    const expires = Date.now() - 1000;
+    const signature = createHmac('sha256', row.view_secret!).update(`${share.id}.${HUMAN}.${expires}`).digest('hex');
+    const expired = await fetch(`${origin}/s/${share.id}/?access=${HUMAN}.${expires}.${signature}`);
+    expect(expired.status).toBe(403);
+    expect(await expired.text()).toContain('has expired');
+    const access = await computerViewToken(database, share.id, HUMAN);
+    const allowed = await fetch(`${origin}/s/${share.id}/?access=${access}`);
+    expect(allowed.status).toBe(200);
+    expect(await allowed.text()).toContain('Page.screencastFrame');
+    const otherAccess = await computerViewToken(database, share.id, OTHER);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, OTHER]);
+    try {
+      const refused = await fetch(`${origin}/s/${share.id}/?access=${otherAccess}`);
+      expect(refused.status).toBe(403);
+      expect(await refused.text()).toContain('You do not have access');
+    } finally {
+      await database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, OTHER]);
+    }
+    await endComputerSession(database, live, row);
+    const ended = await fetch(`${origin}/s/${share.id}/?access=${access}`);
+    expect(ended.status).toBe(410);
+    expect(await ended.text()).toContain('has ended');
+  });
+
+  it('Reproduction SHARE-CARD-DM-1: delivers the committed card directly to an open owner DM', async () => {
+    const dm = '33333333-3333-4333-8333-333333333339';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants)
+      VALUES($1,$2,'Direct message',$3::jsonb)`, [dm, WORKSPACE, JSON.stringify([HUMAN, AGENT])]);
+    for (const member of [HUMAN, AGENT]) await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, dm, member]);
+    const mounted = createBeelineServer({ database, live, phone,
+      auth: { authenticatePhone: async (token: string) => token === 'owner' ? HUMAN : OTHER } as unknown as TokenAuth,
+      daemon: new DaemonService(database, live), mediaMaximumBytes: 1024 });
+    await new Promise<void>((resolve) => mounted.listen(0, '127.0.0.1', resolve));
+    const port = (mounted.address() as AddressInfo).port;
+    const owner = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.owner']);
+    const outsider = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.outsider']);
+    const received: Array<Record<string, any>> = [];
+    const forbidden: Array<Record<string, any>> = [];
+    owner.on('message', raw => received.push(JSON.parse(raw.toString())));
+    outsider.on('message', raw => forbidden.push(JSON.parse(raw.toString())));
+    try {
+      await Promise.all([opened(owner), opened(outsider)]);
+      const subscribed = nextType(owner, 'subscribed');
+      owner.send(JSON.stringify({ type: 'subscribe', roomIds: [dm] }));
+      outsider.send(JSON.stringify({ type: 'subscribe', roomIds: [dm] }));
+      await subscribed;
+      const share = await createComputerSession(database, live, {
+        roomId: dm, agentId: AGENT, sessionId: 'dm-card-delivery', upstreamUrl: 'body:', title: 'Shared browser',
+      });
+      // No LISTEN bridge and no covering Room read: the publishing service
+      // must deliver the card itself to an already-open transcript.
+      for (let attempt = 0; attempt < 100 && !received.some(frame => frame.type === 'message-delta'); attempt++)
+        await new Promise(resolve => setTimeout(resolve, 10));
+      const delta = received.find(frame => frame.type === 'message-delta');
+      expect(delta?.message.id).toBe(share.messageId);
+      expect(readRoomViewMessage(delta?.message)?.computerSession).toMatchObject({ id: share.id, status: 'live' });
+      expect(forbidden.some(frame => frame.type === 'message-delta')).toBe(false);
+      expect((await phone.readRoom(dm, HUMAN))?.messages.find(message => message.id === share.messageId)?.computerSession)
+        .toMatchObject({ id: share.id, status: 'live' });
+    } finally {
+      owner.terminate(); outsider.terminate();
+      await new Promise<void>(resolve => mounted.close(() => resolve()));
+      await database.query('DELETE FROM rooms WHERE id=$1', [dm]);
+    }
+  });
+
   it('keeps passive viewer context for the next agent read without a wake or human transcript line', async () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'passive-view', upstreamUrl: 'body:',
@@ -182,7 +269,7 @@ describe('computer session handoff', () => {
     expect(card.rows[0]?.card).toMatchObject({ status: 'live', url: share.url });
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find((message) => message.id === row!.message_id)?.computerSession)
       .toMatchObject({ id: share.id, status: 'live', url: share.url });
-    expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(403);
+    expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(200);
     const page = await fetch(`${origin}/s/${share.id}?access=${access}`);
     expect(page.status).toBe(200);
     const viewerHtml = await page.text();
@@ -284,7 +371,7 @@ describe('computer session handoff', () => {
       await expect(phone.execute('openComputerSession', { id: share.id }, OTHER)).rejects.toThrow('access denied');
       await expect(phone.execute('handbackComputerSession', { id: share.id }, OTHER)).rejects.toThrow('access denied');
       expect(await computerViewToken(database, share.id, OTHER)).toBeNull();
-      expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(403);
+      expect((await fetch(`${origin}/s/${share.id}`)).status).toBe(200);
       expect((await fetch(`${origin}/s/${share.id}/status`)).status).toBe(403);
       const { access } = await phone.execute('openComputerSession', { id: share.id }, HUMAN);
       expect((await fetch(`${origin}/s/${share.id}?access=${access}`)).status).toBe(200);
@@ -700,7 +787,7 @@ describe('computer session handoff', () => {
       await database.query(`UPDATE computer_sessions SET relay_instance_id='source-machine' WHERE id=$1`, [share.id]);
       process.env.FLY_MACHINE_ID = 'other-machine';
       const denied = await fetch(`${origin}/s/${share.id}/`, { redirect: 'manual' });
-      expect(denied.status).toBe(403);
+      expect(denied.status).toBe(200);
       expect(denied.headers.get('fly-replay')).toBeNull();
       const replay = await fetch(`${origin}/s/${share.id}/?access=${access}`, { redirect: 'manual' });
       expect(replay.status).toBe(307);

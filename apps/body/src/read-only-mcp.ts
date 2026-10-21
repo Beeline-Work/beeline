@@ -2378,7 +2378,7 @@ async function shareBrowser(args: JsonObject): Promise<string> {
       roomId: context.roomId, sessionId: args.sessionId, upstreamUrl, title, expiresAt,
     });
     console.error(`[computer-share] card published ms=${Date.now() - startedAt}`);
-    return JSON.stringify({ cardId: result.id, url: result.url, sessionId: args.sessionId, status: 'live' });
+    return JSON.stringify({ cardId: result.messageId, shareId: result.id, message: 'The live browser card is posted in this place. Ask the person to open the card.', sessionId: args.sessionId, status: 'live' });
   }
   if (args.source !== 'chromium') throw new Error('Choose an open Squire or Chromium browser');
   const debugUrl = typeof args.debugUrl === 'string' ? args.debugUrl : 'http://127.0.0.1:9222';
@@ -2398,7 +2398,7 @@ async function shareBrowser(args: JsonObject): Promise<string> {
     await daemonExecute('endComputerSession', { roomId: context.roomId, sessionId: page.id });
     throw error;
   }
-  return JSON.stringify({ cardId: result.id, url: result.url, sessionId: page.id, status: 'live' });
+  return JSON.stringify({ cardId: result.messageId, shareId: result.id, message: 'The live browser card is posted in this place. Ask the person to open the card.', sessionId: page.id, status: 'live' });
 }
 
 

@@ -1,3 +1,4 @@
+import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import {
@@ -422,6 +423,12 @@ export default function BuzzChannels() {
         return;
       }
       if (cancelled) return;
+      const browserShareId = await takePendingBrowserShare();
+      if (cancelled) return;
+      if (browserShareId) {
+        router.replace({ pathname: '/beeline/browser-share', params: { id: browserShareId } });
+        return;
+      }
       const nextTransport = new BuzzRigTransport(nextIdentity);
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       const relayPromise = nextTransport.ensureClient();

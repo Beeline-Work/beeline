@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
 import { markdownToSpeech } from './markdown-to-speech.js';
 import { VoiceService } from './voice-service.js';
+import * as telemetry from './sentry.js';
 
 const state = vi.hoisted(() => ({ room: undefined as any, streams: [] as ReadableStream<any>[], audio: undefined as any }));
 vi.mock('@livekit/rtc-node', () => ({
@@ -2321,4 +2322,72 @@ it('VOICE-ROUTER-1: empty call work is hydrated once across transcript invalidat
     await runtime.refresh();
     expect(service.db.query.mock.calls.filter(([sql]) => sql.includes('SELECT source.text'))).toHaveLength(1);
   } finally { await runtime.close(); }
+});
+
+
+it('VOICE-BARGE-1: assembler pause aborts a provider without publishing or capturing an error', async () => {
+  const capture = vi.spyOn(telemetry, 'captureServerError').mockImplementation(() => {});
+  const { service } = conversationService(1);
+  let active!: AbortSignal;
+  service.config.brain.answer.mockImplementation(async (_agent: unknown, _history: unknown, _text: unknown, signal: AbortSignal) => {
+    active = signal;
+    return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    const work = (runtime as any).task(() => runtime.utterance('human', 'Ruby explain this'), 'human');
+    await vi.waitFor(() => expect(active).toBeDefined());
+    (runtime as any).assembler.pause('human');
+    await work;
+    expect(active.aborted).toBe(true);
+    expect(capture).not.toHaveBeenCalled();
+    const signals = state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)));
+    expect(signals.some((signal: any) => signal.type === 'error')).toBe(false);
+  } finally { await runtime.close(); capture.mockRestore(); }
+});
+
+
+it('VOICE-TIMEOUT-1: the call plays remaining Aura audio after RTC backpressure exceeds 30 seconds', async () => {
+  const { service } = conversationService(1);
+  service.agents.mockResolvedValue(roster.map(agent => ({ ...agent, voice: 'luna' })));
+  service.config.brain.answer.mockImplementation(async () => ({ text: 'A spoken answer. '.repeat(50), order: false }));
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { body = controller; controller.enqueue(Buffer.alloc(960, 1)); },
+  })));
+  service.speech.mockResolvedValue(new AuraSpeech('test', 'account', fetcher) as any);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const playback = deferred<void>();
+  state.audio.captureFrame.mockImplementationOnce(() => playback.promise);
+  vi.useFakeTimers();
+  try {
+    const work = runtime.utterance('human', 'Ruby explain this');
+    await vi.waitFor(() => expect(state.audio.captureFrame).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(31000);
+    body.enqueue(Buffer.alloc(960, 1)); body.close(); playback.resolve();
+    await work;
+    expect(state.audio.captureFrame).toHaveBeenCalledTimes(2);
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
+    expect(state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)))
+      .some((signal: any) => signal.type === 'error')).toBe(false);
+  } finally { playback.resolve(); vi.useRealTimers(); await runtime.close(); }
+});
+
+
+it('VOICE-TIMEOUT-1: a real stalled Aura request still publishes a plain retry message and is captured', async () => {
+  const capture = vi.spyOn(telemetry, 'captureServerError').mockImplementation(() => {});
+  const { service } = conversationService(1);
+  service.agents.mockResolvedValue(roster.map(agent => ({ ...agent, voice: 'luna' })));
+  const fetcher = vi.fn<typeof fetch>(async () => new Promise<Response>(() => {}));
+  service.speech.mockResolvedValue(new AuraSpeech('test', 'account', fetcher) as any);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  vi.useFakeTimers();
+  try {
+    const work = (runtime as any).task(() => runtime.utterance('human', 'Ruby explain this'), 'human');
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(5000); await work;
+    expect(capture).toHaveBeenCalledWith(expect.objectContaining({ message: 'Voice provider timed out; please try again' }), expect.objectContaining({ surface: 'voice' }));
+    const signals = state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)));
+    expect(signals).toContainEqual({ type: 'error', message: 'Voice reply unavailable; please try again' });
+  } finally { vi.useRealTimers(); await runtime.close(); capture.mockRestore(); }
 });

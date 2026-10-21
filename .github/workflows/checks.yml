@@ -539,6 +539,16 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: isolated-proof
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -547,6 +557,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth && npm run build -w @beeline/body
+      - name: Prove release migration lock handoff on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/migration-retry.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       # This file subtracts the measured synthetic 206 ms timer wait before
       # checking claim query overhead. It runs with one worker on its own host.
       - name: Run the claim latency budget alone

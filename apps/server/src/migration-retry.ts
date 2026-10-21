@@ -75,8 +75,10 @@ export async function retryMigrationStep(
     onLockTimeout?: () => Promise<void>;
   } = {},
 ): Promise<void> {
-  const attempts = options.attempts ?? 6;
-  const delayMs = options.delayMs ?? ((attempt) => 1_000 * attempt + Math.floor(Math.random() * 500));
+  // At least 345 seconds of backoff alone: older servers can hold a job
+  // transaction for five minutes and do not participate in the job gate yet.
+  const attempts = options.attempts ?? 40;
+  const delayMs = options.delayMs ?? ((attempt) => Math.min(10_000, 1_000 * attempt) + Math.floor(Math.random() * 500));
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   for (let attempt = 1; ; attempt++) {
     try {

@@ -104,6 +104,16 @@ that marker and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
 migration behind live traffic.
 
+Before schema work, the migration takes an exclusive advisory job gate on a
+dedicated connection. Long-running pool statements and transactions take its
+shared counterpart before touching tables, so existing work drains and new
+jobs wait without claiming or discarding queued work. App, enrichment and
+health reads do not use this gate. The gate wait is bounded to six minutes;
+job statements and transactions are bounded to five minutes. DDL still waits
+only one second per table-lock attempt. Forty retries with capped backoff
+also cover readers on older servers that do not yet use the gate. The gate
+connection is destroyed on success or failure to release ownership.
+
 The promotion records the two current Machine image refs, builds one tagged
 Fly image, and chooses the lexically first Machine as the canary. It updates
 only that Machine, pinning probes to it with `fly-force-instance-id`. Every 15

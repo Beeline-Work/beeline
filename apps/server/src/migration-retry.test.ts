@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PostgresDatabase } from './database.js';
+import { JOB_TRANSACTION_DEADLINE_MS, PostgresDatabase } from './database.js';
+import { MIGRATION_JOB_GATE_KEY, withMigrationJobGate } from './migration-job-gate.js';
 import { isDeadlock, lockedTables, logLockHolders, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
 
 // Optional real PostgreSQL proof: loopback only, unique schema, never a shared account.
@@ -57,6 +58,111 @@ describe('retryOnDeadlock', () => {
 });
 
 describe('retryMigrationStep', () => {
+  it('destroys the gate session after either a migration failure or a gate acquisition failure', async () => {
+    for (const acquireFails of [false, true]) {
+      const release = vi.fn();
+      const failure = new Error(acquireFails ? 'gate failed' : 'migration failed');
+      const session = {
+        query: vi.fn(async (sql: string) => {
+          if (acquireFails && sql.includes('pg_advisory_xact_lock(')) throw failure;
+        }),
+        release,
+      };
+      const work = vi.fn(async () => { throw failure; });
+      await expect(withMigrationJobGate({ connectDedicated: async () => session }, work)).rejects.toBe(failure);
+      expect(release).toHaveBeenCalledOnce();
+      expect(release).toHaveBeenCalledWith(true);
+      expect(work).toHaveBeenCalledTimes(acquireFails ? 0 : 1);
+    }
+  });
+
+  it('waits longer than a legacy job deadline even without counting lock waits', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    await expect(retryMigrationStep('legacy reader', async () => {
+      calls++;
+      throw Object.assign(new Error('lock timeout'), { code: '55P03' });
+    }, { sleep: async ms => { waits.push(ms); } })).rejects.toMatchObject({ code: '55P03' });
+    expect(calls).toBe(40);
+    expect(waits.reduce((total, ms) => total + ms, 0)).toBeGreaterThan(JOB_TRANSACTION_DEADLINE_MS);
+    expect(Math.max(...waits)).toBeLessThan(10_500);
+  });
+
+  it.skipIf(!postgresUrl)('R-MIGRATION-READER drains a messages reader and pauses new jobs until DDL commits', async () => {
+    const schema = `release_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    await admin.query(`CREATE TABLE ${schema}.messages (id int)`);
+    const migration = new PostgresDatabase('', 2, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 2,
+      options: `-c search_path=${schema} -c lock_timeout=50ms`,
+    }) });
+    const jobs = new PostgresDatabase('', 2, { mode: 'long-running', pool: new Pool({
+      connectionString: postgresUrl, max: 2, application_name: 'beeline_long_running',
+      options: `-c search_path=${schema}`,
+    }) });
+    let releaseReader!: () => void;
+    let readerStarted!: () => void;
+    const started = new Promise<void>(resolve => { readerStarted = resolve; });
+    const release = new Promise<void>(resolve => { releaseReader = resolve; });
+    const reader = jobs.transaction(async db => {
+      await db.query('SELECT * FROM messages');
+      readerStarted();
+      await release;
+    });
+    let finishMigration: (() => void) | undefined;
+    let migrationWork: Promise<void> | undefined;
+    let queuedJob: Promise<unknown> | undefined;
+    try {
+      await started;
+      const ddl = 'ALTER TABLE messages ADD COLUMN delivered boolean';
+      // Before: six short retries expire while the reader still owns its lock.
+      await expect(retryMigrationStep('R-MIGRATION-READER before', async () => {
+        await migration.query(ddl);
+      }, { attempts: 6, delayMs: () => 1 })).rejects.toMatchObject({ code: '55P03' });
+      let gateEntered!: () => void;
+      const entered = new Promise<void>(resolve => { gateEntered = resolve; });
+      const finish = new Promise<void>(resolve => { finishMigration = resolve; });
+      migrationWork = withMigrationJobGate(migration, async () => {
+        await migration.query(ddl);
+        gateEntered();
+        await finish;
+      });
+      // Observe the exclusive gate waiting behind the active reader.
+      let waiting = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        waiting = (await admin.query(`SELECT 1 FROM pg_locks
+          WHERE locktype='advisory' AND objid=$1 AND NOT granted`, [MIGRATION_JOB_GATE_KEY])).rowCount! > 0;
+        if (waiting) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(waiting).toBe(true);
+      let jobFinished = false;
+      queuedJob = jobs.query('SELECT delivered FROM messages').then(() => { jobFinished = true; });
+      releaseReader();
+      await reader;
+      await entered;
+      try {
+        expect(jobFinished).toBe(false);
+        // App traffic still reads while jobs are paused and no DDL is queued.
+        await expect(admin.query(`SELECT delivered FROM ${schema}.messages`)).resolves.toBeDefined();
+      } finally { finishMigration?.(); }
+      await migrationWork;
+      await queuedJob;
+      expect(jobFinished).toBe(true);
+    } finally {
+      releaseReader();
+      finishMigration?.();
+      await reader;
+      await migrationWork;
+      await queuedJob;
+      await jobs.close();
+      await migration.close();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
+  });
+
   it('keeps semicolons inside quoted strings, comments, and trigger bodies', () => {
     const script = `-- first; comment
 CREATE TABLE sample (value text DEFAULT 'a;b');

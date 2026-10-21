@@ -10,6 +10,7 @@ import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './se
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
+import { withMigrationJobGate } from './migration-job-gate.js';
 import { databaseConnectionBudget } from './database-budget.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
@@ -79,26 +80,29 @@ function required(name: string) {
 }
 
 async function runReleaseMigration(): Promise<void> {
-  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
+  // One dedicated gate holder and one connection for migration statements.
+  const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 2, {
     mode: 'migration',
   });
   try {
-    await migrate(database, { deferData: true });
-    await retryMigrationStep('auth schema', async () => {
-      await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+    await withMigrationJobGate(database, async () => {
+      await migrate(database, { deferData: true });
+      await retryMigrationStep('auth schema', async () => {
+        await new AuthStore(database as unknown as TransactionalDatabase).migrate();
+      });
+      await migrateData(database);
+      // Armed only by the release owner, once the create-or-join onboarding is
+      // live on every supported client (docs/welcome-retirement.md).
+      const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
+      if (greeterAgentId) {
+        const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
+        console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+      }
+      // This is deliberately last: boot may proceed only after both schema owners
+      // and every data backfill completed successfully.
+      await retryMigrationStep('schema marker', () => markSchemaCurrent(database));
+      console.log('[migration] server and auth schemas are current');
     });
-    await migrateData(database);
-    // Armed only by the release owner, once the create-or-join onboarding is
-    // live on every supported client (docs/welcome-retirement.md).
-    const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
-    if (greeterAgentId) {
-      const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
-      console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
-    }
-    // This is deliberately last: boot may proceed only after both schema owners
-    // and every data backfill completed successfully.
-    await retryMigrationStep('schema marker', () => markSchemaCurrent(database));
-    console.log('[migration] server and auth schemas are current');
   } finally {
     await database.close();
   }

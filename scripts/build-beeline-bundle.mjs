@@ -329,7 +329,7 @@ async function main() {
     // specific runtime.
     const nodeResolution = [
       'beeline_node_min_major=20',
-      'beeline_node_min_minor=11',
+      'beeline_node_min_minor=12',
       'beeline_node_ok() {',
       '  [ -x "$1" ] || return 1',
       '  "$1" -e \'var v=process.versions.node.split(".").map(Number);process.exit(v[0]>\'"$beeline_node_min_major"\'||(v[0]===\'"$beeline_node_min_major"\'&&v[1]>=\'"$beeline_node_min_minor"\')?0:1)\' >/dev/null 2>&1',
@@ -376,7 +376,7 @@ async function main() {
         schemaVersion: 1,
         name: 'beeline',
         platform,
-        node: '>=20.11.0',
+        node: '>=20.12.0',
         // Self-update identity (self-update.ts reads this from the INSTALLED
         // bundle — never from a checkout). version is a comparable
         // YYYY.MM.DD build date; commit is the exact source revision.
@@ -413,7 +413,7 @@ async function main() {
     file: filename,
     sha256: digest,
     bytes: archiveStat.size,
-    node: '>=20.11.0',
+    node: '>=20.12.0',
     commit: sourceCommit,
     version: buildVersion,
   };

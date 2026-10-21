@@ -1,4 +1,7 @@
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { TokenAuth } from './auth.js';
+import { createBeelineServer } from './server.js';
 import { migrate } from './database.js';
 import { describedWorkflow, PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -438,4 +441,42 @@ it('backfills with the same resolver and preserves already resolved workflows', 
       ])
     ).rows,
   ).toEqual([{ workflow_slug: 'recorded-target' }]);
+});
+
+it('Reproduction R1: answers a stop of an already-deleted schedule with its own 404 code', async () => {
+  const created = await daemon.execute(
+    'createAgentSchedule',
+    { roomId: ROOM, agentId: AGENT, prompt: 'Run daily', cadence: { kind: 'interval', everyMinutes: 1 } },
+    AGENT,
+  );
+  const server = createBeelineServer({
+    database: db,
+    auth: { authenticatePhone: async () => ADMIN } as unknown as TokenAuth,
+    phone,
+    daemon,
+    live: new LiveHub(),
+    mediaMaximumBytes: 1,
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const stop = async (roomId: string) => {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/phone/operations/deleteRoomSchedule`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ roomId, scheduleId: created.scheduleId }),
+      });
+      return { status: response.status, body: response.status === 204 ? null : await response.json() };
+    };
+    expect(await stop(ROOM)).toEqual({ status: 204, body: null });
+    // The phone treats this exact answer as "already stopped".
+    expect(await stop(ROOM)).toEqual({ status: 404, body: { error: 'schedule not found' } });
+    // A wrong Room is also a 404, but with its own code, so it still reads as a failure.
+    expect(await stop('20000000-0000-4000-8000-0000000000ff')).toEqual({
+      status: 404,
+      body: { error: 'room not found' },
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

@@ -23,18 +23,36 @@ function shims(mobile: string): Record<string, string> {
     '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
       register: async () => () => undefined,
     });`,
-    '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
+    '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {
+      constructor(operation, status, code) {
+        super('Monolith ' + operation + ' failed (' + status + '): ' + code);
+        this.name = 'MonolithPhoneOperationError';
+        Object.assign(this, { operation, status, code });
+      }
+    }
+    // ?stopFails=gone answers a stop the way the server does once the row is
+    // already deleted; ?stopFails=down answers it the way an outage does.
     export const monolithPhoneOperation = async (name, input) => {
       (globalThis.__operations ??= []).push(name);
       (globalThis.__inputs ??= []).push([name, input]);
-      if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') return {};
+      const stopFails = new URLSearchParams(location.search).get('stopFails');
+      if (name === 'deleteRoomSubscription' || name === 'deleteRoomSchedule') {
+        if (stopFails === 'gone') {
+          (globalThis.__gone ??= new Set()).add(input.scheduleId ?? input.subscriptionId);
+          throw new MonolithPhoneOperationError(name, 404,
+            name === 'deleteRoomSchedule' ? 'schedule not found' : 'subscription not found');
+        }
+        if (stopFails === 'down') throw new MonolithPhoneOperationError(name, 503, 'request failed');
+        return {};
+      }
       if (name === 'readWorkflowDefinition') return { contract: ${contract}, runs: [] };
       if (name !== 'readScheduledWork') throw new Error('unexpected ' + name);
       if (new URLSearchParams(location.search).has('failScheduleRead') && !globalThis.__failedScheduleRead) {
         globalThis.__failedScheduleRead = true;
         throw new Error('schedule read unavailable');
       }
-      return {
+      const gone = globalThis.__gone ?? new Set();
+      const work = {
         roomName: 'beeline', agentNames: [['agent-1', 'Hoots'], ['agent-2', 'Ruby']],
         subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
           source: 'repository', event: 'pull_request.opened', repository: 'owner/widgets',
@@ -53,6 +71,8 @@ function shims(mobile: string): Record<string, string> {
           runCount: 3, workflowSlug: 'feedback-triage', corner: { id: 'corner-1', name: 'issues-triage' } },
       ],
     };
+      return { ...work, schedules: work.schedules.filter((item) => !gone.has(item.id)),
+        subscriptions: work.subscriptions.filter((item) => !gone.has(item.id)) };
     };`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async room() {
@@ -97,13 +117,17 @@ type Page = {
   allCircles: number;
   pushed: unknown[];
   afterStop: string[];
+  stopX: number | null;
+  confirmX: number | null;
+  afterConfirm: string[];
+  bannerBelowHeader: boolean | null;
   operationsBeforeConfirm: string[];
   operations: string[];
   inputs: [string, unknown][];
   back: number;
 };
 
-async function proof(query: string): Promise<Page> {
+async function proof(query: string, screenshotPath?: string): Promise<Page> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/scheduled-work-proof.tsx'),
@@ -111,7 +135,9 @@ async function proof(query: string): Promise<Page> {
     shims: shims(mobile),
     width: 390,
     query,
-    head: `<style>${fontsCss(mobile)}</style>`,
+    ...(screenshotPath ? { screenshotPath, height: 844 } : {}),
+    // A screenshot shows the page alone, not the proof's own result line.
+    head: `<style>${fontsCss(mobile)}${screenshotPath ? '#result{display:none}' : ''}</style>`,
   });
   expect(status, stderr).toBe(0);
   if (process.env.PRINT_PROOF) console.log(result);
@@ -190,11 +216,57 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       "Summarize yesterday's merged PRs for the Room. Group them by area and link each PR.",
       'Stop schedule',
     ]);
-    expect(page.afterStop.slice(-2)).toEqual(['Cancel', 'Stop schedule']);
+    expect(page.afterStop.slice(-2)).toEqual(['Stop schedule', 'Cancel']);
     expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16]);
     stopped(page, 'deleteRoomSchedule');
     expect(page.inputs).toContainEqual(['deleteRoomSchedule', { roomId: 'room-1', scheduleId: 'daily' }]);
   }, 120_000);
+
+  // Reproduction R1: the page was loaded, then the schedule's row was deleted
+  // before Stop. Set PROOF_SHOTS to a directory to keep each page's screenshot.
+  const shot = (name: string) =>
+    process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, `${name}.png`) : undefined;
+
+  it.each([
+    ['schedule', 'scheduleId=daily', 'This schedule has stopped.'],
+    ['subscription', 'subscriptionId=sub-1', 'This subscription has stopped.'],
+  ] as const)('R1: shows a %s already gone on the server as stopped, with no error', async (pageName, id, gone) => {
+    for (const theme of ['dark', 'light']) {
+      const page = await proof(`?page=${pageName}&roomId=room-1&${id}&stopFails=gone&theme=${theme}`,
+        shot(`R1-${pageName}-gone-${theme}`));
+      expect(page.afterConfirm).toContain(gone);
+      expect(page.afterConfirm.join(' ')).not.toMatch(/Could not|Monolith|404|not found/);
+      expect(page.bannerBelowHeader).toBeNull();
+    }
+  }, 240_000);
+
+  it.each([
+    ['schedule', 'scheduleId=daily', 'stop-schedule', 'Stop schedule'],
+    ['subscription', 'subscriptionId=sub-1', 'stop-subscription', 'Stop subscription'],
+  ] as const)('R1: puts the %s confirm Stop where the first tap landed', async (pageName, id, _stopId, label) => {
+    for (const theme of ['dark', 'light']) {
+      const page = await proof(`?page=${pageName}&roomId=room-1&${id}&holdConfirm=1&theme=${theme}`,
+        shot(`R1-${pageName}-confirm-${theme}`));
+      expect(page.stopX).toBe(16);
+      expect(page.confirmX).toBe(page.stopX);
+      expect(page.afterStop.slice(-2)).toEqual([label, 'Cancel']);
+    }
+  }, 240_000);
+
+  it.each([
+    ['schedule', 'scheduleId=daily', 'deleteRoomSchedule', 'Could not stop this schedule.'],
+    ['subscription', 'subscriptionId=sub-1', 'deleteRoomSubscription', 'Could not stop this subscription.'],
+  ] as const)('R1: says a failed %s stop in one plain sentence and tries the stop again', async (pageName, id, operation, sentence) => {
+    for (const theme of ['dark', 'light']) {
+      const page = await proof(`?page=${pageName}&roomId=room-1&${id}&stopFails=down&retryStop=1&theme=${theme}`,
+        shot(`R1-${pageName}-failed-${theme}`));
+      expect(page.afterConfirm).toContain(sentence);
+      expect(page.afterConfirm.join(' ')).not.toMatch(/MonolithPhoneOperationError|deleteRoom|\(\d{3}\)/);
+      expect(page.bannerBelowHeader).toBe(true);
+      expect(page.operations.filter((name) => name === operation)).toHaveLength(2);
+      expect(page.back).toBe(0);
+    }
+  }, 240_000);
 
   it('links workflow timer and event details to the steps on the workflow page', async () => {
     for (const [pageName, id, stop] of [
@@ -228,7 +300,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'Triage incoming work.',
       'Stop subscription',
     ]);
-    expect(page.afterStop.slice(-2)).toEqual(['Cancel', 'Stop subscription']);
+    expect(page.afterStop.slice(-2)).toEqual(['Stop subscription', 'Cancel']);
     expect(page.detailAxis).toEqual([16, 16, 16, 16, 16, 16]);
     stopped(page, 'deleteRoomSubscription');
     expect(page.inputs).toContainEqual([

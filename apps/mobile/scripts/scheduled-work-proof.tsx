@@ -80,12 +80,28 @@ async function run() {
   if (page === 'schedule' || page === 'subscription') click('scheduled-work-workflow');
   const stopId = page === 'subscription' ? 'stop-subscription'
     : page === 'schedule' ? 'stop-schedule' : null;
+  const params = new URLSearchParams(location.search);
+  // Where the Stop row's own label starts, before and after the first tap.
+  const labelX = (testID: string) => {
+    const node = document.querySelector(`[data-testid="${testID}"]`);
+    return node ? (node.querySelector('[dir=auto]') ?? node).getBoundingClientRect().x : null;
+  };
+  const stopX = stopId ? labelX(stopId) : null;
   if (stopId) click(stopId);
   await pause();
   const afterStop = leaves().map((node) => node.textContent);
+  const confirmX = stopId ? labelX(`${stopId}-confirm`) : null;
   const operationsBeforeConfirm = [...((globalThis as { __operations?: string[] }).__operations ?? [])];
-  if (stopId) click(`${stopId}-confirm`);
+  if (stopId && !params.has('holdConfirm')) click(`${stopId}-confirm`);
   for (let i = 0; i < 3; i += 1) await pause();
+  const afterConfirm = leaves().map((node) => node.textContent);
+  const header = document.querySelector(`[data-testid="${page}-header"]`)?.getBoundingClientRect();
+  const banner = document.querySelector(`[data-testid="${page}-stop-error"]`)?.getBoundingClientRect();
+  const bannerBelowHeader = header && banner ? banner.top >= header.bottom - 1 : null;
+  if (params.has('retryStop')) {
+    click(`${page}-stop-error-retry`);
+    for (let i = 0; i < 3; i += 1) await pause();
+  }
   report(
     JSON.stringify({
       text,
@@ -107,6 +123,10 @@ async function run() {
       allCircles,
       pushed: (globalThis as { __pushed?: unknown[] }).__pushed ?? [],
       afterStop,
+      stopX,
+      confirmX,
+      afterConfirm,
+      bannerBelowHeader,
       operationsBeforeConfirm,
       operations: (globalThis as { __operations?: unknown[] }).__operations ?? [],
       inputs: (globalThis as { __inputs?: unknown[] }).__inputs ?? [],

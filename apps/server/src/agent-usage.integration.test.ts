@@ -183,8 +183,21 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   await db.query(
     `INSERT INTO free_agent_budget(day,usd) VALUES((now() AT TIME ZONE 'UTC')::date,25)`,
   );
+  // PGlite's now() follows Date.now(), so the mocked read needs this frozen UTC day too.
+  const frozenMs = 1792512525000;
+  const frozenDay = new Date(frozenMs).toISOString().slice(0, 10);
+  await db.query(
+    `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,$2::date,123000)
+     ON CONFLICT (owner_id, day) DO UPDATE SET tokens=EXCLUDED.tokens`,
+    [owner, frozenDay],
+  );
+  await db.query(
+    `INSERT INTO free_agent_budget(day,usd) VALUES($1::date,25)
+     ON CONFLICT (day) DO UPDATE SET usd=EXCLUDED.usd`,
+    [frozenDay],
+  );
   // A valid usage timestamp can contain the private operator budget's digits.
-  const clock = vi.spyOn(Date, 'now').mockReturnValue(1792512525000);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(frozenMs);
   let paused;
   try {
     paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);

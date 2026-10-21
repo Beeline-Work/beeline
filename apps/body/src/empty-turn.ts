@@ -69,17 +69,20 @@ export function shouldRetryEmptyTurn(explanation: EmptyTurnExplanation): boolean
 }
 
 /**
- * The provider that served the turn is rate limited, timed out, or down. A
- * pin of ONE provider (`allow_fallbacks: false`, the empty-completion retry's
- * pin, which a retained session keeps for its later turns) gives OpenRouter
- * nowhere else to go, so the turn loop moves the pin to the next provider
- * itself. A key, balance, or request fault is not the provider's and is not
- * retried.
+ * The provider that served the turn is rate limited, timed out, out of credit,
+ * or down. A pin of ONE provider (`allow_fallbacks: false`, the
+ * empty-completion retry's pin, which a retained session keeps for its later
+ * turns) gives OpenRouter nowhere else to go, so the turn loop moves the pin to
+ * the next provider itself. A key or request fault is not the provider's and is
+ * not retried. A 402 (out of credit) also moves the pin: the next configured
+ * provider is tried once, the same way a 429 is, and when the whole route is
+ * out of credit the turn ends on one named reason instead of repeating the
+ * error.
  */
 export function shouldFailOverProviderError(explanation: EmptyTurnExplanation): boolean {
   const record = explanation.record;
   if (record?.kind !== 'error' || record.status === undefined) return false;
-  return record.status === 408 || record.status === 429 || record.status >= 500;
+  return record.status === 402 || record.status === 408 || record.status === 429 || record.status >= 500;
 }
 
 /**

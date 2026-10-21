@@ -193,13 +193,13 @@ describe('the empty-completion routing retry', () => {
     expect(shouldRetryEmptyTurn({ reason: 'x' })).toBe(true);
   });
 
-  it('fails over a rate limit, timeout, or outage, never a key, balance, or request fault', () => {
-    for (const status of [408, 429, 500, 502, 503]) {
+  it('fails over a rate limit, timeout, credit refusal, or outage, never a key or request fault', () => {
+    for (const status of [402, 408, 429, 500, 502, 503]) {
       expect(
         shouldFailOverProviderError({ reason: 'x', record: { kind: 'error', reason: 'x', status } }),
       ).toBe(true);
     }
-    for (const status of [400, 401, 402, 403, 404]) {
+    for (const status of [400, 401, 403, 404]) {
       expect(
         shouldFailOverProviderError({ reason: 'x', record: { kind: 'error', reason: 'x', status } }),
       ).toBe(false);

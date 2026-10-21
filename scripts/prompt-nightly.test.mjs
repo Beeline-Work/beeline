@@ -1,12 +1,21 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { assessExperiment, budget, chooseBlock, median, removalBlocks, replaySample } from './prompt-nightly.mjs';
+import { assessExperiment, budget, chooseBlock, median, needsSquire, removalBlocks, replaySample } from './prompt-nightly.mjs';
+import { loadCases } from './prompt-cases.ts';
 
 const model = 'fixture/model';
 const response = (answer, tokens = 100) => ({ id: 'fixture', model, usage: { total_tokens: tokens, cost: 0.0001 },
   choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(answer) } }] });
 const row = (id, pass, tokens) => ({ id, pass, samples: [{ tokens }] });
+
+test('browser-session cases are skipped while a text-only case with browser tools stays eligible', () => {
+  const cases = loadCases();
+  assert.deepEqual(cases.filter(needsSquire).map(({ id }) => id), [
+    'squire-busy-request-capability', 'squire-drive-starts-drive', 'squire-long-history-host-recovery',
+  ]);
+  assert.equal(needsSquire(cases.find(({ id }) => id === 'long-incident-shipped-status')), false);
+});
 
 test('removal requires the same cases, no passing-case regression, and lower measured tokens', () => {
   const baseline = [row('a', true, 100), row('b', false, 200)];
@@ -24,6 +33,7 @@ test('protects every failing-case section and rotates the next experiment', () =
   assert.equal(chooseBlock(blocks, baseline, cases)?.id, 'b');
   assert.equal(chooseBlock(blocks, baseline, cases, 'b')?.id, 'c');
   assert.equal(chooseBlock(blocks.slice(0, 1), baseline, cases), undefined);
+  assert.equal(chooseBlock(blocks, [], cases, undefined, [{ id: 'failure', status: 'skipped:squire' }])?.id, 'b');
 });
 
 test('extracts actual render paragraphs, never rationale or arbitrary source text', () => {

@@ -16,8 +16,8 @@ A new section needs a case before `npm run test:prompt-cases` passes.
 
 ## Where cases come from
 
-The [04:00 nightly replay](../nightly.md) measures every case on the free-agent
-model and tries one paragraph removal. Its history and **Prompt nightly results**
+The [04:00 nightly replay](../nightly.md) measures eligible cases on the free-agent
+model (browser-session cases are explicitly skipped:squire) and tries one paragraph removal. Its history and **Prompt nightly results**
 issue provide the 9am digest's prompt health line. A real agent failure from
 Sentry, triage or the workspace walk becomes a failing case before a prompt fix;
 the fix must pass it without regressing previously passing cases or overall rate.

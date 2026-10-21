@@ -42,8 +42,9 @@ export function removalBlocks(text) {
   return blocks;
 }
 
-export function chooseBlock(blocks, baseline, cases, previousId) {
-  const protectedSections = new Set(baseline.filter((row) => !row.pass).map((row) => cases.find((c) => c.id === row.id)?.section));
+export function chooseBlock(blocks, baseline, cases, previousId, skipped = []) {
+  const protectedSections = new Set([...baseline.filter((row) => !row.pass), ...skipped]
+    .map((row) => cases.find((c) => c.id === row.id)?.section));
   const candidates = blocks.filter((block) => !protectedSections.has(block.section));
   if (!candidates.length) return undefined;
   const previous = candidates.findIndex((block) => block.id === previousId);
@@ -123,6 +124,14 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
   return { pass: false, reason: 'Skill continuation exceeded six rounds', transcript, tokens, cost, requests };
 }
 
+
+/** Browser-session cases stay outside both arms of the nightly cohort. */
+export function needsSquire(testCase) {
+  const browserTools = testCase.tools?.some((name) => name.startsWith('operate_'));
+  return Boolean(browserTools && (JSON.stringify(testCase.pass).includes('operate_') ||
+    testCase.messages?.some((line) => /session_id:|browser held by session/.test(line))));
+}
+
 export async function replaySuite(source, cases, options) {
   const rows = [];
   let next = 0;
@@ -174,16 +183,6 @@ export function fileTransport(directory) {
   };
 }
 
-export async function httpTransport(body) {
-  if (!process.env.OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is not configured');
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(120_000),
-  });
-  if (!response.ok) throw new Error(`Model request failed: HTTP ${response.status}`);
-  return response.json();
-}
-
 export async function runNightly({ out, history, request, tokenCap, costCap, root = ROOT }) {
   mkdirSync(out, { recursive: true });
   const startedAt = new Date().toISOString();
@@ -192,19 +191,21 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   const model = readFileSync(join(root, 'apps/server/src/free-agents.ts'), 'utf8')
     .match(/model: env\.BEELINE_FREE_AGENT_MODEL \|\| '([^']+)'/)?.[1];
   if (!model) throw new Error('Cannot determine the production free-agent model');
-  const cases = loadCases();
+  const allCases = loadCases();
+  const skipped = allCases.filter(needsSquire).map(({ id, section }) => ({ id, section, status: 'skipped:squire', reason: 'Requires a Squire browser session; excluded by the nightly cohort policy' }));
+  const cases = allCases.filter((testCase) => !needsSquire(testCase));
   const source = await loadSource(root);
-  const problems = check(source, cases);
+  const problems = check(source, allCases);
   if (problems.length) throw new Error(problems.join('\n'));
   const ledger = budget(tokenCap, costCap);
-  const result = { startedAt, commit, model, status: 'running', caseCount: cases.length, baseline: [], candidate: [], experiment: { outcome: 'not run' } };
+  const result = { startedAt, commit, model, status: 'running', caseCount: allCases.length, eligibleCount: cases.length, skipped, baseline: [], candidate: [], experiment: { outcome: 'not run' } };
   const save = () => writeFileSync(join(out, 'result.json'), `${JSON.stringify({ ...result, tokens: ledger.tokens, cost: ledger.cost }, null, 2)}\n`);
   let temp;
   try {
     result.baseline = await replaySuite(source, cases, { model, request, ledger, onCase(row) { result.baseline.push(row); save(); } });
     const text = readFileSync(join(root, SOURCE), 'utf8');
     const prior = existsSync(history) ? readFileSync(history, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
-    const block = chooseBlock(removalBlocks(text), result.baseline, cases, prior.at(-1)?.experiment?.block?.id);
+    const block = chooseBlock(removalBlocks(text), result.baseline, allCases, prior.at(-1)?.experiment?.block?.id, skipped);
     if (block) {
       result.experiment = { outcome: 'running', block };
       temp = mkdtempSync(join(tmpdir(), 'beeline-prompt-nightly-'));
@@ -213,7 +214,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
       const candidateText = text.slice(0, block.start) + "''" + text.slice(block.end);
       writeFileSync(join(temp, SOURCE), candidateText);
       const candidateSource = await loadSource(temp);
-      const invalid = check(candidateSource, cases);
+      const invalid = check(candidateSource, allCases);
       if (invalid.length) result.experiment.outcome = `rejected: ${invalid.join('; ')}`;
       else {
         result.candidate = await replaySuite(candidateSource, cases, { model, request, ledger,
@@ -240,10 +241,10 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   const rate = result.status === 'complete'
     ? `${passed}/${cases.length} passed (${(100 * passed / cases.length).toFixed(1)}%)`
     : `${result.baseline.length}/${cases.length} cases completed, ${passed} passed; overall pass rate unavailable`;
-  const summary = `Prompt nightly ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
+  const summary = `Prompt nightly ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
-  appendFileSync(history, `${JSON.stringify({ startedAt, commit, model, status: result.status, passed, cases: cases.length, medianTokensPerTurn: total,
+  appendFileSync(history, `${JSON.stringify({ startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,
     tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, pass, medianTokensPerTurn }) => ({ id, pass, medianTokensPerTurn })), experiment: result.experiment })}\n`);
   console.log(summary);
   return { ...result, tokens: ledger.tokens, cost: ledger.cost };
@@ -255,10 +256,11 @@ async function main() {
   const out = resolve(option('--out', '.scratch/prompt-nightly/latest'));
   const history = resolve(option('--history', '.scratch/prompt-nightly/history.jsonl'));
   const exchange = option('--exchange');
+  if (!exchange) throw new Error('Use --exchange with the Beeline vault-backed controller; keys never enter this process');
   const tokenCap = Number(option('--token-cap', DEFAULT_TOKEN_CAP));
   const costCap = Number(option('--cost-cap', DEFAULT_COST_CAP));
   if (![tokenCap, costCap].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Budgets must be positive finite numbers');
-  const result = await runNightly({ out, history, request: exchange ? fileTransport(resolve(exchange)) : httpTransport, tokenCap, costCap });
+  const result = await runNightly({ out, history, request: fileTransport(resolve(exchange)), tokenCap, costCap });
   if (result.status !== 'complete') process.exitCode = 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

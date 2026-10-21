@@ -50,7 +50,6 @@ jobs:
               - 'scripts/prompt-case-rules.test.ts'
               - 'scripts/prompt-nightly.mjs'
               - 'scripts/prompt-nightly.test.mjs'
-              - '.github/workflows/prompt-nightly.yml'
               - '.github/workflows/prompt-cases.yml'
 
   prompt-cases:

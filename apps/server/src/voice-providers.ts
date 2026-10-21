@@ -155,10 +155,14 @@ export interface VoiceSpeech {
 class VoiceDeadline {
   readonly controller = new AbortController();
   private readonly first: ReturnType<typeof setTimeout>;
-  private readonly total: ReturnType<typeof setTimeout>;
+  private total: ReturnType<typeof setTimeout>;
+  private remainingMs: number;
+  private resumedAt: number;
   private readonly aborted: Promise<never>;
   private readonly cancel: () => void;
   constructor(private readonly parent: AbortSignal, firstMs: number, totalMs: number) {
+    this.remainingMs = totalMs;
+    this.resumedAt = performance.now();
     this.cancel = () => this.controller.abort(parent.reason);
     this.aborted = new Promise<never>((_, reject) => {
       this.controller.signal.addEventListener('abort', () => reject(this.controller.signal.reason), { once: true });
@@ -171,6 +175,15 @@ class VoiceDeadline {
     if (parent.aborted) this.cancel();
   }
   received() { clearTimeout(this.first); }
+  /** Only provider work spends the total budget; RTC playback may apply backpressure. */
+  pause() {
+    clearTimeout(this.total);
+    this.remainingMs = Math.max(0, this.remainingMs - (performance.now() - this.resumedAt));
+  }
+  resume() {
+    this.resumedAt = performance.now();
+    this.total = setTimeout(() => this.controller.abort(new Error('Voice provider timed out; please try again')), this.remainingMs);
+  }
   wait<T>(work: PromiseLike<T>): Promise<T> { return Promise.race([work, this.aborted]); }
   close() {
     clearTimeout(this.first); clearTimeout(this.total);
@@ -355,7 +368,11 @@ export class AuraSpeech implements VoiceSpeech {
           if (done) break;
           if (value.length) deadline.received();
           if (buffered) pcm.push(value);
-          else yield value;
+          else {
+            deadline.pause();
+            try { yield value; }
+            finally { deadline.resume(); }
+          }
         }
       } finally { void reader.cancel().catch(() => {}); }
     } finally { deadline.close(); }

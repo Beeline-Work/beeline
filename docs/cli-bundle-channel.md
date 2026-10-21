@@ -7,11 +7,6 @@
 
 Helpers boot a verified staged release or the verified active release from local disk, then check for the newest release on a pushed release notice and once after socket registration from `https://usebeeline.app/dl/manifest.json`. That URL and
 its relative platform archive and `.sha256` paths remain unchanged.
-New bundles require Node.js 20.12 or newer: the CLI's `@clack/core` dependency
-imports `node:util.styleText`, which is absent in Node.js 20.11. The shell
-installer, bundle metadata and launch wrappers enforce that floor. Repository
-release commands use Node.js 20.19 from `.nvmrc`, including the free-agent
-helper build and its bare-install startup smoke test.
 The recovery bootstrap migrates old installations forward to one native supervised helper.
 Cloudflare remains the public TLS endpoint; GitHub Pages becomes the origin
 for the entire website, including `/dl` and `.well-known`.

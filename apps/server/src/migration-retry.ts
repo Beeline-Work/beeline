@@ -75,9 +75,9 @@ export async function retryMigrationStep(
     onLockTimeout?: () => Promise<void>;
   } = {},
 ): Promise<void> {
-  // At least 345 seconds of backoff alone: older servers can hold a job
-  // transaction for five minutes and do not participate in the job gate yet.
-  const attempts = options.attempts ?? 40;
+  // Allow roughly three minutes to find a gap between the live server
+  // push scans. Keep each DDL lock wait short; back off outside PostgreSQL.
+  const attempts = options.attempts ?? 20;
   const delayMs = options.delayMs ?? ((attempt) => Math.min(10_000, 1_000 * attempt) + Math.floor(Math.random() * 500));
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   for (let attempt = 1; ; attempt++) {

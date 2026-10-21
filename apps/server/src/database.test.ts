@@ -25,7 +25,6 @@ import {
   HEALTH_POOL_WAIT_TIMEOUT_MS,
   MIGRATION_LOCK_TIMEOUT_MS,
   MIGRATION_STATEMENT_TIMEOUT_MS,
-  JOB_TRANSACTION_DEADLINE_MS,
   isTransientDatabaseConnectionError,
   type SqlDatabase,
 } from './database.js';
@@ -874,8 +873,8 @@ describe('PostgresDatabase reconnects', () => {
       connectionTimeoutMillis: ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
       application_name: 'beeline_enrichment',
     });
-    expect(postgresPoolConfig('postgres://owner', 1, 'long-running')).toHaveProperty(
-      'statement_timeout', JOB_TRANSACTION_DEADLINE_MS,
+    expect(postgresPoolConfig('postgres://owner', 1, 'long-running')).not.toHaveProperty(
+      'statement_timeout',
     );
   });
 

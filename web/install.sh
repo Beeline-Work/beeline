@@ -4,8 +4,8 @@ set -eu
 fail() { echo "beeline installer: $*" >&2; exit 1; }
 base_url=${BEELINE_INSTALL_BASE_URL:-https://usebeeline.app}
 base_url=${base_url%/}
-command -v node >/dev/null 2>&1 || fail 'Node.js >=20.12 is required'
-node -e 'const v=process.versions.node.split(".").map(Number);process.exit(v[0]>20||(v[0]===20&&v[1]>=12)?0:1)' || fail 'Node.js >=20.12 is required'
+command -v node >/dev/null 2>&1 || fail 'Node.js >=20.11 is required'
+node -e 'const v=process.versions.node.split(".").map(Number);process.exit(v[0]>20||(v[0]===20&&v[1]>=11)?0:1)' || fail 'Node.js >=20.11 is required'
 installer_tmp=$(mktemp -d "${TMPDIR:-/tmp}/beeline-install.XXXXXX")
 trap 'rm -rf "$installer_tmp"' EXIT HUP INT TERM
 curl --connect-timeout 15 --max-time 60 -fsSL "$base_url/dl/beeline-bootstrap.mjs" -o "$installer_tmp/bootstrap.mjs"

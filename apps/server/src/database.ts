@@ -51,7 +51,6 @@ import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
-import { MIGRATION_JOB_GATE_KEY } from './migration-job-gate.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 
@@ -119,7 +118,6 @@ export function postgresPoolConfig(
               }
             : {
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
-              statement_timeout: JOB_TRANSACTION_DEADLINE_MS,
             }),
   };
 }
@@ -254,7 +252,6 @@ export class PostgresDatabase implements ClosableDatabase {
   readonly #profiler = new QueryProfiler();
   readonly #pause: Pause;
   readonly #transactionDeadlineMs: number;
-  readonly #jobGate: boolean;
   readonly #transactions = new Map<number, number>();
   #transactionDeadlines = 0;
   /** Start time of every query this process currently has in flight, keyed by
@@ -347,7 +344,6 @@ export class PostgresDatabase implements ClosableDatabase {
       options.pool ??
       new Pool(postgresPoolConfig(connectionString, maximumConnections, options.mode));
     this.#pause = options.pause ?? pause;
-    this.#jobGate = options.mode === 'long-running';
     this.#transactionDeadlineMs = options.transactionDeadlineMs ??
       (options.mode === 'enrichment' ? ENRICHMENT_TRANSACTION_DEADLINE_MS
         : options.mode === 'diagnostics' ? HEALTH_TRANSACTION_DEADLINE_MS
@@ -391,9 +387,6 @@ export class PostgresDatabase implements ClosableDatabase {
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    // Autocommit job statements need the same gate and deadline as explicit
-    // transactions. In particular, repeated push scans must yield to releases.
-    if (this.#jobGate) return this.transaction((db) => db.query<Row>(sql, values));
     try {
       const raw = await this.#timed(sql, () =>
         this.#retryTransientConnection(async () => {
@@ -497,8 +490,6 @@ export class PostgresDatabase implements ClosableDatabase {
         transaction: async <Result>(nested: (database: SqlDatabase) => Promise<Result>) =>
           nested(database),
       };
-      if (this.#jobGate)
-        await database.query(`SELECT pg_advisory_xact_lock_shared(${MIGRATION_JOB_GATE_KEY})`);
       const result = await Promise.race([work(database), deadline]);
       await Promise.race([client.query('COMMIT'), deadline]);
       return result;

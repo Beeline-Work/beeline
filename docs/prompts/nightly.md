@@ -10,9 +10,7 @@ will not cancel it. The old corner schedule
 The weekly cadence was approved by lunchboxfortwo and relayed through Ruby.
 Ruby confirmed the surviving Room schedule is weekly, with its next run on
 Sunday 2026-10-25, 04:00 EDT / 08:00 UTC. Both corner schedule-list reads
-returned `schedules: []`; there is no remaining corner copy. On helpers that
-restrict schedule edits to their own place, verify the Room schedule from a
-turn in #beeline; a cross-place 404 does not mean it is absent.
+returned `schedules: []`; there is no remaining corner copy.
 
 The schedule uses the owner's OpenRouter key through vault `use_credential`;
 no Actions secret or exported key is needed. The GitHub replay workflow was removed.

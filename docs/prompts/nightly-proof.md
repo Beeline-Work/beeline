@@ -43,7 +43,8 @@ Ruby subsequently confirmed the surviving Room schedule has that weekly cadence
 and next-run time. Two corner `wake(action:list)` reads returned `schedules: []`.
 The recorded experiment above remains historical evidence, independent of cadence.
 The existing schedule prompt, sealed exchange, 6M-token/$3 caps and every
-per-run rule remain unchanged. Ruby owns procedure and digest wording updates.
+per-run rule remain unchanged. Saved procedure version 3 explicitly preserves
+the instruction to read the current brief and obey branch authority.
 
 Results are indexed on [Prompt nightly results](https://github.com/Beeline-Work/beeline/issues/2710).
 The saved morning-card procedure reads its newest result comment and linked

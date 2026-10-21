@@ -2641,10 +2641,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.linkSpendApproval:systemLine:a0935b802ffc2b52",
+    "id": "src/daemon-service.ts:DaemonService.linkSpendApproval:systemLine:75f1b93b4b7f7850",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(this.database, {\n    id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),\n    roomId, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Link' },\n    verb: 'needs your approval for', object: title, consequence: detail,\n    presentation: 'card', cardType: 'squire-approval',\n    card: {\n        agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,\n            ...(context.agent_handle ? { handle: context.agent_handle } : {}),\n            ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },\n        tool: 'Link', title, detail, approvalUrl, approvalId: requestId,\n        linkKind: 'approval', sourceRoomId: input.roomId,\n        expiresAt: Date.now() + 24 * 60 * 60000,\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
+    "template": "systemLine(this.database, {\n    id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),\n    roomId, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Link' },\n    verb: 'needs your approval for', object: title, consequence: detail,\n    presentation: 'card', cardType: 'squire-approval',\n    card: {\n        agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,\n            ...(context.agent_handle ? { handle: context.agent_handle } : {}),\n            ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },\n        tool: 'Link', title, detail, approvalUrl, approvalId: requestId,\n        linkKind: 'approval',\n        expiresAt: Date.now() + 24 * 60 * 60000,\n        ...source,\n    },\n})",
     "literals": [
       "':'",
       "'Direct message'",
@@ -2856,10 +2856,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:restateSystemLine:e83485711f4a3753",
+    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:restateSystemLine:9ec3e4e0d1c88a93",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "restateSystemLine",
-    "template": "restateSystemLine(database, open.id, grantCardPhrase(requester, agent, grants), {\n    agent,\n    owner,\n    requester,\n    grants,\n    sourceRoomId: input.roomId,\n    ...(sourceMessageId ? { sourceMessageId } : {}),\n})",
+    "template": "restateSystemLine(database, open.id, grantCardPhrase(requester, agent, grants), {\n    agent,\n    owner,\n    requester,\n    grants,\n    ...source,\n})",
     "literals": [
       "' and '",
       "'agent'",
@@ -2884,10 +2884,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:systemLine:61488dd194cb6d3d",
+    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:systemLine:557be55df28b18ca",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    id: messageId,\n    roomId: dmRoomId,\n    authorId: squireRoute ? SYSTEM_IDENTITY_ID : agentId,\n    ...grantCardPhrase(requester, agent, [grantView]),\n    presentation: 'card',\n    cardType: 'grant-request',\n    card: {\n        agent,\n        owner,\n        requester,\n        grants: [grantView],\n        sourceRoomId: input.roomId,\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
+    "template": "systemLine(database, {\n    id: messageId,\n    roomId: dmRoomId,\n    authorId: squireRoute ? SYSTEM_IDENTITY_ID : agentId,\n    ...grantCardPhrase(requester, agent, [grantView]),\n    presentation: 'card',\n    cardType: 'grant-request',\n    card: {\n        agent,\n        owner,\n        requester,\n        grants: [grantView],\n        ...source,\n    },\n})",
     "literals": [
       "' and '",
       "'agent'",
@@ -2913,10 +2913,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:systemLine:d34d6038eafe9db1",
+    "id": "src/daemon-service.ts:DaemonService.requestAgentGrant:systemLine:b51ba6cb21b0aa29",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    roomId: cardRoomId,\n    authorId: agentId,\n    ...grantCardPhrase(requester, agent, [grantView]),\n    presentation: 'card',\n    cardType: 'grant-request',\n    card: { agent, owner, requester, grants: [grantView], sourceRoomId: input.roomId,\n        ...(sourceMessageId ? { sourceMessageId } : {}) },\n})",
+    "template": "systemLine(database, {\n    roomId: cardRoomId,\n    authorId: agentId,\n    ...grantCardPhrase(requester, agent, [grantView]),\n    presentation: 'card',\n    cardType: 'grant-request',\n    card: { agent, owner, requester, grants: [grantView], ...source },\n})",
     "literals": [
       "' and '",
       "'agent'",
@@ -2984,10 +2984,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.squireApproval:systemLine:c532d5899691d2d4",
+    "id": "src/daemon-service.ts:DaemonService.squireApproval:systemLine:20d530f8b9430c50",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    id: messageId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: connectorDisplayName('trusty-squire'),\n    },\n    verb: 'needs your approval for',\n    object: input.title.trim(),\n    consequence: input.detail.trim(),\n    presentation: 'card',\n    cardType: 'squire-approval',\n    card: {\n        agent,\n        tool: input.tool.trim(),\n        title: input.title.trim(),\n        detail: input.detail.trim(),\n        approvalUrl: approvalUrl.toString(),\n        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),\n        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60000,\n        linkKind: input.linkKind,\n        sourceRoomId: input.roomId,\n        ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
+    "template": "systemLine(database, {\n    id: messageId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: connectorDisplayName('trusty-squire'),\n    },\n    verb: 'needs your approval for',\n    object: input.title.trim(),\n    consequence: input.detail.trim(),\n    presentation: 'card',\n    cardType: 'squire-approval',\n    card: {\n        agent,\n        tool: input.tool.trim(),\n        title: input.title.trim(),\n        detail: input.detail.trim(),\n        approvalUrl: approvalUrl.toString(),\n        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),\n        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60000,\n        linkKind: input.linkKind,\n        ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),\n        ...source,\n    },\n})",
     "literals": [
       "':'",
       "'Direct message'",

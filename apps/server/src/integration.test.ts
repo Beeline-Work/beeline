@@ -1,3 +1,4 @@
+import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
@@ -11003,6 +11004,94 @@ describe('monolith integration', () => {
     expect(
       (await database.query(`SELECT id FROM messages WHERE card_type='grant-request'`)).rows,
     ).toEqual([]);
+  });
+
+  it('grant-src-1: creates and reads approval cards with the source message actual Room', async () => {
+    const capture = vi.spyOn(serverSentry, 'captureServerError').mockImplementation(() => undefined);
+    await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
+    const opened = await operation('createHumanCorner', { roomId: ROOM, title: 'Grant-source' });
+    const { id: sourceRoom } = await opened.json() as { id: string };
+    const source = await operation('sendRoomMessage', {
+      roomId: sourceRoom, text: 'Please run the checks', mentions: [],
+    });
+    const { messageId: root } = await source.json() as { messageId: string };
+    const requestId = createHash('sha256').update('grant-src-1-turn').digest('hex');
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Agent request')`,
+      [requestId, ROOM, AGENT]);
+    const command = await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: requestId,
+      turnRequestId: requestId, reason: 'fixture',
+    });
+    await database.query(`UPDATE agent_commands SET root_source_message_id=$2 WHERE id=$1`, [command!.id, root]);
+    const ask = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, requestId, kind: 'command', target: 'python3 check.py', reason: 'Run checks',
+      script: { path: 'check.py', contents: 'print(1)', bytes: 8,
+        sha256: createHash('sha256').update('print(1)').digest('hex') },
+    });
+    expect(ask.status).toBe(200);
+    const { messageId: cardId } = await ask.json() as { messageId: string };
+    const stored = (await database.query<{ room_id: string; card: { sourceRoomId: string; sourceMessageId: string } }>(
+      `SELECT room_id,card FROM messages WHERE id=$1`, [cardId],
+    )).rows[0]!;
+    expect(stored.card).toMatchObject({ sourceRoomId: sourceRoom, sourceMessageId: root });
+    // Recreate the production card's stale pair; reading must repair it too.
+    await database.query(`UPDATE messages SET card=jsonb_set(card,'{sourceRoomId}',to_jsonb($2::text)) WHERE id=$1`, [cardId, ROOM]);
+    const view = await request(`/v1/phone/rooms/${stored.room_id}`, 'GET', undefined, accessToken);
+    expect(view.status).toBe(200);
+    const painted = await view.json() as RoomView;
+    expect(painted.messages.find(row => row.id === cardId)?.grantRequest)
+      .toMatchObject({ sourceRoomId: sourceRoom, sourceMessageId: root });
+    const staleJump = await request(`/v1/phone/rooms/${ROOM}/history?around=${root}`, 'GET', undefined, accessToken);
+    expect(staleJump.status).toBe(200);
+    expect((await staleJump.json() as RoomHistoryView).messages.some(row => row.id === root)).toBe(false);
+    const jump = await request(`/v1/phone/rooms/${sourceRoom}/history?around=${root}`, 'GET', undefined, accessToken);
+    expect(jump.status).toBe(200);
+    expect((await jump.json() as RoomHistoryView).messages.some(row => row.id === root)).toBe(true);
+    const outsider = await phoneToken('grant-source-outsider');
+    expect((await request(`/v1/phone/rooms/${sourceRoom}/history?around=${root}`, 'GET', undefined, outsider)).status).toBe(404);
+    const absent = await request(`/v1/phone/rooms/${sourceRoom}/history?around=${'f'.repeat(64)}`, 'GET', undefined, accessToken);
+    expect((await absent.json() as RoomHistoryView).messages).toEqual([]);
+    const approval = await daemonOperation('postSquireApproval', {
+      roomId: ROOM, requestId, tool: 'test', title: 'Approve access', detail: 'Request access',
+      approvalUrl: 'https://approve.trustysquire.test/approval/grant-src-1',
+      approvalId: 'grant-src-1', linkKind: 'approval',
+    });
+    expect(approval.status).toBe(200);
+    const squireCard = (await database.query<{ card: unknown }>(
+      `SELECT card FROM messages WHERE card_type='squire-approval'`,
+    )).rows[0]!.card;
+    expect(squireCard).toMatchObject({ sourceRoomId: sourceRoom, sourceMessageId: root });
+    expect(capture).not.toHaveBeenCalled();
+    // Force a bad stamp at creation while retaining the already-resolved row.
+    const checkSource = approvalSources.approvalCardSource;
+    const stamp = vi.spyOn(approvalSources, 'approvalCardSource').mockImplementation((kind, source, row) =>
+      checkSource(kind, { ...source, sourceRoomId: ROOM }, row));
+    const badApproval = await daemonOperation('postSquireApproval', {
+      roomId: ROOM, requestId, tool: 'test', title: 'Approve access', detail: 'Private text must not reach telemetry',
+      approvalUrl: 'https://approve.trustysquire.test/approval/grant-src-bad',
+      approvalId: 'grant-src-bad', linkKind: 'approval',
+    });
+    expect(badApproval.status).toBe(200);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture).toHaveBeenCalledWith(expect.any(Error), {
+      cardKind: 'squire-approval', sourceRoomId: ROOM, sourceMessageId: root,
+      actualRoomId: sourceRoom, actualMessageId: root,
+    });
+    stamp.mockRestore();
+    capture.mockClear();
+    // A private root command id must never be passed off as a message id.
+    await database.query(`UPDATE agent_commands SET root_source_message_id=id WHERE id=$1`, [command!.id]);
+    const fallback = await daemonOperation('postSquireApproval', {
+      roomId: ROOM, requestId, tool: 'test', title: 'Approve access', detail: 'Request access',
+      approvalUrl: 'https://approve.trustysquire.test/approval/grant-src-private',
+      approvalId: 'grant-src-private', linkKind: 'approval',
+    });
+    expect(fallback.status).toBe(200);
+    const fallbackId = (await fallback.json() as { id: string }).id;
+    expect((await database.query<{ card: unknown }>(`SELECT card FROM messages WHERE id=$1`, [fallbackId])).rows[0]!.card)
+      .toMatchObject({ sourceRoomId: ROOM, sourceMessageId: requestId });
+    expect(capture).not.toHaveBeenCalled();
+    capture.mockRestore();
   });
 
   it('rejects obsolete repository grant requests without posting a permission card', async () => {

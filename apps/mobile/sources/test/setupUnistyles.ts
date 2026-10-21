@@ -44,6 +44,8 @@ vi.mock('react-native-svg', () => {
     default: host('Svg'),
     Svg: host('Svg'),
     Circle: host('Circle'),
+    Defs: host('Defs'),
+    Mask: host('Mask'),
     Ellipse: host('Ellipse'),
     G: host('G'),
     Line: host('Line'),

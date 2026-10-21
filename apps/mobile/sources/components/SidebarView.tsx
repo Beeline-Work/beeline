@@ -140,6 +140,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
   desktopWorkspaceHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  membersGlyph: { color: theme.buzz.ledgerQuiet },
   desktopWorkspaceHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -494,7 +495,7 @@ export const SidebarView = React.memo(function SidebarView() {
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
                   <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
-                    icon={<MembersAgentsGlyph size={22} />}
+                    icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
                     onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
                 )}
               </View>

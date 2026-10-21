@@ -893,7 +893,7 @@ export default function BuzzChannels() {
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
               <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
-                icon={<MembersAgentsGlyph size={22} />}
+                icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
                 onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
             </View>
           )}
@@ -1213,6 +1213,7 @@ const styles = StyleSheet.create((theme) => {
     },
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
     // and they touch, so their centres stay one complete touch target apart.
+    membersGlyph: { color: hull.ledgerQuiet },
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -56,6 +56,8 @@
     "dry-run:helper-storage": "node --import tsx scripts/dry-run-helper-storage.ts",
     "dry-run:agent-class-retirement": "node --import tsx scripts/dry-run-agent-class-retirement.ts",
     "prompt-cases": "node --import tsx scripts/prompt-cases.ts",
+    "prompt:nightly": "node --import tsx scripts/prompt-nightly.mjs",
+    "test:prompt-nightly": "node --import tsx --test scripts/prompt-nightly.test.mjs",
     "test:prompt-cases": "node --import tsx --test scripts/prompt-case-rules.test.ts && node --import tsx scripts/prompt-cases.ts",
     "test:deploy": "node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/ios-store-build.test.mjs scripts/gh-release-retry.test.mjs scripts/server-release-smoke.test.mjs scripts/landing-page.test.mjs scripts/pages-site.test.mjs scripts/legacy-production-routing.test.mjs",
     "test:pages": "node --test scripts/desktop-download.test.mjs scripts/pages-site.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs",

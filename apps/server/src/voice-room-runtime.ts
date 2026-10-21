@@ -315,12 +315,14 @@ export class VoiceRoomRuntime {
       // Retain a turn's echo context through its final, even after playout
       // ends. Missing confidence must not make a short playback noise valid.
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
-      // Confidence gates interruption evidence, never a finished recognized turn.
+      // Finished requests keep all recognized words, except unconfirmed lone fillers.
+      // Reject those before they can become continuations of an unfinished request.
+      const filler = /^(hey|yeah|yes|yep|ok|okay|uh|um|huh|hmm|mm)$/.test(speechWords(event.transcript).join(' '));
       if (event.event === 'EndOfTurn' && speechWords(event.transcript).length && !confirmedVoiceSpeech(event))
         console.info('[voice-speech-shadow]', JSON.stringify({ callId: this.callId, turnIndex: event.turn_index,
           transcript: event.transcript, words: event.words ?? [] }));
       const recognized = event.event === 'EndOfTurn'
-        ? speechWords(event.transcript).length > 0 : confirmedVoiceSpeech(event);
+        ? speechWords(event.transcript).length > 0 && (!filler || confirmedVoiceSpeech(event)) : confirmedVoiceSpeech(event);
       if (!recognized || voicePlaybackEcho(event.transcript, context) ||
           (context && acknowledgment && !event.words?.length)) {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);

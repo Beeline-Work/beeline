@@ -12,9 +12,11 @@ import { BeelineGlyphPaint } from './BeelineGlyphPaint';
 export function SurfaceGlyphLoader({
   compact = false,
   testID = 'surface-glyph-loader',
+  size,
 }: {
   compact?: boolean;
   testID?: string;
+  size?: number;
 }) {
   return (
     <View
@@ -27,7 +29,7 @@ export function SurfaceGlyphLoader({
         framing="cell"
         live
         loop="release"
-        size={compact ? MARK_CELL : SURFACE_GLYPH_SIZE}
+        size={size ?? (compact ? MARK_CELL : SURFACE_GLYPH_SIZE)}
         testID={testID ? `${testID}-glyph` : undefined}
       />
     </View>

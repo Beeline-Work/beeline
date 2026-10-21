@@ -532,6 +532,107 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     } };
 }
 
+it.each([
+  ['Hey,', 0.3, 0.2, false],
+  ['Hey', 0.95, 0.08, false],
+  ['Hey', 0.95, 0.2, true],
+  ...['yeah', 'yes', 'yep', 'ok', 'okay', 'uh', 'um', 'huh', 'hmm', 'mm'].map(text => [text, 0.3, 0.2, false]),
+] as [string, number, number, boolean][])('Reproduction filler-final-1: %s confidence=%s duration=%s delivered=%s', async (text, confidence, end, delivered) => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    const utterance = vi.spyOn(runtime as any, 'utterance');
+    harness.emit('EndOfTurn', text, 0, [{ confidence, start: 0, end }]);
+    if (delivered) {
+      await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
+      expect(harness.messages).toEqual(['@ronnie ' + text]);
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(utterance).not.toHaveBeenCalled();
+      expect(harness.messages).toEqual([]);
+    }
+  } finally { harness.finishPlayback(); await runtime.close(); }
+});
+
+it('Reproduction filler-final-2: does not append an unconfirmed filler to the previous request', async () => {
+  const harness = phantomHarness();
+  let finish!: () => void;
+  harness.service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
+    await new Promise<void>(resolve => { finish = resolve; });
+    onText('The reply.'); return { text: 'The reply.', order: false };
+  });
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Your reply seems slower than the previous version.', 0);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    harness.emit('EndOfTurn', 'Hey,', 1, [{ confidence: 0.3, start: 0, end: 0.2 }]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect((runtime as any).assembler.current('human').text).toBe('Your reply seems slower than the previous version.');
+    finish();
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(harness.messages).toEqual(['@ronnie Your reply seems slower than the previous version.']);
+  } finally { finish?.(); harness.finishPlayback(); await runtime.close(); }
+});
+
+it('Demonstration filler-final-1/2: recognizer finals reach the persisted phone transcript without phantom fillers', async () => {
+  const db = new PgliteDatabase(), live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
+  const fixture = conversationService(1);
+  let receive!: (event: any) => void, finish!: () => void;
+  fixture.service.config.stt.mockImplementation(async callback => {
+    receive = callback; return { send: vi.fn(), close: vi.fn() };
+  });
+  fixture.service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
+    await new Promise<void>(resolve => { finish = resolve; });
+    onText('The reply.'); return { text: 'The reply.', order: false };
+  });
+  const voice = new RealVoiceService(db, live, { ...fixture.service.config, speech: fixture.speech });
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Filler proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'DM',$3)`, [room, workspace, [human, agent]]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    const joined = await voice.join(room, human);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    await voice.ensureRuntime(call);
+    state.room.remoteParticipants.set(human, { identity: human });
+    state.streams = [new ReadableStream()];
+    state.room.emit('track', { kind: 1 }, {}, { identity: human });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    const phone = new PhoneService(db, 'http://proof');
+    const transcript = async () => (await phone.readRoom(room, human))!.messages
+      .filter(message => message.author.pubkey === human && message.presentation === 'message').map(message => message.text);
+    const say = (text: string, turn: number, confidence: number, end = 0.2) => receive({
+      event: 'EndOfTurn', transcript: text, turn_index: turn, sequence_id: turn,
+      words: text.split(' ').map(word => ({ word, confidence, start: 0, end })),
+    });
+    say('Hey,', 0, 0.3);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await transcript()).toEqual([]);
+    say('Ruby slower than the previous version.', 1, 0.3);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    say('Hey,', 2, 0.3);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.']);
+    finish();
+    await vi.waitFor(() => expect(fixture.speech.synthesize).toHaveBeenCalled());
+    say('Hey', 3, 0.95);
+    await vi.waitFor(async () => expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.', '@ruby Hey']));
+    console.log('filler-final-1/2: STT final → real VoiceService/database → PhoneService transcript: noise absent, prior request unchanged, confirmed Hey delivered.');
+  } finally { finish?.(); await voice.close(); await db.close(); }
+}, 30_000);
+
 it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a final at confidence %s', async confidence => {
   const harness = phantomHarness();
   const logs = vi.spyOn(console, 'info');

@@ -2,14 +2,6 @@ import type { CornerState, CornerStateReason } from '@beeline/api-contract/phone
 
 export type CornerSuperState = 'working' | 'needs-human' | 'finished';
 
-const CORNER_STATE_PRECEDENCE: Readonly<Record<CornerState, number>> = {
-  review: 0,
-  working: 1,
-  waiting: 2,
-  idle: 3,
-  archived: 4,
-};
-
 export type CornerSummary = {
   id: string;
   name: string;
@@ -40,33 +32,6 @@ export function cornerSuperState(status: CornerState): Exclude<CornerSuperState,
   if (status === 'working') return 'working';
   if (status === 'archived') return 'finished';
   return 'needs-human';
-}
-
-/** Relative precedence that ranks canonical idle as least reportable. */
-export function cornerStatusPrecedenceOrNull(status: CornerState): number {
-  return CORNER_STATE_PRECEDENCE[status];
-}
-
-/** Corners still being actively worked on — the set that deserves a live
- * badge / sort-to-top treatment, as opposed to terminal or paused states.
- * Canonical idle is not active work. */
-export function isCornerActive(status: CornerState): boolean {
-  return status === 'working' || status === 'review';
-}
-
-export function isCornerNeedsYou(status: CornerState): boolean {
-  return status === 'review' || status === 'waiting';
-}
-
-/**
- * Confirmed archival overrides a stale lifecycle read so current-work
- * surfaces cannot report a closed corner as active.
- */
-export function resolveCornerLifecycleStatus(
-  known: CornerState,
-  confirmedArchived: boolean,
-): CornerState {
-  return confirmedArchived ? 'archived' : known;
 }
 
 /**
@@ -156,18 +121,6 @@ export function cornerStatusPresentation(
     case 'idle':
       return { glyph: CORNER_GLYPH_HOLLOW, label: status };
   }
-}
-
-export function sortCorners(corners: CornerSummary[]): CornerSummary[] {
-  return [...corners].sort((a, b) => {
-    const statusDelta =
-      cornerStatusPrecedenceOrNull(a.state) - cornerStatusPrecedenceOrNull(b.state);
-    if (statusDelta !== 0) return statusDelta;
-    return (
-      (b.lastActivityAt ?? b.createdAt ?? 0) - (a.lastActivityAt ?? a.createdAt ?? 0) ||
-      a.name.localeCompare(b.name)
-    );
-  });
 }
 
 /**

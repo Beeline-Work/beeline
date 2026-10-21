@@ -323,7 +323,7 @@ describe('GitHub-only account and repository access', () => {
     expect(sentBody).not.toHaveProperty('permissions');
   });
 
-  it('deletes a merged branch with an exact-repository contents grant', async () => {
+  it.each([204, 404, 422])('deletes a merged branch with an exact-repository contents grant (HTTP %i)', async status => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);
     const fetchMock = vi
@@ -334,7 +334,7 @@ describe('GitHub-only account and repository access', () => {
           { status: 201 },
         ),
       )
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+      .mockResolvedValueOnce(new Response(null, { status }));
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
 
@@ -1091,5 +1091,32 @@ describe('installation token diagnostics (Reproduction 7801305644)', () => {
       status: 500, message: 'GitHub installation token failed: HTTP 500',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe('live branch deletion safety reads', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('reads the default, protection and open base PRs from GitHub', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ default_branch: 'trunk' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ protected: true })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ number: 42 }])));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'feature/corner'))
+      .resolves.toEqual({ defaultBranch: 'trunk', protected: true, openBasePullRequest: true });
+    expect(String(fetchMock.mock.calls[1]![0])).toContain('branches/feature%2Fcorner');
+    expect(String(fetchMock.mock.calls[2]![0])).toContain('base=feature%2Fcorner');
+  });
+  it('returns missing for a branch 404 but refuses a repository 404', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ default_branch: 'main' })))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'gone')).resolves.toBeUndefined();
+    await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'gone')).rejects.toThrow('HTTP 404');
   });
 });

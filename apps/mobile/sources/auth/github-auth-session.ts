@@ -245,10 +245,6 @@ function isCallbackFor(url: string, redirectUri: string): boolean {
   return url === redirectUri || url.startsWith(`${redirectUri}?`);
 }
 
-export function isGitHubSignInCallbackUrl(url: string | null): boolean {
-  return Boolean(url && isCallbackFor(url, githubSignInRedirectUri()));
-}
-
 function validInstallationReturnPath(value: unknown): value is string {
   return (
     typeof value === 'string' &&

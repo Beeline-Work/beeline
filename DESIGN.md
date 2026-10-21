@@ -274,7 +274,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: reveal 176 ms (`PixelGateReveal`), confirm 240 ms, loader frame 133 ms, new-message 140 ms fade+rise (`NewMessageMaterialize`), demote dip 90 ms, and one live clock `liveCycle` 1120 ms. All respect `ReduceMotion.System`; continuous ones stop when the app backgrounds. Nothing but the continuous loops exceeds ~240 ms.
 
 - **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
-- At most two of `PixelLoader` / `HullWaveSignal` run on screen at once.
+- At most two of `PixelLoader` run on screen at once.
 - **The self-painting glyph** is the one drawn loop: `BootPaint` paints once on splash; `SurfaceGlyphLoader` (page and Room load gates) and `BeelineMarkSpinner` (thinking line) draw the Beeline mark, unwind, and rest empty. Reduced motion shows the static mark.
 - **Exceptions:** the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress).
 

@@ -246,12 +246,6 @@ export type ParsedPermissionExecution = {
   value: PermissionExecutionV1;
 };
 
-export type ParsedPermissionEvent =
-  | ParsedPermissionRequest
-  | ParsedPermissionDecision
-  | ParsedPermissionRevocation
-  | ParsedPermissionExecution;
-
 export interface PermissionScopePolicy {
   type: PermissionScopeType;
   minimumRole: PermissionRole;

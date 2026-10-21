@@ -10,24 +10,19 @@
  * │
  * ├─ consoleOutputEnabled = true? (default for dev/preview, or toggled on)
  * │  ├─ call original console method ✅
- * │  ├─ capture to in-app buffer ✅
  * │  └─ send to remote log server (if configured) ✅
  * │
  * └─ console.error / console.warn (always, regardless of flag)
  *    ├─ call original console method ✅
- *    ├─ capture to in-app buffer ✅
  *    └─ send to remote log server (if configured) ✅
  */
 
 import { log } from '@/log';
-import { MAX_APP_LOG_ENTRIES } from '@/log';
 import { loadLocalSettings } from '@/sync/persistence';
 import { loadAppConfig } from '@/sync/appConfig';
 import { Platform } from 'react-native';
 import { serializeForLogs } from '@/utils/truncateForLogs';
 
-let logBuffer: any[] = []
-const MAX_BUFFER_SIZE = MAX_APP_LOG_ENTRIES
 let isConsolePatched = false
 let remoteLogServerUrl: string | null = null
 let consoleOutputEnabled = false
@@ -112,18 +107,8 @@ export function initConsoleLogging() {
       // clickable stack traces, and multi-arg formatting in dev tools)
       originalConsole![level](...args)
 
-      // Serialize once for buffer + remote (but NOT for native console)
       const formatted = formatArgs(args)
       log.captureFormatted(level, formatted)
-
-      logBuffer.push({
-        timestamp: new Date().toISOString(),
-        level,
-        message: formatted
-      })
-      if (logBuffer.length > MAX_BUFFER_SIZE) {
-        logBuffer.shift()
-      }
 
       sendLog(level, formatted)
     }
@@ -132,13 +117,4 @@ export function initConsoleLogging() {
   isConsolePatched = true
 
   originalConsole.log('[ConsoleLogging] Initialized', consoleOutputEnabled ? '(output enabled)' : '(output suppressed)')
-}
-
-// For developer settings UI
-export function getLogBuffer() {
-  return [...logBuffer]
-}
-
-export function clearLogBuffer() {
-  logBuffer = []
 }

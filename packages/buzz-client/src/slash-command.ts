@@ -35,8 +35,6 @@ export const BEELINE_SLASH_COMMANDS = [
   'close-corner',
 ] as const;
 
-export type BeelineSlashCommand = (typeof BEELINE_SLASH_COMMANDS)[number];
-
 /** A message whose first token is shaped like a slash-command invocation. */
 export type SlashCommandInput = {
   /** The verb, without the leading slash, lowercased (e.g. `loop`). */

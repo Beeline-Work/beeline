@@ -202,7 +202,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 32;
+export const REQUIRED_SCHEMA_VERSION = 33;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1925,6 +1925,21 @@ CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(comm
 -- True while a human corner still carries the name the phone generated for it;
 -- any rename clears it (corner-title.ts).
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
+
+-- Only newly closed/merged corners enqueue cleanup; no historical branch sweep.
+CREATE TABLE IF NOT EXISTS corner_branch_deletions (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  installation_id bigint NOT NULL,
+  repository_id bigint NOT NULL,
+  repository text NOT NULL,
+  branch text NOT NULL,
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  last_error text
+);
+CREATE INDEX IF NOT EXISTS corner_branch_deletions_due_idx
+  ON corner_branch_deletions(next_attempt_at) WHERE finished_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS corner_watches (
   watcher_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

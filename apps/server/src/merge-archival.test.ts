@@ -19,7 +19,12 @@ if (postgresUrl && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(postgre
   throw new Error('Merge archival proof requires isolated loopback PostgreSQL');
 let db: SqlDatabase, close: () => Promise<void>;
 let requestId: string;
-const app = { deleteBranch: vi.fn(async () => undefined) };
+const app = {
+  deleteBranch: vi.fn(async () => undefined),
+  installationToken: vi.fn(async () => ({ token: 'github-test-token' })),
+  branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false, openBasePullRequest: false })),
+  openPullRequestsForBranch: vi.fn(async () => []),
+};
 const event = {
   action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
   pull_request: { number: 1, title: 'Fix archival', html_url: 'https://github.com/owner/widgets/pull/1',
@@ -28,7 +33,7 @@ const event = {
 };
 
 beforeEach(async () => {
-  app.deleteBranch.mockClear();
+  vi.clearAllMocks();
   if (postgresUrl) {
     const schema = `merge_${randomUUID().replaceAll('-', '')}`;
     const admin = new Pool({ connectionString: postgresUrl });
@@ -107,6 +112,9 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   await operations(retryDatabase).processWebhook('pull_request', event);
   expect(attempts).toBe(2);
   await assertArchived();
+  expect(app.branchDeletionSafety).toHaveBeenCalledTimes(1);
+  expect((await db.query(`SELECT attempts,finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [C])).rows[0])
+    .toMatchObject({ attempts: 1, finished_at: expect.anything(), last_error: null });
   expect(app.deleteBranch).toHaveBeenCalledTimes(1);
   await operations().processWebhook('pull_request', event);
   await assertArchived();
@@ -130,6 +138,7 @@ it.each([['40P01', 3], ['XX000', 1]] as const)('bounds archival retries for %s',
   expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action='stop'`, [C])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE card->>'type'='corner-complete'`)).rowCount).toBe(0);
   expect(app.deleteBranch).not.toHaveBeenCalled();
+  expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [C])).rowCount).toBe(0);
 });
 
 it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as const)(

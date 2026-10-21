@@ -4,7 +4,6 @@ import {
   SignedEventOutbox,
   SurfaceResponseCache,
   type Identity,
-  type RoomView,
   type SignedOutboxRecord,
   type SurfaceCacheAddress,
 } from '@beeline/buzz-client';
@@ -136,6 +135,3 @@ export function clearMobileSurfaceStorage(): void {
     if (key.startsWith(OUTBOX_PREFIX)) mutations.delete(key);
   }
 }
-
-/** Convenience type used only at the render boundary; cached values stay verbatim RoomView. */
-export type CachedRoomSurface = RoomView;

@@ -374,6 +374,8 @@
       "COMPOSER_MAX_HEIGHT",
       "COMPOSER_MIN_HEIGHT",
       "CornerCockpit",
+      "captioned",
+      "marker",
       "DesktopRoomInspector",
       "HeaderIconControl",
       "control",

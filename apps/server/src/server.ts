@@ -244,6 +244,7 @@ function isWebAppCorsPath(pathname: string): boolean {
   return (
     pathname === '/healthz' ||
     pathname.startsWith('/v1/') ||
+    pathname === '/auth/capabilities' ||
     pathname === '/auth/github/completion' ||
     pathname === '/auth/github/completion/cancel' ||
     pathname === '/auth/oidc/completion' ||

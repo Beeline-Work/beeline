@@ -144,6 +144,22 @@ describe('mounted monolith auth', () => {
     if (database) await database.close();
   });
 
+  it('R-GOOGLE-WEB-CORS: exposes Google capabilities only to configured browser origins', async () => {
+    const allowed = await mountedRequest('/auth/capabilities', {
+      origin: 'https://web.usebeeline.app',
+    });
+    expect(allowed.status).toBe(200);
+    expect(JSON.parse(allowed.body)).toMatchObject({ google: true });
+    expect(allowed.headers['access-control-allow-origin']).toBe('https://web.usebeeline.app');
+    expect(allowed.headers.vary).toContain('Origin');
+
+    const untrusted = await mountedRequest('/auth/capabilities', {
+      origin: 'https://attacker.example',
+    });
+    expect(untrusted.status).toBe(200);
+    expect(untrusted.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
   it('E1/E3/E14/E16: the Google HTTP exchange creates a session and preserves the returning profile', async () => {
     const exchange = async (subject = 'google-owner') => {
       const ticket = randomBytes(32).toString('base64url');

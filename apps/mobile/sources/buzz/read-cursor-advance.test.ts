@@ -82,9 +82,45 @@ describe('newestCountableMessage', () => {
   // so the surface re-asks with `pinnedTailReadReport`; the mark below is the
   // write that clears the Room list's dot.
   it('reports the durable reply beneath a settling live lane, and nothing for a lone lane', () => {
+    const perched = { pinnedToTail: true, landing: false, hasObservedVisibility: true };
     const settling = [row('earlier'), row('reply'), row('lane', { isAgentLiveTurn: true })];
-    expect(pinnedTailReadReport(settling).map((message) => message.id)).toEqual(['reply']);
-    expect(pinnedTailReadReport([row('lane', { isAgentLiveTurn: true })])).toEqual([]);
+    expect(pinnedTailReadReport(settling, perched).map((message) => message.id)).toEqual(['reply']);
+    expect(pinnedTailReadReport([row('lane', { isAgentLiveTurn: true })], perched)).toEqual([]);
+  });
+
+  // Reproduction COLD-OPEN-UNSEEN-TAIL. A cold open's controller pin starts
+  // true and a first-unread landing is still on its way; without the list's own
+  // evidence the fetched tail would be read over messages below the fold.
+  it('refuses without established visibility, during a landing, or off the tail', () => {
+    const chronological = [row('older'), row('fetched-tail')];
+    expect(
+      pinnedTailReadReport(chronological, {
+        pinnedToTail: true,
+        landing: false,
+        hasObservedVisibility: false,
+      }),
+    ).toEqual([]);
+    expect(
+      pinnedTailReadReport(chronological, {
+        pinnedToTail: true,
+        landing: true,
+        hasObservedVisibility: true,
+      }),
+    ).toEqual([]);
+    expect(
+      pinnedTailReadReport(chronological, {
+        pinnedToTail: false,
+        landing: false,
+        hasObservedVisibility: true,
+      }),
+    ).toEqual([]);
+    expect(
+      pinnedTailReadReport(chronological, {
+        pinnedToTail: true,
+        landing: false,
+        hasObservedVisibility: true,
+      }).map((message) => message.id),
+    ).toEqual(['fetched-tail']);
   });
 });
 
@@ -251,7 +287,14 @@ describe('ReadCursorAdvancer and the mark the server already holds', () => {
     const publish = vi.fn();
     const advancer = new ReadCursorAdvancer(publish);
     const chronological = [row('older'), row('reply')];
-    advancer.observe(chronological, pinnedTailReadReport(chronological));
+    advancer.observe(
+      chronological,
+      pinnedTailReadReport(chronological, {
+        pinnedToTail: true,
+        landing: false,
+        hasObservedVisibility: true,
+      }),
+    );
     vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
     expect(publish).toHaveBeenCalledWith('reply');
   });

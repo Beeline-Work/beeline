@@ -72,14 +72,17 @@ describe('the chat surface read-mark contract', () => {
     // is newest, but the list runs no new viewability pass — the same stale
     // report the unread control re-asks for. The control was given that
     // re-ask; the server mark's only writer was not, so the Room list's dot
-    // outlived the read. The re-ask must stay gated on the tail, and must skip
-    // a provisional lane for the durable row beneath it.
+    // outlived the read. The re-ask must carry the list's own evidence — a
+    // cold open's pin starts true and a first-unread landing is still to come —
+    // and must skip a provisional lane for the durable row beneath it.
     const tailAsk = chatSource.slice(
       chatSource.indexOf('The viewport pass above owns the read boundary'),
       chatSource.indexOf('// Back from the code reader'),
     );
-    expect(tailAsk).toContain('pinnedTailReadReport(chronological)');
-    expect(tailAsk).toContain('scrollController.isPinnedToTail()');
+    expect(tailAsk).toContain('pinnedTailReadReport(chronological, {');
+    expect(tailAsk).toContain('pinnedToTail: scrollController.isPinnedToTail()');
+    expect(tailAsk).toContain('landing: scrollController.isLanding()');
+    expect(tailAsk).toContain('hasObservedVisibility: newMessageHasObservedVisibility');
     expect(tailAsk).toContain('advanceReadCursor(chronological, report)');
     expect(tailAsk).toContain('newestTranscriptMessageId');
   });

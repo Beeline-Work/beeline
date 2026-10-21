@@ -70,18 +70,37 @@ export function newestCountableMessage(
 }
 
 /**
+ * Evidence the list has actually shown the reader the newest end. A fetched
+ * Room view is not evidence: on a cold open the controller's pin starts true
+ * and a first-unread landing is still on its way, so an unguarded re-ask would
+ * read the fetched tail over messages sitting below the fold.
+ */
+export type PinnedTailReadEvidence = {
+  /** The reader rests at (or within the threshold of) the newest end. */
+  readonly pinnedToTail: boolean;
+  /** A row request (a first-unread or jump landing) still owns the list. */
+  readonly landing: boolean;
+  /** The list has reported what is on screen at least once. */
+  readonly hasObservedVisibility: boolean;
+};
+
+/**
  * The report a surface sends when the newest row changes under a reader
  * already resting at the tail: the newest durable row alone, or nothing when
- * every trailing row is provisional.
+ * every trailing row is provisional or the evidence is missing.
  *
- * Kept as one function so the surface's pinned-tail re-ask and its regression
- * proof make the same decision. The list's own viewability report remains the
- * boundary's normal owner; this is only the re-ask the list does not owe when
- * an arrival leaves the viewable set unchanged.
+ * Kept as one function so the surface's pinned-tail re-ask and its behavioral
+ * regression make the same decision. The list's own viewability report remains
+ * the boundary's normal owner; this is only the re-ask the list does not owe
+ * when an arrival leaves the viewable set unchanged. It stays silent until the
+ * list has said what is on screen and no landing owns it, so a cold open never
+ * reads the fetched tail.
  */
 export function pinnedTailReadReport(
   chronological: readonly ChatDisplayMessage[],
+  evidence: PinnedTailReadEvidence,
 ): readonly ChatDisplayMessage[] {
+  if (!evidence.hasObservedVisibility || evidence.landing || !evidence.pinnedToTail) return [];
   const newest = newestCountableMessage(chronological);
   return newest ? [newest] : [];
 }

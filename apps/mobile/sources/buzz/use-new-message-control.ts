@@ -97,6 +97,8 @@ export function useNewMessageControl({
 }): {
   /** The opening unread row for this visit. */
   dividerMessageId: string | null;
+  /** True once the list has reported what is on screen at least once. */
+  hasObservedVisibility: boolean;
   queue: NewMessageQueue;
   /** The jump disc: shown for as long as the newest row is off screen. */
   discVisible: boolean;
@@ -204,6 +206,7 @@ export function useNewMessageControl({
   // updates and live arrivals cannot move it; only reaching newest ends it.
   return {
     dividerMessageId,
+    hasObservedVisibility,
     queue: enabled ? queue : EMPTY_NEW_MESSAGE_QUEUE,
     discVisible:
       newestJumpDiscVisible({

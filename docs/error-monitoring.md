@@ -32,8 +32,9 @@ All three DSNs and the `Beeline release token (beeline-bt org:ci)` and
 `Beeline alert setup token (lunchboxfortwo, beeline-bt)` are in the Squire vault
 under Beeline labels. Use the scoped setup token through `use_credential` for
 Sentry API requests; do not export tokens into chat, files, or builds. No auth
-token is needed for event ingestion. Source-map upload is not configured by
-this change; current errors retain source stack frames where available.
+token is needed for event ingestion. Mobile source maps are uploaded by the OTA publisher and native build hooks.
+The Actions secret `SENTRY_AUTH_TOKEN` must contain the existing vaulted release
+token; never put it in Expo public variables or app configuration.
 
 The unified release workflow supplies the public helper and mobile DSNs from
 repository variables. A local source helper uses only its explicit environment;
@@ -173,3 +174,24 @@ Run the PostgreSQL proof with `BEELINE_SENTRY_TEST_POSTGRES_URL` set to an isola
 loopback database and `npm test -w @beeline/server -- src/sentry-wake.test.ts`;
 each test owns and removes a separate schema. Without that variable it uses
 PGlite.
+
+## Mobile source maps
+
+Metro adds a debug ID to each bundle and its source map. EAS Update 22.2.0
+exports composed Hermes maps; `scripts/ota-release.mjs` uploads the exact export
+once per platform before reusing it for older runtimes. Uploads name the full
+release SHA, matching `EXPO_PUBLIC_BEELINE_RELEASE_SHA` in the app. Debug IDs
+distinguish Android, iOS, OTA and embedded bundles even at the same SHA. An OTA
+upload failure emits an Actions warning and does not prevent publication.
+
+OTA uploads run in a detached best-effort worker; publication never waits for
+Sentry network traffic. Worker errors and missing credentials emit warnings.
+A runner ending before the worker finishes can lose that diagnostic upload.
+Native build configuration, fingerprints and runtime pins match main; embedded
+native bundle uploads remain follow-up work.
+
+CI setup: securely transfer the vault entry **Beeline release token (beeline-bt
+org:ci)** into repository Actions secret `SENTRY_AUTH_TOKEN`. The personal
+GitHub connection needs repository Actions secrets access. Do not print or
+copy the token through an agent prompt. Only the secret name is wired here; secure provisioning and a live
+symbolicated Android event remain pending.

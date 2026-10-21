@@ -903,6 +903,7 @@ jobs:
         if: needs.initialize.outputs.stage_mobile_ota == 'pending'
         with:
           phase: build
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
           retry_attempt: ${{ inputs.retry_attempt }}

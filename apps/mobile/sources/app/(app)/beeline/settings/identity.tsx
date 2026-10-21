@@ -1,3 +1,4 @@
+import WorkspaceSettings from './workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -566,6 +567,13 @@ export default function BuzzIdentitySettings() {
             tone="destructive"
           />
         </View>
+
+        {selectedWorkspace && workspaceListConfirmed && (workspaceRole === 'owner' || workspaceRole === 'admin') ? (
+          <View style={styles.section} testID="workspace-settings-section">
+            <RoomListSectionHeader title={`Workspace · ${selectedWorkspace.name}`} inset="content" />
+            <WorkspaceSettings embedded workspaceId={selectedWorkspace.id} />
+          </View>
+        ) : null}
 
         {githubNotice ? <Text style={styles.notice}>{githubNotice}</Text> : null}
 

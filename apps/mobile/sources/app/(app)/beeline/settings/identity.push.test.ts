@@ -1,3 +1,4 @@
+vi.mock('./workspace', async () => { const React = await import('react'); return { default: (props: object) => React.createElement('WorkspaceSettings', props) }; });
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';

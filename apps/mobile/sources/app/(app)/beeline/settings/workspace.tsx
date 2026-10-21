@@ -142,12 +142,12 @@ function firstParam(value: string | string[] | undefined): string | undefined {
  * workspace mark sits in a centred brass-bezelled tile; name, visibility and
  * the generated-mark reset are plain rows because the page is the workspace.
  */
-export default function WorkspaceSettings() {
+export default function WorkspaceSettings({ embedded = false, workspaceId }: { embedded?: boolean; workspaceId?: string } = {}) {
   useLatencyRouteFrame('/beeline/settings/workspace');
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ communityId?: string | string[] }>();
-  const communityId = firstParam(params.communityId);
+  const communityId = workspaceId ?? firstParam(params.communityId);
   const [joinLinkBusy, setJoinLinkBusy] = useState(false);
   const joinLinkGeneration = useRef(0);
   const [publicJoinUrl, setPublicJoinUrl] = useState<string | null>(null);
@@ -469,8 +469,8 @@ export default function WorkspaceSettings() {
     workingKey === 'picture' ? 'Working…' : workspace?.avatar ? 'Change picture' : 'Set picture';
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-      <PageHeader onBack={() => router.back()} prominent title={WORKSPACE_LABEL} />
+    <View style={[styles.container, embedded && { flex: 0 }, { paddingTop: embedded ? 0 : insets.top, paddingBottom: embedded ? 0 : insets.bottom }]}>
+      {!embedded && <PageHeader onBack={() => router.back()} prominent title={WORKSPACE_LABEL} />}
 
       {!workspaceView ? (
         <View style={styles.denied} testID="workspace-settings-load-failed">
@@ -494,7 +494,7 @@ export default function WorkspaceSettings() {
           {error && <Text style={styles.errorText}>{error}</Text>}
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView scrollEnabled={!embedded} contentContainerStyle={[styles.content, embedded && { paddingHorizontal: 0 }]} keyboardShouldPersistTaps="handled">
           <View style={styles.section} testID="workspace-overview-settings">
             <View style={styles.ident}>
               {/* Indented as before so the UI policy keeps matching this legacy control. */}
@@ -633,6 +633,7 @@ export default function WorkspaceSettings() {
             />
           </View>
 
+          {!embedded && (<>
           <View style={styles.section} testID="channel-visibility-settings">
             <Text style={styles.sectionLabel}>{ROOM_LABEL}s</Text>
             {workspaceView?.managerSettings?.roomsTruncated && (
@@ -675,6 +676,8 @@ export default function WorkspaceSettings() {
               );
             })}
           </View>
+
+          </>)}
 
           {isWorkspaceOwner && (
             <View style={styles.section}>

@@ -13,6 +13,7 @@ export function RoomListToolbar({
   query,
   onQuery,
   onTray,
+  reserveTraySpace = false,
   needsYouCount = 0,
   searchRef,
   searchOpen: controlledSearchOpen,
@@ -26,6 +27,8 @@ export function RoomListToolbar({
   query: string;
   onQuery: (query: string) => void;
   onTray?: () => void;
+  /** Keep search and filters fixed when the Tray action moves to the header. */
+  reserveTraySpace?: boolean;
   /** The badge on the tray mark; absent at zero. */
   needsYouCount?: number;
   searchRef?: React.RefObject<TextInput | null>;
@@ -66,27 +69,9 @@ export function RoomListToolbar({
       >
         <Ionicons name="search-outline" size={21} color={styles.label.color} />
       </Pressable>
+      {!onTray && reserveTraySpace && <View style={styles.action} />}
       {onTray && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'}
-          accessibilityState={{ selected: traySelected }}
-          onPress={onTray}
-          style={styles.action}
-          testID={desktop ? 'desktop-tray' : 'workspace-tray'}
-        >
-          <TrayGlyph
-            size={22}
-            color={styles.tray.color}
-            cutColor={styles.tray.backgroundColor}
-            filled={traySelected}
-          />
-          {needsYouCount > 0 ? (
-            <View style={styles.needsCount} testID="tray-needs-you-count">
-              <Text style={styles.needsCountText}>{compactNeedsYouCount(needsYouCount)}</Text>
-            </View>
-          ) : null}
-        </Pressable>
+        <RoomListTrayAction onPress={onTray} needsYouCount={needsYouCount} traySelected={traySelected} desktop={desktop} />
       )}
     </>
   );
@@ -141,6 +126,37 @@ export function RoomListToolbar({
     </View>
   );
 }
+/** The existing Tray action is shared by the toolbar and the Room-list header. */
+export function RoomListTrayAction({ onPress, needsYouCount = 0, traySelected = false, desktop = false }: {
+  onPress: () => void;
+  needsYouCount?: number;
+  traySelected?: boolean;
+  desktop?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'}
+      accessibilityState={{ selected: traySelected }}
+      onPress={onPress}
+      style={styles.action}
+      testID={desktop ? 'desktop-tray' : 'workspace-tray'}
+    >
+      <TrayGlyph
+        size={22}
+        color={styles.tray.color}
+        cutColor={styles.tray.backgroundColor}
+        filled={traySelected}
+      />
+      {needsYouCount > 0 ? (
+        <View style={styles.needsCount} testID="tray-needs-you-count">
+          <Text style={styles.needsCountText}>{compactNeedsYouCount(needsYouCount)}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
 const NEEDS_COUNT_SIZE = 17;
 
 const styles = StyleSheet.create((theme) => ({

@@ -1,3 +1,4 @@
+vi.mock('./workspace', async () => { const React = await import('react'); return { default: (props: object) => React.createElement('WorkspaceSettings', props) }; });
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
@@ -469,5 +470,22 @@ describe('Settings account actions', () => {
     );
     expect(account.deleteAccount).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
+  });
+});
+
+describe('Workspace section access in Settings', () => {
+  it.each(['owner', 'admin', 'member'] as const)('shows workspace controls only to managers: %s', async (role) => {
+    workbench.readWorkbench.mockResolvedValue(view('2 connections'));
+    phoneOperation.mockImplementation(async (name: string) => name === 'readIdentitySettings'
+      ? { identity: { personId: VIEWER, face: null, pushLevel: 'attention', handle: null, name: 'Captain' },
+          workspaces: { workspaces: [{ id: 'workspace-1', name: 'Beeline', role }] },
+          workbench: await workbench.readWorkbench() }
+      : {});
+    const renderer = await renderScreen();
+    const embedded = renderer.root.findAllByType('WorkspaceSettings');
+    expect(embedded).toHaveLength(role === 'member' ? 0 : 1);
+    if (embedded.length) expect(embedded[0].props).toMatchObject({ embedded: true, workspaceId: 'workspace-1' });
+    expect(headings(renderer)).toEqual(expect.arrayContaining(['CONNECTORS', 'DEVICE', 'ACCOUNT']));
+    expect(headings(renderer)).not.toContain('Personal');
   });
 });

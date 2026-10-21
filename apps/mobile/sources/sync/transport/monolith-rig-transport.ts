@@ -473,6 +473,9 @@ export class MonolithRigTransport {
       return { channelId: result.id, created: result.created };
     });
   }
+  setCornerLocked(roomId: string, locked: boolean) {
+    return this.operation('setCornerLocked', { roomId, locked }).then(() => undefined);
+  }
   closeCorner(roomId: string) {
     return this.operation('requestCornerClose', { roomId }).then(() => undefined);
   }

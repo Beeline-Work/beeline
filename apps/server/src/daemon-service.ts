@@ -8087,6 +8087,11 @@ export class DaemonService {
       } else if (input.roomId) {
         await assertCornerCommandTarget(database, input.roomId, cornerId);
       }
+      if ((await database.query(
+        `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND locked`, [cornerId],
+      )).rowCount) {
+        throw new CommandRefusalError('This corner is locked. A person must unlock it before agents can close it.', 409);
+      }
       await closeCornerState(database, cornerId);
     });
     return this.writeResult();

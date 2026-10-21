@@ -1,3 +1,4 @@
+import { CornerLockAction } from '@/components/buzz/CornerLockAction';
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 import { showVoiceJoinError } from '@/buzz/voice-update';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
@@ -853,6 +854,7 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
+    refreshSignal,
     outbox,
   } = session;
   useEffect(() => {
@@ -7371,6 +7373,16 @@ export function BuzzChatSurface({
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
       >
+        <CornerLockAction
+          locked={roomSurface?.cornerLocked === true}
+          disabled={closingCorner || !transport}
+          save={async (locked) => {
+            if (!transport) throw new Error('Still connecting. Try again in a moment.');
+            await transport.setCornerLocked(decodedId, locked);
+          }}
+          onSaved={() => refreshSignal.force()}
+          onError={(error) => Modal.alert('Could not change corner lock', error instanceof Error ? error.message : String(error))}
+        />
         <HullActionSheetRow
           accessibilityLabel={`Close ${CORNER_LABEL}`}
           description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}

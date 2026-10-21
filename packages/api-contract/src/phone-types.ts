@@ -696,6 +696,8 @@ export type RoomView = {
   /** On a corner: whether something in it is still owed to a person, which
    * keeps an otherwise quiet corner `waiting` instead of `idle`. */
   readonly cornerOwed?: boolean;
+  /** People control whether agents may archive this corner. */
+  readonly cornerLocked?: boolean;
   /** Native, code-free apps persisted on this corner and shared with its members. */
   readonly cornerApps?: readonly CornerAppView[];
   /** Optional installed app whose human surface owns this corner. */

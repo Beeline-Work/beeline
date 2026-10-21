@@ -77,7 +77,8 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   ).rows[0];
   if (!corner) throw new Error('corner not found');
   const pullRequest = await database.query(
-    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND lifecycle->'pr'->>'number' IS NOT NULL`,
+    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND lifecycle->'pr'->>'number' IS NOT NULL
+       AND lifecycle->'pr'->>'mergedAt' IS NULL`,
     [cornerId],
   );
   if (pullRequest.rowCount)

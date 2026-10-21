@@ -9,6 +9,10 @@
   // Only proof adapters: bundlers supply these exports through runtime aliases.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // Metro injects these disposable server/router adapters into the native proof.
+    "apps/mobile/scripts/search-cell-proof/mocks.tsx": ["exports"],
+    // Selected as the temporary Metro configuration described in the proof runbook.
+    "apps/mobile/scripts/search-cell-proof/metro.cjs": ["exports"],
     // Type declarations for the JavaScript boundary shared by Expo Go and the
     // rendered-page test; the runtime module is selected through boundary aliases.
     "apps/mobile/offline-proof/adapters/services.d.ts": ["exports"],
@@ -190,6 +194,8 @@
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
         "scripts/agent-profile-usage-native-proof.tsx",
+        // Invoked by path or selected as Metro aliases for the Android screenshot proof.
+        "scripts/search-cell-proof/*.{cjs,ts,tsx}",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

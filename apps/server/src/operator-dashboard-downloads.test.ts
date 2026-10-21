@@ -2,7 +2,12 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
 import { migrate } from './database.js';
 import { dashboardDownloads } from './operator-dashboard-downloads.js';
-import { parseAppleReport, parsePlayReport } from './store-download-reports.js';
+import { generateKeyPairSync } from 'node:crypto';
+import {
+  parseAppleReport,
+  parsePlayReport,
+  storeDownloadFetcher,
+} from './store-download-reports.js';
 let db: PgliteDatabase;
 const now = '2026-10-20T12:00:00.000Z';
 beforeEach(async () => {
@@ -112,4 +117,33 @@ it('parses UTF16 Play first-time users and excludes Apple updates, re-downloads 
   expect(parseAppleReport(Buffer.from(header + rows), '42', '2026-10-18').get('2026-10-18')).toBe(
     9,
   );
+});
+it('counts an Apple no-sales 404 as zero but a not-yet-published 404 as a failure', async () => {
+  const key = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    .privateKey.export({ type: 'pkcs8', format: 'pem' })
+    .toString();
+  const fetcher = storeDownloadFetcher({
+    BEELINE_ASC_ISSUER: 'issuer',
+    BEELINE_ASC_KEY_ID: 'kid',
+    BEELINE_ASC_PRIVATE_KEY: key,
+    BEELINE_ASC_VENDOR_NUMBER: '1',
+    BEELINE_ASC_APP_ID: '42',
+  });
+  const apple404 = (detail: string) =>
+    new Response(JSON.stringify({ errors: [{ status: '404', code: 'NOT_FOUND', detail }] }), {
+      status: 404,
+    });
+  const fetchMock = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(apple404('There were no sales for the date specified.'))
+    .mockResolvedValueOnce(
+      apple404('Report is not available yet. Daily reports are available by 5 am Pacific Time.'),
+    );
+  try {
+    const signal = new AbortController().signal;
+    expect(await fetcher('ios', ['2026-10-17'], signal)).toEqual(new Map([['2026-10-17', 0]]));
+    await expect(fetcher('ios', ['2026-10-18'], signal)).rejects.toThrow('Store HTTP 404');
+  } finally {
+    fetchMock.mockRestore();
+  }
 });

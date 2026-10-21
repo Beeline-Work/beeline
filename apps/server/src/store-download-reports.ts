@@ -99,6 +99,16 @@ async function checked(url: string, init: RequestInit): Promise<Response> {
   if (!response.ok) throw new Error(`Store HTTP ${response.status}`);
   return response;
 }
+export function appleNoSales(body: string): boolean {
+  try {
+    const { errors } = JSON.parse(body) as { errors?: { detail?: unknown }[] };
+    return (errors ?? []).some(
+      (e) => typeof e.detail === 'string' && /no sales for the date/i.test(e.detail),
+    );
+  } catch {
+    return false;
+  }
+}
 export function storeDownloadFetcher(env: NodeJS.ProcessEnv): DownloadFetcher {
   return async (platform, days, signal) => {
     const now = Math.floor(Date.now() / 1000);
@@ -166,10 +176,16 @@ export function storeDownloadFetcher(env: NodeJS.ProcessEnv): DownloadFetcher {
           'filter[vendorNumber]': vendor,
           'filter[reportDate]': day,
         });
-        const response = await checked(
+        const response = await fetch(
           `https://api.appstoreconnect.apple.com/v1/salesReports?${query}`,
           { headers: { Authorization: `Bearer ${token}` }, signal },
         );
+        // Apple answers 404 both for a day with no sales and for a report not published yet.
+        if (response.status === 404 && appleNoSales(await response.text())) {
+          output.set(day, 0);
+          continue;
+        }
+        if (!response.ok) throw new Error(`Store HTTP ${response.status}`);
         for (const [date, count] of parseAppleReport(
           Buffer.from(await response.arrayBuffer()),
           app,

@@ -847,7 +847,11 @@ export async function connectApp(
       }
     }
   }
-  const derived = await deriveStatus(database, { ...row,
+  // Reconnect requests owner setup on the same route. Vault presence alone
+  // cannot prove that the existing key has access to the requested resource.
+  const derived: Derived = params.reconnect && row.transport === 'squire-api'
+    ? { status: 'connecting' }
+    : await deriveStatus(database, { ...row,
     ...(authorizationUrl ? { composio_account_id: null,
       composio_link_expires_at: new Date(Date.now() + APP_SIGN_IN_TIMEOUT_MS),
       sign_in_error: null } : {}),

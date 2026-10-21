@@ -109,6 +109,12 @@ export async function explainHotRead(
   values: readonly unknown[],
   sampleCount = 5,
 ): Promise<HotReadResult> {
+  // Warm the PGlite query path once so cold planning and initialization do not
+  // become a latency sample. Both corpus shapes still gate all five timed reads.
+  await database.query<QueryResultRow>(
+    `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`,
+    [...values],
+  );
   const samples: ExplainSample[] = [];
   for (let sample = 0; sample < sampleCount; sample += 1) {
     const startedAt = performance.now();

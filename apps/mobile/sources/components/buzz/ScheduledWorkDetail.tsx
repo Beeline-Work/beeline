@@ -1,5 +1,4 @@
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { HullDialogActions } from './HullDialog';
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { router } from 'expo-router';
@@ -93,7 +92,8 @@ export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
 
 /**
  * "Stop schedule" or "Stop subscription": one tap asks, a second confirms, the
- * same two steps the schedule list's STOP took.
+ * same two steps the schedule list's STOP took. The confirm is the same row,
+ * so the second tap lands where the first did; Cancel takes the trailing axis.
  */
 export function StopScheduledWork({
   label,
@@ -110,22 +110,20 @@ export function StopScheduledWork({
   return (
     <View style={styles.facts}>
       {confirming ? (
-        <HullDialogActions
-          actions={[
-            {
-              label: 'Cancel',
-              disabled: working,
-              onPress: () => setConfirming(false),
-              testID: `${testID}-cancel`,
-            },
-            {
-              label,
-              variant: 'destructive',
-              disabled: working,
-              onPress: onStop,
-              testID: `${testID}-confirm`,
-            },
-          ]}
+        <SettingsRow
+          accessibilityLabel={`Confirm ${label.toLowerCase()}`}
+          action="Cancel"
+          disabled={working}
+          onPress={onStop}
+          testID={`${testID}-confirm`}
+          title={label}
+          tone="destructive"
+          trailingPress={{
+            accessibilityLabel: 'Cancel',
+            disabled: working,
+            onPress: () => setConfirming(false),
+            testID: `${testID}-cancel`,
+          }}
         />
       ) : (
         <SettingsRow

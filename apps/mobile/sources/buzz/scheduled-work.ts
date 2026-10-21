@@ -8,7 +8,7 @@ import {
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
-import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { monolithPhoneOperation, MonolithPhoneOperationError } from '@/sync/transport/monolith-operation';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { useSharedSurface } from './use-shared-surface';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
@@ -179,24 +179,49 @@ export function useScheduledWork(roomId: string | undefined) {
     setError, retry: () => { void refresh(); } };
 }
 
-export async function stopSchedule(roomId: string, scheduleId: string): Promise<void> {
-  await monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId });
+/**
+ * How a stop ended: `stopped`, or `already-stopped` when the server no longer
+ * has that row, so what the person wanted is already true. Only the server's
+ * own not-found answer for the row counts; a missing Room still fails.
+ */
+export type StopOutcome = 'stopped' | 'already-stopped';
+
+async function stopRow(
+  operation: () => Promise<unknown>,
+  notFound: 'schedule not found' | 'subscription not found',
+): Promise<StopOutcome> {
+  try {
+    await operation();
+    return 'stopped';
+  } catch (error) {
+    if (error instanceof MonolithPhoneOperationError && error.status === 404 && error.code === notFound)
+      return 'already-stopped';
+    throw error;
+  }
+}
+
+export async function stopSchedule(roomId: string, scheduleId: string): Promise<StopOutcome> {
+  const outcome = await stopRow(
+    () => monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId }), 'schedule not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-  if (!identity) return;
+  if (!identity) return outcome;
   const address = scheduledWorkAddress(relay, identity.publicKey, roomId);
   const current = mobileSurfaceCache.peek(address, isScheduledWork);
   if (current) await mobileSurfaceCache.write(address, {
     ...current, schedules: current.schedules.filter((item) => item.id !== scheduleId),
   }, isScheduledWork);
+  return outcome;
 }
 
-export async function stopSubscription(roomId: string, subscriptionId: string): Promise<void> {
-  await monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId });
+export async function stopSubscription(roomId: string, subscriptionId: string): Promise<StopOutcome> {
+  const outcome = await stopRow(
+    () => monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId }), 'subscription not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-  if (!identity) return;
+  if (!identity) return outcome;
   const address = scheduledWorkAddress(relay, identity.publicKey, roomId);
   const current = mobileSurfaceCache.peek(address, isScheduledWork);
   if (current) await mobileSurfaceCache.write(address, {
     ...current, subscriptions: current.subscriptions.filter((item) => item.id !== subscriptionId),
   }, isScheduledWork);
+  return outcome;
 }

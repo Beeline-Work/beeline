@@ -30,19 +30,22 @@ export default function PromptSchedule() {
   }>();
   const roomId = first(params.roomId);
   const scheduleId = first(params.scheduleId);
-  const { work, loading, error, setError, retry } = useScheduledWork(roomId);
+  const { work, loading, error, retry } = useScheduledWork(roomId);
   useLatencyRouteFrame('/beeline/settings/schedule', !loading, true);
   const [working, setWorking] = useState(false);
+  const [stopFailed, setStopFailed] = useState(false);
   const schedule = work?.schedules.find((candidate) => candidate.id === scheduleId);
 
   const stop = async () => {
     if (!roomId || !schedule) return;
     setWorking(true);
+    setStopFailed(false);
     try {
-      await stopSchedule(roomId, schedule.id);
-      router.back();
-    } catch (caught) {
-      setError(`Could not stop the schedule: ${String(caught)}`);
+      // Already gone on the server: the page shows it stopped and rereads the list.
+      if ((await stopSchedule(roomId, schedule.id)) === 'already-stopped') retry();
+      else router.back();
+    } catch {
+      setStopFailed(true);
     } finally {
       setWorking(false);
     }
@@ -57,7 +60,18 @@ export default function PromptSchedule() {
         testID="schedule-header"
         title="Schedule"
       />
-      {error && (
+      {stopFailed ? (
+        <View accessibilityRole="alert" style={styles.error} testID="schedule-stop-error">
+          <Text style={styles.errorText}>Could not stop this schedule.</Text>
+          <Button
+            label="Try again"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={() => void stop()}
+            testID="schedule-stop-error-retry"
+          />
+        </View>
+      ) : error ? (
         <View style={styles.error}>
           <Text style={styles.errorText}>{error}</Text>
           <Button
@@ -67,7 +81,7 @@ export default function PromptSchedule() {
             onPress={retry}
           />
         </View>
-      )}
+      ) : null}
       {loading && !work ? (
         <View style={styles.loading}>
           <SurfaceGlyphLoader testID="schedule-loader" />
@@ -108,7 +122,9 @@ const styles = StyleSheet.create((theme) => ({
   error: {
     minHeight: 44,
     justifyContent: 'center',
+    gap: theme.buzz.space.sm,
     paddingHorizontal: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.sm,
     backgroundColor: theme.buzz.bgHighlight,
   },
   errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },

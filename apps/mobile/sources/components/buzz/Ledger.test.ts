@@ -152,7 +152,7 @@ describe('the ledger — an agent turn', () => {
     expect(digest.props.style.fontWeight).toBeUndefined();
   });
 
-  it('emphasizes the lead by weight and brightness at ONE size, never by size', () => {
+  it('emphasizes the lead by brightness with the same font family and size', () => {
     const renderer = render(
       React.createElement(LedgerEntry, {
         itemId: 'a',
@@ -166,10 +166,11 @@ describe('the ledger — an agent turn', () => {
     const leadStyle = renderer.root.findByProps({ testID: 'lit-lead' }).props.textStyle;
     const bodyStyle = renderer.root.findByProps({ testID: 'lit' }).props.textStyle;
 
-    // Weight carries hierarchy: medium lead, regular body.
-    expect(leadStyle.fontFamily).toBe('SpaceGrotesk-Medium');
+    // The whole turn uses one loaded face; only brightness changes.
+    expect(leadStyle.fontFamily).toBe(bodyStyle.fontFamily);
+    expect(leadStyle.fontWeight).toBeUndefined();
     expect(bodyStyle.fontFamily).toBe('SpaceGrotesk-Regular');
-    // Brightness carries it too: primary lead, secondary body.
+    // Primary lead, secondary body.
     expect(leadStyle.color).toBe('#f0f0f3');
     expect(bodyStyle.color).toBe('#c9c9d1');
     // ONE size — this is the load-bearing rule.

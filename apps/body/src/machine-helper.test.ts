@@ -632,7 +632,9 @@ describe('one update drain for every hosted agent', () => {
       const midDrainClaimMs = claims.get('mid-drain')! - sentAt;
       expect(midDrainClaimMs).toBeLessThan(1_000);
       // The original turn remains active: this claim did not wait for its end.
-      expect(core.activeTurnCount()).toBe(1);
+      // The HTTP handler records the reply before the intake receives its
+      // response and leaves the short turn.
+      await vi.waitFor(() => expect(core.activeTurnCount()).toBe(1));
       expect(await activeReleaseId(layout)).toBe('old');
       if (handoff === 'quiet gap') {
         finishHeld();

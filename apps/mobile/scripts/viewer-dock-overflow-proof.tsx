@@ -24,16 +24,13 @@ const find = (id: string) => document.querySelector<HTMLElement>(`[data-testid="
 async function waitForReplyLayout() {
   const deadline = performance.now() + 3000;
   let lastLayout = '', stableSince = performance.now();
-  for (;;) {
+  while (performance.now() < deadline) {
     const scroll = find('viewer-conversation-scroll');
     const layout = scroll ? `${scroll.scrollHeight}:${scroll.clientHeight}:${scroll.scrollTop}` : '';
     if (layout !== lastLayout) { lastLayout = layout; stableSince = performance.now(); }
-    const atNewest = Boolean(scroll?.textContent?.includes('NEWEST LINE') && scroll.scrollTop > 0 &&
-        Math.abs(scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop) < 3);
-    if (atNewest && performance.now() - stableSince >= 150) return;
-    // Chrome can jump virtual time past the deadline in the same tick the delayed
-    // reply lands; keep polling while the newest line is already at the bottom.
-    if (performance.now() >= deadline && !atNewest) break;
+    if (scroll?.textContent?.includes('NEWEST LINE') && scroll.scrollTop > 0 &&
+        Math.abs(scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop) < 3 &&
+        performance.now() - stableSince >= 150) return;
     await wait(25);
   }
   throw new Error('Reply did not arrive and scroll to the newest line within 3 seconds');

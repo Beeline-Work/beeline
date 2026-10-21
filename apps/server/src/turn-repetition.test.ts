@@ -3,9 +3,10 @@ import { turnMessageRepetition } from './turn-repetition.js';
 const post = 'Google sign-in (#2676) is merged. The checks passed and the account linking flow is ready for review.';
 it.each([
   [post, true],
-  [post.toUpperCase().replaceAll(' ', '\n'), true],
+  [post.replaceAll(' ', '\n'), true],
   ['Google sign-in (#2676) is merged.', true],
-  [post.replace('ready for review', 'available for review'), true],
+  [post.replace('ready for review', 'available for review'), false],
+  [post.replace('and the account', 'and account'), true],
   [`${post} You must approve the release.`, false],
   [post.replace('passed', 'failed'), false],
   [post.replace('ready', 'deleted'), false],

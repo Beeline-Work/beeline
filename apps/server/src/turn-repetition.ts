@@ -1,38 +1,33 @@
 /** Compare final prose only with visible output from this generation and address. */
 export function turnMessageRepetition(final: string, earlier: string): 'same' | 'similar' | false {
-  const tokens = (text: string) => text.normalize('NFKC').toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(/\s+/).filter(Boolean);
-  // Punctuation in a URL or signed number carries meaning; normalization
-  // must not turn a changed destination or amount into an exact match.
-  const literalParts = (text: string) => text.match(/https?:\/\/\S+|(?<!\w)[+-]?\d+(?:\.\d+)?%?/g) ?? [];
-  const literals = (text: string) => JSON.stringify(literalParts(text));
+  // Preserve punctuation and case, and preserve whitespace inside code spans.
+  // Only whitespace between tokens is presentation: signs, paths, identifiers
+  // and code must never become equal through lossy text normalization.
+  const tokens = (text: string) => text.match(/(`+)[\s\S]*?\1|[^\s]+/g) ?? [];
   const next = tokens(final), previous = tokens(earlier);
   if (!next.length || !previous.length) return false;
-  const a = next.join(' '), b = previous.join(' ');
-  if (a === b) return literals(final) === literals(earlier) ? 'same' : false;
-  if (` ${b} `.includes(` ${a} `)) {
-    // Token normalization erases signed amounts and URL separators. A
-    // literal-bearing subset must also occur with its punctuation intact.
-    // This permits omitted sentences without requiring all earlier literals.
-    const prose = (text: string) => text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
-    const finalLiterals = literalParts(final), earlierLiterals = literalParts(earlier);
-    const unchanged = !finalLiterals.length || (prose(earlier).includes(prose(final)) &&
-      finalLiterals.every(value => earlierLiterals.includes(value)));
-    return unchanged ? 'same' : false;
-  }
+  const contains = (haystack: string[], needle: string[]) => {
+    if (needle.length > haystack.length) return false;
+    for (let start = 0; start <= haystack.length - needle.length; start++) {
+      if (needle.every((word, offset) => word === haystack[start + offset])) return true;
+    }
+    return false;
+  };
+  if (contains(previous, next)) return 'same';
   // Any appended sentence is new information, even when most words repeat.
-  if (` ${a} `.includes(` ${b} `)) return false;
-  // Require the same sentence count and no changed numbers, negations or links.
+  if (contains(next, previous)) return false;
   // A near match remains in collapsed activity rather than losing authored text.
   const sentences = (text: string) => text.split(/[.!?]+(?:\s|$)/).filter(s => s.trim()).length;
   if (final.length > 16000 || earlier.length > 16000 || Math.max(next.length, previous.length) > 2048 || next.length < 12 || sentences(final) !== sentences(earlier)) return false;
-  const facts = (text: string) => text.toLowerCase().match(/https?:\/\/\S+|\b\d+\b|\b(?:not|never|no|cannot|can't|failed|passed|pending)\b/g)?.sort().join('|') ?? '';
-  if (facts(final) !== facts(earlier) || literals(final) !== literals(earlier)) return false;
-  // A new content word can change the outcome despite a high similarity
-  // score. Only tolerate small edits to connective/presentation wording.
+  // Near matching may change ordinary connective words only. Anything that
+  // could be a literal must occur exactly, in the same order and quantity.
+  const literals = (words: string[]) => JSON.stringify(words.filter(word => !/^\p{L}+[.,!?;:]?$/u.test(word)));
+  if (literals(next) !== literals(previous)) return false;
   const cosmetic = new Set(['now', 'already', 'just', 'the', 'a', 'an', 'is', 'was', 'has', 'been', 'ready', 'available']);
+  const content = (words: string[]) => JSON.stringify(words.filter(word => !cosmetic.has(word)));
+  if (content(next) !== content(previous)) return false;
   const oldWords = new Set(previous), newWords = new Set(next);
-  if (next.some(word => !oldWords.has(word) && !cosmetic.has(word)) ||
+  if (next.some(word => !oldWords.has(word)) ||
       previous.some(word => !newWords.has(word) && !cosmetic.has(word))) return false;
   // Bounded token edit distance: small wording changes, no unbounded quadratic work.
   const budget = Math.min(3, Math.floor(Math.max(next.length, previous.length) * 0.08));

@@ -100,3 +100,12 @@ Containment now requires literal-bearing prose to occur with punctuation
 intact and each literal to match exactly. Both corrected finals stay visible;
 the unchanged amount and link summaries still deduplicate. Unit coverage also
 allows dropping an unrelated sentence containing a different literal.
+
+The follow-up order extends literal protection to paths, identifiers and code
+spans. Matching now preserves punctuation and case for every token, with
+whitespace normalization only between tokens; whitespace inside a code span
+is preserved. Six additional service regressions failed before this change
+(path separators, identifier punctuation, code operators, code case and code
+spacing). Near matching rejects any new final token and permits only small
+omissions of connective words; a wording change introducing a new word keeps
+the final visible. This deliberately favors showing a possible duplicate.

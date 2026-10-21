@@ -1345,7 +1345,7 @@ it('dedupe does not wake a tagged agent again for the collapsed final', async ()
 it('dedupe keeps a lightly reworded summary in collapsed activity', async () => {
   const text = 'Google sign-in (#2676) is merged. The checks passed and the account linking flow is ready for review.';
   await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
-  const final = text.replace('ready for review', 'available for review');
+  const final = text.replace('and the account', 'and account');
   const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
   expect((await db.query(`SELECT presentation,activity FROM messages WHERE id=$1`, [result.id])).rows[0])
     .toMatchObject({ presentation: 'activity', activity: [{ kind: 'note', title: 'Turn summary', text: final }] });
@@ -1378,4 +1378,18 @@ it.each([
   const messages = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message');
   expect(messages.map(m => m.id)).toEqual(corrected ? [posted.id, result.id] : [posted.id]);
   if (corrected) expect(messages[1]?.text).toBe(final);
+});
+
+it.each([
+  ['Read /tmp/a-b. The checks passed.', 'Read /tmp/a/b.'],
+  ['The identifier is account_ready. The checks passed.', 'The identifier is account-ready.'],
+  ['Run `send(a-b)`. The checks passed.', 'Run `send(a/b)`.'],
+  ['Run `send(a-b)`.', 'Run `send(a/b)`.'],
+  ['Run `READY`.', 'Run `ready`.'],
+  ['Run `a  b`.', 'Run `a b`.'],
+])('dedupe keeps a corrected path, identifier or code span visible: %s -> %s', async (post, final) => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
+    .toEqual([posted.id, result.id]);
 });

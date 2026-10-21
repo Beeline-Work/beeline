@@ -1,5 +1,5 @@
-import { HULL_SHEET_INSET, HULL_SHEET_ROW_HEIGHT } from './hull-sheet-layout';
-export { HULL_SHEET_INSET } from './hull-sheet-layout';
+import { HULL_SHEET_INSET as sheetInset, HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
+export const HULL_SHEET_INSET = sheetInset;
 import { Button } from './Button';
 import React from 'react';
 import {

@@ -90,6 +90,10 @@ For a single-file playable game, explicitly post with mime:"application/vnd.beel
 
 When the mock needs a real product photo, do not draw an SVG stand-in. When scratch_io is mounted, call beeline-agent scratch_io(action:image) with the photo's http(s) URL. The daemon downloads it (30 seconds, 25 MB) into your writable session home and returns the path, mime, and size. Without it, download the photo with a shell command into a corner's writable workspace. Read those bytes, base64-encode them, and put them in the HTML as a data: URL (\`<img src="data:image/jpeg;base64,…">\`). Then post_artifact as usual. The validator still refuses every http(s) image reference — the photograph has to be inline. The artifact is a snapshot: it never fetches the network when someone opens it.
 
+## Message links
+
+Cite Room or corner messages with #beeline/<name>/<message_id> or [label](#beeline/<name>/<message_id>); use the real name and message id.
+
 ## Reactions
 
 To acknowledge a message without a reply, call react_to_message(messageId, emoji) with one of ${MESSAGE_REACTION_EMOJIS.join(' ')}. Repeating the same reaction changes nothing.

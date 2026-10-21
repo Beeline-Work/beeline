@@ -16,7 +16,7 @@ const message = (digit: string, createdAt: number): RoomViewMessage => ({
   author: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' },
 });
 
-it.each(['quote', 'notification', 'bookmark'])(
+it.each(['quote', 'notification', 'bookmark', 'message-link'])(
   '%s reads a distant target into the window once',
   async (source) => {
     const target = message('b', 2);

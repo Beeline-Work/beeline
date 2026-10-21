@@ -2502,6 +2502,12 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, result ? 200 : 404, result ?? { error: 'not_found' });
     return;
   }
+  match = url.pathname.match(/^\/v1\/phone\/message-links\/([0-9a-f]{64})$/);
+  if (method === 'GET' && match) {
+    const result = await options.phone.resolveMessageLink(match[1]!, identityId!);
+    json(response, result ? 200 : 404, result ?? { error: 'not_found' });
+    return;
+  }
   // A phone that rebuilds derivable fields asks for Room reads without them.
   const compact = wantsCompactView(request.headers[COMPACT_VIEW_HEADER]);
   match = url.pathname.match(/^\/v1\/phone\/rooms\/([0-9a-f-]+)$/);

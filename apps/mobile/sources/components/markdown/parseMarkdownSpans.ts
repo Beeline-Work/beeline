@@ -6,7 +6,7 @@ import type { MarkdownSpan } from "./parseMarkdown";
 const pattern = /(\*\*(.*?)\*\*)|((?<!\*)\*(?!\*)(.*?)\*(?!\*))|(\[([^\]]+)\]\(([^)]+)\))|(`(.*?)`)/g;
 
 export function pushTextWithAutoLinks(spans: MarkdownSpan[], text: string, styles: MarkdownSpan['styles']) {
-    const urlPattern = /https?:\/\/[^\s<]+/g;
+    const urlPattern = /https?:\/\/[^\s<]+|(?<![A-Za-z0-9_/#])#beeline\/[^\s/()<>]+\/[0-9a-f]{64}(?![A-Za-z0-9_/-])/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 

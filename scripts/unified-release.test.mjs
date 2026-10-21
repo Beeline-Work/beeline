@@ -902,7 +902,12 @@ test('release notification timeout is a bounded warning', async () => {
     secret: 'secret',
     timeoutMs: 10,
     fetchImpl: (_url, { signal }) => new Promise((resolve, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      // A real pending request keeps Node alive; AbortSignal.timeout alone does not.
+      const pendingRequest = setInterval(() => {}, 1000);
+      signal.addEventListener('abort', () => {
+        clearInterval(pendingRequest);
+        reject(signal.reason);
+      }, { once: true });
     }),
   });
   assert.equal(RELEASE_NOTIFY_TIMEOUT_MS, 10_000);

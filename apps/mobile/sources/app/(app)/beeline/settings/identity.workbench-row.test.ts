@@ -482,9 +482,14 @@ describe('Workspace section access in Settings', () => {
           workbench: await workbench.readWorkbench() }
       : {});
     const renderer = await renderScreen();
-    const embedded = renderer.root.findAllByType('WorkspaceSettings');
-    expect(embedded).toHaveLength(role === 'member' ? 0 : 1);
-    if (embedded.length) expect(embedded[0].props).toMatchObject({ embedded: true, workspaceId: 'workspace-1' });
+    const rows = renderer.root.findAllByProps({ testID: 'settings-workspace-row' });
+    expect(rows.length > 0).toBe(role !== 'member');
+    if (rows.length) {
+      expect(rows[0].props.value).toBe('Beeline');
+      rows[0].props.onPress();
+      expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workspace', params: { communityId: 'workspace-1' } });
+    }
+    expect(renderer.root.findAllByType('WorkspaceSettings')).toHaveLength(0);
     expect(headings(renderer)).toEqual(expect.arrayContaining(['CONNECTORS', 'DEVICE', 'ACCOUNT']));
     expect(headings(renderer)).not.toContain('Personal');
   });

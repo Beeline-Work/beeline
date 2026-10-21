@@ -1,0 +1,21 @@
+{
+  "android": {
+    "density": 160,
+    "widthPx": 412,
+    "roomButtonRight": 396,
+    "dmButtonRight": 396,
+    "rightOffsetPx": 16,
+    "glyphBoxRightOffsetPx": 30,
+    "buttonCenterRightOffsetPx": 38
+  },
+  "desktop": {
+    "deviceScaleFactor": 1,
+    "paneRightPx": 339,
+    "roomButtonRight": 323,
+    "dmButtonRight": 323,
+    "rightOffsetPx": 16,
+    "glyphBoxRightOffsetPx": 30,
+    "buttonCenterRightOffsetPx": 38
+  },
+  "productionCropDifferentPixels": 0
+}

@@ -950,7 +950,8 @@ describe('public Workspace join links', () => {
     const renderer = await render();
     expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
     const copy = renderer.root.findByProps({ testID: 'workspace-public-join-copy' });
-    expect(copy.props.description).toBe(`https://usebeeline.app/join/${token}`);
+    expect(copy.props.title).toBe('Copy public join link');
+    expect(copy.props.description).not.toContain(token);
     await act(async () => copy.props.onPress());
     expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
     expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-rotate' })).toHaveLength(0);

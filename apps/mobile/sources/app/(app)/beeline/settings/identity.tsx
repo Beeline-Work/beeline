@@ -1,4 +1,3 @@
-import WorkspaceSettings from './workspace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -466,8 +465,9 @@ export default function BuzzIdentitySettings() {
 
         {selectedWorkspace && workspaceListConfirmed && (workspaceRole === 'owner' || workspaceRole === 'admin') ? (
           <View style={styles.section} testID="workspace-settings-section">
-            <RoomListSectionHeader title={`Workspace · ${selectedWorkspace.name}`} inset="content" />
-            <WorkspaceSettings embedded workspaceId={selectedWorkspace.id} />
+            <SettingsRow title="Workspace" value={selectedWorkspace.name} chevron="right"
+              testID="settings-workspace-row"
+              onPress={() => router.push({ pathname: '/beeline/settings/workspace', params: { communityId: selectedWorkspace.id } } as never)} />
           </View>
         ) : null}
 

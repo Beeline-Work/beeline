@@ -114,7 +114,6 @@ function renderRail(
     viewerPubkey: 'viewer-pubkey',
     viewerName: 'Alan',
   },
-  onJoin?: () => void,
 ) {
   let tree!: ReactTestRenderer;
   act(() => {
@@ -122,7 +121,6 @@ function renderRail(
       <DesktopWorkspaceRail
         activeWorkspaceId="alpha"
         onAdd={onAdd}
-        onJoin={onJoin}
         onClose={onClose}
         onOpenAccount={onOpenAccount}
         onSelect={onSelect}
@@ -263,21 +261,6 @@ describe('desktop Workspace rail', () => {
     act(() => listeners.get('keydown')?.({ key: 'Enter', preventDefault }));
 
     expect(onAdd).toHaveBeenCalledOnce();
-  });
-
-  it('opens Join by pointer and in the arrow-key sequence before the account tile', () => {
-    const onJoin = vi.fn();
-    const onAdd = vi.fn();
-    const onAccount = vi.fn();
-    const tree = renderRail(vi.fn(), vi.fn(), onAdd, onAccount, undefined, onJoin);
-    act(() => tree.root.findByProps({ testID: 'desktop-workspace-join' }).props.onPress());
-    const preventDefault = vi.fn();
-    act(() => listeners.get('keydown')?.({ key: 'ArrowUp', preventDefault }));
-    act(() => listeners.get('keydown')?.({ key: 'ArrowUp', preventDefault }));
-    act(() => listeners.get('keydown')?.({ key: 'Enter', preventDefault }));
-    expect(onJoin).toHaveBeenCalledTimes(2);
-    expect(onAdd).not.toHaveBeenCalled();
-    expect(onAccount).not.toHaveBeenCalled();
   });
 
   it('opens the account hub from its own tile, by pointer and by keyboard', () => {

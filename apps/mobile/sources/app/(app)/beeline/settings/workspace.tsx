@@ -470,7 +470,7 @@ export default function WorkspaceSettings({ embedded = false, workspaceId }: { e
 
   return (
     <View style={[styles.container, embedded && { flex: 0 }, { paddingTop: embedded ? 0 : insets.top, paddingBottom: embedded ? 0 : insets.bottom }]}>
-      {!embedded && <PageHeader onBack={() => router.back()} prominent title={WORKSPACE_LABEL} />}
+      {!embedded && <PageHeader onBack={() => router.back()} backAccessibilityLabel="Back to Settings" prominent title={WORKSPACE_LABEL} />}
 
       {!workspaceView ? (
         <View style={styles.denied} testID="workspace-settings-load-failed">
@@ -556,7 +556,7 @@ export default function WorkspaceSettings({ embedded = false, workspaceId }: { e
               <View testID="workspace-public-join-setting">
                 <SettingsRow
                   title={joinLinkBusy ? 'Loading join link…' : joinLinkCopied ? 'Join link copied' : 'Copy public join link'}
-                  description={publicJoinUrl ?? 'Anyone can use this link to join, any number of times.'}
+                  description="Anyone can use this link to join, any number of times."
                   disabled={workingKey !== null || joinLinkBusy}
                   onPress={() => {
                     if (!publicJoinUrl) {

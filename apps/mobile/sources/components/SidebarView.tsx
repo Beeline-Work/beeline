@@ -713,10 +713,6 @@ export const SidebarView = React.memo(function SidebarView() {
               setWorkspaceSwitcherOpen(false);
               router.push('/beeline/community' as Href);
             }}
-            onJoin={() => {
-              setWorkspaceSwitcherOpen(false);
-              router.push({ pathname: '/beeline/community', params: { mode: 'join' } } as Href);
-            }}
             onClose={() => setWorkspaceSwitcherOpen(false)}
             onOpenAccount={() => {
               setWorkspaceSwitcherOpen(false);

@@ -44,7 +44,6 @@ type DesktopWorkspaceRailProps = {
   readonly onClose: () => void;
   readonly onSelect: (workspaceId: string) => void;
   readonly onAdd: () => void;
-  readonly onJoin?: () => void;
   /** The account hub. The rail's scrim covers the pane that also names it. */
   readonly onOpenAccount: () => void;
   readonly viewerPubkey?: string;
@@ -60,7 +59,6 @@ export function DesktopWorkspaceRail({
   onClose,
   onSelect,
   onAdd,
-  onJoin,
   onOpenAccount,
   viewerPubkey,
   viewerName,
@@ -81,7 +79,6 @@ export function DesktopWorkspaceRail({
     workspaces.findIndex((workspace) => workspace.id === activeWorkspaceId),
   );
   const focusedIndexRef = React.useRef(activeIndex);
-  const accountIndex = workspaces.length + (onJoin ? 2 : 1);
 
   React.useEffect(() => {
     if (!open) return;
@@ -112,12 +109,7 @@ export function DesktopWorkspaceRail({
           onAdd();
           return;
         }
-        if (onJoin && focusedIndexRef.current === workspaces.length + 1) {
-          event.preventDefault();
-          onJoin();
-          return;
-        }
-        if (focusedIndexRef.current === accountIndex) {
+        if (focusedIndexRef.current === workspaces.length + 1) {
           event.preventDefault();
           onOpenAccount();
           return;
@@ -133,8 +125,8 @@ export function DesktopWorkspaceRail({
       event.preventDefault();
       const startIndex = focusedIndexRef.current;
       const delta = event.key === 'ArrowDown' ? 1 : -1;
-      // Workspaces, creation actions, then the account hub.
-      const itemCount = accountIndex + 1;
+      // Workspaces, then the add tile, then the account hub.
+      const itemCount = workspaces.length + 2;
       const nextIndex = (startIndex + delta + itemCount) % itemCount;
       focusedIndexRef.current = nextIndex;
       tileRefs.current[nextIndex]?.focus?.();
@@ -145,8 +137,6 @@ export function DesktopWorkspaceRail({
     activeWorkspaceId,
     activeIndex,
     onAdd,
-    onJoin,
-    accountIndex,
     onClose,
     onOpenAccount,
     onSelect,
@@ -271,13 +261,6 @@ export function DesktopWorkspaceRail({
             >
               <Text style={styles.addGlyph}>+</Text>
             </Pressable>
-            {onJoin ? <Pressable accessibilityLabel="Join Workspace" accessibilityRole="menuitem"
-              onPress={onJoin}
-              onFocus={() => { focusedIndexRef.current = workspaces.length + 1; }}
-              ref={(node) => { tileRefs.current[workspaces.length + 1] = node; }}
-              style={[styles.tile, styles.addTile]} testID="desktop-workspace-join">
-              <Text style={styles.addGlyph}>↪</Text>
-            </Pressable> : null}
             <View style={styles.separator} />
             {/* The account hub. The rail's scrim covers the navigation pane
                 that also names it, so without this the rail is a dead end for
@@ -288,14 +271,14 @@ export function DesktopWorkspaceRail({
                 accessibilityRole="menuitem"
                 onBlur={() => setAccountFocused(false)}
                 onFocus={() => {
-                  focusedIndexRef.current = accountIndex;
+                  focusedIndexRef.current = workspaces.length + 1;
                   setAccountFocused(true);
                 }}
                 onHoverIn={() => setAccountHovered(true)}
                 onHoverOut={() => setAccountHovered(false)}
                 onPress={onOpenAccount}
                 ref={(node) => {
-                  tileRefs.current[accountIndex] = node;
+                  tileRefs.current[workspaces.length + 1] = node;
                 }}
                 style={[styles.tile, accountFocused && styles.focusedTile]}
                 testID="desktop-workspace-account"

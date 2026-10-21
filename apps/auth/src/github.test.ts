@@ -63,12 +63,17 @@ it('R-GH-RETRY: shared rollup waits for Retry-After and never retries permanent 
 });
 
 it.each(['120', 'Wed, 21 Oct 2026 12:00:00 GMT'])('preserves Retry-After %s on a failed rollup response', async retryAfter => {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream unavailable', {
-    status: 503, headers: { 'retry-after': retryAfter },
-  })));
-  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
-  await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', 'a'.repeat(40)))
-    .rejects.toMatchObject({ status: 503, retryAfter });
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream unavailable', {
+      status: 503, headers: { 'retry-after': retryAfter },
+    })));
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    const result = expect(app.readCommitCheckRollup('room-token', 'owner/widgets', 'a'.repeat(40)))
+      .rejects.toMatchObject({ status: 503, retryAfter });
+    await vi.runAllTimersAsync();
+    await result;
+  } finally { vi.useRealTimers(); }
 });
 
 it('reads merged PR evidence needed to recover a missed webhook', async () => {

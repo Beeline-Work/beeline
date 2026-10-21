@@ -1,0 +1,171 @@
+appId: app.usebeeline
+name: Google sign-up to a merged starter PR and repository switch
+---
+# The emulator browser must already be signed into the dedicated test account.
+# The runner rejects the owner's account and requires an explicit isolated device.
+- evalScript: ${output.humanActions = 0}
+- launchApp:
+    clearState: true
+- assertVisible:
+    id: onboarding-google-sign-in
+- tapOn:
+    id: onboarding-google-sign-in
+- evalScript: ${output.humanActions += 1}
+# New accounts see install/authorize; returning installations may complete OAuth directly.
+- repeat:
+    times: 60
+    while:
+      notVisible:
+        id: onboarding-face-confirm|choice-create|room-list|confirm-community-join
+    commands:
+      - runFlow:
+          when:
+            visible: ${ONBOARDING_GOOGLE_EMAIL}
+          commands:
+            - tapOn: ${ONBOARDING_GOOGLE_EMAIL}
+      - runFlow:
+          when:
+            visible: 'Continue'
+          commands:
+            - tapOn: 'Continue'
+      - runFlow:
+          when:
+            visible: 'Connect your GitHub repositories'
+          commands:
+            - tapOn: 'Continue with GitHub'
+            - evalScript: ${output.humanActions += 1}
+      - runFlow:
+          when:
+            visible: 'Install.*Authorize|Install & Authorize|Install'
+          commands:
+            - assertVisible: ${ONBOARDING_GITHUB_LOGIN}
+            - tapOn: 'All repositories'
+            - evalScript: ${output.humanActions += 1}
+            - tapOn: 'Install.*Authorize|Install & Authorize|Install'
+            - evalScript: ${output.humanActions += 1}
+      - runFlow:
+          when:
+            visible: 'Authorize.*'
+          commands:
+            - tapOn: 'Authorize.*'
+            - evalScript: ${output.humanActions += 1}
+      - waitForAnimationToEnd:
+          timeout: 1000
+- extendedWaitUntil:
+    visible:
+      id: onboarding-face-confirm|choice-create|room-list|confirm-community-join
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        id: onboarding-face-confirm
+    commands:
+      - tapOn:
+          id: onboarding-face-confirm
+      - evalScript: ${output.humanActions += 1}
+- runFlow:
+    when:
+      visible:
+        id: room-list
+    commands:
+      - openLink: beeline://beeline/community
+      - evalScript: ${output.humanActions += 1}
+# A configured invite exercises the join-first variant of B.
+- runFlow:
+    when:
+      true: ${ONBOARDING_INVITE_URL != ''}
+    commands:
+      - openLink: ${ONBOARDING_INVITE_URL}
+      - extendedWaitUntil:
+          visible:
+            id: confirm-community-join
+          timeout: 20000
+      - tapOn:
+          id: confirm-community-join
+      - evalScript: ${output.humanActions += 1}
+- runFlow:
+    when:
+      visible:
+        id: choice-create
+    commands:
+      - assertVisible:
+          id: choice-workspace-name
+      - tapOn:
+          id: choice-create
+      - evalScript: ${output.humanActions += 1}
+- extendedWaitUntil:
+    visible:
+      id: repository-onboarding-repository
+    timeout: 60000
+- takeScreenshot: 01-repository-card
+- runFlow:
+    when:
+      visible: 'Connect GitHub'
+    commands:
+      - tapOn:
+          id: repo-card-install
+      - extendedWaitUntil:
+          visible: 'Install.*Authorize|Install & Authorize|Authorize.*'
+          timeout: 60000
+      - assertVisible: ${ONBOARDING_GITHUB_LOGIN}
+      - runFlow:
+          when:
+            visible: 'All repositories'
+          commands:
+            - tapOn: 'All repositories'
+      - tapOn: 'Install.*Authorize|Install & Authorize|Authorize.*'
+      - extendedWaitUntil:
+          visible:
+            id: repo-card-create
+          timeout: 60000
+- takeScreenshot: 01-google-owner-connected-github
+- tapOn:
+    id: repo-card-create
+- evalScript: ${output.humanActions += 1}
+- evalScript: ${console.log("HUMAN_ACTIONS_BEFORE_FIRST_COMMIT=" + output.humanActions)}
+- extendedWaitUntil:
+    visible:
+      id: repository-onboarding-starters
+    timeout: 60000
+- takeScreenshot: 02-starters
+- tapOn:
+    id: transcript-card-choice-readme
+- extendedWaitUntil:
+    visible:
+      id: corner-opened-marker-.*
+    timeout: 60000
+- tapOn:
+    id: corner-opened-marker-.*
+# The dedicated account owns this test Workspace and gives the normal human merge yes.
+- extendedWaitUntil:
+    visible: '.*(PR #[0-9]+|pull/[0-9]+).*'
+    timeout: 600000
+- takeScreenshot: 03-ready-for-review
+- tapOn:
+    id: chat-input
+- inputText: '@beebee yes, merge the current PR through the normal gate once its current checks pass.'
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '^merged$'
+    timeout: 600000
+- takeScreenshot: 03-merged
+- pressKey: back
+# F uses the same agent tool and card; no Settings or CLI in the product path.
+- tapOn:
+    id: chat-input
+- inputText: '@beebee switch this Room to another repository; show the repository card'
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: 'Switch repository'
+    timeout: 60000
+- tapOn:
+    id: repo-card-link
+- assertVisible: 'Current.*open PRs stay open'
+- tapOn:
+    id: transcript-card-choice-${ONBOARDING_SWITCH_REPOSITORY_ID}
+- extendedWaitUntil:
+    visible: ${ONBOARDING_SWITCH_REPOSITORY_NAME}
+    timeout: 60000
+- takeScreenshot: 04-switched

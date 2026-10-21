@@ -182,6 +182,8 @@ async function main() {
       if (!mountedAuth) throw new Error('monolith auth is not ready');
       return mountedAuth.verifyGitHubTicket(ticket);
     }),
+    () => new Date(),
+    (ticket) => mountedAuth.verifyGoogleTicket(ticket),
   );
   const processGitHubWebhook = async (event: string, payload: unknown, deliveryId?: string) => {
     if (!github) throw new Error('GitHub webhook processor is unavailable');
@@ -199,9 +201,9 @@ async function main() {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
       webAppOrigins,
-      completeRepositoryInstallation: async (state, installationId) => {
+      completeRepositoryInstallation: async (state, installationId, code, callbackUri) => {
         if (!github) throw new Error('GitHub installation service is unavailable');
-        return github.completeInstallation(state, installationId);
+        return github.completeInstallation(state, installationId, code, callbackUri);
       },
     },
   );

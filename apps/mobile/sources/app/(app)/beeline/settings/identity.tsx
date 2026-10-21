@@ -1,3 +1,5 @@
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
@@ -50,6 +52,7 @@ import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
 import { applyAppearanceChoice, setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
 import { roomOpenTraceEnabled } from '@/buzz/room-open-trace';
+import { githubConnectionErrorMessage } from '@/auth/github-connection-error';
 import { clearPendingGitHubSignInState } from '@/auth/github-auth-session';
 import { monolithSession } from '@/auth/monolith-session';
 import { clearMobileSurfaceStorage, surfaceAddress } from '@/buzz/surface-storage';
@@ -72,7 +75,7 @@ const TERMS_URL = 'https://usebeeline.app/terms/';
 const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
 export default function BuzzIdentitySettings() {
   useLatencyRouteFrame('/beeline/settings/identity');
-  const { githubReconnect } = useLocalSearchParams<{ githubReconnect?: string }>();
+  const { githubReconnect, githubConnectionError } = useLocalSearchParams<{ githubReconnect?: string; githubConnectionError?: string }>();
   const insets = useSafeAreaInsets();
   const [error, setError] = useState<string | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<Identity | null>(null);
@@ -106,6 +109,74 @@ export default function BuzzIdentitySettings() {
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
+  const [googleAvailable, setGoogleAvailable] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      void readAuthCapabilities(getBuzzRuntimeConfig().monolithUrl)
+        .then(capabilities => { if (alive) setGoogleAvailable(capabilities.google === true); })
+        .catch(() => undefined);
+    };
+    const unwatch = watchGooglePreview(refresh);
+    refresh();
+    return () => { alive = false; unwatch(); };
+  }, []);
+  useEffect(() => {
+    if (!profilePubkey) return;
+    void (async () => {
+      const google = await import('@/auth/google-auth-session');
+      if (await google.pendingGoogleLinkIdentity() !== profilePubkey) return;
+      const { getInitialURL } = await import('expo-linking');
+      const ticket = await google.resumeGoogleSignIn(await getInitialURL());
+      if (!ticket) return;
+      await google.completeGoogleAccountLink(ticket, profilePubkey);
+      await publishManagedIdentity(await monolithPhoneOperation('getManagedIdentity', {}));
+    })().catch(reason => setGitHubNotice(reason instanceof Error ? reason.message : String(reason)));
+  }, [profilePubkey]);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const connectGoogle = async () => {
+    if (googleBusy || !profilePubkey) return;
+    setGoogleBusy(true);
+    setGitHubNotice(null);
+    try {
+      const [{ runGoogleSignIn, completeGoogleAccountLink }, { getRandomBytes },
+        { openAccountAuthSession, subscribeToAuthUrls }, { authSessionOptions }] = await Promise.all([
+        import('@/auth/google-auth-session'), import('expo-crypto'),
+        import('@/auth/desktop-auth-session'), import('@/auth/auth-session'),
+      ]);
+      const token = () => btoa(String.fromCharCode(...getRandomBytes(32))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+      const ticket = await runGoogleSignIn({ state: token(), recoveryToken: token(), linkIdentity: profilePubkey,
+        openAuthSession: (url, redirect) => openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect)),
+        subscribeToUrls: subscribeToAuthUrls });
+      await completeGoogleAccountLink(ticket, profilePubkey);
+      await publishManagedIdentity(await monolithPhoneOperation('getManagedIdentity', {}));
+    } catch (reason) { setGitHubNotice(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setGoogleBusy(false); }
+  };
+  const [githubBusy, setGitHubBusy] = useState(false);
+  const connectGitHub = async () => {
+    if (githubBusy) return;
+    setGitHubBusy(true);
+    setGitHubNotice(null);
+    try {
+      const [{ runHostGitHubInstallationSession }, { githubInstallationRedirectUri }] = await Promise.all([
+        import('@/auth/github-installation-host'), import('@/auth/github-auth-session'),
+      ]);
+      await runHostGitHubInstallationSession({
+        returnPath: '/beeline/settings/identity',
+        startInstallation: async () => (await monolithPhoneOperation('beginGitHubInstallation', {
+          redirectUri: githubInstallationRedirectUri(), reconnect: true,
+        })).url,
+        refreshRepositories: async () => {
+          await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
+          await publishManagedIdentity(await monolithPhoneOperation('getManagedIdentity', {}));
+        },
+        onRefreshPhase: () => undefined,
+      });
+    } catch (reason) {
+      setGitHubNotice(reason instanceof Error ? reason.message : String(reason));
+    } finally { setGitHubBusy(false); }
+  };
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const manualUpdateRunning = useRef(false);
@@ -120,12 +191,13 @@ export default function BuzzIdentitySettings() {
     release.releaseSha ? ` · ${release.releaseSha.slice(0, 12)}` : ''
   }`;
   useEffect(() => {
-    if (githubReconnect === 'success') setGitHubNotice('GitHub reconnected.');
+    if (githubConnectionError) setGitHubNotice(githubConnectionErrorMessage(githubConnectionError));
+    else if (githubReconnect === 'success') setGitHubNotice('GitHub reconnected.');
     else if (githubReconnect === 'mismatch')
       setGitHubNotice('Reconnect the GitHub account already linked to this identity.');
     else if (githubReconnect === 'failed')
       setGitHubNotice('Could not reconnect GitHub. Try again.');
-  }, [githubReconnect]);
+  }, [githubReconnect, githubConnectionError]);
   useEffect(() => {
     // A change on another device reaches this mounted page through the
     // server's identity subscription, which also refreshes the device copies.
@@ -310,7 +382,7 @@ export default function BuzzIdentitySettings() {
   const displayFace = face ?? managedProjection?.face ?? null;
   const managedHandle = managedProjection?.handle ??
     (displayName ? personHandle(displayName, profilePubkey ?? '') : '');
-  const githubLogin = managedHandle;
+  const githubLogin = managedProjection?.providers?.find((link) => link.provider === 'github')?.login;
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
   const [uiSize, setUiSize] = useLocalSettingMutable('uiSize');
@@ -362,8 +434,10 @@ export default function BuzzIdentitySettings() {
               ...(displayFace ? { face: displayFace } : {}),
             }}
             identityMarkTestID="identity-face-mark"
-            onAvatarPress={profilePubkey ? () => setFacePickerOpen(true) : undefined}
-            onHandlePress={managedHandle ? openGitHubProfile : undefined}
+            onAvatarPress={
+              profilePubkey ? () => setFacePickerOpen(true) : undefined
+            }
+            onHandlePress={githubLogin ? openGitHubProfile : undefined}
             role={workspaceRole ?? undefined}
           />
         </View>
@@ -431,6 +505,25 @@ export default function BuzzIdentitySettings() {
 
         <View style={styles.section} testID="account-settings">
           <RoomListSectionHeader title="Account" inset="content" />
+          {managedProjection?.providers?.map((link) => (
+                <SettingsRow
+                  key={link.provider}
+                  title={link.provider === 'google' ? 'Google' : 'GitHub'}
+                  description={link.login}
+                  value={link.reconnect ? 'Reconnect' : managedProjection.providers?.length === 1 ? 'Signed in' : 'Linked'}
+                  onPress={link.provider === 'github' ? () => void connectGitHub() : undefined}
+                  disabled={githubBusy}
+                  testID={`settings-provider-${link.provider}`}
+                />
+              ))}
+          {managedProjection && !managedProjection.providers?.some(link => link.provider === 'github') ? (
+            <SettingsRow title="GitHub" description="Needed only to link repositories" value="Connect"
+              onPress={() => void connectGitHub()} disabled={githubBusy} testID="settings-provider-github" />
+          ) : null}
+          {googleAvailable && managedProjection && !managedProjection.providers?.some(link => link.provider === 'google') ? (
+            <SettingsRow title="Google" value="Connect" onPress={() => void connectGoogle()}
+              disabled={googleBusy} testID="settings-provider-google" />
+          ) : null}
           <View testID="legal-settings">
             <SettingsRow
               accessibilityLabel={"Privacy Policy"}

@@ -17,10 +17,6 @@ import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contra
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
-import {
-  lockIdentityHandleWorkspaces,
-  reassignCollidingAgentHandles,
-} from './workspace-handles.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
@@ -363,6 +359,8 @@ export class GitHubOperations {
           [github!.subject],
         )
       ).rows[0];
+      const current = (await database.query<{ subject: string }>(`SELECT subject FROM identity_external_links WHERE provider='github' AND identity_id=$1`, [viewerId])).rows[0];
+      if (current && current.subject !== github!.subject) throw new Error('github_account_mismatch');
       if (existing && existing.identity_id !== viewerId && !recover)
         throw new Error('GitHub identity is already linked');
       if (existing && existing.identity_id !== viewerId) {
@@ -384,12 +382,9 @@ export class GitHubOperations {
            provider_login=EXCLUDED.provider_login`,
         [github!.subject, viewerId, github!.issuer, GITHUB_IDENTITY_AUDIENCE, github!.login],
       );
-      const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
-      await reassignCollidingAgentHandles(database, viewerId, github!.login, workspaceIds);
       await database.query(
-        `UPDATE identities SET name=COALESCE(NULLIF($2,''),name),
-           handle=$3,github_subject=$4,updated_at=now() WHERE id=$1`,
-        [viewerId, github!.name, github!.login, github!.subject],
+        `UPDATE identities SET github_subject=$2,updated_at=now() WHERE id=$1`,
+        [viewerId, github!.subject],
       );
       await database.query(
         `INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at) VALUES($1,$2,$3,$4) ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()`,
@@ -411,7 +406,9 @@ export class GitHubOperations {
   }
 
   async beginInstallation(viewerId: string, input: Input<'beginGitHubInstallation'>) {
-    const state = `${await onboardingEnabledForViewer(this.database, viewerId) ? 'repository_install_' : ''}${randomBytes(32).toString('base64url')}`;
+    const credential = await this.userCredential(viewerId, this.database);
+    const binding = input.reconnect === true || !credential?.token;
+    const state = `${binding ? 'github_bind_' : await onboardingEnabledForViewer(this.database, viewerId) ? 'repository_install_' : ''}${randomBytes(32).toString('base64url')}`;
     await this.database.query(
       `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
       [hash(state), viewerId, input.redirectUri],
@@ -423,8 +420,8 @@ export class GitHubOperations {
     return { url: this.app.installationUrl(state) };
   }
 
-  async completeInstallation(state: string, installationId?: number) {
-    return this.database.transaction(async (database) => {
+  async completeInstallation(state: string, installationId?: number, code?: string, callbackUri?: string) {
+    try { return await this.database.transaction(async (database) => {
       const flow = (
         await database.query<{ identity_id: string; redirect_uri: string }>(
           `SELECT identity_id,redirect_uri FROM github_auth_flows WHERE state_hash=$1 AND purpose='installation' AND consumed_at IS NULL AND expires_at>now() FOR UPDATE`,
@@ -433,6 +430,27 @@ export class GitHubOperations {
       ).rows[0];
       if (!flow) throw new Error('GitHub installation flow not found or expired');
       if (state.startsWith('repository_install_') && !await onboardingEnabledForViewer(database, flow.identity_id)) throw new Error('repository onboarding unavailable');
+      if (state.startsWith('github_bind_')) {
+        if (!code || !callbackUri) throw new Error('github_connection_canceled');
+        const identity = await this.oauth.exchangeCode(code, callbackUri);
+        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`github:${identity.subject}`]);
+        await database.query(`SELECT id FROM identities WHERE id=$1 FOR UPDATE`, [flow.identity_id]);
+        const links = (await database.query<{ subject: string; identity_id: string }>(
+          `SELECT subject,identity_id FROM identity_external_links WHERE provider='github' AND (identity_id=$1 OR subject=$2) FOR UPDATE`,
+          [flow.identity_id, identity.subject])).rows;
+        if (links.some(link => link.identity_id !== flow.identity_id))
+          throw new Error('That GitHub account belongs to another Beeline account. Sign out and continue with GitHub to use it.');
+        if (links.some(link => link.subject !== identity.subject)) throw new Error('github_account_mismatch');
+        await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+          VALUES('github',$1,$2,$3,$4,$5) ON CONFLICT(provider,subject) DO UPDATE SET provider_login=EXCLUDED.provider_login`,
+          [identity.subject, flow.identity_id, identity.issuer, GITHUB_IDENTITY_AUDIENCE, identity.login]);
+        await database.query(`UPDATE identities SET github_subject=$2,updated_at=now() WHERE id=$1`, [flow.identity_id, identity.subject]);
+        await database.query(`INSERT INTO github_user_tokens(subject,encrypted_token,encrypted_refresh_token,expires_at)
+          VALUES($1,$2,$3,$4) ON CONFLICT(subject) DO UPDATE SET encrypted_token=EXCLUDED.encrypted_token,
+          encrypted_refresh_token=EXCLUDED.encrypted_refresh_token,expires_at=EXCLUDED.expires_at,stale_at=NULL,updated_at=now()`,
+          [identity.subject, this.seal(identity.accessToken), identity.refreshToken ? this.seal(identity.refreshToken) : null,
+            identity.tokenExpiresIn ? new Date(Date.now()+identity.tokenExpiresIn*1000) : null]);
+      }
       let installationIds: number[];
       if (installationId !== undefined) {
         installationIds = [installationId];
@@ -444,10 +462,23 @@ export class GitHubOperations {
         installationIds = [...(await this.listAdministeredInstallations(credential.token) ?? [])];
         if (!installationIds.length) throw new Error('GitHub installation access denied');
       }
+      let installed = 0;
       for (const id of installationIds) {
+        if (state.startsWith('github_bind_')) {
+          const account = await this.app.installationAccount(id);
+          const credential = await this.userCredential(flow.identity_id, database);
+          const administers = credential?.token && (account.type === 'User' ? account.id === credential.subject
+            : await this.app.organizationAdmin(credential.token, account.login));
+          if (!administers) {
+            if (installationId === undefined) continue;
+            throw new Error('github_installation_admin_required');
+          }
+        }
         await this.assertInstallationAccess(flow.identity_id, id, database);
         await this.syncInstallation(flow.identity_id, id, database);
+        installed++;
       }
+      if (!installed) throw new Error('github_installation_admin_required');
       await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [
         hash(state),
       ]);
@@ -455,6 +486,21 @@ export class GitHubOperations {
       redirect.searchParams.set('installed', '1');
       return redirect.toString();
     });
+    } catch (reason) {
+      if (!state.startsWith('github_bind_')) throw reason;
+      const flow = (await this.database.query<{ redirect_uri: string }>(
+        `UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1 AND purpose='installation'
+         AND consumed_at IS NULL AND expires_at>now() RETURNING redirect_uri`, [hash(state)])).rows[0];
+      if (!flow) throw reason;
+      const message = reason instanceof Error ? reason.message : '';
+      const error = message === 'github_installation_admin_required' ? message : message === 'github_account_mismatch' ? 'github_account_mismatch'
+        : message.startsWith('That GitHub account belongs') ? 'github_account_already_linked'
+        : message === 'github_connection_canceled' ? message : 'github_connection_failed';
+      const redirect = new URL(flow.redirect_uri);
+      redirect.searchParams.set('installed', '0');
+      redirect.searchParams.set('error', error);
+      return redirect.toString();
+    }
   }
 
   async refresh(viewerId: string): Promise<{ githubReconnectNeeded?: boolean }> {

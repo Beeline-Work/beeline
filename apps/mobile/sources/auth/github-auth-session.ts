@@ -1,3 +1,4 @@
+import { githubConnectionErrorMessage } from './github-connection-error';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -698,6 +699,11 @@ async function completeGitHubInstallationCallback(callbackUrl: string): Promise<
     throw new OidcBindError('invalid_installation', 'Unexpected GitHub installation callback');
   }
   const url = new URL(callbackUrl);
+  const connectionError = url.searchParams.get('error');
+  if (url.searchParams.get('installed') === '0' && connectionError && await githubInstallationReturnPath()) {
+    const message = githubConnectionErrorMessage(connectionError);
+    throw new OidcBindError(connectionError, message);
+  }
   const installed = url.searchParams.getAll('installed');
   const unexpected = [...url.searchParams.keys()].filter((key) => key !== 'installed');
   if (installed.length !== 1 || installed[0] !== '1' || unexpected.length > 0) {
@@ -716,10 +722,11 @@ async function completeGitHubInstallationCallback(callbackUrl: string): Promise<
   return callbackUrl;
 }
 
-export async function completeGitHubInstallationRoute(installed: unknown): Promise<void> {
+export async function completeGitHubInstallationRoute(installed: unknown, error?: string): Promise<void> {
   const redirectUri = githubInstallationRedirectUri();
   const completion = new URL(redirectUri);
   if (typeof installed === 'string') completion.searchParams.set('installed', installed);
+  if (error) completion.searchParams.set('error', error);
   await completeGitHubInstallationCallback(completion.toString());
 }
 

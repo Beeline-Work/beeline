@@ -1,4 +1,5 @@
 import { repositoryOnboardingEnabled } from '@beeline/api-contract/phone';
+import { GOOGLE_PREVIEW_HEADER, googlePreviewVisible } from './google-preview.js';
 import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
@@ -46,7 +47,10 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
   app.get('/auth/capabilities', async (request, reply) => {
     tenantFor(request);
     noStore(reply);
-    return reply.send({ github: Boolean(options.github), oidc: true, ...(options.github && onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, now().getTime()) ? { repositoryOnboarding: true } : {}) });
+    return reply.send({ github: Boolean(options.github), oidc: true,
+      ...(googlePreviewVisible(options, request.headers[GOOGLE_PREVIEW_HEADER]) ? { google: true } : {}),
+      ...(options.github && onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, now().getTime()) ? { repositoryOnboarding: true } : {}),
+    });
   });
 
   /** Recover a completed native GitHub flow without trusting OS callback delivery. */
@@ -86,6 +90,49 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     const body = request.body as Record<string, unknown>;
     if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
       throw new ProtocolError(400, 'invalid_recovery', 'GitHub recovery token is invalid');
+    }
+    await options.store.cancelRecoveryTicket(sha256(body.recoveryToken), now());
+    noStore(reply);
+    return reply.code(204).send();
+  });
+
+  /** Recover a completed native Google flow without trusting OS callback delivery. */
+  app.post('/auth/oidc/completion', async (request, reply) => {
+    const tenant = tenantFor(request);
+    const body = request.body as Record<string, unknown>;
+    if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
+      throw new ProtocolError(400, 'invalid_recovery', 'Google recovery token is invalid');
+    }
+    const ticket = await options.store.findTicket(sha256(body.recoveryToken));
+    noStore(reply);
+    // Missing and not-yet-completed tokens are deliberately indistinguishable.
+    if (!ticket) return reply.code(202).send({ status: 'pending' });
+    if (ticket.community !== tenant.community || ticket.issuer !== 'https://accounts.google.com') {
+      return reply.code(202).send({ status: 'pending' });
+    }
+    if (ticket.consumedAt || ticket.expiresAt.getTime() < now().getTime()) {
+      return reply.code(410).send({ error: 'google_completion_expired' });
+    }
+    return reply.send({
+      protocol: 1,
+      kind: OIDC_BIND_KIND,
+      marker: OIDC_BIND_MARKER,
+      ticket: body.recoveryToken,
+      challenge: ticket.challenge,
+      provider: ticket.issuer,
+      audience: ticket.audience,
+      subject: ticket.subject,
+      community: ticket.community,
+      issued_at: Math.floor(ticket.createdAt.getTime() / 1_000),
+      expires_at: Math.floor(ticket.expiresAt.getTime() / 1_000),
+    });
+  });
+
+  app.post('/auth/oidc/completion/cancel', async (request, reply) => {
+    tenantFor(request);
+    const body = request.body as Record<string, unknown>;
+    if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
+      throw new ProtocolError(400, 'invalid_recovery', 'Google recovery token is invalid');
     }
     await options.store.cancelRecoveryTicket(sha256(body.recoveryToken), now());
     noStore(reply);
@@ -137,6 +184,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     const query = request.query as Record<string, unknown>;
     const appRedirect = query.app_redirect;
     const appState = query.app_state;
+    const appRecoveryChallenge = query.app_recovery_challenge;
     if ((appRedirect === undefined) !== (appState === undefined)) {
       throw new ProtocolError(
         400,
@@ -150,7 +198,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       const associatedRedirect = `${tenant.origin}/auth/oidc/mobile-callback`;
       if (
         typeof appRedirect !== 'string' ||
-        !isAllowedAppRedirect(appRedirect, associatedRedirect)
+        !isAllowedAppRedirect(appRedirect, associatedRedirect, '/beeline/google-callback')
       ) {
         throw new ProtocolError(
           400,
@@ -163,6 +211,14 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       }
       appRedirectUri = appRedirect;
       boundAppState = appState;
+    }
+    if (
+      appRecoveryChallenge !== undefined &&
+      (!appRedirectUri ||
+        typeof appRecoveryChallenge !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(appRecoveryChallenge))
+    ) {
+      throw new ProtocolError(400, 'invalid_request', 'native recovery challenge is invalid');
     }
     const issuedAt = now();
     const state = randomToken();
@@ -181,6 +237,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       redirectUri,
       appRedirectUri,
       appState: boundAppState,
+      appRecoveryHash: typeof appRecoveryChallenge === 'string' ? appRecoveryChallenge : null,
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
     });
@@ -312,15 +369,15 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub sign-in is not configured');
     const query = request.query as Record<string, unknown>;
-    if (process.env.BEELINE_REPOSITORY_ONBOARDING === '1' && typeof query.state === 'string' && query.state.startsWith('repository_install_')) {
+    if (typeof query.state === 'string' && (query.state.startsWith('github_bind_') || (process.env.BEELINE_REPOSITORY_ONBOARDING === '1' && query.state.startsWith('repository_install_')))) {
       const installationId = query.installation_id === undefined ? undefined : Number(query.installation_id);
-      if (query.error || (installationId !== undefined && (!Number.isSafeInteger(installationId) || installationId <= 0)) ||
+      if ((query.error && !query.state.startsWith('github_bind_')) || (installationId !== undefined && (!Number.isSafeInteger(installationId) || installationId <= 0)) ||
           !options.completeRepositoryInstallation) {
         throw new ProtocolError(400, 'invalid_installation_flow', 'GitHub installation did not complete');
       }
       // The monolith verifies access with the flow owner's stored GitHub user grant,
       // locks and consumes the state, and supplies the previously validated return URI.
-      const location = await options.completeRepositoryInstallation(query.state, installationId);
+      const location = await options.completeRepositoryInstallation(query.state, installationId, typeof query.code === 'string' ? query.code : undefined, `${tenantFor(request).origin}/auth/github/callback`);
       noStore(reply);
       return reply.redirect(location, 302);
     }
@@ -522,39 +579,16 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       );
     }
 
-    const ticket = randomToken();
-    const challenge = randomToken();
-    const issuedAt = now();
-    const expiresAt = new Date(issuedAt.getTime() + ticketTtlMs);
-    await options.store.createTicket(sha256(ticket), {
-      challenge,
-      community: tenant.community,
-      issuer: identity.issuer,
-      audience: identity.audience,
-      subject: identity.subject,
-      createdAt: issuedAt,
-      expiresAt,
-      attemptCount: 0,
-      consumedAt: null,
-      boundPubkey: null,
-    });
-    noStore(reply);
-    const bindChallenge = {
-      protocol: 1,
-      kind: OIDC_BIND_KIND,
-      marker: OIDC_BIND_MARKER,
-      ticket,
-      challenge,
-      provider: identity.issuer,
-      audience: identity.audience,
-      subject: identity.subject,
-      community: tenant.community,
-      issued_at: Math.floor(issuedAt.getTime() / 1_000),
-      expires_at: Math.floor(expiresAt.getTime() / 1_000),
-    } as const;
-    const completion = nativeCompletion(flow, bindChallenge);
-    if (completion) return deliverNativeCompletion(reply, completion);
-    return reply.send(bindChallenge);
+    return issueBindChallenge(
+      tenant,
+      flow, {
+        ...identity,
+        displayName: identity.name,
+        login: identity.email,
+        avatar: identity.picture,
+    },
+      reply,
+    );
   });
 
   app.post('/auth/oidc/bind', async (request, reply) => {

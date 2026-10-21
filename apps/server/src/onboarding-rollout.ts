@@ -8,5 +8,5 @@ export async function onboardingEnabledForViewer(database: SqlDatabase, viewerId
      WHERE l.identity_id=i.id AND l.provider='github' LIMIT 1)) subject FROM identities i WHERE i.id=$1`,
     [viewerId],
   )).rows[0];
-  return repositoryOnboardingEnabled(row?.subject, process.env);
+  return (process.env.BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS ?? '').split(',').map(id => id.trim()).includes(viewerId) || repositoryOnboardingEnabled(row?.subject, process.env);
 }

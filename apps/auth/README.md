@@ -1,8 +1,7 @@
 # `@beeline/auth`
 
-This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding library. GitHub
-is the shipped sign-in; the Google OIDC routes remain available but are hidden
-from the app. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
+This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding library. GitHub and Google are the supported sign-in providers. Google remains behind
+a server rollout flag and subject allowlist until device acceptance is complete. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
 transaction. It does not issue transport credentials, grant roles or membership,
 or accept a Nostr secret key.
 
@@ -90,6 +89,14 @@ webhook deliveries.
 `GET /auth/capabilities` then reports `github: true`; without them it reports
 `github: false`, GitHub routes stay unavailable, and auth capabilities remain disabled for GitHub.
 
+The `BEELINE_AUTH_OIDC_*` settings take precedence over their legacy
+`BUZZY_AUTH_OIDC_*` equivalents. Legacy names remain a temporary fallback until
+the new names are deployed and Google sign-in is verified; remove the old Fly
+values and fallback only after that verification.
+
+`BEELINE_AUTH_ALLOW_INSECURE_OIDC` likewise falls back to
+`BUZZY_AUTH_ALLOW_INSECURE_OIDC` and is always ignored in production.
+
 Required configuration:
 
 - `DATABASE_URL`
@@ -99,12 +106,12 @@ Required configuration:
   aliases. `roomCommunityIds` is the non-empty allowlist of server-stamped tenant UUIDs from
   `channels.community_id` whose Rooms this auth tenant serves. Do not use the client-authored
   `community` tag from a Room create event for this list.
-- `BUZZY_AUTH_OIDC_ISSUER`
-- `BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
-- `BUZZY_AUTH_OIDC_TOKEN_ENDPOINT`
-- `BUZZY_AUTH_OIDC_JWKS_URI`
-- `BUZZY_AUTH_OIDC_CLIENT_ID`
-- `BUZZY_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
+- `BEELINE_AUTH_OIDC_ISSUER`
+- `BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
+- `BEELINE_AUTH_OIDC_TOKEN_ENDPOINT`
+- `BEELINE_AUTH_OIDC_JWKS_URI`
+- `BEELINE_AUTH_OIDC_CLIENT_ID`
+- `BEELINE_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
 - `GITHUB_APP_ID`
@@ -200,7 +207,7 @@ Monolith production uses `https://server.usebeeline.app/auth/github/callback`.
 domains must not be restored to production tenant configuration.
 
 HTTP OIDC endpoints are accepted only for local emulators when
-`BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
+`BEELINE_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
 
 ## Local device emulator
 
@@ -212,7 +219,34 @@ This mode deliberately
 uses a non-`__Host-` browser cookie because the loopback fixture is HTTP; the
 production default remains `Secure` and `__Host-` prefixed.
 
-Environment naming: `BEELINE_AUTH_TENANTS_JSON` and `BEELINE_AUTH_SETUP_TOKEN` prefer the Beeline spelling; the matching `BUZZY_` names still work.
+## Google sign-in rollout
+
+Google is off by default. `BEELINE_GOOGLE_SIGN_IN=1` enables the service,
+but `/auth/capabilities` reveals the button only with a matching
+`x-beeline-google-preview` header. Configure a random, URL-safe
+`BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN` of at least 32 characters. A tester opens
+`https://web.usebeeline.app/?google_preview=<token>` or
+`beeline://beeline/onboarding?google_preview=<token>` once. The client removes
+the token from navigation, stores it on that device, and sends it only to the
+capabilities endpoint. Do not log or publish a live preview link.
+
+`BEELINE_GOOGLE_SIGN_IN_SUBJECTS` remains a comma-separated Google subject
+allow list checked before ticket consumption and account creation. Preview
+enrollment never bypasses it. `BEELINE_GOOGLE_SIGN_IN_EVERYONE=1` reveals Google
+without enrollment and removes the subject restriction, but still requires
+the master switch. Keep everyone-on unset until the owner approves general
+availability after production Android, iOS, GitHub regression and org-admin
+acceptance. Production staging/deploy remains a separate authorized step.
+
+The browser requests `openid email profile`; only verified email supplies the
+initial handle. The OAuth client, nonce, PKCE, issuer, audience and one-use
+ticket remain server verified. `/auth/oidc/completion` recovers dropped
+redirects through the state-bound recovery secret on native, web and desktop.
+Profiles are initialized once and are preserved on subsequent sign-ins.
+Accounts are never linked by email.
+
+Environment naming: `BEELINE_AUTH_TENANTS_JSON`, `BEELINE_AUTH_SETUP_TOKEN`, and
+`BEELINE_AUTH_HOST` prefer the Beeline spelling; the matching `BUZZY_` names still work.
 When both spellings are set, `BEELINE_` wins, including an empty value.
 
 See [environment naming and compatibility](../../docs/environment-names.md) for the full migration and production staging rules.

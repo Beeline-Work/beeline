@@ -1,4 +1,5 @@
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { OidcBindError } from '@beeline/buzz-client';
 import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monolith-secure-storage';
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import { webRuntimeStorage } from '@/utils/web-storage';
@@ -170,16 +171,44 @@ export class MonolithSession {
   }
 
   async exchangeGitHubTicket(ticket: string): Promise<string> {
+    return this.exchangeProviderTicket('github', ticket);
+  }
+
+  async exchangeGoogleTicket(ticket: string): Promise<string> {
+    return this.exchangeProviderTicket('google', ticket);
+  }
+
+  private async exchangeProviderTicket(
+    provider: 'github' | 'google',
+    ticket: string,
+  ): Promise<string> {
     const revision = this.credentialRevision;
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/github/exchange`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/${provider}/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ oidcToken: ticket }),
     });
-    if (!response.ok) throw new MonolithSessionRequiredError();
+    if (!response.ok) {
+      if (provider === 'google') {
+        const failure = await response.json().catch(() => null);
+        if (failure?.reason === 'preview_account_not_allowed') {
+          throw new OidcBindError('exchange_failed', 'Google sign-in is in preview. This Google account is not on the test list.');
+        }
+      }
+      throw new MonolithSessionRequiredError();
+    }
     const tokens = (await response.json()) as MonolithTokens;
     await this.accept(tokens, true, revision);
     return tokens.identityId;
+  }
+
+  async linkGoogleTicket(ticket: string): Promise<void> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/google/link`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${await this.authorization()}` },
+      body: JSON.stringify({ oidcToken: ticket }),
+    });
+    if (response.status === 409) throw new Error('That Google account belongs to another Beeline account.');
+    if (!response.ok) throw new Error('Could not connect Google. Try again.');
   }
 
   async reconnectGitHubTicket(ticket: string): Promise<void> {

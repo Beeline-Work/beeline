@@ -5,13 +5,16 @@ import { Typography } from '@/constants/Typography';
 import { defaultFaceForSeed, type FaceId } from '@/buzz/faces';
 import { FaceGrid } from './FaceGrid';
 import { Button } from './Button';
+import { HullDialogInput } from './HullDialog';
 
 /** The one canvas crossfade in the app: the You step into the app. */
 export const FACE_CEREMONY_CROSSFADE_MS = 240;
 
-export type YouStepChoice = { face: FaceId };
+export type YouStepChoice = { face: FaceId; name?: string; handle?: string };
 
 type YouStepProps = {
+  editableIdentity?: boolean;
+  provider?: 'google' | 'github';
   /** The new identity's id: the seed the tiles and the default face are drawn from. */
   seed: string;
   /** The actual GitHub login assigned to this identity, when available. */
@@ -37,6 +40,8 @@ export function YouStep({
   handle,
   name,
   currentFace,
+  editableIdentity = false,
+  provider = 'github',
   onConfirm,
   onEntered,
   initialSelection,
@@ -47,6 +52,8 @@ export function YouStep({
   const [selected, setSelected] = useState<string | null>(
     initialSelection === undefined ? (currentFace ?? defaultFaceForSeed(seed)) : initialSelection,
   );
+  const [nameDraft, setNameDraft] = useState(name ?? '');
+  const [handleDraft, setHandleDraft] = useState(handle ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const crossfade = useRef(new Animated.Value(0)).current;
@@ -56,10 +63,14 @@ export function YouStep({
     setBusy(true);
     setError(null);
     try {
-      await onConfirm({ face: selected as FaceId });
+      await onConfirm({ face: selected as FaceId,
+        ...(editableIdentity
+          ? { name: nameDraft.trim(), handle: handleDraft.trim().toLowerCase() }
+          : {}),
+      });
     } catch (caught) {
       setError(
-        `Could not save your face. Try again. (${caught instanceof Error ? caught.message : String(caught)})`,
+        `Could not save your profile. Try again. (${caught instanceof Error ? caught.message : String(caught)})`,
       );
       setBusy(false);
       return;
@@ -98,6 +109,27 @@ export function YouStep({
               <Text style={styles.handle}>{handle || name || 'You'}</Text>
               <Text style={styles.period}>.</Text>
             </Text>
+            {editableIdentity ? (
+              <View>
+                <HullDialogInput
+                  accessibilityLabel="Name"
+                  value={nameDraft}
+                  onChangeText={setNameDraft}
+                  editable={!busy}
+                  testID="onboarding-you-name-input"
+                />
+                <HullDialogInput
+                  accessibilityLabel="Handle"
+                  value={handleDraft}
+                  onChangeText={setHandleDraft}
+                  editable={!busy}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={30}
+                  testID="onboarding-you-handle-input"
+                />
+              </View>
+            ) : null}
             <View style={styles.gridSlot}>
               <FaceGrid
                 columns={4}
@@ -128,7 +160,7 @@ export function YouStep({
               testID="onboarding-face-confirm"
             />
             <Text style={styles.hint} testID="onboarding-you-source">
-              From GitHub · change either later in Settings
+              {`From ${provider === 'google' ? 'Google' : 'GitHub'} · change either later in Settings`}
             </Text>
           </View>
         </ScrollView>
@@ -163,7 +195,8 @@ const styles = StyleSheet.create((theme) => {
     },
     choices: { paddingTop: hull.space.xl },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textSecondary },
-    handleLine: { ...Typography.default(), fontSize: handleSize, lineHeight: 52, marginTop: hull.space.xs },
+    handleLine: { ...Typography.default(), fontSize: handleSize, lineHeight: 52, marginTop: hull.space.xs,
+    },
     at: { color: hull.accent },
     handle: { color: hull.textPrimary },
     period: { color: hull.textPrimary },

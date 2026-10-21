@@ -9,6 +9,8 @@ const sources = resolve(__dirname, '..');
 // button plate. Every new accent-filled style must be classified here or use
 // the button palette instead; this makes a local Pressable fill fail CI.
 const decorativeAccentFills = new Set([
+  // The non-interactive recommendation badge above the neutral sign-in button.
+  'app/(app)/beeline/onboarding.tsx:recommended',
   'app/(app)/join/[token].tsx:badgeDot',
   'app/(app)/beeline/workflow-run.tsx:liveDot',
   'components/buzz/ConversationRow.tsx:dot',

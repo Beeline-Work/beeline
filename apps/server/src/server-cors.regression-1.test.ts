@@ -83,6 +83,26 @@ describe('web app CORS', () => {
     expect(redeem).toHaveBeenCalledWith('review-secret', '127.0.0.1');
   });
 
+  it('allows preview capability preflight only for a configured web origin', async () => {
+    const handler = vi.fn((_request, response) => { response.writeHead(404); response.end(); });
+    const { origin } = await start([deployedWebOrigin], handler);
+    for (const browserOrigin of [deployedWebOrigin, 'https://attacker.example']) {
+      const response = await fetch(`${origin}/auth/capabilities`, {
+        method: 'OPTIONS', headers: { origin: browserOrigin,
+          'access-control-request-method': 'GET',
+          'access-control-request-headers': 'x-beeline-google-preview' },
+      });
+      if (browserOrigin === deployedWebOrigin) {
+        expect(response.status).toBe(204);
+        expect(response.headers.get('access-control-allow-origin')).toBe(browserOrigin);
+        expect(response.headers.get('access-control-allow-headers')).toContain('x-beeline-google-preview');
+        expect(handler).not.toHaveBeenCalled();
+      } else {
+        expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      }
+    }
+  });
+
   it('allows the language and Room lexicon headers on dictation preflight', async () => {
     const { origin } = await start([deployedWebOrigin]);
     const response = await fetch(`${origin}/v1/phone/transcriptions`, {

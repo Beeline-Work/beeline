@@ -51,6 +51,9 @@ it('shows installation missing for an account without an installation', async ()
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`, [W,OTHER]);
   const card = await postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
   expect(card.state).toBe('install_missing');
+  expect(card.ownerHandle).toBe('tester');
+  expect(card.canLink).toBe(false);
+  await expect(phone.execute('actOnRepositoryCard', { roomId:R, cardId:card.id, action:'install', redirectUri:'beeline://beeline/github-installation' }, OTHER)).rejects.toThrow();
   await expect(phone.execute('actOnRepositoryCard', { roomId:R, cardId:card.id, action:'link', repositoryId:42 }, OTHER)).rejects.toThrow();
 });
 
@@ -128,4 +131,15 @@ it('keeps another requester\'s unanswered card open when onboarding an invitee',
     `SELECT id,card->>'status' status FROM messages WHERE id=ANY($1::text[])`, [[ownerCard.id, inviteeCard.id]])).rows;
   expect(cards).toHaveLength(2);
   expect(cards.every(card => card.status === 'open')).toBe(true);
+});
+
+it('E19/E20: allows a Google identity by Beeline id only while the rollout is enabled', async () => {
+  await db.query(`UPDATE identities SET github_subject=NULL WHERE id=$1`, [OTHER]);
+  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', OTHER);
+  const card = await postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
+  expect(card.githubLinked).toBe(false);
+  expect(card.repositories).toEqual([]);
+  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
+  await expect(postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' })).rejects.toThrow('unavailable');
+  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
 });

@@ -13,6 +13,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { createMonolithAuth, type MonolithAuthMount } from './monolith-auth.js';
+import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { GitHubOperations } from './github-operations.js';
 
 const tenant = {
@@ -30,6 +31,8 @@ describe('mounted monolith auth', () => {
   let origin: string;
   let githubOperations: GitHubOperations;
   let installationAccess: boolean;
+  let githubSubject: string;
+  let repositorySelection: 'selected' | 'all';
   let processWebhook: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -44,7 +47,13 @@ describe('mounted monolith auth', () => {
         if (!mountedForVerification) throw new Error('monolith auth is not ready');
         return mountedForVerification.verifyGitHubTicket(ticket);
       }),
+      () => new Date(),
+      async (ticket) => {
+        if (!mountedForVerification) throw new Error('monolith auth is not ready');
+        return mountedForVerification.verifyGoogleTicket(ticket);
+      },
     );
+    githubSubject = '42';
     const githubOauth = {
       config: { clientId: 'github-client', clientSecret: 'github-secret' },
       authorizationUrl: ({ state, redirectUri }: { state: string; redirectUri: string }) =>
@@ -52,7 +61,7 @@ describe('mounted monolith auth', () => {
       exchangeCode: async () => ({
         issuer: 'https://github.com' as const,
         audience: 'github-client',
-        subject: '42',
+        subject: githubSubject,
         login: 'octocat',
         displayName: 'The Octocat',
         accessToken: 'github-user-token',
@@ -61,6 +70,7 @@ describe('mounted monolith auth', () => {
       }),
     } as unknown as GitHubOAuthClient;
     installationAccess = true;
+    repositorySelection = 'selected';
     const githubApp = {
       installationUrl: (state: string) => `https://github.test/install?state=${state}`,
       userCanAccessInstallation: async () => installationAccess,
@@ -69,8 +79,9 @@ describe('mounted monolith auth', () => {
         id: '42',
         login: 'owner',
         type: 'User' as const,
-        repositorySelection: 'selected' as const,
+        repositorySelection,
       }),
+      installationToken: async () => ({ token: 'room-token', expiresAt: Date.now() + 3_600_000 }),
       listRepositories: async () => [
         { id: 101, installationId: 77, fullName: 'owner/widgets', defaultBranch: 'trunk' },
       ],
@@ -83,17 +94,20 @@ describe('mounted monolith auth', () => {
         app: githubApp,
       },
       {
-        completeRepositoryInstallation: (state, installationId) => githubOperations.completeInstallation(state, installationId),
+        completeRepositoryInstallation: (state, installationId, code, callbackUri) => githubOperations.completeInstallation(state, installationId, code, callbackUri),
         createDaemonExchange: (agentId, transaction) =>
           tokenAuth.createDaemonExchange(agentId, transaction),
         env: {
           NODE_ENV: 'test',
+          BEELINE_GOOGLE_SIGN_IN: '1',
+          BEELINE_GOOGLE_SIGN_IN_SUBJECTS: 'google-owner',
+          BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN: 'p'.repeat(43),
           BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
-          BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
-          BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
-          BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
-          BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
-          BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+          BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
+          BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+          BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+          BEELINE_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+          BEELINE_AUTH_OIDC_CLIENT_ID: 'test-client',
         },
       },
     );
@@ -118,6 +132,7 @@ describe('mounted monolith auth', () => {
       live,
       mediaMaximumBytes: 1024,
       authHandler: mount.handle,
+      webAppOrigins: ['https://web.usebeeline.app'],
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -128,6 +143,138 @@ describe('mounted monolith auth', () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (mount) await mount.close();
     if (database) await database.close();
+  });
+
+  it.each([
+    { label: 'defaults', enabled: false, everyone: false, supplied: '', visible: false },
+    { label: 'no token', enabled: true, everyone: false, supplied: '', visible: false },
+    { label: 'wrong token', enabled: true, everyone: false, supplied: 'w'.repeat(43), visible: false },
+    { label: 'right token', enabled: true, everyone: false, supplied: 'p'.repeat(43), visible: true },
+    { label: 'everyone on', enabled: true, everyone: true, supplied: '', visible: true },
+    { label: 'master off', enabled: false, everyone: true, supplied: 'p'.repeat(43), visible: false },
+  ])('preview discovery over mounted HTTP: $label', async ({ enabled, everyone, supplied, visible }) => {
+    const previewMount = await createMonolithAuth(database, tenant.origin, undefined, {
+      createDaemonExchange: async () => { throw new Error('unused'); },
+      env: {
+        NODE_ENV: 'test',
+        BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
+        BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
+        BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+        BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+        BEELINE_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+        BEELINE_AUTH_OIDC_CLIENT_ID: 'test-client',
+        ...(enabled ? { BEELINE_GOOGLE_SIGN_IN: '1' } : {}),
+        ...(everyone ? { BEELINE_GOOGLE_SIGN_IN_EVERYONE: '1' } : {}),
+        BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN: 'p'.repeat(43),
+      },
+    });
+    const previewServer = createBeelineServer({
+      database, auth: {} as TokenAuth, phone: {} as PhoneService,
+      daemon: {} as DaemonService, live: new LiveHub(), mediaMaximumBytes: 1,
+      authHandler: previewMount.handle, webAppOrigins: ['https://web.usebeeline.app'],
+    });
+    try {
+      await new Promise<void>(resolve => previewServer.listen(0, '127.0.0.1', resolve));
+      const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request(`http://127.0.0.1:${(previewServer.address() as AddressInfo).port}/auth/capabilities`, {
+          headers: { host: tenant.host, 'x-beeline-google-preview': supplied },
+        }, response => {
+          let body = '';
+          response.on('data', chunk => { body += chunk; });
+          response.on('end', () => resolve({ status: response.statusCode!, body }));
+        });
+        req.on('error', reject); req.end();
+      });
+      expect(result.status).toBe(200);
+      expect(JSON.parse(result.body).google === true).toBe(visible);
+    } finally {
+      await new Promise<void>(resolve => previewServer.close(() => resolve()));
+      await previewMount.close();
+    }
+  });
+
+  it('R-GOOGLE-WEB-CORS: exposes Google capabilities only to configured browser origins', async () => {
+    const allowed = await mountedRequest('/auth/capabilities', {
+      origin: 'https://web.usebeeline.app',
+      'x-beeline-google-preview': 'p'.repeat(43),
+    });
+    expect(allowed.status).toBe(200);
+    expect(JSON.parse(allowed.body)).toMatchObject({ google: true });
+    expect(allowed.headers['access-control-allow-origin']).toBe('https://web.usebeeline.app');
+    expect(allowed.headers.vary).toContain('Origin');
+
+    const untrusted = await mountedRequest('/auth/capabilities', {
+      origin: 'https://attacker.example',
+    });
+    expect(untrusted.status).toBe(200);
+    expect(untrusted.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('E1/E3/E14/E16/E23: the Google HTTP exchange creates a session and preserves the returning profile', async () => {
+    const exchange = async (subject = 'google-owner') => {
+      const ticket = randomBytes(32).toString('base64url');
+      await store.createTicket(createHash('sha256').update(ticket).digest('hex'), {
+        challenge: 'challenge',
+        community: tenant.community,
+        issuer: 'https://accounts.google.com',
+        audience: 'test-client',
+        subject,
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+        attemptCount: 0,
+        consumedAt: null,
+        boundPubkey: null,
+        providerLogin: 'alex.chen@gmail.com',
+        providerDisplayName: 'Alex Chen',
+        providerAvatar: 'https://example.com/alex',
+      });
+      const response = await fetch(`${origin}/v1/auth/google/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-beeline-google-preview': 'p'.repeat(43) },
+        body: JSON.stringify({ oidcToken: ticket }),
+      });
+      return { response, ticket };
+    };
+    const { response, ticket } = await exchange();
+    expect(response.status).toBe(200);
+    const session = (await response.json()) as { identityId: string; accessToken: string };
+    expect(session.accessToken).toBeTruthy();
+    expect(
+      (
+        await database.query(
+          'SELECT name,handle,avatar,github_subject FROM identities WHERE id=$1',
+          [session.identityId],
+        )
+      ).rows[0],
+    ).toEqual({
+      name: 'Alex Chen',
+      handle: 'alex.chen',
+      avatar: 'https://example.com/alex',
+      github_subject: null,
+    });
+    await database.query('UPDATE identities SET name=$2 WHERE id=$1', [
+      session.identityId,
+      'Edited',
+    ]);
+    const returning = await exchange();
+    expect(returning.response.status).toBe(200);
+    expect(((await returning.response.json()) as { identityId: string }).identityId).toBe(
+      session.identityId,
+    );
+    expect(
+      (await database.query('SELECT name FROM identities WHERE id=$1', [session.identityId]))
+        .rows[0]!.name,
+    ).toBe('Edited');
+    const replay = await fetch(`${origin}/v1/auth/google/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: ticket }),
+    });
+    expect(replay.status).toBe(401);
+    const denied = (await exchange('not-allowlisted')).response;
+    expect(denied.status).toBe(401);
+    expect(await denied.json()).toMatchObject({ error: 'google_sign_in_failed', reason: 'preview_account_not_allowed' });
+    expect((await database.query("SELECT 1 FROM identity_external_links WHERE provider='google' AND subject='not-allowlisted'")).rows).toEqual([]);
   });
 
   async function issueTicket(subject = '42', login = 'octocat'): Promise<string> {
@@ -252,6 +399,100 @@ describe('mounted monolith auth', () => {
 
     const retiredLookup = await mountedRequest('/.well-known/nostr.json?name=octocat');
     expect(retiredLookup.status).toBe(404);
+  });
+
+  it('E22: web can poll a completed Google ticket when the redirect was lost', async () => {
+    const ticket = randomBytes(32).toString('base64url');
+    await store.createTicket(createHash('sha256').update(ticket).digest('hex'), {
+      challenge:'challenge',community:tenant.community,issuer:'https://accounts.google.com',audience:'test-client',
+      subject:'google-owner',createdAt:new Date(),expiresAt:new Date(Date.now()+120000),attemptCount:0,consumedAt:null,boundPubkey:null,
+      providerLogin:'alex@gmail.com',providerDisplayName:'Alex',
+    });
+    const preflight = await fetch(`${origin}/auth/oidc/completion`, {method:'OPTIONS', headers:{origin:'https://web.usebeeline.app','access-control-request-method':'POST'}});
+    expect(preflight.status).toBe(204);
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('https://web.usebeeline.app');
+    const completed = await mountedJsonRequest('/auth/oidc/completion', {recoveryToken:ticket});
+    expect(completed.status).toBe(200);
+    expect(completed.body).toMatchObject({ticket,subject:'google-owner',provider:'https://accounts.google.com'});
+    const exchanged = await fetch(`${origin}/v1/auth/google/exchange`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({oidcToken:ticket})});
+    expect(exchanged.status).toBe(200);
+    expect((await mountedJsonRequest('/auth/oidc/completion', {recoveryToken:ticket})).status).toBe(410);
+  });
+
+  it('E13: a signed-in GitHub user links Google without changing identity or profile', async () => {
+    const id = 'f'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Chosen Name','chosen')`, [id]);
+    await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('github','42',$1,'https://github.com','github-client')`, [id]);
+    const ticket = randomBytes(32).toString('base64url');
+    await store.createTicket(createHash('sha256').update(ticket).digest('hex'), {
+      challenge:'challenge', community:tenant.community, issuer:'https://accounts.google.com', audience:'test-client',
+      subject:'google-owner', createdAt:new Date(), expiresAt:new Date(Date.now()+120000), attemptCount:0,
+      consumedAt:null, boundPubkey:null, providerLogin:'alex@gmail.com', providerDisplayName:'Alex',
+    });
+    const auth = new TokenAuth(database, verifierFromEnvironment(async () => { throw new Error('unused'); }),
+      () => new Date(), token => mount.verifyGoogleTicket(token));
+    await auth.linkGoogleOidc(id, ticket);
+    expect((await database.query(`SELECT identity_id FROM identity_external_links WHERE provider='google' AND subject='google-owner'`)).rows[0]?.identity_id).toBe(id);
+    expect((await database.query(`SELECT name,handle FROM identities WHERE id=$1`, [id])).rows[0]).toEqual({name:'Chosen Name',handle:'chosen'});
+  });
+
+  it('E4/E5/E6/E7/E8/E15: binds and installs for a Google identity without changing its profile', async () => {
+    const id = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle,avatar) VALUES($1,'human','Alex Chen','alex.chen','google-photo')`, [id]);
+    await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('google','google-owner',$1,'https://accounts.google.com','test-client')`, [id]);
+    repositorySelection = 'all';
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', id);
+    const phone = new PhoneService(database, tenant.origin, githubOperations);
+    const workspace = await phone.execute('createWorkspace', { name:'Google owner' }, id);
+    const roomId = workspace.roomId!;
+    const agent = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Beebee','beebee')`, [agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent,id]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [workspace.id,agent,roomId]);
+    const before = await postRepositoryOnboarding(database, githubOperations, {roomId,agentId:agent,requesterId:id,kind:'repository'});
+    expect(before.state).toBe('install_missing');
+    const begin = async () => {
+      const started = await githubOperations.beginInstallation(id, { redirectUri: 'beeline://beeline/github-installation', reconnect: true });
+      return new URL(started.url).searchParams.get('state')!;
+    };
+    const canceled = await mountedRequest(`/auth/github/callback?error=access_denied&state=${await begin()}`);
+    expect(canceled.headers.location).toContain('error=github_connection_canceled');
+    expect((await database.query(`SELECT 1 FROM identity_external_links WHERE provider='github' AND identity_id=$1`, [id])).rows).toHaveLength(0);
+    const state = await begin();
+    expect(state).toMatch(/^github_bind_/);
+    installationAccess = false;
+    const callback = (value: string) => `/auth/github/callback?code=bind-code&state=${value}&installation_id=77`;
+    expect((await mountedRequest(callback(state))).headers.location).toContain('error=github_connection_failed');
+    expect((await database.query(`SELECT 1 FROM identity_external_links WHERE provider='github' AND identity_id=$1`, [id])).rows).toHaveLength(0);
+    expect((await database.query(`SELECT 1 FROM github_user_tokens WHERE subject='42'`)).rows).toHaveLength(0);
+    installationAccess = true;
+    const completed = await mountedRequest(callback(await begin()));
+    expect(completed.status, completed.body).toBe(302);
+    expect(completed.headers.location).toBe('beeline://beeline/github-installation?installed=1');
+    expect((await database.query(`SELECT name,handle,avatar FROM identities WHERE id=$1`, [id])).rows[0]).toEqual({name:'Alex Chen',handle:'alex.chen',avatar:'google-photo'});
+    expect((await database.query(`SELECT identity_id FROM identity_external_links WHERE provider='github' AND subject='42'`)).rows[0]?.identity_id).toBe(id);
+    const refreshed = await postRepositoryOnboarding(database, githubOperations, {roomId,agentId:agent,requesterId:id,kind:'repository'});
+    expect(refreshed.state).toBe('no_repo_linked');
+    expect(refreshed.repositories.map(repo => repo.fullName)).toEqual(['owner/widgets']);
+    vi.spyOn(githubOperations, 'onboardingSignals').mockResolvedValue({commits:[],failingChecks:[],issues:[],branches:[],files:[]});
+    await phone.execute('actOnRepositoryCard', {roomId,cardId:refreshed.id,action:'link',repositoryId:101}, id);
+    expect((await phone.readRoom(roomId,id))?.repository?.name).toBe('owner/widgets');
+    const corner = await phone.execute('createHumanCorner', {roomId,title:'first-google-owner-work'}, id);
+    expect(await phone.readRoom(corner.id,id)).toBeTruthy();
+    expect(await githubOperations.roomToken(roomId)).toMatchObject({token:'room-token'});
+    githubSubject = '43';
+    const mismatch = await mountedRequest(callback(await begin()));
+    expect(mismatch.headers.location).toContain('error=github_account_mismatch');
+    expect((await database.query(`SELECT github_subject FROM identities WHERE id=$1`, [id])).rows[0]?.github_subject).toBe('42');
+    expect((await database.query(`SELECT 1 FROM github_user_tokens WHERE subject='43'`)).rows).toHaveLength(0);
+    githubSubject = '42';
+    const other = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+    const conflict = await githubOperations.beginInstallation(other, { redirectUri:'beeline://beeline/github-installation' });
+    const rejected = await mountedRequest(callback(new URL(conflict.url).searchParams.get('state')!));
+    expect(rejected.headers.location).toContain('error=github_account_already_linked');
+    expect((await database.query(`SELECT identity_id FROM identity_external_links WHERE provider='github' AND subject='42'`)).rows[0]?.identity_id).toBe(id);
   });
 
   it('completes repo-card installation through the OAuth callback and rejects replay or forged state', async () => {

@@ -11,6 +11,130 @@ describe('opaque token ceremony', () => {
     await migrate(db);
   });
   afterEach(() => db.close());
+  it('E3/E14/E16: Google resumes its subject, preserves edits and allocates an untaken handle', async () => {
+    const auth = new TokenAuth(
+      db,
+      async () => ({ subject: 'same-subject', login: 'googleperson', name: 'Google Person' }),
+      () => new Date(),
+      async () => ({
+        subject: 'same-subject',
+        name: 'Google Person',
+        email: 'Google.Person@gmail.com',
+        audience: 'google-client',
+        avatar: 'https://example.com/google',
+      }),
+    );
+    const github = await auth.exchangeGitHubOidc('github');
+    const google = await auth.exchangeGoogleOidc('google');
+    expect(google.identityId).not.toBe(github.identityId);
+    expect(await auth.authenticatePhone(google.accessToken)).toBe(google.identityId);
+    const profile = (
+      await db.query('SELECT name,handle,avatar,github_subject FROM identities WHERE id=$1', [
+        google.identityId,
+      ])
+    ).rows[0]!;
+    expect(profile).toMatchObject({
+      name: 'Google Person',
+      avatar: 'https://example.com/google',
+      github_subject: null,
+    });
+    expect(profile.handle).toBe('google.person');
+    await db.query('UPDATE identities SET name=$2,handle=$3,avatar=$4 WHERE id=$1', [
+      google.identityId,
+      'Edited Name',
+      'editedhandle',
+      'https://example.com/edited',
+    ]);
+    const returning = await auth.exchangeGoogleOidc('again');
+    expect(returning.identityId).toBe(google.identityId);
+    expect(
+      (await db.query('SELECT name,handle,avatar FROM identities WHERE id=$1', [google.identityId]))
+        .rows[0],
+    ).toEqual({
+      name: 'Edited Name',
+      handle: 'editedhandle',
+      avatar: 'https://example.com/edited',
+    });
+    expect(
+      (await db.query("SELECT identity_id FROM identity_external_links WHERE provider='google'"))
+        .rows,
+    ).toEqual([{ identity_id: google.identityId }]);
+  });
+  it('E13: linking Google preserves the GitHub account and either provider signs into that identity', async () => {
+    const auth = new TokenAuth(db, async () => ({subject:'42',login:'githubname',name:'GitHub Name'}), () => new Date(),
+      async () => ({subject:'google-sub',name:'Google Name',email:'same@gmail.com',audience:'client'}));
+    const github = await auth.exchangeGitHubOidc('github');
+    await auth.linkGoogleOidc(github.identityId, 'google');
+    const google = await auth.exchangeGoogleOidc('google-again');
+    expect(google.identityId).toBe(github.identityId);
+    expect((await auth.exchangeGitHubOidc('github-again')).identityId).toBe(github.identityId);
+    expect((await db.query(`SELECT name,handle FROM identities WHERE id=$1`, [github.identityId])).rows[0]).toEqual({name:'GitHub Name',handle:'githubname'});
+    const other = 'e'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+    await expect(auth.linkGoogleOidc(other, 'google')).rejects.toThrow('already linked');
+  });
+  it('E16: uses email handles, the smallest collision suffix, reserved names and the 30-character limit', async () => {
+    const emails = [
+      'Alex.Chen@gmail.com',
+      'alex.chen@work.example',
+      'A+lex.Chen@gmail.com',
+      'channel@gmail.com',
+      'play-review@gmail.com',
+      '___+@gmail.com',
+      `${'a'.repeat(35)}@gmail.com`,
+      `${'a'.repeat(35)}@work.example`,
+    ];
+    const auth = new TokenAuth(
+      db,
+      async () => ({
+        subject: 'github-profile',
+        login: 'alex.chen',
+        name: 'GitHub Name',
+        avatar: 'https://example.com/github',
+      }),
+      () => new Date(),
+      async (ticket) => ({
+        subject: ticket,
+        email: emails[Number(ticket)],
+        name: 'Alex',
+        audience: 'client',
+      }),
+    );
+    const handles = [];
+    for (let index = 0; index < emails.length; index++) {
+      const tokens = await auth.exchangeGoogleOidc(String(index));
+      handles.push(
+        (await db.query('SELECT handle FROM identities WHERE id=$1', [tokens.identityId])).rows[0]!
+          .handle,
+      );
+    }
+    expect(handles).toEqual([
+      'alex.chen',
+      'alex.chen2',
+      'alex.chen3',
+      'channel2',
+      'play-review2',
+      'person',
+      'a'.repeat(30),
+      `${'a'.repeat(29)}2`,
+    ]);
+    const github = await auth.exchangeGitHubOidc('github');
+    expect(
+      (await db.query('SELECT name,handle,avatar FROM identities WHERE id=$1', [github.identityId]))
+        .rows[0],
+    ).toEqual({ name: 'GitHub Name', handle: 'alex.chen4', avatar: 'https://example.com/github' });
+    await db.query('UPDATE identities SET name=$2,handle=$3,avatar=$4 WHERE id=$1', [
+      github.identityId,
+      'Chosen',
+      'chosen',
+      'https://example.com/chosen',
+    ]);
+    await auth.exchangeGitHubOidc('returning');
+    expect(
+      (await db.query('SELECT name,handle,avatar FROM identities WHERE id=$1', [github.identityId]))
+        .rows[0],
+    ).toEqual({ name: 'Chosen', handle: 'chosen', avatar: 'https://example.com/chosen' });
+  });
   async function phoneAuth(clock: () => Date) {
     const auth = new TokenAuth(
       db,
@@ -27,7 +151,8 @@ describe('opaque token ceremony', () => {
     now = new Date('2026-10-12T20:40:00Z');
     await db.query('DELETE FROM phone_access_tokens WHERE expires_at < $1', [now]);
     expect((await db.query('SELECT 1 FROM phone_access_tokens')).rowCount).toBe(0);
-    const afterDeploy = new TokenAuth(db, async () => { throw new Error('unused'); }, () => now);
+    const afterDeploy = new TokenAuth(db, async () => { throw new Error('unused'); }, () => now,
+    );
     expect(await afterDeploy.authenticatePhone(initial.accessToken)).toBeNull();
     const renewed = await afterDeploy.refresh(initial.refreshToken);
     expect(renewed?.identityId).toBe(initial.identityId);
@@ -40,12 +165,14 @@ describe('opaque token ceremony', () => {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', key, iv);
     const encrypted = Buffer.concat([cipher.update(JSON.stringify(next), 'utf8'), cipher.final()]);
-    const sealed = [iv, cipher.getAuthTag(), encrypted].map(p => p.toString('base64url')).join('.');
+    const sealed = [iv, cipher.getAuthTag(), encrypted].map((p) => p.toString('base64url')).join('.');
     await db.query(`INSERT INTO phone_sessions(refresh_hash,identity_id,family_id,expires_at)
       SELECT $1,identity_id,family_id,expires_at FROM phone_sessions WHERE refresh_hash=$2`,
-      [tokenHash(next.refreshToken), tokenHash(previous.refreshToken)]);
+      [tokenHash(next.refreshToken), tokenHash(previous.refreshToken)],
+    );
     await db.query('UPDATE phone_sessions SET consumed_at=now(),successor_tokens=$2 WHERE refresh_hash=$1',
-      [tokenHash(previous.refreshToken), sealed]);
+      [tokenHash(previous.refreshToken), sealed],
+    );
     return next;
   }
 
@@ -67,7 +194,8 @@ describe('opaque token ceremony', () => {
     const { auth, initial } = await phoneAuth(() => now);
     await auth.refresh(initial.refreshToken); // server committed, reply was lost
     now = new Date('2027-10-11T14:00:00Z');
-    const afterRestart = new TokenAuth(db, async () => { throw new Error('unused'); }, () => now);
+    const afterRestart = new TokenAuth(db, async () => { throw new Error('unused'); }, () => now,
+    );
     const renewed = await afterRestart.refresh(initial.refreshToken);
     expect(renewed?.refreshToken).toBe(initial.refreshToken);
     expect(renewed!.refreshExpiresAt).toBeGreaterThan(now.getTime());
@@ -100,7 +228,8 @@ describe('opaque token ceremony', () => {
   it('rejects an unrecoverable pre-replay token without deleting its live family', async () => {
     const { auth, initial } = await phoneAuth(() => new Date('2026-10-11T14:00:00Z'));
     const latest = await legacySuccessor(initial, 1);
-    await db.query('UPDATE phone_sessions SET successor_tokens=NULL WHERE refresh_hash=$1', [tokenHash(initial.refreshToken)]);
+    await db.query('UPDATE phone_sessions SET successor_tokens=NULL WHERE refresh_hash=$1', [tokenHash(initial.refreshToken),
+    ]);
     expect(await auth.refresh(initial.refreshToken)).toBeNull();
     expect((await auth.refresh(latest.refreshToken))?.refreshToken).toBe(latest.refreshToken);
   });
@@ -111,7 +240,8 @@ describe('opaque token ceremony', () => {
     await db.query('UPDATE phone_sessions SET expires_at=$1', [new Date('2026-11-10T14:00:00Z')]);
     await migrateData(db);
     await migrateData(db);
-    await db.query('DELETE FROM phone_sessions WHERE expires_at < $1', [new Date('2027-11-10T14:00:00Z')]);
+    await db.query('DELETE FROM phone_sessions WHERE expires_at < $1', [new Date('2027-11-10T14:00:00Z'),
+    ]);
     expect((await auth.refresh(initial.refreshToken))?.refreshToken).toBe(initial.refreshToken);
     expect((await db.query('SELECT expires_at FROM phone_sessions')).rows).toEqual([
       { expires_at: new Date('9999-12-31T23:59:59Z') },
@@ -120,7 +250,8 @@ describe('opaque token ceremony', () => {
 
   it('allows simultaneous renewals without rotating, clobbering or growing the refresh family', async () => {
     const { auth, initial } = await phoneAuth(() => new Date('2026-10-11T14:00:00Z'));
-    const [first, second] = await Promise.all([auth.refresh(initial.refreshToken), auth.refresh(initial.refreshToken)]);
+    const [first, second] = await Promise.all([auth.refresh(initial.refreshToken), auth.refresh(initial.refreshToken),
+    ]);
     expect(first?.refreshToken).toBe(initial.refreshToken);
     expect(second?.refreshToken).toBe(initial.refreshToken);
     expect((await db.query('SELECT 1 FROM phone_sessions')).rowCount).toBe(1);

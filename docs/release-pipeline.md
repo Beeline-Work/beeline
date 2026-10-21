@@ -35,13 +35,28 @@ Firstmate runs one command directly, without creating a release worker:
 node scripts/dispatch-production-release.mjs
 ```
 
-Pass no inputs. The dispatch command refuses while any production release is
+Pass no inputs. Run inside an authenticated Beeline agent turn citing a human
+release command. The command uses the existing repository workflow dispatch
+path on the server; it no longer invokes GitHub directly. The server derives
+agent id and handle, place, and the root human command message from the active
+turn, and commits a Room message before requesting the dispatch. That message
+is the durable audit receipt and is readable through the ordinary Room read.
+A receipt says "requested"; it does not prove GitHub accepted the request.
+No credentials, tokens or recovery input values are stored in the receipt.
+
+The server passes `dispatched_by` with these fields and the audit message id.
+The workflow requires that attribution, shows it in its run name and summary,
+and preserves it on automatic retries. Anonymous agent dispatches are refused.
+Recovery operators cannot override the server-supplied attribution.
+
+The dispatch command refuses while any production release is
 queued, waiting, or in progress, and stops if the GitHub listing fails. Recovery
 operators pass the existing `-f name=value` inputs to the same command. This
 check is advisory against simultaneous callers: workflow concurrency serializes
 those races with `cancel-in-progress: false`. GitHub keeps at most one pending
 run in a concurrency group, so use this command to avoid stacking dispatches.
-Manual dispatches through GitHub still serialize behind the running release.
+Direct GitHub recovery dispatches also require `dispatched_by` and still
+serialize behind the running release. Use the audited command for agent work.
 
 A person can cancel a stuck run in GitHub Actions → Unified production release
 → the run → Cancel workflow, or run `gh-axi run cancel <run-id>`. Wait for
@@ -59,8 +74,8 @@ The workflow pins current `main`, includes every merge at that
 HEAD, keeps automatic component selection, uses the established `store_track=none`
 policy, promotes the OTA without a device proof (recorded UNPROVEN unless
 `run_release_proof=true`), publishes one release record, runs component checks,
-and reports the result in the workflow summary. The visible workflow inputs are
-recovery- and consent-only: operators use them to continue an existing identity,
+and reports the result in the workflow summary. The operator-selected workflow inputs are
+recovery- and consent-only (the server supplies attribution): operators use them to continue an existing identity,
 explicitly request the device proof, or make a deliberate store submission -
 never for a routine release.
 

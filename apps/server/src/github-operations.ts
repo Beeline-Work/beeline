@@ -793,6 +793,7 @@ export class GitHubOperations {
   async dispatchRoomWorkflow(roomId: string, workflowName: string): Promise<void> {
     const name = workflowName.trim();
     if (!name || name.length > 255) throw new Error('invalid workflow name');
+    if (name === 'Unified production release') throw new Error('Production release requires an agent identity; use the audited release command');
     const target = await this.roomWorkflowTarget(roomId);
     const workflows = await this.app.listDispatchableWorkflows(
       target.token,
@@ -807,6 +808,14 @@ export class GitHubOperations {
       matches[0]!.id,
       target.defaultBranch,
     );
+  }
+
+  async dispatchProductionRelease(roomId: string, inputs: Record<string, string>): Promise<void> {
+    if (!inputs.dispatched_by) throw new Error('Production release requires an agent identity');
+    const target = await this.roomAnchorTarget(roomId);
+    if (target.repository.toLowerCase() !== 'beeline-work/beeline' || target.defaultBranch !== 'main')
+      throw new Error('Production release requires Beeline main');
+    await this.app.dispatchProductionWorkflow(target.token, target.repository, inputs);
   }
 
   /** Caller is authorized by DaemonService against the requesting corner membership. */

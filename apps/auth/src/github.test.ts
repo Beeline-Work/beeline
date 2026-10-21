@@ -1172,3 +1172,32 @@ it.each(['pulls/1/files', 'pulls/1/reviews', 'pulls/1/comments', 'issues/1/comme
     });
   },
 );
+
+it.each(['queued', 'in_progress', 'waiting', 'pending', 'requested'])('release-dispatch-serialization: refuses a %s release before POST', async active => {
+  const requests: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    requests.push(url);
+    return Response.json({ workflow_runs: url.includes(`status=${active}&`) ? [{ id: 123 }] : [] });
+  }));
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.dispatchProductionWorkflow('secret-token', 'Beeline-Work/beeline', { dispatched_by: 'audit' })).rejects.toThrow(`123 is already ${active}`);
+  expect(requests.every(url => !url.endsWith('/dispatches'))).toBe(true);
+});
+
+it('release-dispatch-attribution: passes attribution and recovery fields only after clean preflight', async () => {
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ workflow_runs: [] }));
+  vi.stubGlobal('fetch', fetchMock);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  const inputs = { dispatched_by: '{"handle":"jellybean"}', retry_attempt: '2', release_version: 'v0.1.94' };
+  await app.dispatchProductionWorkflow('secret-token', 'Beeline-Work/beeline', inputs);
+  expect(fetchMock).toHaveBeenCalledTimes(6);
+  expect(JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body))).toEqual({ ref: 'main', inputs });
+});
+
+it.each(['missing identity', 'listing error', 'invalid listing'])('release dispatch fails closed on %s', async failure => {
+  const fetchMock = vi.fn(async () => failure === 'listing error' ? new Response('unavailable', { status: 403 }) : Response.json({}));
+  vi.stubGlobal('fetch', fetchMock);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.dispatchProductionWorkflow('token', 'Beeline-Work/beeline', failure === 'missing identity' ? {} : { dispatched_by: 'audit' })).rejects.toThrow();
+  expect(fetchMock).toHaveBeenCalledTimes(failure === 'missing identity' ? 0 : 1);
+});

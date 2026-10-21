@@ -1,21 +1,30 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 
-// Query failures stop dispatch. GitHub concurrency covers races after this check.
+// Use the active Beeline turn. The server owns identity, provenance and GitHub access.
 try {
-  const output = execFileSync('gh-axi', [
-    'api', '--paginate', '--slurp',
-    'repos/Beeline-Work/beeline/actions/workflows/unified-release.yml/runs?per_page=100',
-  ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  const pages = JSON.parse(output);
-  if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page.workflow_runs))) {
-    throw new Error('GitHub returned an invalid release run listing');
+  const { BEELINE_DAEMON_BASE_URL: baseUrl, BEELINE_DAEMON_TOKEN: token,
+    BEELINE_DAEMON_AGENT_ID: agentId, BEELINE_TURN_CONTEXT_FILE: contextFile } = process.env;
+  if (!baseUrl || !token || !agentId || !contextFile)
+    throw new Error('Production release requires an authenticated Beeline agent turn');
+  const context = JSON.parse(await readFile(contextFile, 'utf8'));
+  const inputs = {};
+  const args = process.argv.slice(2);
+  for (let index = 0; index < args.length; index += 2) {
+    const field = args[index + 1];
+    if (!['-f', '-F', '--raw-field', '--field'].includes(args[index]) || !field?.includes('='))
+      throw new Error('Use -f name=value for release recovery inputs');
+    const separator = field.indexOf('=');
+    inputs[field.slice(0, separator)] = field.slice(separator + 1);
   }
-  const active = pages.flatMap(page => page.workflow_runs).find(run => run.status !== 'completed');
-  if (active) {
-    throw new Error(`Production release ${active.id} is already ${active.status}. Wait for it to finish, or cancel it in GitHub Actions before dispatching another release.`);
-  }
-  execFileSync('gh-axi', ['workflow', 'run', 'unified-release.yml', '--ref', 'main', ...process.argv.slice(2)], { stdio: 'inherit' });
+  const response = await fetch(new URL('/v1/daemon/operations/dispatchRoomWorkflow', baseUrl), {
+    method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ agentId, roomId: context.roomId, requestId: context.requestId,
+      generationId: context.generationId, inputs }), signal: AbortSignal.timeout(120000),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error?.message ?? result.error ?? 'Production release dispatch was refused');
+  console.log(`Production release dispatched. Audit message: ${result.auditMessageId}`);
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

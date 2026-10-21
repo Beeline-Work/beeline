@@ -392,8 +392,11 @@ export interface NotificationActionDeps {
   newMessageId(): string;
   present(notification: OutcomeNotification): Promise<void>;
   handled: HandledActionStore;
-  /** Responses being answered right now in this JS runtime. */
-  inFlight: Set<string>;
+  /**
+   * Responses being answered right now in this JS runtime, with the work that
+   * answers each. A second delivery of the same tap waits for that work.
+   */
+  inFlight: Map<string, Promise<unknown>>;
   log?(message: string): void;
 }
 
@@ -419,36 +422,53 @@ export async function handleNotificationAction(
   const request = readNotificationAction(payload);
   if (!request) return null;
   // Claimed synchronously, before any await, so two deliveries of the same
-  // tap in one runtime cannot both pass the check.
-  if (deps.inFlight.has(request.key)) return null;
-  deps.inFlight.add(request.key);
+  // tap in one runtime cannot both pass the check. The second delivery still
+  // waits for the first to finish: on Android a closed app runs the tap as a
+  // headless task AND hands it to the response listener, and Android may
+  // freeze the process as soon as the task returns. A task that returned
+  // early left the reply posted but the notification spinning, never
+  // rewritten.
+  const running = deps.inFlight.get(request.key);
+  if (running) {
+    await running.catch(() => undefined);
+    return null;
+  }
+  const work = answerNotificationAction(request, deps);
+  deps.inFlight.set(request.key, work);
   try {
-    if (await deps.handled.has(request.key)) return null;
-    // Spent before the call: a response is answered once, never replayed on a
-    // later app start. A retry is a new response on the failure notification.
-    await deps.handled.add(request.key);
-    let outcome: NotificationActionOutcome;
-    try {
-      if (request.kind === 'grant') await deps.decideGrant(request.grantId, request.decision);
-      else
-        await deps.sendReply({
-          roomId: request.roomId,
-          parentMessageId: request.parentMessageId,
-          text: request.text,
-          messageId: deps.newMessageId(),
-        });
-      outcome = 'done';
-    } catch (error) {
-      outcome = request.kind === 'grant' && isSettledGrant(error) ? 'settled' : 'failed';
-      deps.log?.(
-        `[PUSH ACTION] ${request.kind} failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    await deps.present(outcomeNotification(request, outcome, deps.platform));
-    return outcome;
+    return await work;
   } finally {
     deps.inFlight.delete(request.key);
   }
+}
+
+async function answerNotificationAction(
+  request: NotificationActionRequest,
+  deps: NotificationActionDeps,
+): Promise<NotificationActionOutcome | null> {
+  if (await deps.handled.has(request.key)) return null;
+  // Spent before the call: a response is answered once, never replayed on a
+  // later app start. A retry is a new response on the failure notification.
+  await deps.handled.add(request.key);
+  let outcome: NotificationActionOutcome;
+  try {
+    if (request.kind === 'grant') await deps.decideGrant(request.grantId, request.decision);
+    else
+      await deps.sendReply({
+        roomId: request.roomId,
+        parentMessageId: request.parentMessageId,
+        text: request.text,
+        messageId: deps.newMessageId(),
+      });
+    outcome = 'done';
+  } catch (error) {
+    outcome = request.kind === 'grant' && isSettledGrant(error) ? 'settled' : 'failed';
+    deps.log?.(
+      `[PUSH ACTION] ${request.kind} failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  await deps.present(outcomeNotification(request, outcome, deps.platform));
+  return outcome;
 }
 
 /** The failed reply's text, for the composer the tap opens. */

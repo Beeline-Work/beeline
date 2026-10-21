@@ -1,3 +1,4 @@
+import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_EFFECTIVE_AT, SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
 import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
@@ -54,6 +55,8 @@ import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 
+export const JOB_STATEMENT_TIMEOUT_MS = 2_000;
+export const JOB_LOCK_TIMEOUT_MS = 500;
 export const APP_STATEMENT_TIMEOUT_MS = 5_000;
 export const APP_POOL_WAIT_TIMEOUT_MS = 2_000;
 export const ENRICHMENT_STATEMENT_TIMEOUT_MS = 750;
@@ -117,6 +120,8 @@ export function postgresPoolConfig(
                 options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
               }
             : {
+              statement_timeout: JOB_STATEMENT_TIMEOUT_MS,
+              options: `-c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
             }),
   };
@@ -202,7 +207,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 34;
+export const REQUIRED_SCHEMA_VERSION = 35;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3288,6 +3293,7 @@ export async function migrate(
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
+  await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 
@@ -3301,6 +3307,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('push outbox cutover', () => workflowBackfillOnce(
+    database, 'push-outbox-v1', backfillPushOutbox));
   await dataStep('free agent connection guide', () =>
     workflowBackfillOnce(database, 'free-agent-connect-guide-v1', async db => {
       await db.query(`UPDATE agents agent SET soul=jsonb_set(agent.soul,'{instructions}',

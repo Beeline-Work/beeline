@@ -637,7 +637,7 @@ export class PostgresLiveListener {
     const pushOnly = payload.table === 'push_devices' ||
       payload.table === 'workspace_join_notifications';
     if ((payload.table === 'messages' && payload.operation !== 'DELETE') ||
-        pushOnly ||
+        pushOnly || payload.table === 'identities' ||
         (payload.table === 'agent_turns' && payload.operation === 'UPDATE'))
       this.pushWake?.();
     if (pushOnly) return;

@@ -1,5 +1,10 @@
+import { observeFunnelAuth } from './signin-funnel.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readEnv, authTenantsFromEnvironment, oidcClientFromEnvironment } from '@beeline/auth/environment';
+import {
+  readEnv,
+  authTenantsFromEnvironment,
+  oidcClientFromEnvironment,
+} from '@beeline/auth/environment';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { verifyPhoneGitHubTicket } from '@beeline/auth/phone-github-ticket';
 import { buildAuthServer } from '@beeline/auth/server';
@@ -37,7 +42,9 @@ export async function createMonolithAuth(
   const publicHost = new URL(publicOrigin).host.toLowerCase();
   const tenant = tenants.find((candidate) => candidate.host.toLowerCase() === publicHost);
   if (!tenant) {
-    throw new Error(`BEELINE_AUTH_TENANTS_JSON (BUZZY_AUTH_TENANTS_JSON still works) must include monolith Host ${publicHost}`);
+    throw new Error(
+      `BEELINE_AUTH_TENANTS_JSON (BUZZY_AUTH_TENANTS_JSON still works) must include monolith Host ${publicHost}`,
+    );
   }
 
   // Both schemas live in the monolith's one PostgreSQL database. AuthStore only
@@ -47,6 +54,7 @@ export async function createMonolithAuth(
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
+    onFunnelAuth: (input) => observeFunnelAuth(database, input),
     completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
     ...(github ? { github } : {}),

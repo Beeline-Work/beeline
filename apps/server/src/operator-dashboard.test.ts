@@ -95,6 +95,42 @@ async function seed() {
 }
 
 describe('private operator dashboard', () => {
+  it('validates anonymous events at the HTTP boundary and rate limits without persisting personal fields', async () => {
+    const input={event:'app_opened',installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android',version:'0.2.22',environment:'production',timestamp:new Date().toISOString()};
+    const send=(data:unknown,ip='funnel-proof')=>fetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});
+    expect((await send({...input,email:'private@example.com'})).status).toBe(400);
+    expect((await send({...input,event:'signed_in',provider:'github'})).status).toBe(401);
+    expect((await send({...input,version:'x'.repeat(2000)})).status).toBe(400);
+    expect((await send(input)).status).toBe(204);
+    expect((await send(input)).status).toBe(204);
+    expect((await send({...input,environment:'lab'})).status).toBe(204);
+    const rows=(await db.query(`SELECT * FROM signin_funnel_events`)).rows;
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain('private@example.com');
+    expect(JSON.stringify(rows)).not.toContain('funnel-proof');
+    // Invalid input also spends the per-IP budget, before body parsing or storage.
+    for(let i=0;i<60;i++)expect((await send({},'rate-proof')).status).toBe(400);
+    expect((await send({},'rate-proof')).status).toBe(429);
+  });
+
+  it('serves Downloads before Signup with aligned cached counts through the authenticated endpoint', async () => {
+    await seed();
+    await db.query(`UPDATE identities SET created_at=(now() AT TIME ZONE 'UTC')::date-2 WHERE kind='human'`);
+    await db.query(`INSERT INTO store_download_days(platform,day,installs,source,fetched_at,attempted_at,final)
+      SELECT 'android',d,10,'Play',now(),now(),true FROM generate_series(
+        (now() AT TIME ZONE 'UTC')::date-89,(now() AT TIME ZONE 'UTC')::date-2,interval '1 day') d`);
+    const response = await get('?platforms=android');
+    expect(response.status).toBe(200);
+    const value = await response.json();
+    expect(value.downloads).toMatchObject({ stage: 'downloads', nextStage: 'signup', state: 'measured', count: 880,
+      comparison: { downloads: 880, signups: 6, dropOffCount: 874, dropOffRate: 874/880 } });
+    expect(value.usage.people[0]).toMatchObject({ stage: 'signup', count: 6 });
+    expect(value.overview.series.downloads.data.weekly.at(-1).value).toBe(70);
+    expect(value.overview.sources.downloadsAndroid.state).toBe('measured');
+    const web = await (await get('?platforms=web')).json();
+    expect(web.downloads).toMatchObject({ state: 'not_measured', count: null });
+  });
+
   it('serves bounded UTC series, deduplicated cohorts, retention and live helper evidence without content', async () => {
     await seed();
     const today = new Date().toISOString().slice(0, 10);

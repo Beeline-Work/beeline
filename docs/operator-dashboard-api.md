@@ -96,3 +96,147 @@ lack sufficient samples. Questions-to-watch use the funnel, failure history,
 repeat-correction counts and observed telemetry coverage; no separate alert feed
 or unverified notification delivery is implied. Sentry and Beeline errors belong
 in Telegram.
+
+## Store downloads and signup comparison
+
+The additive `downloads` stage precedes Signup in the frontend. Keep the original
+`usage.people` / `usage.agents` stages and lifetime definitions unchanged; use
+`downloads.comparison.signups`, never the lifetime Signup count, for this transition.
+This is a feature, not a defect report.
+
+- `downloads` has `stage: downloads`, `nextStage: signup`, a label, explanatory
+  `note`, `from` / `through` dates, `count`, `perPlatform`, `comparison`, and `series`.
+  Render **Downloads (store installs) → Signup → Workspace → …**. Show
+  `comparison.dropOffCount` and `comparison.dropOffRate` (fraction, not percent).
+  Per-platform comparisons are under `comparison.perPlatform`. Counts and rates
+  are null when coverage is missing; a zero denominator has a null rate. Signed
+  negative drop-off remains visible because installs and signups are different
+  populations; do not clamp it to imply a measured conversion cohort.
+- The window starts 89 UTC dates before the request. It ends two dates before the
+  request when Android is selected, otherwise one date before. Every mobile slice
+  and the deduplicated mobile signup total use those same dates. Web and desktop
+  have `not_measured`, null counts, and no store calls. The total includes only
+  selected mobile platforms; it never treats unmeasured platforms as zero.
+- `series.daily` / `series.weekly` contain nullable download points; a weekly bucket
+  is null if any day is missing. `series.signups` supplies the matching signup
+  series. `overview.series.downloads` also exposes the download series alongside
+  the existing signup series, with explicit window dates. Use the matching series
+  for comparisons: the existing overview signup series still includes recent days.
+- `measured`, `stale`, and `missing` distinguish complete observations, cached
+  observations after a failed/provisional refresh, and incomplete coverage.
+  Each mobile platform includes its source, latest successful `fetchedAt` and
+  `lastCompleteDay`. Missing days stay null even when other days have data.
+- The endpoint claims missing or provisional days atomically in
+  `store_download_days`, at most once per hour across server processes. Store
+  requests have an eight-second budget per platform and at most three concurrent
+  fetches. There is no scheduled collector. Successful days three or more dates
+  old become final; newer days refresh on a subsequent eligible dashboard read.
+  Failed attempts retain cached values and the hourly claim.
+
+Configuration (new Fly secrets, stage only after the required passkey approval):
+`BEELINE_PLAY_SERVICE_ACCOUNT_JSON`, `BEELINE_PLAY_REPORTS_BUCKET`,
+`BEELINE_PLAY_PACKAGE`, `BEELINE_ASC_ISSUER`, `BEELINE_ASC_KEY_ID`,
+`BEELINE_ASC_PRIVATE_KEY`, `BEELINE_ASC_VENDOR_NUMBER`, `BEELINE_ASC_APP_ID`.
+The Apple app ID is required to prevent vendor-wide reports counting other apps.
+The Play service account needs Play report access (View app information and
+Download bulk reports) and `storage.objects.get` on the reports bucket; the OAuth
+scope is `devstorage.read_only`. Apple requires a Sales or Finance role for daily
+sales reports. Never log provider response bodies or credentials.
+
+Play uses **Daily User Installs**, not device installs: it is the closest provided
+user acquisition count to first-time downloads. Blank cells and absent dates are
+missing, not zero. CSV is decoded as UTF-16LE when its BOM is present. Apple reads
+only this app's Apple Identifier and product types **1, 1F, 1T**; exact allowlisting
+excludes updates (7*) and re-downloads (3*). Successful empty sales reports are
+measured zero; unavailable reports are missing. Store report calendar dates are
+compared with UTC signup dates, so this is an estimate, not person-level attribution.
+
+Required UI note: “Downloads count store installs, not people. Reinstalls and
+several devices per person mean the drop-off is an estimate.” Desktop release-asset
+counts are deliberately omitted: repeat requests and automated downloads would add
+a different, noisy measure rather than comparable first-time installers.
+
+Provider references: [Play monthly reports](https://support.google.com/googleplay/android-developer/answer/6135870),
+[Apple sales reports](https://developer.apple.com/documentation/appstoreconnectapi/get-v1-salesreports),
+[Apple product types](https://developer.apple.com/help/app-store-connect/reference/reporting/product-type-identifiers/).
+
+## Anonymous pre-sign-in funnel (brief revision 2)
+
+`POST /v1/funnel/events` accepts only the shared schema in
+`packages/api-contract/src/signin-funnel.ts`, at most 1 KiB. Unknown fields,
+non-UUID-v4 IDs, unknown providers/outcomes, arbitrary error strings and non-version
+build labels are refused. The timestamp is validated but grouping uses server
+receipt time. IP addresses exist only in a bounded, request-driven in-memory rate
+limit (60/minute); the event ledger has no IP or account column. `signed_in`
+requires phone-session authentication. Production-only data is retained; dev,
+preview, lab, review and known preview version labels are ignored.
+
+The app stores a random install UUID and a 30-minute attempt UUID in local
+storage. A launch/foreground action records app opened when signed out (and on the
+first measured launch); the sign-in screen records its appearance once per open.
+A provider press creates an attempt. A persisted step ledger prevents duplicate
+callback and signed-in sends across callback remounts. Transmission is best effort,
+with a short timeout and no retries or background collector. No network send is
+awaited by the sign-in UI. Corrupted persisted contexts with extra fields are
+rejected before being sent. Web and Tauri use the same controller.
+
+OAuth start URLs carry only that strict context. The auth service records the
+state-bound start and verified callback outcome via a server hook; it sends no
+OAuth code, token, subject, cookie or login to the funnel. Server observations
+replace matching client reports. Successful GitHub session exchange records
+signed-in authoritatively; the authenticated client event supplies the same
+install/attempt for all providers. Existing OIDC browser opening is instrumented
+for Google, ready for its separately gated UI; this change does not enable Google
+sign-in. A new Google exchange must retain the shared session-accept path.
+
+Authenticated events mark an install internal if its identity is hidden, fixture
+only, the fixed Play reviewer, or one of the explicitly confirmed operator
+handles (`lunchboxfortwo`, `bananaman614305`, `moonscannerai`). All earlier events
+for that install are excluded retroactively. The account identifier is used only
+for this check and is not saved in either funnel table. Review launch links and
+review sessions are suppressed on the client as well. Ordinary customer Workspace
+owners are not classified as staff.
+
+`signinFunnel` is an additive response alongside `downloads`. Its `through` matches the download comparison; store lag applies to the whole
+journey. Its `from` is the later of the requested start and first event collection
+date. `requestedFrom` preserves the original window, and `signinFunnel.downloads`
+recounts cached downloads over that common window. Render that Downloads count
+for the expanded journey; the top-level `downloads` remains backward compatible.
+Render its five stages between Downloads and the existing Signup stage, with
+`perPlatform` entries for `all` and each selected platform. Each stage has a
+count, denominator, signed drop-off count and fractional rate. Counts are distinct
+installs across retries and providers, never sums of platform slices.
+`providers` supplies GitHub / Google starts, completions, completion rates,
+callback outcome branches, and daily/weekly series. The platform-level `series`
+also supplies every pre-sign-in stage. Weekly counts deduplicate installs across
+the full seven-day bucket. Outcome branches can overlap if one install retries.
+A zero start denominator yields a null completion rate. If the window predates
+collection, `state` is `not_measured` and stage counts are null. Consult
+`coverageStart`; this release cannot reconstruct earlier sign-in attempts.
+
+Downloads-to-open comparisons are available per measured mobile platform and for
+an exclusively mobile selection. An all-platform selection also contains web and
+desktop opens, whose downloads are unmeasured, so that transition's denominator
+is null. Later steps remain comparable within the selected platform window.
+Each platform also has a `signup` count of production identities over the common
+window, explicitly marked as people rather than installs. The original
+`usage.people` stages still count people over their original lifetime, and the
+legacy download comparison still supplies its original dated account signups; do
+not silently use either as an install count.
+
+On dashboard reads and the first event of each UTC day, request-triggered
+compaction replaces raw events older than the 90-calendar-day window with daily
+anonymous counts and removes expired auth correlations. No timer runs. If there
+is no activity, compaction resumes on the next request. The current dashboard
+window uses raw distinct install counts; retained older daily aggregates contain
+no install IDs and cannot reconstruct cross-day unique installs. Internal status
+learned after raw records expire cannot revise those anonymous historical counts.
+
+Privacy disclosures changed in `web/privacy/index.html`, both checked-in Android
+full descriptions (`store/listing` and `fastlane/metadata`), and
+`store/questionnaires/google-play-data-safety.md`. Store-console declaration
+submission remains release-owned. The implementation uses existing JavaScript
+and native dependencies, changes no runtime pin and needs no new store binary;
+mobile delivery can use the normal OTA release path. The private dashboard
+frontend and production screenshot require its separately accessible repository
+and approved store configuration.

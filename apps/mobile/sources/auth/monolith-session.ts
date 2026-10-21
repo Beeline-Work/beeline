@@ -1,3 +1,4 @@
+import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monolith-secure-storage';
 import { isDesktopShell } from '@/utils/isDesktopShell';
@@ -169,12 +170,12 @@ export class MonolithSession {
       : input;
   }
 
-  async exchangeGitHubTicket(ticket: string): Promise<string> {
+  async exchangeGitHubTicket(ticket: string, funnel?: SigninFunnelEvent): Promise<string> {
     const revision = this.credentialRevision;
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/github/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ oidcToken: ticket }),
+      body: JSON.stringify({ oidcToken: ticket, ...(funnel ? {funnel} : {}) }),
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
@@ -640,6 +641,7 @@ export class MonolithSession {
       // A new sign-in may repair an expired session for the same identity.
       // Token refresh alone must not start another registration/refresh loop.
       if (signedIn || previousId !== tokens.identityId) this.identityChanged();
+      if (signedIn) void import('./signin-funnel').then(module=>module.funnelSignedIn(tokens.accessToken)).catch(()=>undefined);
     });
   }
 }

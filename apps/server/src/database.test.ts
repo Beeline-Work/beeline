@@ -827,10 +827,10 @@ describe('cascade-path foreign keys stay indexed', () => {
 });
 
 describe('release-owned schema readiness', () => {
-  it('rejects the previous schema marker until the branch cleanup migration is released', async () => {
-    const query = vi.fn().mockResolvedValue(result([{ version: 32 }]));
+  it('rejects the previous schema marker until the store downloads migration is released', async () => {
+    const query = vi.fn().mockResolvedValue(result([{ version: 33 }]));
     await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
-      /expected schema version 33, found 32/,
+      /expected schema version 34, found 33/,
     );
   });
 

@@ -29,3 +29,5 @@ Beeline connects to supported coding agents running on your own computer. It giv
 This is not full automation. It is a better division of labor: machine speed at execution, human taste and judgment at the boundaries that matter.
 
 Published by Moon Rice Limited.
+
+Privacy: Beeline measures anonymous sign-in steps using random install and attempt IDs to improve onboarding. Raw events are kept for 90 days, then only daily counts. Details: https://usebeeline.app/privacy/

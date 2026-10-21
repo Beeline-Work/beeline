@@ -1,3 +1,4 @@
+import type { FunnelAuthObservation } from '@beeline/api-contract/signin-funnel';
 import Fastify, {
   type FastifyInstance,
   type FastifyReply,
@@ -103,6 +104,7 @@ export type GitHubRoomTokenAuthorityResult =
   | { authorized: false; reason: GitHubRoomTokenAuthorityFailureReason };
 
 export interface AuthServerOptions {
+  onFunnelAuth?: (input: FunnelAuthObservation) => Promise<void>;
   store: AuthStore;
   oidc: OidcClient;
   /** GitHub is the shipped sign-in and repository-access provider. */

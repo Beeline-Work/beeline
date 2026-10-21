@@ -1,3 +1,5 @@
+import { dashboardSigninFunnel } from './signin-funnel.js';
+import { dashboardDownloads } from './operator-dashboard-downloads.js';
 import type { SqlDatabase } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
 import { dashboardOverview } from './operator-dashboard-overview.js';
@@ -500,9 +502,59 @@ export async function readOperatorDashboard(
     dashboardOps(database, measuredAt, releaseVersion, minRuntimes),
   ]);
   const overview = await dashboardOverview(database, platforms, measuredAt).catch(sectionError);
+  const downloads = await dashboardDownloads(database, platforms, measuredAt).catch(sectionError);
+  const signinFunnel =
+    'from' in downloads
+      ? await dashboardSigninFunnel(
+          database,
+          platforms,
+          measuredAt,
+          downloads.from,
+          downloads.through,
+          downloads.count,
+          Object.fromEntries(downloads.perPlatform.map((p) => [p.platform, p.count])),
+        ).catch(sectionError)
+      : sectionError();
+  const downloadSource = (platform: string) => {
+    const value =
+      'perPlatform' in downloads
+        ? downloads.perPlatform.find((p) => p.platform === platform)
+        : undefined;
+    return {
+      state: value?.state ?? 'not_measured',
+      source: value?.source ?? 'Store download reports',
+      fetchedAt: value?.fetchedAt ?? null,
+      lastCompleteDay: value?.lastCompleteDay ?? null,
+    };
+  };
   return {
     schemaVersion: 1,
-    overview,
+    downloads,
+    signinFunnel,
+    overview:
+      'series' in overview
+        ? {
+            ...overview,
+            series: {
+              ...overview.series,
+              downloads:
+                'series' in downloads
+                  ? {
+                      state: downloads.state,
+                      measuredAt,
+                      data: { daily: downloads.series.daily, weekly: downloads.series.weekly },
+                      from: downloads.from,
+                      through: downloads.through,
+                    }
+                  : sectionError(),
+            },
+            sources: {
+              ...overview.sources,
+              downloadsIos: downloadSource('ios'),
+              downloadsAndroid: downloadSource('android'),
+            },
+          }
+        : overview,
     measuredAt,
     platforms: [...platforms],
     usage: usage.status === 'fulfilled' ? usage.value : sectionError(),

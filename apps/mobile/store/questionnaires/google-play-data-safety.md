@@ -25,7 +25,21 @@ Developer/publisher: **Moon Rice Limited**. The active Play Console account is
 | Files and documents | Yes, only when the user attaches/uploads them | With the user's Beeline service and recipients they choose | App functionality | Optional | Yes |
 | Photos | Yes, only when selected as a chat attachment or avatar | With the user's Beeline service and recipients they choose | App functionality | Optional | Yes |
 | Device or other IDs | Yes — Android FCM registration token | Firebase Cloud Messaging and the user's Beeline push gateway | App functionality: deliver optional notifications | Optional | Yes — token is registered to the signed app identity |
-| App interactions | Conditional — only when a build contains `EXPO_PUBLIC_POSTHOG_API_KEY` and analytics is not disabled | PostHog as a service provider | Analytics | Optional | No application-level account identity is passed by the current event calls |
+| App interactions (first-party sign-in funnel) | Yes in production | Beeline service only | Analytics: improve sign-in | Required in production | No account identifier in the event ledger |
+| Other IDs (random install/attempt UUIDs) | Yes in production | Beeline service only | Anonymous sign-in measurement | Required in production | No account identifier in the event ledger |
+| App interactions (PostHog) | Conditional — only when a build contains `EXPO_PUBLIC_POSTHOG_API_KEY` and analytics is not disabled | PostHog as a service provider | Analytics | Optional | No application-level account identity is passed by the current event calls |
+
+## First-party anonymous sign-in measurement
+
+Production apps send app-open, sign-in-screen, provider-tap, callback-outcome and
+signed-in events to Beeline. Declare App interactions and Other IDs for analytics:
+random install and short-lived attempt IDs, platform/version, timestamp, provider,
+and fixed outcome/error enums. No account identifiers, names, emails, logins,
+IP addresses, device names, codes or tokens are stored in these events. The
+signed-in endpoint uses authentication only to exclude internal traffic. Raw
+records last 90 days, followed by anonymous daily aggregates. Dev/preview/lab and
+Play Review traffic is excluded. Privacy text: `web/privacy/index.html`.
+This declaration is independent of optional PostHog configuration.
 
 ## Conditional analytics declaration
 

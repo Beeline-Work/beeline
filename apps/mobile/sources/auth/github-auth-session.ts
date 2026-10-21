@@ -1,3 +1,4 @@
+import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -496,6 +497,7 @@ async function awaitCompletedGitHubBindChallenge(expectedState: string): Promise
 }
 
 interface ResilientGitHubSessionInput {
+  funnelContext?: SigninFunnelEvent;
   state: string;
   recoveryToken: string;
   purpose?: 'signin' | 'reconnect';
@@ -513,6 +515,7 @@ interface ResilientGitHubSessionInput {
 
 /** Keep the deep link fast path, then recover the same one-use proof by app-held secret. */
 export async function runResilientGitHubSignInSession({
+  funnelContext,
   state,
   recoveryToken,
   purpose = 'signin',
@@ -535,6 +538,11 @@ export async function runResilientGitHubSignInSession({
     await cancelGitHubRecovery(previousRecoveryToken, runtime, fetchImpl);
   }
   const start = startGitHubSignInWebFlow(state, runtime, recoveryToken);
+  if (funnelContext) {
+    const authorization=new URL(start.authorizationUrl);
+    authorization.searchParams.set('funnel',JSON.stringify(funnelContext));
+    start.authorizationUrl=authorization.toString();
+  }
   if (purpose === 'signin') {
     const authorization = new URL(start.authorizationUrl);
     authorization.searchParams.set('onboarding', '1');

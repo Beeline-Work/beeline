@@ -202,7 +202,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 33;
+export const REQUIRED_SCHEMA_VERSION = 34;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2323,6 +2323,50 @@ ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS next_retry_at timestam
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS read_cleared_at timestamptz;
 -- Content-free observations written only when a real client operation ends.
 -- The dashboard reads a bounded recent window; no timer produces samples.
+CREATE TABLE IF NOT EXISTS signin_funnel_installs (
+  install_id uuid PRIMARY KEY,
+  internal boolean NOT NULL DEFAULT false,
+  seen_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS signin_funnel_events (
+  install_id uuid NOT NULL,
+  attempt_id uuid NOT NULL,
+  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in')),
+  platform text NOT NULL CHECK (platform IN ('ios','android','web','macos','windows','linux')),
+  version text NOT NULL,
+  provider text NOT NULL DEFAULT '' CHECK (provider IN ('','github','google')),
+  outcome text NOT NULL DEFAULT '' CHECK (outcome IN ('','success','cancelled','error')),
+  error_code text,
+  source text NOT NULL CHECK (source IN ('client','server')),
+  occurred_at timestamptz NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(install_id,attempt_id,event,provider)
+);
+CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
+CREATE TABLE IF NOT EXISTS signin_funnel_auth_flows (
+  flow_hash text PRIMARY KEY,
+  context jsonb NOT NULL,
+  expires_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS signin_funnel_daily (
+  day date NOT NULL,
+  platform text NOT NULL,
+  event text NOT NULL,
+  provider text NOT NULL,
+  outcome text NOT NULL,
+  installs bigint NOT NULL,
+  PRIMARY KEY(day,platform,event,provider,outcome)
+);
+CREATE TABLE IF NOT EXISTS store_download_days (
+  platform text NOT NULL CHECK (platform IN ('ios','android')),
+  day date NOT NULL,
+  installs bigint CHECK (installs >= 0 AND installs <= 9007199254740991),
+  source text NOT NULL,
+  fetched_at timestamptz,
+  attempted_at timestamptz NOT NULL,
+  final boolean NOT NULL DEFAULT false,
+  PRIMARY KEY(platform,day)
+);
 CREATE TABLE IF NOT EXISTS operator_function_events (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   function_name text NOT NULL CHECK (function_name IN

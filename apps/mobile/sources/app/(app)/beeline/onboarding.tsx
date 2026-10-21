@@ -1,3 +1,4 @@
+import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
@@ -89,6 +90,11 @@ interface PendingBind {
   managedIdentity?: ManagedIdentity;
 }
 
+async function exchangeFunnelTicket(ticket:string){
+  const context=await pendingFunnelAttempt().catch(()=>undefined);
+  return context?monolithSession.exchangeGitHubTicket(ticket,context):monolithSession.exchangeGitHubTicket(ticket);
+}
+
 function randomState(): string {
   return btoa(String.fromCharCode(...getRandomBytes(32)))
     .replace(/\+/g, '-')
@@ -111,6 +117,7 @@ const INPUT_FOCUSED_BORDER_WIDTH = 2;
 
 export default function BuzzOnboarding() {
   const repositoryOnboarding = useRepositoryOnboarding();
+  useEffect(() => { void funnelScreen().catch(()=>undefined); }, []);
   useLatencyRouteFrame('/beeline/onboarding', true, true);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -355,8 +362,9 @@ export default function BuzzOnboarding() {
             });
           return;
         }
+        void funnelCallback('success');
         if (repositoryOnboarding) setStatus('binding');
-        const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
+        const identityId = await exchangeFunnelTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
         if (alive) await enterAfterMonolithSignIn(identityId);
         return;
@@ -366,6 +374,7 @@ export default function BuzzOnboarding() {
       }
     })()
       .catch((error: unknown) => {
+        void funnelCallback('error','unknown');
         if (!alive) return;
         const next = noticeForAuthError(error);
         setNotice(next);
@@ -388,12 +397,14 @@ export default function BuzzOnboarding() {
     markSignInInFlight(true);
     let startedState: string | undefined;
     try {
+      const funnelContext=await beginFunnelAttempt('github').catch(()=>undefined);
       const runtime = getBuzzRuntimeConfig();
       const state = randomState();
       startedState = state;
       const challenge = await runResilientGitHubSignInSession({
         state,
         recoveryToken: randomState(),
+        funnelContext,
         runtime,
         openAuthSession: (authorizationUrl, redirectUri) =>
           openAccountAuthSession(
@@ -403,11 +414,14 @@ export default function BuzzOnboarding() {
           ),
         subscribeToUrls: subscribeToAuthUrls,
       });
+      void funnelCallback('success');
       if (repositoryOnboarding) setStatus('binding');
-      const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
+      const identityId = await exchangeFunnelTicket(challenge.ticket);
       await clearPendingGitHubSignInState();
       await enterAfterMonolithSignIn(identityId);
     } catch (error) {
+      const cancelled=error instanceof OidcBindError && ['browser_canceled','github_denied','oidc_denied'].includes(error.code);
+      void funnelCallback(cancelled?'cancelled':'error',cancelled?undefined:error instanceof OidcBindError && error.code==='offline'?'offline':'unknown');
       await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
       const next = noticeForAuthError(error);
       setStatus(next.status);

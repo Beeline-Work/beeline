@@ -1,3 +1,4 @@
+import { beginFunnelAttempt, funnelCallback } from './signin-funnel';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { isDesktopShell } from '@/utils/isDesktopShell';
@@ -22,12 +23,27 @@ export async function openAccountAuthSession(
   redirectUri: string,
   options: Record<string, unknown>,
 ): Promise<AuthSessionResult> {
-  if (!isDesktopShell()) {
-    return WebBrowser.openAuthSessionAsync(authorizationUrl, redirectUri, options);
+  // OIDC uses the same observer when enabled. GitHub's resilient wrapper has
+  // already attached its context, so repository installation is never counted.
+  const url=new URL(authorizationUrl);
+  const google=/^\/auth\/(?:oidc|google)\/start$/.test(url.pathname);
+  if(google && !url.searchParams.has('funnel')){
+    const context=await beginFunnelAttempt('google').catch(()=>undefined);
+    if(context)url.searchParams.set('funnel',JSON.stringify(context));
   }
-  const { openUrl } = await import('@tauri-apps/plugin-opener');
-  await openUrl(authorizationUrl);
-  return { type: 'opened' };
+  try {
+    if (!isDesktopShell()) {
+      const result=await WebBrowser.openAuthSessionAsync(url.toString(), redirectUri, options);
+      if(google && result.type==='success') {
+        const error=new URL(result.url).searchParams.get('error');
+        void funnelCallback(error ? 'error' : 'success',error ? 'provider_error' : undefined);
+      }else if(google && (result.type==='cancel' || result.type==='dismiss'))void funnelCallback('cancelled');
+      return result;
+    }
+    const { openUrl } = await import('@tauri-apps/plugin-opener');
+    await openUrl(url.toString());
+    return { type: 'opened' };
+  }catch(error){if(google)void funnelCallback('error','unknown');throw error;}
 }
 
 export function subscribeToAuthUrls(

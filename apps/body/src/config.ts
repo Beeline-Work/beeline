@@ -22,23 +22,6 @@ import type { McpServerWire } from './acp.js';
 
 export type SessionMode = 'readonly' | 'edit';
 
-/** Mutation-class tool names that must be absent in Room read-only sessions. */
-export const WRITE_TOOL_NAMES = [
-  'shell',
-  'execute',
-  'str_replace',
-  'write',
-  'Write',
-  'write_file',
-  'Bash',
-  'apply_patch',
-  'git_commit',
-  'git_checkout',
-  'git_branch',
-  'git_config',
-  'git_push',
-] as const;
-
 export interface BodyConfig {
   agentProgramError?: string;
   /** Installed daemon bundle identity reported with the monolith startup presence announcement. */
@@ -222,19 +205,6 @@ function commandInRunningBundle(command: string): string | undefined {
     }
   }
   return undefined;
-}
-
-/**
- * Resolve binary paths. Prefers env overrides, then worktree scratch build,
- * then PATH-style defaults.
- */
-export function resolveBinaries(env: NodeJS.ProcessEnv = process.env): {
-  agentBinary: string;
-  mcpBinary: string;
-} {
-  const agent = resolveAgentCommand({ kind: 'reference', env }).command;
-  const mcp = resolveMcpBinary(env);
-  return { agentBinary: agent, mcpBinary: mcp };
 }
 
 export function resolveMcpBinary(env: NodeJS.ProcessEnv = process.env): string {
@@ -566,20 +536,6 @@ export function buildAgentEnv(
   }
 
   return agentEnv;
-}
-
-/** True when agent env has enough credentials for a real LLM call. */
-export function hasLlmCredentials(agentEnv: Record<string, string>): boolean {
-  if (agentEnv.BUZZ_AGENT_PROVIDER === 'openai' || agentEnv.OPENAI_COMPAT_API_KEY) {
-    return Boolean(agentEnv.OPENAI_COMPAT_API_KEY && agentEnv.OPENAI_COMPAT_MODEL);
-  }
-  if (agentEnv.BUZZ_AGENT_PROVIDER === 'anthropic') {
-    return Boolean(agentEnv.ANTHROPIC_API_KEY && agentEnv.ANTHROPIC_MODEL);
-  }
-  return Boolean(
-    (agentEnv.OPENAI_COMPAT_API_KEY && agentEnv.OPENAI_COMPAT_MODEL) ||
-    (agentEnv.ANTHROPIC_API_KEY && agentEnv.ANTHROPIC_MODEL),
-  );
 }
 
 export function loadBodyConfig(opts: {

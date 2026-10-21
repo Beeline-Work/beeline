@@ -8,7 +8,6 @@ export interface BuzzRuntimeConfig {
   relayUrl: 'https://usebeeline.app';
   /** Kept as a DTO field for call sites while all push operations use the monolith. */
   pushGatewayUrl: 'https://server.usebeeline.app';
-  monolithEnabled: true;
 }
 
 function normalizedUrl(value: string | undefined, fallback: string): string {
@@ -23,6 +22,5 @@ export function getBuzzRuntimeConfig(): BuzzRuntimeConfig {
     relayUrl: 'https://usebeeline.app',
     pushGatewayUrl: DEFAULT_MONOLITH_URL,
     monolithUrl: normalizedUrl(config.buzzyMonolithUrl, DEFAULT_MONOLITH_URL),
-    monolithEnabled: true,
   };
 }

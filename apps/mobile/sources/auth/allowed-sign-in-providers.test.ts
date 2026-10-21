@@ -8,14 +8,18 @@ describe('GitHub and Google mobile sign-in surface', () => {
   it('offers GitHub first and gates Google on the server capability', () => {
     const onboarding = source('app/(app)/beeline/onboarding.tsx');
     expect(onboarding.indexOf('testID="onboarding-github-sign-in"')).toBeLessThan(onboarding.indexOf('testID="onboarding-google-sign-in"'));
-    expect(onboarding).toContain('capabilities?.google === true');
+    expect(onboarding).toContain('readAuthCapabilities(runtime.monolithUrl)');
+    expect(onboarding).toContain('capabilities.google === true');
     expect(onboarding).toContain('Recommended');
     expect(onboarding).not.toContain('Continue with Apple');
     expect(existsSync(new URL('../app/(app)/beeline/google-callback.tsx', import.meta.url))).toBe(true);
   });
   it('starts monolith sign-in on the monolith auth host', () => {
     expect(source('app/(app)/beeline/onboarding.tsx')).toContain(
-      'startGitHubSignInWebFlow(state, runtime)',
+      'runResilientGitHubSignInSession({',
+    );
+    expect(source('auth/github-auth-session.ts')).toContain(
+      'const authBaseUrl = runtime.monolithUrl;',
     );
   });
 

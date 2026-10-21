@@ -525,11 +525,6 @@ export type WorkspaceMemberGrantView = AgentGrantView & {
   readonly agent: RoomViewIdentity;
 };
 
-/** One @System ledger card (the mobile twin of the server card payload). */
-export type WalletTxCardView = NonNullable<RoomViewMessage['walletTx']>;
-export type WalletInsufficientCardView = NonNullable<RoomViewMessage['walletInsufficient']>;
-export type WalletDelegationCardView = NonNullable<RoomViewMessage['walletDelegation']>;
-
 export type GrantRequestCardView = {
   readonly agent: RoomViewIdentity;
   readonly owner: RoomViewIdentity;
@@ -773,22 +768,6 @@ export type RoomHistoryOutlineDay = {
     readonly authorName: string;
     readonly authorHandle?: string;
   };
-};
-
-/** Prompt-ready conversation rows supplied directly by the Room endpoint. */
-export type AgentHistoryEntry = {
-  readonly eventId: string;
-  readonly channelId: string;
-  readonly type: 'human-message' | 'agent-message';
-  readonly author: {
-    readonly pubkey: string;
-    readonly kind: 'human' | 'agent';
-    readonly label: string;
-  };
-  readonly body: string;
-  readonly attachments: readonly AttachmentReference[];
-  readonly createdAt: number;
-  readonly provenance: 'relay-verified' | 'monolith-verified';
 };
 
 export type ChatListCorner = {

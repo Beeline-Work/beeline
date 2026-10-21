@@ -266,7 +266,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 
 **Workspace plate.** Every Workspace mark is a 3×3 block/slot/cut/void plate in tones of one brass hue (`WORKSPACE_BRASS_HUE` ≈ 40°); it goes solid below `CYPHER_MIN_SIZE` (24). Owners may set a Workspace picture, seated concentric inside its bezel (`buzz/workspace-tile.ts`).
 
-**Pictures.** Photo overrides for people and agents stay off (`PHOTO_OVERRIDES_ENABLED`, `photoIdentityMarksEnabled`). The image exceptions are Workspace pictures, server-generated agent portraits (`/v1/agent-avatars/`), and connector logos.
+**Pictures.** Photo overrides for people and agents stay off: `IdentityMark` renders no person or agent relay photo, and `identity.photo-darkflight.test.ts` keeps picture actions off their settings. The image exceptions are Workspace pictures, server-generated agent portraits (`/v1/agent-avatars/`), and connector logos.
 
 **Names and vocabulary.** An agent's name comes from its registered `displayName` via `resolveAgentDisplayIdentity`; the soul shapes personality and art, never the name. "Room," never "Channel." `Members` names the surface (`MEMBERS_LABEL`); its sections are `People N` and `Agents N`. Room and corner names carry the `#` mark wherever they are exposed (`displayRoomIndexTitle`, `displayCornerTitle`), added at render only. Room and corner state is the drawn `StateCircle`, never a typed diamond.
 
@@ -274,7 +274,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: reveal 176 ms (`PixelGateReveal`), confirm 240 ms, loader frame 133 ms, new-message 140 ms fade+rise (`NewMessageMaterialize`), demote dip 90 ms, and one live clock `liveCycle` 1120 ms. All respect `ReduceMotion.System`; continuous ones stop when the app backgrounds. Nothing but the continuous loops exceeds ~240 ms.
 
 - **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
-- At most two of `PixelLoader` / `HullWaveSignal` run on screen at once.
+- At most two of `PixelLoader` run on screen at once.
 - **The self-painting glyph** is the one drawn loop: `BootPaint` paints once on splash; `SurfaceGlyphLoader` (page and Room load gates) and `BeelineMarkSpinner` (thinking line) draw the Beeline mark, unwind, and rest empty. Reduced motion shows the static mark.
 - **Exceptions:** the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress).
 

@@ -25,7 +25,7 @@ const mount = await createMonolithAuth(database, origin, undefined, {
 });
 const server = createBeelineServer({ database, auth: {} as never, phone: {} as never,
   daemon: {} as never, live: new LiveHub(), authHandler: mount.handle,
-  mediaMaximumBytes: 1, webAppOrigins: ['http://localhost:8089'],
+  mediaMaximumBytes: 1, webAppOrigins: ['http://localhost:8089', 'http://127.0.0.1:8089'],
 });
 await new Promise<void>(resolve => server.listen(4319, '127.0.0.1', resolve));
 console.log('Google preview fixture ready on 4319');

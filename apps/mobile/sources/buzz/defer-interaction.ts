@@ -16,10 +16,3 @@ export function afterInteractions(run: () => void): () => void {
   const handle = InteractionManager.runAfterInteractions(run);
   return () => handle.cancel();
 }
-
-/** Promise form, for awaiting the settle point inside an async orchestration. */
-export function whenInteractionsComplete(): Promise<void> {
-  return new Promise((resolve) => {
-    InteractionManager.runAfterInteractions(() => resolve());
-  });
-}

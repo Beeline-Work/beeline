@@ -24,18 +24,9 @@ describe('community invite links', () => {
   });
 
   it('uses the app-link origin instead of the monolith API origin', () => {
-    expect(
-      resolveCommunityInvitePublicOrigin('https://server.usebeeline.app', {
-        monolithEnabled: true,
-        relayUrl: 'https://usebeeline.app',
-      }),
-    ).toBe('https://usebeeline.app');
-    expect(
-      resolveCommunityInvitePublicOrigin('https://relay.example', {
-        monolithEnabled: false,
-        relayUrl: 'https://usebeeline.app',
-      }),
-    ).toBe('https://relay.example');
+    expect(resolveCommunityInvitePublicOrigin({ relayUrl: 'https://usebeeline.app' })).toBe(
+      'https://usebeeline.app',
+    );
   });
 
   it('reuses the client invite flow and returns its shareable URL', async () => {

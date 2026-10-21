@@ -372,7 +372,6 @@ interface RoomRow {
   repository_updated_at: Date | null;
   repository_resolution: 'repository' | 'none' | 'unverified';
   github_installation_id: string | null;
-  github_events_enabled: boolean;
   reviewer_agent_id: string | null;
   reviewer_fallback_ids: string[] | null;
   created_at: Date;
@@ -2304,7 +2303,7 @@ export class PhoneService {
               ...((parent ?? room).github_installation_id
                 ? { githubInstallationId: Number((parent ?? room).github_installation_id) }
                 : {}),
-              githubEventsEnabled: (parent ?? room).github_events_enabled,
+              githubEventsEnabled: true,
               ...(typeof allowAutoMerge === 'boolean' ? { allowAutoMerge } : {}),
             },
           }
@@ -8485,7 +8484,7 @@ export class PhoneService {
       `UPDATE rooms
        SET repository_key=NULL,repository_name=NULL,repository_remote=NULL,
            repository_target_branch='main',github_installation_id=NULL,
-           repository_resolution='none',github_events_enabled=true,
+           repository_resolution='none',
            repository_updated_at=now(),updated_at=now()
        WHERE id=$1`,
       [input.roomId],
@@ -8509,7 +8508,7 @@ export class PhoneService {
       },
       targetBranch: row.repository_target_branch,
       updatedAt: unix(row.repository_updated_at ?? row.updated_at),
-      githubEventsEnabled: row.github_events_enabled,
+      githubEventsEnabled: true,
       source: 'config' as const,
     };
   }

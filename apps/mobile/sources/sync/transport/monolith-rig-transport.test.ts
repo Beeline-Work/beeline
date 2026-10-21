@@ -17,7 +17,6 @@ vi.mock('expo-crypto', () => ({
 }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
-    monolithEnabled: true,
     monolithUrl: 'https://server.example',
     relayUrl: 'wss://legacy.example',
   }),

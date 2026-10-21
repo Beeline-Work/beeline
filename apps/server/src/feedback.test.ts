@@ -51,8 +51,8 @@ beforeEach(async () => {
   );
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [WORKSPACE]);
   await database.query(
-    `INSERT INTO rooms(id,workspace_id,created_by,name,github_events_enabled)
-     VALUES($1,$2,$3,'Moonbase Launch',false)`,
+    `INSERT INTO rooms(id,workspace_id,created_by,name)
+     VALUES($1,$2,$3,'Moonbase Launch')`,
     [ROOM, WORKSPACE, PERSON],
   );
   await database.query(

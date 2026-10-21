@@ -481,6 +481,7 @@ async function main() {
         reconciledCornerReviewers = result.ok;
       }
       if (githubJobs) {
+        await backgroundJobs.run('corner-branch-cleanup', () => githubJobs.retryBranchDeletions());
         await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
       }
       if (githubJobs && !reconciledMergeability) {

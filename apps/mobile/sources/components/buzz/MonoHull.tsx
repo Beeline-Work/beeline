@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   AppState,
   Platform,
@@ -142,36 +142,6 @@ export function PixelLoader({ compact = false }: { compact?: boolean }) {
   );
 }
 
-/** One restrained live tip for a streaming activity timeline. */
-export function HullActivityTip({ label = 'working…' }: { label?: string }) {
-  const reducedMotion = useReducedMotion();
-  const opacity = useSharedValue(1);
-
-  useEffect(() => {
-    if (reducedMotion) {
-      opacity.value = 1;
-      return;
-    }
-    opacity.value = withRepeat(
-      withTiming(0.28, {
-        duration: motionTokens.liveCycle,
-        easing: easeOutQuint,
-        reduceMotion: ReduceMotion.System,
-      }),
-      -1,
-      true,
-    );
-  }, [opacity, reducedMotion]);
-
-  const dotStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
-  return (
-    <View accessibilityLabel={label} accessibilityRole="progressbar" style={styles.activityTip}>
-      <Animated.View style={[styles.activityTipDot, dotStyle]} />
-      <Text style={styles.activityTipLabel}>{label}</Text>
-    </View>
-  );
-}
-
 function LoaderCell({
   frame,
   index,
@@ -300,12 +270,6 @@ export function StateCircle({
   );
 }
 
-type HullWaveSignalProps = {
-  active?: boolean;
-  label: 'LIVE' | 'WAITING' | 'RUNNING';
-  compact?: boolean;
-};
-
 /**
  * The one continuous loop the app runs while it is on screen and unattended:
  * a linear 0→1 cycle other live primitives read a phase off. Kept here so
@@ -343,67 +307,14 @@ function useLiveCycle(active: boolean): { progress: SharedValue<number>; still: 
   return { progress, still: Boolean(reducedMotion || !active) };
 }
 
-export function HullWaveSignal({ active = true, label, compact = false }: HullWaveSignalProps) {
-  const { progress, still } = useLiveCycle(active);
-  // Gold means one thing product-wide: an agent is alive and working. LIVE is
-  // that state; WAITING and RUNNING report the app's own progress, so they
-  // stay on the grayscale signal tone.
-  const alive = label === 'LIVE';
-
-  const segments = useMemo(
-    () => Array.from({ length: compact ? 6 : 9 }, (_, index) => index),
-    [compact],
-  );
-  return (
-    <View accessibilityLabel={label} accessibilityRole="text" style={styles.waveSignal}>
-      <View style={styles.waveSegments}>
-        {segments.map((index) => (
-          <WaveSegment
-            key={index}
-            alive={alive}
-            index={index}
-            count={segments.length}
-            progress={progress}
-            staticState={still}
-          />
-        ))}
-      </View>
-      <Text style={styles.waveLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function WaveSegment({
-  alive,
-  index,
-  count,
-  progress,
-  staticState,
-}: {
-  alive: boolean;
-  index: number;
-  count: number;
-  progress: SharedValue<number>;
-  staticState: boolean;
-}) {
-  const style = useAnimatedStyle(() => {
-    if (staticState) return { opacity: index === 0 ? 1 : 0.3 };
-    const phase = progress.value * Math.PI * 2 + (index / count) * Math.PI * 2;
-    return { opacity: 0.3 + 0.7 * Math.sin(phase) ** 2 };
-  });
-  return <Animated.View style={[styles.waveSegment, alive && styles.waveSegmentLive, style]} />;
-}
-
 /** The dimmest the live pulse ever goes. High enough that the mark it carries
  * stays legible at every point in the cycle — a breath, not a blink. */
 const LIVE_PULSE_FLOOR = 0.55;
 
 /**
- * The same live wave, reduced to a single mark: one slow sin² breath on
- * whatever it wraps, on `HullWaveSignal`'s clock. It exists so a dense index
- * row can carry the "an agent is alive here" signal at the size of one glyph
- * — a nine-segment wave in a 30px leading column would be noise, and a static
- * accent dot would not read as *live*.
+ * One slow sin² breath on whatever it wraps, on the live-cycle clock. It
+ * exists so a dense index row can carry the "an agent is alive here" signal
+ * at the size of one glyph.
  *
  * Motion is the redundant channel here, never the only one: what it wraps is
  * already the filled brass needs-you circle.
@@ -647,7 +558,6 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.borderQuiet,
     },
     mechanismRailLive: { backgroundColor: groknight.accent },
-    activityTip: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 4 },
     /* ── Unified state circle: Room rollup and corner state ──────────── */
     stateCircleSlot: {
       alignItems: 'center',
@@ -695,20 +605,6 @@ const styles = StyleSheet.create((theme) => {
     stateCircleWorkingStill: {
       borderColor: groknight.steel,
       borderTopColor: groknight.steel,
-    },
-    activityTipDot: { width: 5, height: 5, backgroundColor: groknight.accent },
-    activityTipLabel: {
-      ...groknight.type.machine,
-      color: groknight.accent,
-    },
-    waveSignal: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 },
-    waveSegments: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    waveSegment: { width: 3, height: 6, backgroundColor: groknight.signalBright },
-    waveSegmentLive: { backgroundColor: groknight.accent },
-    waveLabel: {
-      ...groknight.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
     },
     revealStrip: { position: 'absolute', right: 0, left: 0, backgroundColor: groknight.bgRaised },
   };

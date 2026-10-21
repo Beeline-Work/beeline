@@ -6,7 +6,7 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 /**
  * The Settings identity tile is the same picture-in-a-frame geometry as the
  * Workspace settings tile, measured on painted pixels. Person photos stay
- * darkflighted in the product (`PHOTO_OVERRIDES_ENABLED`), so the proof paints
+ * out of the product, so the proof paints
  * a loud square through a shimmed IdentityMark — a generated creature plate
  * hides the corners this seat exists to round.
  */
@@ -46,7 +46,7 @@ function seatShims(mobile: string): Record<string, string> {
     '@/buzz/person-name': `export const ensurePersonNameForWorkspace = async () => ({ name: 'Captain' });
     export const loadPreferredPersonName = async () => 'Captain';
     export const savePreferredPersonName = async () => undefined;`,
-    '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });`,
+    '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ relayUrl: 'https://relay.test' });`,
     '@/buzz/connectors-model': `export const workbenchSummary = () => ({ value: '0 connected' });`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
     '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false;`,

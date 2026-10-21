@@ -22,6 +22,7 @@
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-env-aliases.mjs",
+        "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/check-acp-adapters.mjs",
         "scripts/prove-voice-mode.ts",

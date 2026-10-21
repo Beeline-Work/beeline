@@ -10,11 +10,11 @@ acceptance is claimed.
 1. Run `node --import tsx .verification/google-preview/fixture.mts`.
 2. In `apps/mobile`, run
    `CI=1 EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:4319 npx expo start --web --port 8089 --max-workers 2`.
-3. Open `http://localhost:8089/beeline/onboarding` in a fresh browser.
+3. Open `http://127.0.0.1:8089/beeline/onboarding` in a fresh browser.
    `without-preview.png` shows GitHub alone, with Google hidden even though the
    service's master switch is on. The production-default master-off case is
    separately asserted by the mounted HTTP matrix.
-4. Open `http://localhost:8089/?google_preview=` followed by 43 lowercase `p`
+4. Open `http://127.0.0.1:8089/?google_preview=` followed by 43 lowercase `p`
    characters. This is a public synthetic fixture value, not a production secret.
    The app removes the query and routes to onboarding. `with-preview.png` shows
    GitHub first with Recommended and Google second. Revisiting the token-free
@@ -73,3 +73,9 @@ Then post three consecutive production Android Google-owner runs ending in a
 merged test PR, real iOS E1/E3 recordings, the production GitHub walkthrough,
 and real-token existing-org admin evidence. Keep everyone-on unset pending
 lunchboxfortwo's separate decision.
+
+Final validation after integrating `origin/main` (`06bf3a7c8`): 107 auth/server/tool
+checks, 8 selected Beebee integration checks, and 85 mobile checks passed.
+Root typecheck passed. The Account browser geometry proof was rerun after
+resolving the removed-runtime-flag overlap. Existing #2668 test cases were
+preserved. The screenshots above show the final integrated UI.

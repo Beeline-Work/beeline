@@ -19,7 +19,7 @@ const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
-const runtime = vi.hoisted(() => ({ monolithEnabled: true, relayUrl: 'https://usebeeline.app' }));
+const runtime = vi.hoisted(() => ({ relayUrl: 'https://usebeeline.app' }));
 // The shared registry entries settings reads, keyed by endpoint.
 const hotSurfaces = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
@@ -234,7 +234,6 @@ beforeEach(() => {
   roomViews.workspace.mockResolvedValue(workspaceView());
   roomViews.chats.mockResolvedValue(chatListView());
   phoneOperation.mockResolvedValue(undefined);
-  runtime.monolithEnabled = true;
   avatarUpload.pickAndUploadAvatar.mockResolvedValue(null);
 });
 
@@ -601,22 +600,6 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'room-sheet' }).props.visible).toBe(false);
     expect(renderer.root.findByProps({ testID: 'room-visibility-private-room' }).props.value).toBe(
       'Public',
-    );
-  });
-
-  it('refuses Room visibility changes outside the Monolith runtime', async () => {
-    runtime.monolithEnabled = false;
-    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
-    const renderer = await render();
-
-    act(() => renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props.onPress());
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'room-sheet-visibility' }).props.onPress();
-    });
-
-    expect(phoneOperation).not.toHaveBeenCalled();
-    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
-      'Room visibility requires the current Beeline runtime.',
     );
   });
 

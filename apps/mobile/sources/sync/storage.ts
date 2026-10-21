@@ -41,14 +41,6 @@ subscribeSettingsWrites((key) => {
     else storage.setState({ localSettings: loadLocalSettings() });
 });
 
-export function useSettings(): Settings {
-    return storage(useShallow((state) => state.settings));
-}
-
-export function useLocalSettings(): LocalSettings {
-    return storage(useShallow((state) => state.localSettings));
-}
-
 export function useLocalSettingMutable<K extends keyof LocalSettings>(
     name: K,
 ): [LocalSettings[K], (value: LocalSettings[K]) => void] {

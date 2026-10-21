@@ -11,15 +11,16 @@ const notifications = vi.hoisted(() => ({
   getDevicePushTokenAsync: vi.fn(),
 }));
 const platformState = vi.hoisted(() => ({ OS: 'android' as 'android' | 'ios' }));
+const operation = vi.hoisted(() => vi.fn());
 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: storage }));
-vi.mock('@beeline/nostr', () => ({ nip98AuthHeader: vi.fn(() => 'Nostr signed') }));
 vi.mock('expo-device', () => ({ isDevice: true }));
 vi.mock('expo-notifications', () => notifications);
 vi.mock('react-native', () => ({ Platform: platformState }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ pushGatewayUrl: 'https://push.example' }),
 }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation }));
 
 import {
   getBuzzPushRegistrationState,
@@ -56,6 +57,7 @@ describe('Buzz push preference', () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     platformState.OS = 'android';
+    operation.mockResolvedValue({});
     storage.getItem.mockResolvedValue(null);
     storage.setItem.mockResolvedValue(undefined);
     storage.removeItem.mockResolvedValue(undefined);
@@ -92,21 +94,17 @@ describe('Buzz push preference', () => {
   });
 
   it('registers, persists the truthful state, and never logs the full token', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
     const allLogs = () =>
       [...logSpy.mock.calls, ...warnSpy.mock.calls].map((parts) => parts.join(' '));
 
     const result = await registerBuzzPushNotifications(identity);
 
     expect(result).toMatchObject({ registered: true, retryable: false, phase: 'registered' });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://push.example/registrations',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ authorization: 'Nostr signed' }),
-      }),
-    );
+    expect(operation).toHaveBeenCalledWith('registerPushDevice', {
+      token: FCM_TOKEN,
+      platform: 'android',
+      environment: 'physical',
+    });
     expect(storage.setItem).toHaveBeenCalledWith(
       REGISTRATION_STATE_KEY,
       expect.stringContaining('"registered":true'),
@@ -119,52 +117,15 @@ describe('Buzz push preference', () => {
     expect(logged).not.toContain(FCM_TOKEN);
   });
 
-  it('sends a test notification with the runtime gateway URL and current identity auth', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
+  it('sends a test notification through the server', async () => {
     await sendBuzzPushTestNotification(identity);
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://push.example/test-send',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ authorization: 'Nostr signed' }),
-        body: JSON.stringify({ pubkey: identity.publicKey }),
-      }),
-    );
-  });
-
-  it('surfaces the push gateway error from a rejected test notification', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ error: 'no registered devices' }), {
-          status: 404,
-          headers: { 'content-type': 'application/json' },
-        }),
-      ),
-    );
-
-    await expect(sendBuzzPushTestNotification(identity)).rejects.toThrow('no registered devices');
-  });
-
-  it('bounds a test notification request that never settles', async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
-
-    const rejection = expect(sendBuzzPushTestNotification(identity)).rejects.toThrow(
-      'test notification request timed out after 7500ms',
-    );
-    await vi.advanceTimersByTimeAsync(7_500);
-
-    await rejection;
+    expect(operation).toHaveBeenCalledWith('sendPushTest', {});
   });
 
   it('surfaces a token-acquisition timeout as a distinct retryable phase', async () => {
     vi.useFakeTimers();
     notifications.getDevicePushTokenAsync.mockReturnValue(new Promise(() => undefined));
-    vi.stubGlobal('fetch', vi.fn());
 
     const pending = registerBuzzPushNotifications(identity);
     await vi.advanceTimersByTimeAsync(7_500);
@@ -186,8 +147,6 @@ describe('Buzz push preference', () => {
 
   it('classifies a generic FCM token failure before contacting the gateway', async () => {
     notifications.getDevicePushTokenAsync.mockRejectedValue(new Error('FCM service unavailable'));
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
 
     const result = await registerBuzzPushNotifications(identity);
 
@@ -197,24 +156,10 @@ describe('Buzz push preference', () => {
       phase: 'token-failed',
       message: 'FCM service unavailable',
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(operation).not.toHaveBeenCalled();
     expect(storage.setItem).toHaveBeenCalledWith(
       REGISTRATION_STATE_KEY,
       expect.stringContaining('"phase":"token-failed"'),
-    );
-  });
-
-  it('surfaces a gateway rejection as a retryable failure with the HTTP status', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 503 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const result = await registerBuzzPushNotifications(identity);
-
-    expect(result).toMatchObject({ registered: false, retryable: true, phase: 'gateway-rejected' });
-    expect(logSpy.mock.calls.some((parts) => parts.join(' ').includes('HTTP 503'))).toBe(true);
-    expect(storage.setItem).toHaveBeenCalledWith(
-      REGISTRATION_STATE_KEY,
-      expect.stringContaining('"phase":"gateway-rejected"'),
     );
   });
 
@@ -311,12 +256,10 @@ describe('Buzz push preference', () => {
     });
   });
 
-  it('unregisters the stored device token with signed identity authorization', async () => {
+  it('unregisters the stored device token through the server', async () => {
     storage.getItem.mockImplementation(async (key: string) =>
       key.includes('/token/') ? 'fcm-token-B_12345678901234567890' : null,
     );
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
 
     const result = await setBuzzPushEnabled(identity, false);
 
@@ -325,13 +268,11 @@ describe('Buzz push preference', () => {
       `@beeline/buzz-push/enabled/${identity.publicKey}`,
       '0',
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://push.example/registrations',
-      expect.objectContaining({
-        method: 'DELETE',
-        headers: expect.objectContaining({ authorization: 'Nostr signed' }),
-      }),
-    );
+    expect(operation).toHaveBeenCalledWith('unregisterPushDevice', {
+      token: 'fcm-token-B_12345678901234567890',
+      platform: 'android',
+      environment: 'physical',
+    });
     expect(storage.removeItem).toHaveBeenCalledWith(
       `@beeline/buzz-push/token/${identity.publicKey}`,
     );
@@ -384,6 +325,7 @@ describe('Buzz push preference on iOS', () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     platformState.OS = 'ios';
+    operation.mockResolvedValue({});
     storage.getItem.mockResolvedValue(null);
     storage.setItem.mockResolvedValue(undefined);
     storage.removeItem.mockResolvedValue(undefined);
@@ -434,30 +376,18 @@ describe('Buzz push preference on iOS', () => {
   });
 
   it('registers the APNs device token with platform "ios"', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
     const result = await registerBuzzPushNotifications(identity);
 
     expect(result).toMatchObject({ registered: true, retryable: false, phase: 'registered' });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://push.example/registrations',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          pubkey: identity.publicKey,
-          token: APNS_TOKEN,
-          platform: 'ios',
-          environment: 'physical',
-        }),
-      }),
-    );
+    expect(operation).toHaveBeenCalledWith('registerPushDevice', {
+      token: APNS_TOKEN,
+      platform: 'ios',
+      environment: 'physical',
+    });
   });
 
   it('rejects a token whose type does not match the running platform', async () => {
     notifications.getDevicePushTokenAsync.mockResolvedValue({ type: 'android', data: APNS_TOKEN });
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
 
     const result = await registerBuzzPushNotifications(identity);
 
@@ -467,7 +397,7 @@ describe('Buzz push preference on iOS', () => {
       phase: 'token-type-unexpected',
       message: 'iOS did not return an APNs token',
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(operation).not.toHaveBeenCalled();
   });
 
   it('retries an unregistered but retryable iOS attempt on foreground', async () => {
@@ -476,8 +406,6 @@ describe('Buzz push preference on iOS', () => {
         ? storedRegistrationState({ failedAttempts: 2, updatedAt: Date.now() - 60_000 })
         : null,
     );
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
 
     const result = await retryBuzzPushRegistration(identity);
 
@@ -488,15 +416,13 @@ describe('Buzz push preference on iOS', () => {
     storage.getItem.mockImplementation(async (key: string) =>
       key.includes('/token/') ? APNS_TOKEN : null,
     );
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
 
     const result = await setBuzzPushEnabled(identity, false);
 
     expect(result).toMatchObject({ registered: false, retryable: false, phase: 'disabled' });
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://push.example/registrations',
-      expect.objectContaining({ method: 'DELETE' }),
+    expect(operation).toHaveBeenCalledWith(
+      'unregisterPushDevice',
+      expect.objectContaining({ token: APNS_TOKEN, platform: 'ios' }),
     );
   });
 });

@@ -1,5 +1,6 @@
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import type { RepositorySignals } from './repository-onboarding.js';
+import { enqueueCornerBranchDeletion, retryCornerBranchDeletions } from './corner-branch-cleanup.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import {
   GITHUB_IDENTITY_AUDIENCE,
@@ -1131,22 +1132,7 @@ export class GitHubOperations {
       this.onRoomChanged?.(cornerId);
       return { status: 'refused', reason };
     }
-    if (target.feature_branch) {
-      try {
-        await this.app.deleteBranch(
-          Number(target.installation_id),
-          Number(target.repository_id),
-          target.full_name,
-          target.feature_branch,
-        );
-      } catch (error) {
-        // The merge webhook archives the corner; branch cleanup is best-effort.
-        console.error(
-          `[server] failed to delete merged corner branch ${target.full_name}:${target.feature_branch}:`,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
+    await enqueueCornerBranchDeletion(this.database, cornerId);
     return { status: 'started' };
   }
 
@@ -2605,6 +2591,7 @@ export class GitHubOperations {
           },
         },
       });
+      await enqueueCornerBranchDeletion(database, target.corner_id);
       await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
@@ -2613,20 +2600,11 @@ export class GitHubOperations {
     if (!archived) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);
-    try {
-      await this.app.deleteBranch(
-        Number(target.installation_id),
-        Number(target.repository_id),
-        pullRequest.repository,
-        pullRequest.branch,
-      );
-    } catch (error) {
-      // Archival and the helper close signal are authoritative. Branch cleanup is best-effort.
-      console.error(
-        `[server] failed to delete merged corner branch ${pullRequest.repository}:${pullRequest.branch}:`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
+    await this.retryBranchDeletions(target.corner_id);
+  }
+
+  async retryBranchDeletions(cornerId?: string) {
+    await retryCornerBranchDeletions(this.database, this.app, cornerId);
   }
 
   private async syncInstallation(

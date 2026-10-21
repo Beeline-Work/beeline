@@ -594,8 +594,7 @@ export default function BuzzMembers({
     setWorking('invite-person');
     setError(null);
     try {
-      const runtime = getBuzzRuntimeConfig();
-      const publicInviteOrigin = resolveCommunityInvitePublicOrigin(relayUrl, runtime);
+      const publicInviteOrigin = resolveCommunityInvitePublicOrigin(getBuzzRuntimeConfig());
       const url = await createCommunityInviteUrl(
         await writeClient(),
         workspaceId,

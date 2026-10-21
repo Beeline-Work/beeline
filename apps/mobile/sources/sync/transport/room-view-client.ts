@@ -1,8 +1,4 @@
-import {
-  RoomViewClient as LegacyRoomViewClient,
-  RoomViewHttpError,
-  type RoomViewClientOptions,
-} from '@beeline/buzz-client';
+import { RoomViewHttpError, type RoomViewClientOptions } from '@beeline/buzz-client';
 import {
   readAgentVoiceCatalog,
   readAgentVoicePreview,
@@ -396,14 +392,11 @@ function stamped<T>(read: Promise<T>, stamp = currentSurfaceStamp()): Promise<T>
   });
 }
 
-/** Stable read seam: OTA config chooses the monolith or untouched relay reader. */
+/** Stable read seam over the monolith reader. */
 export class RoomViewClient {
-  private readonly implementation: LegacyRoomViewClient | MonolithRoomViewClient;
-  constructor(options: RoomViewClientOptions) {
-    this.implementation = getBuzzRuntimeConfig().monolithEnabled
-      ? new MonolithRoomViewClient()
-      : new LegacyRoomViewClient(options);
-  }
+  private readonly implementation = new MonolithRoomViewClient();
+  // Callers still describe their relay and identity; the monolith reader authenticates itself.
+  constructor(_options: RoomViewClientOptions) {}
   workspaces() {
     return this.implementation.workspaces();
   }
@@ -417,13 +410,9 @@ export class RoomViewClient {
     return this.implementation.agent(workspaceId, agentId, workCursor);
   }
   agentVoices(workspaceId: string, agentId: string, roomId?: string) {
-    if (!(this.implementation instanceof MonolithRoomViewClient))
-      return Promise.reject(new Error('Voice selection requires the server'));
     return this.implementation.agentVoices(workspaceId, agentId, roomId);
   }
   setAgentVoice(workspaceId: string, agentId: string, voiceId: string) {
-    if (!(this.implementation instanceof MonolithRoomViewClient))
-      return Promise.reject(new Error('Voice selection requires the server'));
     return this.implementation.setAgentVoice(workspaceId, agentId, voiceId);
   }
   previewAgentVoice(
@@ -431,8 +420,6 @@ export class RoomViewClient {
     agentId: string,
     voiceId: string,
   ) {
-    if (!(this.implementation instanceof MonolithRoomViewClient))
-      return Promise.reject(new Error('Voice selection requires the server'));
     return this.implementation.previewAgentVoice(workspaceId, agentId, voiceId);
   }
   chats(id: string) {
@@ -456,31 +443,21 @@ export class RoomViewClient {
     return stamped(this.implementation.history(id, before));
   }
   historyAfter(id: string, messageId: string): Promise<RoomHistoryView> {
-    return this.implementation instanceof MonolithRoomViewClient
-      ? stamped(this.implementation.historyAfter(id, messageId))
-      : Promise.reject(new Error('Forward history requires the monolith'));
+    return stamped(this.implementation.historyAfter(id, messageId));
   }
   historyAround(id: string, messageId: string): Promise<RoomHistoryView> {
-    return this.implementation instanceof MonolithRoomViewClient
-      ? stamped(this.implementation.historyAround(id, messageId))
-      : Promise.reject(new Error('Targeted history requires the monolith'));
+    return stamped(this.implementation.historyAround(id, messageId));
   }
-  /** The whole-history outline exists only on the monolith; null elsewhere. */
   outline(id: string, timeZone: string): Promise<RoomHistoryOutline | null> {
-    return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.outline(id, timeZone)
-      : Promise.resolve(null);
+    return this.implementation.outline(id, timeZone);
   }
-  /** Room list message search exists only on the monolith; null elsewhere. */
   searchMessages(
     workspaceId: string,
     query: string,
     before?: string,
     signal?: AbortSignal,
   ): Promise<MessageSearchView | null> {
-    return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.searchMessages(workspaceId, query, before, signal)
-      : Promise.resolve(null);
+    return this.implementation.searchMessages(workspaceId, query, before, signal);
   }
   invite(token: string) {
     return this.implementation.invite(token);
@@ -488,17 +465,13 @@ export class RoomViewClient {
   claimAgentPairing(code: string) {
     return this.implementation.claimAgentPairing(code);
   }
-  abandonAgentPairing(code: string) {
-    return this.implementation.abandonAgentPairing(code);
+  abandonAgentPairing(_code: string) {
+    return this.implementation.abandonAgentPairing();
   }
   markRead(roomId: string, messageId: string): Promise<void> {
-    return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.markRead(roomId, messageId)
-      : Promise.resolve();
+    return this.implementation.markRead(roomId, messageId);
   }
   markUnread(roomId: string, messageId: string): Promise<void> {
-    return this.implementation instanceof MonolithRoomViewClient
-      ? this.implementation.markUnread(roomId, messageId)
-      : Promise.resolve();
+    return this.implementation.markUnread(roomId, messageId);
   }
 }

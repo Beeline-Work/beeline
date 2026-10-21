@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { nip98AuthHeader } from '@beeline/nostr';
 import type { Identity } from '@beeline/buzz-client';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
@@ -294,57 +293,16 @@ async function attemptRegistration(
       `[beeline-push] ${service} token acquired fingerprint=${tokenFingerprint(nativeToken.data)} length=${nativeToken.data.length}`,
     );
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REGISTRATION_TIMEOUT_MS);
     try {
-      const runtime = getBuzzRuntimeConfig();
-      const registrationUrl = `${runtime.pushGatewayUrl}/registrations`;
-      const response = runtime.monolithEnabled
-        ? null
-        : await fetch(registrationUrl, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              authorization: nip98AuthHeader(
-                identity.secretKey,
-                identity.publicKey,
-                registrationUrl,
-                'POST',
-              ),
-            },
-            body: JSON.stringify({
-              pubkey: identity.publicKey,
-              token: nativeToken.data,
-              platform,
-              environment: Device.isDevice ? 'physical' : 'emulator',
-            }),
-            signal: controller.signal,
-          });
-      if (runtime.monolithEnabled) {
-        await monolithPhoneOperation('registerPushDevice', {
-          token: nativeToken.data,
-          platform,
-          environment: Device.isDevice ? 'physical' : 'emulator',
-        });
-      }
-      console.log(`[beeline-push] POST ${registrationUrl} -> HTTP ${response?.status ?? 200}`);
-      if (!response) {
-        await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
-        return { registered: true, retryable: false, phase: 'registered' };
-      }
-      if (!response.ok) {
-        throw new Error(`gateway returned HTTP ${response.status}`);
-      }
-      if (response.status === 202) {
-        console.log(`[beeline-push] non-production ${service} device ignored`);
-        return {
-          registered: false,
-          retryable: true,
-          phase: 'gateway-rejected',
-          message: `gateway ignored a non-production ${service} device (HTTP 202)`,
-        };
-      }
+      const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
+      await monolithPhoneOperation('registerPushDevice', {
+        token: nativeToken.data,
+        platform,
+        environment: Device.isDevice ? 'physical' : 'emulator',
+      });
+      console.log(`[beeline-push] POST ${registrationUrl} -> HTTP 200`);
       await AsyncStorage.setItem(tokenKey(identity.publicKey), nativeToken.data);
+      return { registered: true, retryable: false, phase: 'registered' };
     } catch (error) {
       const failure = classifyRegistrationFailure(error);
       console.warn(
@@ -357,12 +315,7 @@ async function attemptRegistration(
         phase: failure.phase,
         message: errorMessage(error),
       };
-    } finally {
-      clearTimeout(timeout);
     }
-
-    console.log(`[beeline-push] ${service} device registered`);
-    return { registered: true, retryable: false, phase: 'registered' };
   } catch (error) {
     const failure = classifyRegistrationFailure(error);
     console.warn(`[beeline-push] registration failed phase=${failure.phase}:`, errorMessage(error));
@@ -379,48 +332,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function pushGatewayError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown };
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error;
-  } catch {
-    // Fall through to the HTTP status when the gateway did not return JSON.
-  }
-  return `gateway returned HTTP ${response.status}`;
-}
-
 /** Send an authenticated proof-of-delivery notification to this identity's devices. */
-export async function sendBuzzPushTestNotification(identity: Identity): Promise<void> {
-  if (getBuzzRuntimeConfig().monolithEnabled) {
-    await monolithPhoneOperation('sendPushTest', {});
-    return;
-  }
-  const testSendUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/test-send`;
-  const controller = new AbortController();
-  try {
-    await withRegistrationTimeout(
-      (async () => {
-        const response = await fetch(testSendUrl, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            authorization: nip98AuthHeader(
-              identity.secretKey,
-              identity.publicKey,
-              testSendUrl,
-              'POST',
-            ),
-          },
-          body: JSON.stringify({ pubkey: identity.publicKey }),
-          signal: controller.signal,
-        });
-        if (!response.ok) throw new Error(await pushGatewayError(response));
-      })(),
-      'test notification request',
-    );
-  } finally {
-    controller.abort();
-  }
+export async function sendBuzzPushTestNotification(_identity: Identity): Promise<void> {
+  await monolithPhoneOperation('sendPushTest', {});
 }
 
 /**
@@ -489,35 +403,11 @@ export async function setBuzzPushEnabled(
     });
     return disabledResult;
   }
-  const registrationUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/registrations`;
-  if (getBuzzRuntimeConfig().monolithEnabled) {
-    await monolithPhoneOperation('unregisterPushDevice', {
-      token,
-      platform,
-      environment: Device.isDevice ? 'physical' : 'emulator',
-    });
-    await AsyncStorage.removeItem(tokenKey(identity.publicKey));
-    await saveRegistrationState(identity.publicKey, {
-      ...disabledResult,
-      failedAttempts: 0,
-      updatedAt: Date.now(),
-    });
-    return disabledResult;
-  }
-  const response = await fetch(registrationUrl, {
-    method: 'DELETE',
-    headers: {
-      'content-type': 'application/json',
-      authorization: nip98AuthHeader(
-        identity.secretKey,
-        identity.publicKey,
-        registrationUrl,
-        'DELETE',
-      ),
-    },
-    body: JSON.stringify({ pubkey: identity.publicKey, token }),
+  await monolithPhoneOperation('unregisterPushDevice', {
+    token,
+    platform,
+    environment: Device.isDevice ? 'physical' : 'emulator',
   });
-  if (!response.ok) throw new Error(`gateway returned HTTP ${response.status}`);
   await AsyncStorage.removeItem(tokenKey(identity.publicKey));
   await saveRegistrationState(identity.publicKey, {
     ...disabledResult,

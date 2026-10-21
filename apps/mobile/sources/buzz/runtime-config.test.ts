@@ -20,7 +20,6 @@ describe('getBuzzRuntimeConfig', () => {
 
     expect(getBuzzRuntimeConfig().pushGatewayUrl).toBe('https://server.usebeeline.app');
     expect(getBuzzRuntimeConfig()).toMatchObject({
-      monolithEnabled: true,
       monolithUrl: 'https://server.usebeeline.app',
     });
   });
@@ -30,7 +29,6 @@ describe('getBuzzRuntimeConfig', () => {
       buzzyMonolithUrl: 'https://monolith.example/',
     });
     expect(getBuzzRuntimeConfig()).toMatchObject({
-      monolithEnabled: true,
       monolithUrl: 'https://monolith.example',
     });
   });

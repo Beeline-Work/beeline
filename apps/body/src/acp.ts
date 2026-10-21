@@ -751,25 +751,6 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
   return [...calls.values()];
 }
 
-/**
- * ACP tool kinds are intentionally portable and runtimes sometimes put the
- * concrete tool name in the title or raw input. Treat shell/execute as
- * mutating because an arbitrary command can cross the write boundary.
- */
-export function isMutatingPermissionRequest(request: AcpPermissionRequest): boolean {
-  const tool = request.toolCall;
-  const kind = tool?.kind?.toLowerCase();
-  if (kind && ['edit', 'execute', 'delete', 'move'].includes(kind)) return true;
-  const description = [tool?.title, tool?.rawInput]
-    .filter((value) => value !== undefined)
-    .map((value) => (typeof value === 'string' ? value : JSON.stringify(value)))
-    .join(' ')
-    .toLowerCase();
-  return /(^|[^a-z])(str_replace|write|edit|shell|bash|execute|create|delete|remove|move|rename|patch|apply_patch)([^a-z]|$)/.test(
-    description,
-  );
-}
-
 interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;

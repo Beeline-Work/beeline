@@ -68,7 +68,6 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline, TurnStepsLine } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -955,7 +954,7 @@ function AttachmentCard({
     !attachment.expired && attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
   const [mediaAuthorization, setMediaAuthorization] = useState<string>();
   useEffect(() => {
-    if (!image || !getBuzzRuntimeConfig().monolithEnabled) return;
+    if (!image) return;
     let live = true;
     void monolithSession
       .authorization()

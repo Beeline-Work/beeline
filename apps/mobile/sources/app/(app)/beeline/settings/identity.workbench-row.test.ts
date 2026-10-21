@@ -30,7 +30,6 @@ const permissionInfo = vi.hoisted(() => ({
     canAskAgain: true,
   })),
 }));
-const runtime = vi.hoisted(() => ({ monolithEnabled: false }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const notificationApi = vi.hoisted(() => ({
   getPresentedNotificationsAsync: vi.fn(async () => []),
@@ -140,7 +139,6 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
     publicKey: 'a'.repeat(64),
     secretKey: new Uint8Array(32).fill(1),
   })),
-  loadBuzzIdentityNsecForExport: vi.fn(async () => 'nsec1test'),
 }));
 vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => null),
@@ -151,7 +149,6 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
 vi.mock('@/buzz/person-name', () => ({
-  ensurePersonNameForWorkspace: vi.fn(async () => ({ name: 'Captain' })),
   loadPreferredPersonName: vi.fn(async () => 'Captain'),
   savePreferredPersonName: vi.fn(async () => undefined),
 }));
@@ -159,7 +156,6 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
     relayUrl: 'https://relay.test',
     pushGatewayUrl: 'https://push.test',
-    monolithEnabled: runtime.monolithEnabled,
   }),
 }));
 vi.mock('@/sync/appConfig', () => ({
@@ -342,7 +338,6 @@ async function refocus(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   mobileSurfaceCache.clear();
-  runtime.monolithEnabled = true;
   workspaceRead.workspaces.mockResolvedValue({ workspaces: [{ id: 'workspace-1' }] });
   client.getGlobalPersonProfile.mockResolvedValue({ name: 'Captain' });
   pushModule.getBuzzPushEnabled.mockResolvedValue(true);

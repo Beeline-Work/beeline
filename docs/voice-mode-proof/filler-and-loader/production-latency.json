@@ -1,0 +1,4401 @@
+{
+  "collectedAt": "2026-10-21",
+  "method": "Fly retained logs sought at each of 129 voice_messages commits (-10s through +45s); continuation generations share source messages. Per-instance image mapping uses Fly Machines version ULID times. Quantiles linearly interpolate (n-1)*p. No raw prompts or credentials retained.",
+  "turnCount": 129,
+  "traces": [
+    {
+      "traceId": "65b7d0a8-eca3-4dc9-836e-e934456fc7a8",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:22:25.499213612Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.6453299999702722,
+        "human_committed": 159.3101560000796,
+        "brain_request": 195.53761300002225
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f934a881-4fd1-4cd7-957a-2b797e936c9b",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:22:26.361957966Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.022569999797269702,
+        "continuation_restart": 0.6293299999088049,
+        "human_committed": 30.215533999959007,
+        "brain_request": 42.88697999995202,
+        "brain_first_token": 802.1456819998566,
+        "tts_request": 1033.4404919999652,
+        "brain_complete": 1164.5983649999835,
+        "tts_first_byte": 1203.4443939998746,
+        "first_audio_published": 1207.0075449999422,
+        "first_voiced_audio_published": 1207.8692959998734
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ce4d5903-8058-4177-b346-dbe4b2d0e62c",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:22:36.703185025Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.020480000181123614,
+        "human_committed": 27.926683000056073,
+        "brain_request": 28.442564000142738,
+        "brain_first_token": 747.9173469999805,
+        "tts_request": 813.6607980001718,
+        "tts_first_byte": 991.9991230000742,
+        "first_audio_published": 998.0229160001036,
+        "first_voiced_audio_published": 998.0892860000022,
+        "brain_complete": 1555.8192420001142
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "4437fe86-d288-41a8-be0f-7f6f61e806ee",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:23:09.659771793Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.025759999873116612,
+        "human_committed": 33.8520459998399,
+        "brain_request": 34.12503599980846,
+        "brain_complete": 1379.2769869999029,
+        "tts_request": 1385.8520109998062,
+        "tts_first_byte": 1558.256092999829,
+        "first_audio_published": 1559.6757629998028,
+        "first_voiced_audio_published": 1559.9302139999345
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1f7448ad-90e5-4fd6-9e57-904d19c63c65",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:23:23.041714671Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.019220000132918358,
+        "human_committed": 39.84152900008485,
+        "brain_request": 47.69442300009541,
+        "brain_complete": 1097.4829939999618,
+        "tts_request": 1103.1789059999865,
+        "tts_first_byte": 1281.6288410001434,
+        "first_audio_published": 1283.329561999999,
+        "first_voiced_audio_published": 1283.4031820001546
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "01af1a41-a33c-4c77-b49e-9e999d5e1a8c",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:24:00.720765616Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.017740000039339066,
+        "human_committed": 27.270863000070676,
+        "brain_request": 27.898803000105545
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "fbf836ba-c7e0-41d0-b11d-3e96010fa35e",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-15T01:24:01.51593477Z",
+      "release": "0.1.58-923d7a17dad5",
+      "stages": {
+        "flux_final": 0.020280000055208802,
+        "continuation_restart": 0.2984400000423193,
+        "human_committed": 29.313994000200182,
+        "brain_request": 29.691474000224844,
+        "brain_complete": 1542.1164050002117,
+        "tts_request": 1572.9947900001425,
+        "tts_first_byte": 1772.5468030001502,
+        "first_audio_published": 1773.8704240000807,
+        "first_voiced_audio_published": 1773.9714040001854
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6aecf0e2-62f0-4867-a96c-5e56af8f515d",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:10.563584085Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 1.1398810000391677,
+        "human_committed": 121.88640200003283,
+        "brain_request": 136.71976400003769,
+        "brain_first_token": 987.9426350000431,
+        "tts_request": 1048.9978760000085,
+        "tts_first_byte": 1255.751248000015,
+        "first_audio_published": 1258.8290810000035,
+        "brain_complete": 1606.6781010000268,
+        "first_voiced_audio_published": 2080.3194660000154
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "200f87ad-437c-4810-9ec7-adcfd3213dbb",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:31.466892767Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.08496000000741333,
+        "human_committed": 40.578364000015426,
+        "brain_request": 41.229234000027645,
+        "brain_first_token": 815.5146599999862,
+        "tts_request": 1049.08050500002,
+        "tts_first_byte": 1212.82857100002,
+        "first_audio_published": 1213.8680119999917,
+        "brain_complete": 1304.4201079999912,
+        "first_voiced_audio_published": 1549.0301820000168
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "dceeffe5-c2f6-4bff-883d-13fd72f12426",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:38.88509712Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.01692999998340383,
+        "human_committed": 157.89017099997727,
+        "brain_request": 158.33076199999778
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "4810f9e9-be63-479c-889d-1a093bf32986",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:39.932592907Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.019129999971482903,
+        "continuation_restart": 0.20960000000195578,
+        "human_committed": 31.894516000000294,
+        "brain_request": 32.46015699999407,
+        "brain_complete": 2707.544919000007,
+        "tts_request": 2713.7957539999625,
+        "tts_first_byte": 2901.8181709999917,
+        "first_audio_published": 2903.4751019999967,
+        "first_voiced_audio_published": 3943.182459999982
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d237e239-ccdc-4a55-93ad-c680054584bb",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:45.929470691Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.022219999984372407,
+        "human_committed": 44.55713700002525,
+        "brain_request": 45.03667800000403,
+        "brain_complete": 985.5348419999937,
+        "tts_request": 992.1723469999852,
+        "tts_first_byte": 1152.6405709999963,
+        "first_audio_published": 1153.2945719999843,
+        "first_voiced_audio_published": 2147.9247019999893
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1cefad94-20a8-4549-8074-9f77b5c3165b",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:55.305878279Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.15366000001085922,
+        "human_committed": 74.80558200000087,
+        "brain_request": 75.23517300002277,
+        "brain_complete": 1082.3028230000054,
+        "tts_request": 1104.700932000007,
+        "tts_first_byte": 1289.2009360000375,
+        "first_audio_published": 1290.2443570000469,
+        "first_voiced_audio_published": 1291.1092670000507
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "5c4a2735-d5c6-4c5e-b93e-6755ab014465",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:12:57.220109615Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.027189999993424863,
+        "human_committed": 58.65588899998693,
+        "brain_request": 58.99609899998177,
+        "brain_complete": 976.0326740000164,
+        "tts_request": 1050.1676659999648,
+        "tts_first_byte": 1216.4799950000015,
+        "first_audio_published": 1218.4451269999845,
+        "first_voiced_audio_published": 1335.9490150000202
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "4b3bb5dd-aa92-462a-8870-6ddaa09c4f23",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:13:01.899955737Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.02451000001747161,
+        "human_committed": 31.764616000000387,
+        "brain_request": 32.443886999972165,
+        "brain_complete": 1249.3411119999946,
+        "tts_request": 1254.7851669999654,
+        "tts_first_byte": 1420.9590459999745,
+        "first_audio_published": 1421.709795999981,
+        "first_voiced_audio_published": 1555.8336980000022
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "850fe1f7-d375-4826-b816-0bab3e7c577a",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:13:10.955915721Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.019330000039190054,
+        "human_committed": 36.9414209999959,
+        "brain_request": 53.455975000048056
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "35cd0f82-a45c-4fbd-a129-f99f06f61a18",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:13:14.623724546Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.02581999998074025,
+        "continuation_restart": 0.2506500000017695,
+        "human_committed": 32.72310699999798,
+        "brain_request": 48.96883999998681,
+        "brain_first_token": 1067.022500000021,
+        "brain_complete": 1201.1818419999909,
+        "tts_request": 1206.4649460000219,
+        "tts_first_byte": 2152.5832459999947,
+        "first_audio_published": 2153.7196569999796,
+        "first_voiced_audio_published": 2212.3364549999824
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "eb89b585-f683-45e1-bb2e-7ddbddedf518",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:13:37.017382629Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.028070000000298023,
+        "human_committed": 25.99337199999718,
+        "brain_request": 36.131209999963176,
+        "brain_first_token": 805.1023820000119,
+        "tts_request": 871.3356669999775,
+        "tts_first_byte": 1069.9962829999859,
+        "first_audio_published": 1070.8040339999716,
+        "first_voiced_audio_published": 1070.892463999975,
+        "brain_complete": 1268.1040879999637
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f3f101d7-589a-42d9-8cf5-dcb3b37e7458",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:13:54.413630124Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.014559999981429428,
+        "human_committed": 36.16736000002129,
+        "brain_request": 36.5987900000182,
+        "brain_complete": 918.7870560000301,
+        "tts_request": 924.9347710000002,
+        "tts_first_byte": 1097.0899450000143,
+        "first_audio_published": 1097.7748560000327,
+        "first_voiced_audio_published": 1097.8168559999904
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "9347571d-f301-4248-81cf-98f2f72b8560",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:14:07.289772403Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.016910000005736947,
+        "human_committed": 30.309015000006184,
+        "brain_request": 42.01070499996422,
+        "brain_first_token": 974.323762999964,
+        "tts_request": 1048.4451149999513,
+        "brain_complete": 1229.5276960000047,
+        "tts_first_byte": 1239.62833399995,
+        "first_audio_published": 1244.0007979999646,
+        "first_voiced_audio_published": 1244.1253879999858
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f480f2a9-2f39-44fe-add8-20336899160c",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:14:11.782089831Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.013750000041909516,
+        "human_committed": 29.490325000020675,
+        "brain_request": 36.037400000030175,
+        "brain_first_token": 734.6131230000174,
+        "tts_request": 811.3509770000237,
+        "tts_first_byte": 997.2644430000219,
+        "first_audio_published": 999.9236450000317,
+        "first_voiced_audio_published": 1000.1169750000117,
+        "brain_complete": 1198.753991000005
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "249acc57-7ee1-43ce-98b9-03b2605fe7a0",
+      "callId": "3fd282dd-4d75-4624-8364-a4cd980f9f53",
+      "instance": "892275f66e6918",
+      "at": "2026-10-15T03:14:26.725146441Z",
+      "release": "0.1.60-1d09b27c43be",
+      "stages": {
+        "flux_final": 0.015160000009927899,
+        "human_committed": 65.3148350000265,
+        "brain_request": 65.74588500004029,
+        "brain_first_token": 902.077963000047,
+        "tts_request": 946.9698110000463,
+        "tts_first_byte": 1121.5172960000345,
+        "first_audio_published": 1122.5872670000535,
+        "first_voiced_audio_published": 1122.6690270000254,
+        "brain_complete": 1357.3270730000222
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "fcb9b1c4-dd4b-44ed-97ff-5678ef382f02",
+      "callId": "ed6bc118-bf5e-4caf-8b0a-8441973ebfd7",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-16T01:06:59.030549256Z",
+      "release": "0.1.65-1bb54031f947",
+      "stages": {
+        "flux_final": 0.8228200003504753,
+        "human_committed": 30.600084997713566,
+        "brain_request": 38.59307799860835
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "82a513bc-7758-4e8c-b397-820e297cc530",
+      "callId": "ed6bc118-bf5e-4caf-8b0a-8441973ebfd7",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-16T01:07:01.844986849Z",
+      "release": "0.1.65-1bb54031f947",
+      "stages": {
+        "flux_final": 0.0357000008225441,
+        "continuation_restart": 0.798480998724699,
+        "human_committed": 29.6730550006032,
+        "brain_request": 36.599897999316454
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0e98b7f8-8d29-41b6-9aa6-4d864aae7c7b",
+      "callId": "ed6bc118-bf5e-4caf-8b0a-8441973ebfd7",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-16T01:07:09.370320941Z",
+      "release": "0.1.65-1bb54031f947",
+      "stages": {
+        "flux_final": 0.04570000246167183,
+        "continuation_restart": 0.15985000133514404,
+        "human_committed": 47.916833002120256,
+        "brain_request": 61.99352899938822,
+        "brain_complete": 1257.8214100003242,
+        "tts_request": 1272.3499960005283,
+        "tts_first_byte": 1478.8626450002193,
+        "first_audio_published": 1481.431266002357,
+        "first_voiced_audio_published": 1481.772516001016
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "50afca81-3f4c-48b6-9414-3a54b0d0b6d4",
+      "callId": "ed6bc118-bf5e-4caf-8b0a-8441973ebfd7",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-16T01:07:30.882467222Z",
+      "release": "0.1.65-1bb54031f947",
+      "stages": {
+        "flux_final": 0.01609000191092491,
+        "human_committed": 29.790114998817444,
+        "brain_request": 37.31510800123215,
+        "brain_complete": 829.1503060013056,
+        "tts_request": 834.7226379998028,
+        "tts_first_byte": 1031.6923019997776,
+        "first_audio_published": 1033.3541529998183,
+        "first_voiced_audio_published": 1232.3945179991424
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "46fa5fc9-6708-4949-bf4f-59eb3a30aaea",
+      "callId": "b7cee1f5-41cd-40b9-b228-c834d7d1d554",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T12:35:25.645621292Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.6625000014901161,
+        "human_committed": 35.59564799815416,
+        "brain_request": 47.656897000968456,
+        "brain_first_token": 789.6714729964733,
+        "tts_request": 1008.6451800018549
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c6f15b9f-63c3-4760-b56e-ece369a84ea1",
+      "callId": "b7cee1f5-41cd-40b9-b228-c834d7d1d554",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T12:35:30.593364612Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.03853999823331833,
+        "continuation_restart": 0.12092000246047974,
+        "human_committed": 29.920037999749184,
+        "brain_request": 37.31031800061464,
+        "brain_first_token": 637.4041619971395
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "53cfafe7-3e80-4850-8683-1b9da5c424d0",
+      "callId": "abaad448-1122-4017-bfd0-1c99729f5285",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T12:35:42.11061862Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.015730001032352448,
+        "human_committed": 32.58498800545931,
+        "brain_request": 37.36752799898386,
+        "brain_first_token": 832.3288110047579,
+        "tts_request": 1002.0627110004425,
+        "tts_first_byte": 1270.2397150024772,
+        "first_audio_published": 1272.8751149997115,
+        "first_voiced_audio_published": 1273.059225000441,
+        "brain_complete": 1366.366319000721
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "bd75ac98-739d-4c3c-9484-611a132acd25",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:08:57.27586593Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.01900000125169754,
+        "human_committed": 38.2093780040741,
+        "brain_request": 51.30274700373411,
+        "brain_first_token": 733.3291370049119,
+        "tts_request": 822.6779610067606,
+        "tts_first_byte": 1044.141118004918,
+        "first_audio_published": 1065.3155270069838,
+        "first_voiced_audio_published": 1179.1462300047278,
+        "brain_complete": 1560.2565270066261
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "88a815ea-6c7d-4efc-948c-82514e34aa3c",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:09:38.735378154Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.02160000056028366,
+        "human_committed": 30.903127998113632,
+        "brain_request": 31.847507998347282
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "eb988615-98d2-4a29-8549-9b22bb761197",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:09:41.746024111Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.01947999745607376,
+        "continuation_restart": 0.08472000062465668,
+        "human_committed": 29.83049799501896,
+        "brain_request": 30.270957998931408,
+        "brain_first_token": 746.4260749965906,
+        "tts_request": 900.210405997932,
+        "tts_first_byte": 1174.6799400001764,
+        "first_audio_published": 1175.3718689978123,
+        "first_voiced_audio_published": 1175.4510889947414,
+        "brain_complete": 2354.9369189962745
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "bce15522-f2bb-4321-98ae-f0c5457eb669",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:10:49.742963224Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.02013000100851059,
+        "human_committed": 32.67280799895525,
+        "brain_request": 32.90087799727917,
+        "brain_complete": 959.6314930021763,
+        "tts_request": 965.3132629990578,
+        "tts_first_byte": 1174.1741800010204,
+        "first_audio_published": 1174.9593899995089,
+        "first_voiced_audio_published": 1175.1048799976707
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "04ea3a3c-bd31-410f-8631-931b2578a709",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:45:04.929423623Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.02279999852180481,
+        "human_committed": 37.760527998209,
+        "brain_request": 38.19413799792528,
+        "brain_first_token": 719.2892180010676,
+        "tts_request": 968.6824229955673,
+        "tts_first_byte": 1222.139327995479,
+        "first_audio_published": 1222.960117995739,
+        "first_voiced_audio_published": 1223.0374679937959,
+        "brain_complete": 1230.3871669992805
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "55999f86-351f-4284-8c98-81ad0a234398",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:45:24.306129155Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.027949996292591095,
+        "human_committed": 33.903487995266914,
+        "brain_request": 34.41479799896479,
+        "brain_complete": 1114.9344130009413,
+        "tts_request": 1120.2645429968834,
+        "tts_first_byte": 1368.3356679975986,
+        "first_audio_published": 1369.3335079997778,
+        "first_voiced_audio_published": 1462.3154329955578
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "8e428630-3574-4e28-a2cc-f287f58c2354",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:46:08.732633131Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.021389998495578766,
+        "human_committed": 46.345567002892494,
+        "brain_request": 46.74244699627161,
+        "brain_complete": 862.8108479976654,
+        "tts_request": 869.3308879956603,
+        "tts_first_byte": 1109.5369540005922,
+        "first_audio_published": 1110.518604002893
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "a772cd0f-7a8a-4edc-b8e1-ad65d9b4d236",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:46:12.314025509Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.02303999662399292,
+        "human_committed": 126.82132299989462,
+        "brain_request": 127.0618629977107,
+        "brain_first_token": 826.0980110019445,
+        "tts_request": 830.8609009981155,
+        "tts_first_byte": 1165.4976610019803,
+        "first_audio_published": 1166.0036809965968,
+        "first_voiced_audio_published": 1225.2989169955254,
+        "brain_complete": 1414.4126560017467
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "cb477e5a-2ee1-4b13-9279-41c624924775",
+      "callId": "a80d3f4d-1d9e-4c8d-8950-afea9b5e411d",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T14:46:27.411403311Z",
+      "release": "0.1.74-4a954a6370d7",
+      "stages": {
+        "flux_final": 0.013340003788471222,
+        "human_committed": 33.00068800151348,
+        "brain_request": 33.306678004562855,
+        "brain_complete": 914.4527050033212,
+        "tts_request": 920.14076500386,
+        "tts_first_byte": 1113.3301829993725,
+        "first_audio_published": 1114.2082130014896,
+        "first_voiced_audio_published": 1227.9609559997916
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c5391641-616d-417f-9357-62b8beac6e61",
+      "callId": "98e0dc6e-59ba-4630-9790-187b62871661",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T15:11:45.075453614Z",
+      "release": "0.1.76-fe3850011dca",
+      "stages": {
+        "flux_final": 0.5859209999907762,
+        "human_committed": 37.25507800001651,
+        "brain_request": 80.3772089999984,
+        "brain_first_token": 855.2440479999932,
+        "tts_request": 865.5604929999972,
+        "brain_complete": 1060.3456360000127
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "fd138a49-3b45-4871-be10-d1c47295b935",
+      "callId": "98e0dc6e-59ba-4630-9790-187b62871661",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T15:11:47.303523516Z",
+      "release": "0.1.76-fe3850011dca",
+      "stages": {
+        "flux_final": 0.027169999986654148,
+        "continuation_restart": 0.17304999998304993,
+        "human_committed": 40.17050899998867,
+        "brain_request": 141.41033700000844,
+        "brain_first_token": 817.8201689999842,
+        "brain_complete": 1127.0460369999928,
+        "tts_request": 1135.613691000006
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "bc0effe4-4cb2-4feb-bb46-580e8137c54a",
+      "callId": "98e0dc6e-59ba-4630-9790-187b62871661",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T15:12:27.730804375Z",
+      "release": "0.1.76-fe3850011dca",
+      "stages": {
+        "flux_final": 0.01947999998810701,
+        "continuation_restart": 0.11699000000953674,
+        "human_committed": 42.66503999999259,
+        "brain_request": 80.38607800001046,
+        "brain_first_token": 715.0072910000163
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "7f22addd-737a-4223-8f7f-502ad7a617ac",
+      "callId": "a5df0506-cb9f-46c2-9845-3dbf29c396c4",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:16:26.120616898Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.7935099999886006,
+        "human_committed": 35.23965599993244,
+        "brain_request": 62.55216900003143,
+        "brain_first_token": 1379.8043279999401,
+        "brain_complete": 1607.9554159999825,
+        "tts_request": 1620.2299919999205,
+        "tts_first_byte": 1883.1312279999256,
+        "first_audio_published": 1884.916348000057,
+        "first_voiced_audio_published": 1885.1602890000213
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ce8ab59f-c739-47a8-9fad-72ccce8fdf22",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:18:47.770725783Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.1093599998857826
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "47d855b2-e343-4100-898d-e9b8085299cb",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:18:57.274906944Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.03766999999061227,
+        "human_committed": 36.73572800005786,
+        "brain_request": 52.62678700010292
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "01d1c9e2-5793-4465-8f76-6d00bec28851",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:18:58.385388442Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.03493999992497265,
+        "continuation_restart": 0.5251400000415742,
+        "human_committed": 32.330758000025526,
+        "brain_request": 43.2479769999627,
+        "brain_first_token": 636.8921819999814,
+        "tts_request": 756.4982950000558,
+        "tts_first_byte": 951.2424129999708,
+        "first_audio_published": 954.079432999948,
+        "first_voiced_audio_published": 954.5146629998926,
+        "brain_complete": 1238.952396000037
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "45721b6f-bdfe-4496-b663-03201f486b5b",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:19:18.096241378Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.02419000002555549
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "482cd60f-f3e6-4c14-b25e-14d8e866870b",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:19:23.423977119Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.02710999990813434
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "52ac74d2-3b06-4b31-bfed-1ea02de22a04",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:19:28.910574604Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.027300000190734863
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3e11ea3a-8690-41a2-b7a0-4f3d51afbd34",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:19:35.760136804Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.02705999999307096
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "76e79d9f-b6ef-46b8-ae87-24126f61bf69",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:19:37.590176486Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011140000075101852
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3c04579e-e6ca-40f3-b6d6-f1f7ea27564b",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:22:46.262809408Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012940000044181943
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "531a3074-ae39-41d7-a267-1b4e9ae8a368",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:22:49.289798227Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012749999994412065,
+        "human_committed": 48.71760699991137,
+        "brain_request": 77.04403500002809,
+        "brain_complete": 914.3684350000694,
+        "tts_request": 932.0375439999625,
+        "tts_first_byte": 1175.3843600000255,
+        "first_audio_published": 1176.1448300001211,
+        "first_voiced_audio_published": 1328.4280310000759
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "25d81fa5-69d2-49fa-83e2-5a631a0c992d",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:22:55.225160967Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.014590000035241246,
+        "human_committed": 33.545058000134304,
+        "brain_request": 46.92744700005278,
+        "brain_complete": 973.2599120000377,
+        "tts_request": 979.8165720000397,
+        "tts_first_byte": 1190.3371390001848,
+        "first_audio_published": 1191.0405090001877,
+        "first_voiced_audio_published": 1191.1014490001835
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c15ed6ff-cbc5-4dbb-a028-34498c9b67ad",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:22:57.865738099Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012209999840706587
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "cb1c3b6b-2f84-4e77-a06a-c054cf7bc11b",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:22:59.560403142Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012829999905079603
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6bdc946f-115c-41cb-85d1-8b733a61b580",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:02.407744201Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.016060000052675605
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "e25c0259-bfc2-4533-9a5a-b62776118fcd",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:08.100761037Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012760000070556998
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "20308c7d-792f-4646-afa7-528dcf2b8dc9",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:21.601060707Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012779999990016222
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ee852324-4d3b-4d04-ba03-b5d99a4c9508",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:28.64105448Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.013419999973848462
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d93681df-fc38-4ffc-a493-15a845e13698",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:37.56223786Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012469999957829714,
+        "human_committed": 37.748237000079826,
+        "brain_request": 46.35878699994646,
+        "brain_complete": 1002.6946400001179,
+        "tts_request": 1009.8412590001244,
+        "tts_first_byte": 1274.1185340001248,
+        "first_audio_published": 1275.399194000056,
+        "first_voiced_audio_published": 1275.484664000105
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "865bd809-b3e6-4e76-a460-ff2ecaf26cd8",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:39.539528887Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.014280000003054738
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "39071df5-aa99-4d87-a4c5-81d2ffbb68a5",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:23:41.61225792Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01581000001169741
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "9b10305f-2502-494a-8175-70a778a7ece5",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:24:02.961508731Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01596999983303249,
+        "human_committed": 31.864458000054583,
+        "brain_request": 201.07315799989738,
+        "brain_first_token": 836.8069299999624,
+        "tts_request": 913.2645049998537,
+        "brain_complete": 1114.1851830000523,
+        "tts_first_byte": 1147.0087810000405,
+        "first_audio_published": 1147.6683109998703,
+        "first_voiced_audio_published": 1147.7997009998653
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d6d93875-6368-43b1-8485-2a67e983a789",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:24:17.933908203Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012360000051558018
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ef72be28-cd30-44d1-a39c-42abbdfec388",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:24:22.273089246Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.016219999874010682
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0b5c37d5-ae71-43ed-aac5-7956113ed67f",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:24:29.949644093Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.015200000023469329
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "e630cec6-1c99-40e9-9f4f-c9b53f7d3126",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:24:31.892253451Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.018009999999776483
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "aa745971-2fc9-4439-acd0-44ca605db880",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:24:52.960134634Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.018269999884068966,
+        "human_committed": 29.987857999978587,
+        "brain_request": 59.210175999905914,
+        "brain_first_token": 688.3477989998646,
+        "tts_request": 728.1752269999124,
+        "brain_complete": 936.7488440000452,
+        "tts_first_byte": 955.5357029999141,
+        "first_audio_published": 956.134992999956,
+        "first_voiced_audio_published": 956.2727329998743
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3d1f4f69-2577-453e-99e6-a8c5a668439e",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:01.087309672Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.018170000053942204
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "e94afc36-8fc0-4ab9-8828-9b6c47a94560",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:04.582124563Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.014979999978095293
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1fc6d31b-9a55-4fca-8c27-7b1733f95775",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:08.827645458Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.014699999941512942
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "9201ae67-97bd-4807-a7f5-21543a765bbf",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:14.828874803Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.049230000004172325,
+        "human_committed": 24.689787999959663,
+        "brain_request": 25.23142799991183
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "4e3a6584-c2ca-4ffc-8d48-8beb7fe2a955",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:16.588650753Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.013780000153928995,
+        "continuation_restart": 0.22985000000335276,
+        "human_committed": 29.356778000015765,
+        "brain_request": 29.95650800014846,
+        "brain_first_token": 564.9395960001275,
+        "brain_complete": 752.7006250000559,
+        "tts_request": 758.8322240000125,
+        "tts_first_byte": 993.9840400000103,
+        "first_audio_published": 994.6482500000857,
+        "first_voiced_audio_published": 994.7233800000977
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "02c84cc0-69ca-4cc8-ba65-54d588144155",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:23.792027705Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.038769999984651804
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "90e8814e-64a1-469e-91e4-6e98f8d4cb38",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:26.394148186Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012489999877288938,
+        "human_committed": 69.3034059999045,
+        "brain_request": 69.6420859999489,
+        "brain_first_token": 1796.1219329999294,
+        "tts_request": 1808.1777529998217,
+        "tts_first_byte": 2022.820379999932,
+        "first_audio_published": 2023.6182699999772,
+        "first_voiced_audio_published": 2023.6917099999264,
+        "brain_complete": 2036.4132389998995
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "813e92b0-b484-4b07-a094-c8ccc1765874",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:25:52.6867369Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.020069999853149056,
+        "human_committed": 26.449949000030756,
+        "brain_request": 26.792678999947384,
+        "brain_first_token": 689.800198999932,
+        "tts_request": 755.3866550000384,
+        "tts_first_byte": 958.1666829998139,
+        "first_audio_published": 959.0347829998937,
+        "first_voiced_audio_published": 959.125402999809,
+        "brain_complete": 1252.9505359998439
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "89c7f922-e3da-440a-b26a-6f5ceb955a64",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:26:16.188762432Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.016940000001341105,
+        "human_committed": 27.742537999991328,
+        "brain_request": 28.110358000034466,
+        "brain_complete": 937.3087939999532,
+        "tts_request": 942.5525930000003,
+        "tts_first_byte": 1251.6944150000345,
+        "first_audio_published": 1252.38223499991,
+        "first_voiced_audio_published": 1252.4161549999844
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "92e1fdd1-c23b-41a2-854e-06aa1fc19d89",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:26:35.506436329Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01448999997228384,
+        "human_committed": 31.937617999967188,
+        "brain_request": 50.27726699993946,
+        "brain_complete": 1114.1654339998495,
+        "tts_request": 1119.623862999957,
+        "tts_first_byte": 1359.741938999854,
+        "first_audio_published": 1360.2896290000062,
+        "first_voiced_audio_published": 1360.350058999844
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "5dac9a26-8799-46fa-8507-5ba2d72053d1",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:26:52.836572656Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.015479999827221036,
+        "human_committed": 42.372317999834195,
+        "brain_request": 42.73701799986884
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3bea60c8-a21a-4357-a7a1-8f242cc596cd",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:27:29.022969082Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.017310000024735928,
+        "continuation_restart": 0.09912999998778105,
+        "human_committed": 30.620137999998406,
+        "brain_request": 31.558717999840155,
+        "brain_first_token": 681.3729889998212,
+        "tts_request": 719.6351169999689,
+        "tts_first_byte": 948.674422999844,
+        "first_audio_published": 949.9654729999602,
+        "first_voiced_audio_published": 950.1217330000363,
+        "brain_complete": 2873.1416789998766
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "98c4eca8-77a0-4099-8630-55726c2b726c",
+      "callId": "84cbe7ca-18c4-4dac-a46f-f12e28dd6b6a",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:28:57.757422592Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.015610000118613243,
+        "human_committed": 32.76809799997136,
+        "brain_request": 33.18579800007865,
+        "brain_first_token": 689.1817290000618,
+        "tts_request": 783.2126039997675,
+        "tts_first_byte": 1011.2145199999213,
+        "first_audio_published": 1011.7330499999225,
+        "first_voiced_audio_published": 1011.8507499997504,
+        "brain_complete": 1765.298725000117
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d29096a1-8aa5-4c13-b0f9-98031a36eea0",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:31:29.972429655Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011990000028163195
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "bc221765-24b9-458d-bbe8-bd52d6877696",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:31:32.905026892Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010580000001937151
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "262555c0-1960-4f38-85ba-79084b42e296",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:31:37.076305239Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01181000005453825,
+        "human_committed": 29.39086400019005,
+        "brain_request": 81.24937800015323
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3145064e-f4f4-4124-bf92-083327386ee5",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:31:41.936400566Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.013499999884516,
+        "continuation_restart": 0.3789299998898059,
+        "human_committed": 30.882354999892414,
+        "brain_request": 59.599548999918625,
+        "brain_complete": 1931.3696309998631,
+        "tts_request": 1942.472405999899,
+        "tts_first_byte": 2133.292627000017,
+        "first_audio_published": 2134.366327999858,
+        "first_voiced_audio_published": 2134.5718580000103
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f89d39f4-4fb9-4446-a2aa-5b89b12708d2",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:31:57.487475128Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010329999960958958,
+        "human_committed": 29.792444000020623,
+        "brain_request": 30.23025400005281,
+        "brain_first_token": 628.9478200001176,
+        "tts_request": 661.4006550000049,
+        "brain_complete": 800.6763319999445,
+        "tts_first_byte": 884.9655220001005,
+        "first_audio_published": 885.5751320000272,
+        "first_voiced_audio_published": 885.6694219999481
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "79bd7e70-7159-4291-9774-62f2fdc21d5e",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:32:09.695871123Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012820000061765313,
+        "human_committed": 26.002961999969557,
+        "brain_request": 26.31178200012073
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "61ea600c-a151-4d23-9f55-e5a1caf6f483",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:32:37.389976434Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01245999988168478,
+        "continuation_restart": 0.0793399999383837,
+        "human_committed": 24.448770999908447,
+        "brain_request": 24.839601000072435,
+        "brain_first_token": 643.4661959998775,
+        "tts_request": 648.6454890000168,
+        "tts_first_byte": 970.4831819999963,
+        "first_audio_published": 971.2999929999933,
+        "first_voiced_audio_published": 971.474753000075,
+        "brain_complete": 1916.3308029999025
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "eed0b024-9650-4c25-a022-5de652eb4b27",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:33:30.767388884Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.0536400000564754,
+        "human_committed": 30.75007399963215,
+        "brain_request": 31.11426499998197,
+        "brain_first_token": 685.4375569997355,
+        "tts_request": 709.6681579998694,
+        "tts_first_byte": 929.5992029998451,
+        "first_audio_published": 930.2750530000776,
+        "first_voiced_audio_published": 930.349492999725,
+        "brain_complete": 1391.972502999939
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "07668229-ab1d-4f9c-ab1b-2f2501f8bdca",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:34:35.001783377Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010209999978542328,
+        "human_committed": 29.79379400005564,
+        "brain_request": 42.715139999985695,
+        "brain_first_token": 750.3584870002232,
+        "tts_request": 756.1637900001369,
+        "tts_first_byte": 940.3980180001818,
+        "first_audio_published": 941.1474680001847,
+        "first_voiced_audio_published": 941.2622080002911,
+        "brain_complete": 2602.379540000111
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "68ec057e-c43d-45e0-99fb-e91ba98aab09",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:35:41.333436706Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01815999997779727
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "5d262dd4-8d3e-4bf1-9814-23ed368bcf35",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:35:49.600021895Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011760000139474869,
+        "human_committed": 36.90350800007582,
+        "brain_request": 37.40946799982339,
+        "brain_first_token": 697.0248429998755,
+        "tts_request": 756.5452809999697,
+        "tts_first_byte": 987.7815709998831,
+        "first_audio_published": 988.3895020000637,
+        "first_voiced_audio_published": 988.5262819998898,
+        "brain_complete": 1912.3908919999376
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "de308758-6997-4127-a45b-de35de0c7fc7",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:35:53.810115504Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010499999858438969
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f9a105fc-9ebb-4a44-84a3-d25bd5592cab",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:35:59.582364979Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.014620000030845404,
+        "human_committed": 32.50813500024378,
+        "brain_request": 32.89007500000298,
+        "brain_first_token": 1211.3767269998789,
+        "tts_request": 1301.4690800001845,
+        "brain_complete": 1342.9523599999957,
+        "tts_first_byte": 1514.9299920001067,
+        "first_audio_published": 1515.8967320001684,
+        "first_voiced_audio_published": 1515.97608199995
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "e9b5f1bd-244b-4c40-a1a2-9e483fa651e0",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:36:08.940833542Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.030749999918043613
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "8430abc0-73e1-439f-8ed3-e52c52dee395",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:36:23.673397796Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011889999732375145
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3ceb477d-3214-4556-8ffa-0fa198c7cce7",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:36:27.280813003Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.009920000098645687,
+        "human_committed": 26.803083000238985,
+        "brain_request": 27.05326300021261,
+        "brain_first_token": 695.4341110000387,
+        "tts_request": 702.8861549999565,
+        "tts_first_byte": 891.9545450001024,
+        "first_audio_published": 893.2363660000265,
+        "first_voiced_audio_published": 893.5219060000964,
+        "brain_complete": 1197.8031210000627
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6d6556d7-dfd1-49d6-9ff1-287af602fe96",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:36:44.082819933Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010969999711960554,
+        "human_committed": 28.43328299978748,
+        "brain_request": 28.571374000050128
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ad6712d0-9ca7-4258-9cea-b57116b57275",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:37:07.628677427Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012999999802559614,
+        "human_committed": 38.312868000008166,
+        "brain_request": 38.70033899974078
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3809935e-87f1-4a40-918f-7555da6656e3",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:37:12.418209216Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012770000379532576,
+        "continuation_restart": 0.9737500003539026,
+        "human_committed": 30.742955000139773,
+        "brain_request": 31.19948500022292,
+        "brain_first_token": 664.0557270003483
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "b653a84a-3e5f-4f6b-a00e-1ba43da4e8d5",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:37:19.703168813Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01273000007495284,
+        "continuation_restart": 0.7643010001629591,
+        "human_committed": 57.3280180003494,
+        "brain_request": 57.7808480001986,
+        "brain_first_token": 757.2113910000771,
+        "tts_request": 786.3692950000986,
+        "tts_first_byte": 963.2015599999577,
+        "first_audio_published": 963.7763500004075,
+        "first_voiced_audio_published": 963.8241100003943,
+        "brain_complete": 1928.6853700000793
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "97f05318-04c8-47b9-8f57-1b3224ad8425",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:38:05.617087073Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010539999697357416,
+        "continuation_restart": 0.06582999974489212,
+        "human_committed": 42.050779999699444,
+        "brain_request": 63.61625099973753,
+        "brain_first_token": 801.8587129996158,
+        "tts_request": 843.5548529997468,
+        "tts_first_byte": 1037.9636450000107,
+        "first_audio_published": 1038.4600359997712,
+        "first_voiced_audio_published": 1038.562915999908,
+        "brain_complete": 1046.228108999785
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "7a539d7d-57e6-4fe6-a4c8-0254133e8181",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:38:25.381563494Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012079999782145023,
+        "human_committed": 30.848315000068396,
+        "brain_request": 31.170194999780506,
+        "brain_first_token": 622.6219469998032,
+        "tts_request": 671.3137699998915,
+        "tts_first_byte": 1317.9915379998274,
+        "first_audio_published": 1318.9380890000612,
+        "first_voiced_audio_published": 1319.0207489999011,
+        "brain_complete": 1603.1734339999966
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0c8147b4-e812-4ae9-88df-c4c440f483ab",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:38:33.136298237Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012979999650269747
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "a4a7186b-4207-47eb-b205-43049ae79601",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:38:45.687786726Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011710000224411488
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "7c3b7fd2-b259-4c2c-82fc-bcf18b548169",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:38:56.998871005Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010999999940395355,
+        "human_committed": 28.549264000263065,
+        "brain_request": 28.841074000112712,
+        "brain_complete": 1104.9068169998936,
+        "tts_request": 1110.9648299999535,
+        "tts_first_byte": 1350.4876339999028,
+        "first_audio_published": 1351.1200149999931,
+        "first_voiced_audio_published": 1351.1854850002564
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "194ef33d-df74-4459-937b-a73a03ff0fd2",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:39:00.581103205Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.0124400001950562,
+        "human_committed": 36.04675700003281,
+        "brain_request": 36.42043700022623,
+        "brain_first_token": 819.905531000346,
+        "tts_request": 881.1125100003555,
+        "tts_first_byte": 1081.8524060002528,
+        "first_audio_published": 1082.9345559999347,
+        "first_voiced_audio_published": 1083.2221860000864,
+        "brain_complete": 1326.4108520001173
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "db73b39e-f3e9-4c8c-b6ac-25e6f0565329",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:40:45.540845524Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011420000344514847
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "541c10c7-8a0b-417a-9623-2631d344f913",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:40:56.722130328Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01257999986410141
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "a63f51f5-2b8c-44ca-9bf1-1fe3668118cd",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:41:02.017112539Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01090999972075224
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c01e8f86-26f2-4b98-a230-84810399aeb1",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:41:04.814704298Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.014090000186115503
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "99b3dc86-0bbe-4642-ac3b-0ac78e4c1d89",
+      "callId": "949f009c-00cb-49a3-b11b-d30afeba3815",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-17T20:41:08.927479528Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.012269999831914902,
+        "human_committed": 45.924302000086755,
+        "brain_request": 46.418821999803185,
+        "brain_first_token": 920.7661290001124,
+        "tts_request": 977.1414560000412,
+        "brain_complete": 1112.8578610001132,
+        "tts_first_byte": 1353.102334999945,
+        "first_audio_published": 1354.2780659999698,
+        "first_voiced_audio_published": 1358.434357999824
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ab17044d-023a-4a8d-964a-a5960a2030a1",
+      "callId": "6ffb0b2a-1715-46da-af9d-5611f51939b1",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:43:37.462823847Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.05407000007107854,
+        "human_committed": 73.98710500029847,
+        "brain_request": 97.27792400028557
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "969b70f4-909c-41fb-acf1-68bedc17552d",
+      "callId": "6ffb0b2a-1715-46da-af9d-5611f51939b1",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:43:48.969298041Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01484999991953373,
+        "continuation_restart": 0.5977600002661347,
+        "human_committed": 27.441628000233322,
+        "brain_request": 34.5824980000034,
+        "brain_first_token": 737.6337460000068,
+        "tts_request": 846.9534789999016,
+        "tts_first_byte": 1100.6349740000442,
+        "first_audio_published": 1101.9398139999248,
+        "first_voiced_audio_published": 1102.119444000069,
+        "brain_complete": 1459.9408129998483
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1f27c07f-3531-4b1d-9b79-cb0a2b3fd94b",
+      "callId": "6ffb0b2a-1715-46da-af9d-5611f51939b1",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:43:53.466514131Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01966000022366643,
+        "human_committed": 214.7432470000349,
+        "brain_request": 266.485754000023
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "33aba008-3732-40de-8816-f85a18e4239a",
+      "callId": "6ffb0b2a-1715-46da-af9d-5611f51939b1",
+      "instance": "892275f66e6918",
+      "at": "2026-10-17T20:44:11.464719217Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.01421999977901578,
+        "continuation_restart": 0.08241999987512827,
+        "human_committed": 31.56668799975887,
+        "brain_request": 41.39502799976617,
+        "brain_complete": 919.9275149996392,
+        "tts_request": 925.7051549996249,
+        "tts_first_byte": 1125.7324429997243,
+        "first_audio_published": 1126.4637829996645,
+        "first_voiced_audio_published": 1126.5879130000249
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1a31cfef-d534-45e0-9aff-7f13edfc678e",
+      "callId": "616ec6bd-1803-4e19-9c9d-5f8d686afaad",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-18T00:20:30.223681305Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011169999837875366,
+        "human_committed": 38.20989899896085,
+        "brain_request": 46.893512999638915
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "5dd7f939-48e3-4c40-9b24-b080e6976562",
+      "callId": "616ec6bd-1803-4e19-9c9d-5f8d686afaad",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-18T00:20:31.006631352Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.011920001357793808,
+        "continuation_restart": 0.08809000067412853,
+        "human_committed": 30.993154000490904,
+        "brain_request": 37.60714800097048,
+        "brain_first_token": 625.3235480003059,
+        "tts_request": 649.1692590005696,
+        "tts_first_byte": 843.6229320000857,
+        "first_audio_published": 844.5514620002359,
+        "first_voiced_audio_published": 940.180428000167,
+        "brain_complete": 1055.5829930007458
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "727f9f14-07fd-4891-a00b-eea4ba51b029",
+      "callId": "616ec6bd-1803-4e19-9c9d-5f8d686afaad",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-18T00:20:46.514346311Z",
+      "release": "0.1.78-574b24bd3636",
+      "stages": {
+        "flux_final": 0.010889999568462372,
+        "human_committed": 32.7115049995482,
+        "brain_request": 33.050565999001265,
+        "brain_complete": 880.2324489988387,
+        "tts_request": 886.1092919986695,
+        "tts_first_byte": 1194.6116389986128,
+        "first_audio_published": 1195.2642299998552,
+        "first_voiced_audio_published": 1333.2040749993175
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "3089c4c6-7f26-4cf1-9081-885e32deb106",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:21:32.803665866Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.9006599999265745,
+        "human_committed": 38.077187999966554,
+        "brain_request": 90.70988499990199,
+        "brain_first_token": 866.5720679999795,
+        "tts_request": 1028.7554290000116,
+        "brain_complete": 1207.8493879999733,
+        "tts_first_byte": 1299.4321329999948,
+        "first_audio_published": 1302.550581999938,
+        "first_voiced_audio_published": 1302.968361999956
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "e2ddd41e-3426-4703-a407-e2893225e728",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:21:34.582348493Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.018150000018067658,
+        "human_committed": 38.87628800002858,
+        "brain_request": 78.80925500008743,
+        "brain_first_token": 848.7999490000075,
+        "tts_request": 874.8047880000668,
+        "brain_complete": 1052.1434970000992,
+        "tts_first_byte": 1105.9607340000803,
+        "first_audio_published": 1107.0392940000165,
+        "first_voiced_audio_published": 1107.2057239999995
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f17967db-c4f1-497e-9156-a0a7080f4c7a",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:21:54.259124918Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.01720000000204891,
+        "human_committed": 34.68501799996011,
+        "brain_request": 35.26259800000116,
+        "brain_first_token": 597.9528040000005,
+        "tts_request": 657.437399999937,
+        "brain_complete": 870.4945669999579,
+        "tts_first_byte": 878.1095969999442,
+        "first_audio_published": 881.3783769999864,
+        "first_voiced_audio_published": 881.6326369999442
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "2d865bab-1af4-4ffe-a6e3-106480606a40",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:22:22.670339549Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.02262000006157905,
+        "human_committed": 35.968408000073396,
+        "brain_request": 36.772648000041954
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "dec13045-f545-4786-b9a3-9b36df0fb877",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:22:48.597896908Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.01588999992236495,
+        "continuation_restart": 0.881969999987632,
+        "human_committed": 49.113696999964304,
+        "brain_request": 49.681036999914795,
+        "brain_complete": 1427.8871049999725,
+        "tts_request": 1433.7995639999863,
+        "tts_first_byte": 1695.4994689999148,
+        "first_audio_published": 1696.3531189999776,
+        "first_voiced_audio_published": 1696.488888999913
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f9691b35-0ce0-4643-8071-9ce1cc8c6062",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:23:21.367468265Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.017929999972693622,
+        "human_committed": 35.96395799994934,
+        "brain_request": 36.378817999968305,
+        "brain_complete": 872.1812980000395,
+        "tts_request": 878.9172869999893
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "377cf585-27ec-4189-8dce-b02e0325d25c",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:23:23.613690941Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.020340000046417117,
+        "continuation_restart": 0.10598999995272607,
+        "human_committed": 34.42295799998101,
+        "brain_request": 35.091478000045754,
+        "brain_complete": 1623.9955729999347,
+        "tts_request": 1631.0844120000256,
+        "tts_first_byte": 1815.2116509999614,
+        "first_audio_published": 1816.1101009999402,
+        "first_voiced_audio_published": 1816.237821000046
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0f9af188-f0fc-402f-89e3-0ae817c0ae0b",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:24:14.91623763Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.021450000000186265,
+        "human_committed": 77.69869500002824,
+        "brain_request": 78.19888500007801,
+        "brain_first_token": 731.772936000023,
+        "tts_request": 762.2001250000903,
+        "tts_first_byte": 953.6933130000252,
+        "first_audio_published": 956.3037130000303,
+        "first_voiced_audio_published": 956.5618830000749,
+        "brain_complete": 982.1574310000287
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ef0966fe-6dfc-4faf-a59b-df829c098d0c",
+      "callId": "d61b0c3d-8c46-4268-bc7e-797d7708d650",
+      "instance": "892275f66e6918",
+      "at": "2026-10-18T21:24:23.579347783Z",
+      "release": "0.1.83-8da00b175080",
+      "stages": {
+        "flux_final": 0.021799999987706542,
+        "human_committed": 36.53128699993249,
+        "brain_request": 37.059416999924,
+        "brain_first_token": 789.0729529999662,
+        "tts_request": 940.0302730000112,
+        "brain_complete": 1140.5924809999997,
+        "tts_first_byte": 1142.6920209999662,
+        "first_audio_published": 1147.6485499999253,
+        "first_voiced_audio_published": 1148.1619499999797
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "30198c96-8083-41a1-8c30-5cb473847901",
+      "callId": "90c97597-f77d-459d-87b1-1b549415a421",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T17:37:22.217418363Z",
+      "release": "0.1.84-f49694b23d95",
+      "stages": {
+        "flux_final": 0.8117999956011772,
+        "human_committed": 38.764726996421814,
+        "brain_request": 64.43938599526882,
+        "brain_complete": 1099.9616839960217,
+        "delivery_committed": 1150.0481309965253,
+        "tts_request": 1170.0618399977684,
+        "tts_first_byte": 1598.3825439959764,
+        "first_audio_published": 1601.1657240018249,
+        "first_voiced_audio_published": 1601.5707539990544
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "254e437b-82ba-4930-a0a7-21a6e7d07ad5",
+      "callId": "90c97597-f77d-459d-87b1-1b549415a421",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T17:37:48.318309946Z",
+      "release": "0.1.84-f49694b23d95",
+      "stages": {
+        "flux_final": 0.14051000028848648,
+        "human_committed": 34.26338800042868,
+        "brain_request": 34.615948006510735,
+        "brain_complete": 1688.0140290036798,
+        "delivery_committed": 1727.5732570067048,
+        "tts_request": 1736.3717460036278,
+        "tts_first_byte": 2101.959904000163,
+        "first_audio_published": 2102.7872640043497,
+        "first_voiced_audio_published": 2102.883934006095
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d6cc3b07-dc93-4c4e-b9f8-64a48c2cb856",
+      "callId": "90c97597-f77d-459d-87b1-1b549415a421",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T17:38:14.288155341Z",
+      "release": "0.1.84-f49694b23d95",
+      "stages": {
+        "flux_final": 0.08284999430179596,
+        "human_committed": 27.205118000507355,
+        "brain_request": 27.411058001220226,
+        "brain_complete": 986.890151001513,
+        "delivery_committed": 1081.4374350011349,
+        "tts_request": 1088.6461450010538,
+        "tts_first_byte": 1322.1202709972858,
+        "first_audio_published": 1323.0643809959292,
+        "first_voiced_audio_published": 1323.1198009997606
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "a10ad994-c912-4f24-af23-156a2a87fa23",
+      "callId": "90c97597-f77d-459d-87b1-1b549415a421",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T17:39:56.666585404Z",
+      "release": "0.1.84-f49694b23d95",
+      "stages": {
+        "flux_final": 0.08594999462366104,
+        "human_committed": 32.83822799474001,
+        "brain_request": 33.2136280015111,
+        "brain_first_token": 2920.3576259985566
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "38121979-a8a1-4ebb-a47b-3e4a5513845b",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:17:56.68867669Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 1.108089999994263
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d515b855-f688-479f-b83c-e64b378189e6",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:00.506484483Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.1619700000155717,
+        "human_committed": 38.037677000043914,
+        "brain_request": 261.92166400002316
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c0330fe5-a6e7-4041-a9fb-085ee7da71bd",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:01.962736841Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.12733000004664063,
+        "human_committed": 38.45160799997393,
+        "brain_request": 74.06328600004781,
+        "brain_first_token": 783.4184720000485
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "605cd35f-87ea-4a98-9acc-d28b3e51f573",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:07.479711639Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.09597000002395362,
+        "human_committed": 29.197647999972105,
+        "brain_request": 32.64809799997602,
+        "brain_first_token": 621.263062999933,
+        "brain_complete": 1062.1924169999547,
+        "tts_request": 1082.9120959999273,
+        "tts_first_byte": 1292.1978830000153,
+        "first_audio_published": 1295.4367530000163,
+        "first_voiced_audio_published": 1295.6706029999768
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "7d3ce794-e5ed-4746-b4ae-dde581a16e17",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:10.817750976Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.09455999999772757,
+        "human_committed": 140.99456199991982,
+        "brain_request": 141.3040219999384,
+        "brain_first_token": 628.8346429999219,
+        "brain_complete": 1008.9702800000086,
+        "tts_request": 1018.752698999946,
+        "tts_first_byte": 1320.313341000001,
+        "first_audio_published": 1321.0203210000182,
+        "first_voiced_audio_published": 1321.176960999961
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "d61b0539-311d-4ddb-ad23-09fd33ab64ad",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:13.869110588Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.0949800000526011,
+        "human_committed": 42.425108000054024,
+        "brain_request": 42.815388000104576,
+        "brain_first_token": 802.5819820000324,
+        "brain_complete": 1173.2573100000154,
+        "tts_request": 1182.1386100000236,
+        "tts_first_byte": 1433.4297250000527,
+        "first_audio_published": 1434.8208550000563,
+        "first_voiced_audio_published": 1434.9491949999938
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "e77d2bc7-7511-4074-b0bb-47468611d1c1",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:27.221077304Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.09966000006534159,
+        "human_committed": 43.29918800003361,
+        "brain_request": 43.54961800004821
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "830cb9fa-c514-4521-862f-2b8357d74c7e",
+      "callId": "9aa8f108-8f1d-4458-8691-c563ad9c0215",
+      "instance": "892275f66e6918",
+      "at": "2026-10-19T23:18:33.296058772Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.06567999999970198,
+        "human_committed": 32.801167999976315,
+        "brain_request": 33.09352800005581,
+        "brain_first_token": 747.0738450000063,
+        "brain_complete": 1018.8176890000468,
+        "tts_request": 1026.5796989999944,
+        "tts_first_byte": 1393.0198070000624,
+        "first_audio_published": 1393.8192970000673,
+        "first_voiced_audio_published": 1393.961527000065
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "19f48606-f975-4513-831b-1ecdeba3631a",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:10.668628339Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.11722999997437
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "22bab2f1-7ee5-4e96-836d-d454a63eaf87",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:16.826254811Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.20882999897003174
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1fdceb7a-c656-481b-826f-f6567867156f",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:18.98716734Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.12505000084638596,
+        "human_committed": 25.744332000613213,
+        "brain_request": 41.49990000016987,
+        "brain_first_token": 1108.6470990013331,
+        "brain_complete": 1672.06788800098,
+        "tts_request": 1692.3302670009434,
+        "tts_first_byte": 1994.7114909999073,
+        "first_audio_published": 1997.1823730003089,
+        "first_voiced_audio_published": 1997.3861630000174
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f70c4895-3a8f-41cd-b262-0a3a3a144daf",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:21.72426092Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.07605999894440174,
+        "human_committed": 28.410983998328447,
+        "brain_request": 28.65353399887681,
+        "brain_first_token": 821.6518719997257,
+        "brain_complete": 1138.021472999826,
+        "tts_request": 1145.621526999399,
+        "tts_first_byte": 1378.5506079997867,
+        "first_audio_published": 1379.9984679985791,
+        "first_voiced_audio_published": 1515.0131629984826
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "51f5fd40-e79e-451e-b5a7-5c634174b8d3",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:33.769871399Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.012409999966621399,
+        "human_committed": 60.224229000508785,
+        "brain_request": 60.903328999876976
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6976d4c6-eb22-44d6-b72a-e4588b59d478",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:36.019414421Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.10923000052571297,
+        "human_committed": 30.042625000700355,
+        "brain_request": 30.212904999032617,
+        "brain_first_token": 1419.5586670003831,
+        "brain_complete": 2432.660099999979,
+        "tts_request": 2439.119682999328,
+        "tts_first_byte": 2635.062547000125,
+        "first_audio_published": 2636.1102169994265,
+        "first_voiced_audio_published": 2636.255046999082
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "61c0c6e5-4417-4875-8d5c-ed73227ffc2a",
+      "callId": "ee4f78b8-5a39-4489-84bb-d11b75b3c0f8",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T02:57:57.293117717Z",
+      "release": "0.1.88-5e9de67e6b52",
+      "stages": {
+        "flux_final": 0.08670999854803085,
+        "human_committed": 33.307915998622775,
+        "brain_request": 33.527125999331474,
+        "brain_first_token": 895.9214369989932,
+        "brain_complete": 1094.2481720000505,
+        "tts_request": 1100.0377449989319,
+        "tts_first_byte": 1378.8715479988605,
+        "first_audio_published": 1379.700217999518,
+        "first_voiced_audio_published": 1516.3866029996425
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "845ce25f-a04e-42c5-aad4-2ece30219221",
+      "callId": "9d462963-eb12-423f-b93a-998d3e0f3cfa",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T13:35:29.343902945Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.8853100016713142,
+        "human_committed": 37.220318000763655,
+        "brain_request": 49.842257000505924
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6539cf72-5c34-4dae-b73b-1c68537c21b5",
+      "callId": "9d462963-eb12-423f-b93a-998d3e0f3cfa",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T13:35:40.654464472Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.1003200002014637,
+        "human_committed": 27.294197998940945,
+        "brain_request": 39.924637999385595,
+        "brain_first_token": 2049.3421379998326,
+        "brain_complete": 2555.848328001797,
+        "tts_request": 2582.9097759984434,
+        "tts_first_byte": 2859.4539100006223,
+        "first_audio_published": 2861.967808999121,
+        "first_voiced_audio_published": 2862.207348998636
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "cadc1c64-c4ed-4d01-b537-fdddb050c311",
+      "callId": "9d462963-eb12-423f-b93a-998d3e0f3cfa",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T13:36:05.801161358Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.062300000339746475,
+        "human_committed": 36.625128000974655,
+        "brain_request": 37.04900800064206,
+        "tts_request": 1719.8419679999352,
+        "tts_first_byte": 1939.320554997772,
+        "first_audio_published": 1943.978845000267,
+        "first_voiced_audio_published": 1944.4309539981186,
+        "brain_first_token": 8811.311985000968,
+        "brain_complete": 10558.002940997481
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6313fbff-4dec-4c5b-9ad2-a84d3398601c",
+      "callId": "9d462963-eb12-423f-b93a-998d3e0f3cfa",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T13:36:38.454930723Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08720999956130981,
+        "human_committed": 31.379838000983,
+        "brain_request": 31.567818000912666
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "15fd4649-c734-40ca-a17b-7201f4193564",
+      "callId": "764cc437-947e-4c44-a535-92797c95b82e",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:36:36.928985714Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.2951600030064583,
+        "human_committed": 37.676668003201485,
+        "brain_request": 76.7814360037446,
+        "brain_first_token": 885.4899369999766,
+        "brain_complete": 1274.8458639979362,
+        "tts_request": 1284.1221840009093,
+        "tts_first_byte": 1555.026557996869,
+        "first_audio_published": 1557.8929269984365,
+        "first_voiced_audio_published": 1558.2369069978595
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "6a6145c3-e4d0-4d8e-af7f-6b3895c51cfc",
+      "callId": "764cc437-947e-4c44-a535-92797c95b82e",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:36:59.49920009Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.15609999746084213,
+        "human_committed": 38.82050799578428,
+        "brain_request": 41.3800980001688,
+        "brain_first_token": 675.9752499982715
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "38f30f83-3388-499f-b74a-3681d466df30",
+      "callId": "764cc437-947e-4c44-a535-92797c95b82e",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:37:13.641748981Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.09630000591278076,
+        "human_committed": 41.07753800600767,
+        "brain_request": 41.54723799973726
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "b8c46ccf-4ff9-4070-af07-4b976f97c90d",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:49:50.417890938Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 1.41177099943161,
+        "human_committed": 37.49372800439596,
+        "brain_request": 47.943483002483845,
+        "brain_first_token": 903.6737700030208,
+        "brain_complete": 1191.6357069984078,
+        "tts_request": 1211.241236999631,
+        "tts_first_byte": 1449.9960310012102,
+        "first_audio_published": 1452.5464920029044,
+        "first_voiced_audio_published": 1452.878102004528
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "7d28d8b9-cb19-444f-8161-5f52e1686329",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:49:58.082609566Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.09696000069379807,
+        "human_committed": 33.11418600380421,
+        "brain_request": 33.39885599911213,
+        "brain_first_token": 1139.0732830017805,
+        "brain_complete": 1174.3092399984598,
+        "tts_request": 1181.071853004396,
+        "tts_first_byte": 1443.4158280044794,
+        "first_audio_published": 1444.348558999598,
+        "first_voiced_audio_published": 1444.4929790049791
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c04be629-6911-4d13-9afe-59196b59210b",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:50:04.724463567Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.06804100424051285,
+        "human_committed": 30.454785004258156,
+        "brain_request": 30.532415002584457,
+        "brain_first_token": 613.0842830017209,
+        "brain_complete": 859.2482700049877,
+        "tts_request": 865.2504930049181,
+        "tts_first_byte": 1172.804340004921,
+        "first_audio_published": 1173.8589100018144,
+        "first_voiced_audio_published": 1173.9220100045204
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "8297dceb-441f-4f7f-aaaa-ca2d7614dadc",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:50:13.179856705Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.0920799970626831,
+        "human_committed": 29.640603996813297,
+        "brain_request": 29.866104997694492,
+        "brain_first_token": 712.3088199943304,
+        "brain_complete": 1097.3693839982152,
+        "tts_request": 1102.8753359988332,
+        "tts_first_byte": 1363.8655209988356,
+        "first_audio_published": 1367.3809419944882,
+        "first_voiced_audio_published": 1367.417851999402
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "854ba056-cb27-41c9-982d-1f8015fa6171",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:50:29.594351261Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.06735000014305115,
+        "human_committed": 32.74059499800205,
+        "brain_request": 33.34783600270748,
+        "brain_complete": 1034.5168429985642,
+        "tts_request": 1040.3647259995341,
+        "tts_first_byte": 1844.8780290037394,
+        "delivery_committed": 1885.8548990041018,
+        "first_audio_published": 1887.761629998684,
+        "first_voiced_audio_published": 1887.9091000035405
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0d4ffe37-d54e-4976-8aff-d89048df06c8",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:50:43.288409638Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.06667999923229218,
+        "human_committed": 30.682893998920918,
+        "brain_request": 30.922074995934963,
+        "brain_complete": 1213.6777989938855,
+        "tts_request": 1220.664831995964,
+        "tts_first_byte": 1458.011094994843,
+        "delivery_committed": 1500.7356949970126,
+        "first_audio_published": 1502.4743859991431,
+        "first_voiced_audio_published": 1502.6266059949994
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "800de172-6066-403f-a595-0d203475edb9",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:50:47.138494106Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.06258100271224976,
+        "human_committed": 32.15746600180864,
+        "brain_request": 32.39175599813461,
+        "brain_complete": 957.0074570029974,
+        "tts_request": 962.3313990011811
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c7afd836-bc64-46b1-86f1-bb9a01964d28",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:50:52.937516341Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.06289999932050705,
+        "human_committed": 47.8739620000124,
+        "brain_request": 48.078763000667095,
+        "brain_complete": 899.6057289987803,
+        "delivery_committed": 937.4660870060325
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "1ffdfb1a-d504-408e-8790-b3e9c5a53df7",
+      "callId": "bc74b297-471e-4ade-a3f2-eb18efba36be",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:51:19.246016468Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08393000066280365,
+        "human_committed": 31.310185000300407,
+        "brain_request": 31.58424600213766,
+        "brain_complete": 1030.821362003684,
+        "tts_request": 1035.8718940019608,
+        "tts_first_byte": 1331.467545002699,
+        "first_audio_published": 1332.0573659986258,
+        "delivery_committed": 1438.3482860028744,
+        "first_voiced_audio_published": 1442.2184580042958
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "8f1efb1e-e6e6-4d2e-9e04-4ecb0b234377",
+      "callId": "3183dda4-778c-4511-9b01-6827fe63b6bc",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:52:50.416399695Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08337999880313873,
+        "human_committed": 34.263636000454426,
+        "brain_request": 57.872847996652126
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "9414b56d-8849-47c4-a3b9-b19da0062864",
+      "callId": "3183dda4-778c-4511-9b01-6827fe63b6bc",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:53:11.381915199Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.07913000136613846,
+        "human_committed": 28.355663001537323,
+        "brain_request": 39.21788899600506
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f482b437-1808-44f0-8acd-9e8293e6ba02",
+      "callId": "3183dda4-778c-4511-9b01-6827fe63b6bc",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:53:13.621996078Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.11428000032901764,
+        "human_committed": 29.98073399811983,
+        "brain_request": 37.67856799811125,
+        "brain_complete": 1393.3889039978385,
+        "tts_request": 1399.1940469965339,
+        "tts_first_byte": 1682.3838519975543,
+        "delivery_committed": 1734.0188570022583,
+        "first_audio_published": 1740.0497699975967,
+        "first_voiced_audio_published": 1740.286899998784
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "92bc7121-93ba-489f-b416-ef0d3fa62045",
+      "callId": "3183dda4-778c-4511-9b01-6827fe63b6bc",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-20T16:54:25.358415643Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.0687599927186966,
+        "human_committed": 27.526353999972343,
+        "brain_request": 27.75381399691105,
+        "brain_complete": 1140.2516339942813,
+        "tts_request": 1145.1312559992075,
+        "tts_first_byte": 1417.7065359950066,
+        "delivery_committed": 1460.5003269985318,
+        "first_audio_published": 1464.2936689928174,
+        "first_voiced_audio_published": 1464.3805089965463
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "34ae9dc6-7e72-413e-825f-686f485be742",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:55:18.61579596Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.14951999485492706,
+        "human_committed": 35.97361800074577,
+        "brain_request": 91.90985399484634,
+        "tts_request": 1446.6201229989529,
+        "tts_first_byte": 1698.3491379991174,
+        "first_audio_published": 1699.4799979999661,
+        "first_voiced_audio_published": 1699.7204179987311,
+        "brain_first_token": 5581.4178769961,
+        "brain_complete": 7115.804055996239
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "f80b4d2b-e6e1-482f-b92b-e2d051511551",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:56:36.546334558Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.1141199991106987,
+        "human_committed": 35.66150800138712,
+        "brain_request": 35.92457800358534,
+        "tts_request": 1338.2866300046444,
+        "tts_first_byte": 2035.4907990023494,
+        "first_audio_published": 2036.7005090042949,
+        "first_voiced_audio_published": 2037.0296790003777,
+        "brain_complete": 5597.25228600204,
+        "delivery_committed": 6027.203170999885
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "c10d191b-a740-454e-9023-9c5515ba915a",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:57:25.761810879Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.07820000499486923,
+        "human_committed": 36.78932800143957,
+        "brain_request": 37.070008002221584,
+        "brain_complete": 1082.508045002818,
+        "tts_request": 1088.108125001192,
+        "tts_first_byte": 1559.2364670038223,
+        "delivery_committed": 1602.7667139992118,
+        "first_audio_published": 1606.201514005661,
+        "first_voiced_audio_published": 1606.4726039990783
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "5fab6119-67c1-4fad-9ab7-975b8d258d31",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:57:30.604990703Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.07210999727249146,
+        "human_committed": 38.49422799795866,
+        "brain_request": 38.738587997853756,
+        "brain_complete": 909.4326659962535,
+        "tts_request": 916.4529749974608,
+        "tts_first_byte": 1336.4675699993968,
+        "delivery_committed": 1417.1662959977984,
+        "first_audio_published": 1418.8730459958315,
+        "first_voiced_audio_published": 1418.9764959961176
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "78e34b2e-528a-49f1-b7c3-916536fcf96e",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:58:35.086265167Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08524999767541885,
+        "human_committed": 35.077058002352715,
+        "brain_request": 35.561098001897335,
+        "brain_complete": 1228.6811370030046,
+        "tts_request": 1234.5645259991288,
+        "tts_first_byte": 1475.2986520007253,
+        "delivery_committed": 1525.7990690022707,
+        "first_audio_published": 1526.6103790029883,
+        "first_voiced_audio_published": 1526.7478389963508
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "806c6a12-db45-4684-a3dc-5849d9c8c458",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:58:56.143707082Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.05984000116586685,
+        "human_committed": 37.21882800012827,
+        "brain_request": 37.41360799968243,
+        "tts_request": 1258.3330750018358,
+        "tts_first_byte": 1543.0401280000806,
+        "first_audio_published": 1544.0470080003142,
+        "first_voiced_audio_published": 1544.114568002522,
+        "brain_first_token": 4431.294696003199,
+        "brain_complete": 6483.023184001446
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "ec5128f8-6295-4635-af30-78638fef5dd2",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:59:09.693747469Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08340000361204147,
+        "human_committed": 31.51587900519371,
+        "brain_request": 31.620349004864693,
+        "brain_first_token": 953.0414840057492,
+        "brain_complete": 1384.7592179998755,
+        "tts_request": 1391.5573470070958,
+        "tts_first_byte": 1702.4588290005922,
+        "first_audio_published": 1703.2179190069437,
+        "first_voiced_audio_published": 1703.3643990010023
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0f5b569a-74f5-4df1-a5e3-737c927f3f88",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T16:59:30.294135572Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.09104999899864197,
+        "human_committed": 36.643307000398636,
+        "brain_request": 36.909687004983425,
+        "brain_first_token": 741.3177350014448,
+        "brain_complete": 2201.8541180044413,
+        "tts_request": 2210.082138001919,
+        "tts_first_byte": 2431.0655150040984,
+        "first_audio_published": 2432.7812549993396,
+        "first_voiced_audio_published": 2432.9426750019193
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "24df4033-9790-4f53-aceb-230ec863efbe",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T17:00:05.649067285Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08263000100851059,
+        "human_committed": 36.16311799734831,
+        "brain_request": 37.007168002426624
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "303edea7-edc8-47e7-9897-46112ab079eb",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T17:00:06.878367753Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.10582000017166138,
+        "human_committed": 29.712187997996807,
+        "brain_request": 30.03251799941063
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "cceb9d34-84e9-429c-a383-a47b7fbb65fd",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T17:00:16.744942651Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.08540000021457672,
+        "human_committed": 32.157388001680374,
+        "brain_request": 32.39189799875021,
+        "brain_complete": 945.4512939974666,
+        "tts_request": 950.8526029959321,
+        "tts_first_byte": 1238.624186001718,
+        "delivery_committed": 1281.8361739963293,
+        "first_audio_published": 1282.839943997562,
+        "first_voiced_audio_published": 1282.8915139958262
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "4119f808-020c-4396-8427-564f23d34d1b",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T17:01:19.346677291Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.06575000286102295,
+        "human_committed": 46.022976003587246,
+        "brain_request": 46.085125997662544,
+        "brain_first_token": 2081.1124550029635,
+        "brain_complete": 2962.6199619993567,
+        "tts_request": 2972.7241820022464,
+        "tts_first_byte": 3324.1607109978795,
+        "first_audio_published": 3325.009470999241,
+        "first_voiced_audio_published": 3325.371141001582
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "5495af8d-a82c-4dbe-8f1b-06f435c8648c",
+      "callId": "9a230e28-fd44-4806-8d75-9887e070fa7c",
+      "instance": "892275f66e6918",
+      "at": "2026-10-20T17:01:57.264928511Z",
+      "release": "0.1.89-6d908054c0dd",
+      "stages": {
+        "flux_final": 0.0741099938750267,
+        "human_committed": 33.599987998604774,
+        "brain_request": 33.81702799350023,
+        "brain_first_token": 2404.435756996274,
+        "brain_complete": 2969.142982997,
+        "tts_request": 2976.3529829978943,
+        "tts_first_byte": 3235.6125169992447,
+        "delivery_committed": 3283.66874499619,
+        "first_audio_published": 3285.793013997376,
+        "first_voiced_audio_published": 3286.2410339936614
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "322e72b4-76bd-45ba-a5ee-aa973840220b",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:20:59.014623856Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.8779400000348687,
+        "human_committed": 49.168913000263274,
+        "brain_request": 95.23616500012577
+      },
+      "decisions": [],
+      "cancelled": "user resumed speaking"
+    },
+    {
+      "traceId": "61c6bb9a-aca7-43ac-990f-53abf25ff30a",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:21:00.638135169Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 1.0591510003432631,
+        "human_committed": 34.89722700044513,
+        "brain_request": 72.37864500004798,
+        "brain_first_token": 1052.7420819997787,
+        "brain_complete": 3179.0144760003313,
+        "tts_request": 3198.463694999926,
+        "tts_first_byte": 3501.709130000323,
+        "first_audio_published": 3504.152560999617,
+        "first_voiced_audio_published": 3504.862901999615
+      },
+      "decisions": [
+        "answer"
+      ]
+    },
+    {
+      "traceId": "a86e3198-f4bd-4e08-b0ff-72238899bc87",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:21:08.06611956Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 2.8693909998983145,
+        "human_committed": 34.06786600034684,
+        "brain_request": 34.391716000624
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "a9fee647-48ef-4e13-8a66-0024baad9903",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:21:28.846005714Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.13893999997526407,
+        "human_committed": 38.38105800002813,
+        "brain_request": 38.6546980002895,
+        "tts_request": 6919.475669000298,
+        "tts_first_byte": 7155.195461000316,
+        "first_audio_published": 7155.907091000117,
+        "first_voiced_audio_published": 7156.0907610002905,
+        "brain_first_token": 9962.812890000641,
+        "brain_complete": 10923.770287999883
+      },
+      "decisions": [
+        "search_history",
+        "answer"
+      ]
+    },
+    {
+      "traceId": "2d724c5d-1a82-42b5-a965-03889b76dd46",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:21:37.769115014Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 3.2626409996300936,
+        "human_committed": 34.33571599982679,
+        "brain_request": 34.540825999341905,
+        "brain_first_token": 1297.4214479997754,
+        "brain_complete": 1553.2204999998212,
+        "tts_request": 1560.3450539996848,
+        "tts_first_byte": 1800.6850079996511,
+        "first_audio_published": 1803.4181699994951,
+        "first_voiced_audio_published": 1803.5301899993792
+      },
+      "decisions": [
+        "answer"
+      ]
+    },
+    {
+      "traceId": "86de9317-6fed-497e-ac75-112881454152",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:21:44.923449732Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.16128999926149845,
+        "human_committed": 62.72295999992639,
+        "brain_request": 62.93580999970436,
+        "brain_first_token": 6236.152683999389,
+        "brain_complete": 7172.267989999615,
+        "tts_request": 7178.083583000116,
+        "tts_first_byte": 7763.0147420000285,
+        "first_audio_published": 7763.629011999816,
+        "first_voiced_audio_published": 7763.766041999683
+      },
+      "decisions": [
+        "answer"
+      ]
+    },
+    {
+      "traceId": "baf8d1e5-3eae-4803-ab7d-3efa52944f39",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:22:09.24457482Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.07880000025033951,
+        "human_committed": 103.59452900011092,
+        "brain_request": 103.83060900028795,
+        "brain_first_token": 1119.3326439997181,
+        "brain_complete": 1676.566689000465,
+        "tts_request": 1682.4376419996843
+      },
+      "decisions": [
+        "answer"
+      ],
+      "cancelled": "superseded"
+    },
+    {
+      "traceId": "58ea0261-e4e7-4eea-b572-04c2a59ec891",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:22:11.448051637Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.8138800002634525,
+        "human_committed": 36.350136999972165,
+        "brain_request": 36.65310799982399,
+        "brain_first_token": 842.1530520003289,
+        "brain_complete": 1651.2812769999728,
+        "tts_request": 1657.1023700004444,
+        "tts_first_byte": 1924.4982980005443,
+        "first_audio_published": 1925.1533580003306,
+        "first_voiced_audio_published": 1925.2915780004114
+      },
+      "decisions": [
+        "answer"
+      ]
+    },
+    {
+      "traceId": "4a297f96-ac64-4a33-8ca1-a901a023dfdb",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:22:21.428787499Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.11860000062733889,
+        "human_committed": 31.389895000495017,
+        "brain_request": 31.742455000057817
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "0f3fb026-6f06-415b-8762-fe9923ed55d6",
+      "callId": "c257dda0-cd31-41d4-8185-47e654c878b9",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:22:33.438929723Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.01773000042885542,
+        "human_committed": 30.784475000575185,
+        "brain_request": 30.84845499973744
+      },
+      "decisions": [],
+      "cancelled": "superseded"
+    },
+    {
+      "traceId": "0b06fc2c-9ee2-4434-a447-7e63668efb7f",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:30:02.072989047Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.08874099981039762,
+        "human_committed": 30.244374999776483,
+        "brain_request": 54.82461699936539,
+        "brain_first_token": 1022.6516279997304,
+        "brain_complete": 5847.442679000087,
+        "tts_request": 5854.838642000221,
+        "tts_first_byte": 6221.966066999361,
+        "first_audio_published": 6223.046748000197,
+        "first_voiced_audio_published": 6223.3622479997575
+      },
+      "decisions": [
+        "answer"
+      ]
+    },
+    {
+      "traceId": "9918867b-21ec-4877-8bf0-1126cc267666",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:30:44.207742378Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.07684999983757734,
+        "human_committed": 28.394272999837995,
+        "brain_request": 28.77556400001049
+      },
+      "decisions": [],
+      "cancelled": "user resumed speaking"
+    },
+    {
+      "traceId": "3c16d4b2-e4bc-4b64-abcd-c9bf31f4e6bf",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:30:47.176142174Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.058229999616742134,
+        "human_committed": 26.117972999811172,
+        "brain_request": 26.30756299942732,
+        "brain_first_token": 1040.9907269999385,
+        "brain_complete": 3022.972881999798,
+        "tts_request": 3028.7047739997506,
+        "tts_first_byte": 3396.074740000069,
+        "first_audio_published": 3396.8166499994695,
+        "first_voiced_audio_published": 3396.9786399994045
+      },
+      "decisions": [
+        "answer"
+      ]
+    },
+    {
+      "traceId": "5b91bafd-9206-4122-8b55-659c5ee34ccf",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:31:14.186418637Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.08768999949097633,
+        "human_committed": 35.1677970001474,
+        "brain_request": 35.396486999467015,
+        "tts_request": 1979.0843139998615,
+        "tts_first_byte": 2300.665966999717,
+        "first_audio_published": 2301.4439769992605,
+        "first_voiced_audio_published": 2301.6361769996583,
+        "brain_complete": 4782.170129999518,
+        "delivery_committed": 5190.081484999508
+      },
+      "decisions": [
+        "search_web",
+        "order"
+      ]
+    },
+    {
+      "traceId": "c317ed22-8d2b-42e9-a15c-9436b7e72197",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:31:32.513656468Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.1378300003707409,
+        "human_committed": 37.973457999527454,
+        "brain_request": 38.30053799971938
+      },
+      "decisions": [],
+      "cancelled": "user resumed speaking"
+    },
+    {
+      "traceId": "b6a67286-8e44-4c91-af51-f08bf2422e35",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:31:41.743318046Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.5646500000730157,
+        "human_committed": 36.961526999250054,
+        "brain_request": 37.17422699928284,
+        "brain_complete": 5368.0065789995715,
+        "delivery_committed": 5423.492734999396
+      },
+      "decisions": [
+        "search_web",
+        "order"
+      ]
+    },
+    {
+      "traceId": "f4859efc-e6c4-4e95-b360-5c4e1b30c5e9",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:32:17.799142496Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.194369999691844,
+        "human_committed": 33.554096000269055,
+        "brain_request": 33.79934599995613
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "41a1103a-f4c6-49db-a735-1fdded45ba8a",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:32:28.108174906Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.12219000048935413
+      },
+      "decisions": []
+    },
+    {
+      "traceId": "063a546d-c5c4-45ee-95f5-fc0451bf71aa",
+      "callId": "7d8d3ac0-0dbc-421f-bce2-c9d71a727b29",
+      "instance": "8d04d0ce21d2d8",
+      "at": "2026-10-21T14:32:38.119482123Z",
+      "release": "0.1.94-703bbdbf5f8c",
+      "stages": {
+        "flux_final": 0.0799399996176362,
+        "human_committed": 88.7043819995597,
+        "brain_request": 88.97040299978107,
+        "brain_first_token": 4523.877176999114,
+        "brain_complete": 6329.728607999161,
+        "tts_request": 6337.382311999798,
+        "tts_first_byte": 6610.3408919991925,
+        "first_audio_published": 6610.919701999985,
+        "first_voiced_audio_published": 6611.066761999391
+      },
+      "decisions": [
+        "answer"
+      ]
+    }
+  ],
+  "allPairs": [
+    {
+      "release": "0.1.58-923d7a17dad5",
+      "committed": 7,
+      "metrics": {
+        "commit": {
+          "n": 7,
+          "median": 30,
+          "p90": 87
+        },
+        "token": {
+          "n": 2,
+          "median": 746,
+          "p90": 767
+        },
+        "tts": {
+          "n": 2,
+          "median": 323,
+          "p90": 386
+        },
+        "audio": {
+          "n": 5,
+          "median": 2,
+          "p90": 5
+        },
+        "total": {
+          "n": 5,
+          "median": 1282,
+          "p90": 1687
+        },
+        "tokenToFrame": {
+          "n": 2,
+          "median": 327,
+          "p90": 389
+        },
+        "totalToFrame": {
+          "n": 5,
+          "median": 1283,
+          "p90": 1688
+        }
+      }
+    },
+    {
+      "release": "0.1.60-1d09b27c43be",
+      "committed": 15,
+      "metrics": {
+        "commit": {
+          "n": 15,
+          "median": 37,
+          "p90": 102
+        },
+        "token": {
+          "n": 7,
+          "median": 837,
+          "p90": 980
+        },
+        "tts": {
+          "n": 7,
+          "median": 265,
+          "p90": 673
+        },
+        "audio": {
+          "n": 13,
+          "median": 1,
+          "p90": 3
+        },
+        "total": {
+          "n": 13,
+          "median": 1216,
+          "p90": 2006
+        },
+        "tokenToFrame": {
+          "n": 7,
+          "median": 270,
+          "p90": 674
+        },
+        "totalToFrame": {
+          "n": 13,
+          "median": 1218,
+          "p90": 2007
+        }
+      }
+    },
+    {
+      "release": "0.1.65-1bb54031f947",
+      "committed": 4,
+      "metrics": {
+        "commit": {
+          "n": 4,
+          "median": 30,
+          "p90": 42
+        },
+        "token": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "tts": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "audio": {
+          "n": 2,
+          "median": 2,
+          "p90": 2
+        },
+        "total": {
+          "n": 2,
+          "median": 1255,
+          "p90": 1434
+        },
+        "tokenToFrame": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "totalToFrame": {
+          "n": 2,
+          "median": 1257,
+          "p90": 1437
+        }
+      }
+    },
+    {
+      "release": "0.1.74-4a954a6370d7",
+      "committed": 12,
+      "metrics": {
+        "commit": {
+          "n": 12,
+          "median": 33,
+          "p90": 46
+        },
+        "token": {
+          "n": 7,
+          "median": 699,
+          "p90": 772
+        },
+        "tts": {
+          "n": 5,
+          "median": 428,
+          "p90": 477
+        },
+        "audio": {
+          "n": 9,
+          "median": 1,
+          "p90": 6
+        },
+        "total": {
+          "n": 9,
+          "median": 1174,
+          "p90": 1290
+        },
+        "tokenToFrame": {
+          "n": 5,
+          "median": 429,
+          "p90": 478
+        },
+        "totalToFrame": {
+          "n": 9,
+          "median": 1175,
+          "p90": 1292
+        }
+      }
+    },
+    {
+      "release": "0.1.76-fe3850011dca",
+      "committed": 3,
+      "metrics": {
+        "commit": {
+          "n": 3,
+          "median": 40,
+          "p90": 42
+        },
+        "token": {
+          "n": 3,
+          "median": 778,
+          "p90": 810
+        },
+        "tts": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "audio": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "total": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "tokenToFrame": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "totalToFrame": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        }
+      }
+    },
+    {
+      "release": "0.1.78-574b24bd3636",
+      "committed": 43,
+      "metrics": {
+        "commit": {
+          "n": 43,
+          "median": 32,
+          "p90": 48
+        },
+        "token": {
+          "n": 24,
+          "median": 662,
+          "p90": 1088
+        },
+        "tts": {
+          "n": 23,
+          "median": 268,
+          "p90": 432
+        },
+        "audio": {
+          "n": 32,
+          "median": 1,
+          "p90": 1
+        },
+        "total": {
+          "n": 32,
+          "median": 1091,
+          "p90": 1499
+        },
+        "tokenToFrame": {
+          "n": 23,
+          "median": 269,
+          "p90": 433
+        },
+        "totalToFrame": {
+          "n": 32,
+          "median": 1092,
+          "p90": 1500
+        }
+      }
+    },
+    {
+      "release": "0.1.83-8da00b175080",
+      "committed": 9,
+      "metrics": {
+        "commit": {
+          "n": 9,
+          "median": 37,
+          "p90": 55
+        },
+        "token": {
+          "n": 5,
+          "median": 753,
+          "p90": 821
+        },
+        "tts": {
+          "n": 5,
+          "median": 280,
+          "p90": 401
+        },
+        "audio": {
+          "n": 7,
+          "median": 3,
+          "p90": 4
+        },
+        "total": {
+          "n": 7,
+          "median": 1143,
+          "p90": 1743
+        },
+        "tokenToFrame": {
+          "n": 5,
+          "median": 283,
+          "p90": 405
+        },
+        "totalToFrame": {
+          "n": 7,
+          "median": 1148,
+          "p90": 1744
+        }
+      }
+    },
+    {
+      "release": "0.1.84-f49694b23d95",
+      "committed": 4,
+      "metrics": {
+        "commit": {
+          "n": 4,
+          "median": 33,
+          "p90": 37
+        },
+        "token": {
+          "n": 1,
+          "median": 2888,
+          "p90": 2888
+        },
+        "tts": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "audio": {
+          "n": 3,
+          "median": 1,
+          "p90": 2
+        },
+        "total": {
+          "n": 3,
+          "median": 1598,
+          "p90": 2001
+        },
+        "tokenToFrame": {
+          "n": 0,
+          "median": null,
+          "p90": null
+        },
+        "totalToFrame": {
+          "n": 3,
+          "median": 1600,
+          "p90": 2002
+        }
+      }
+    },
+    {
+      "release": "0.1.88-5e9de67e6b52",
+      "committed": 12,
+      "metrics": {
+        "commit": {
+          "n": 12,
+          "median": 36,
+          "p90": 59
+        },
+        "token": {
+          "n": 9,
+          "median": 760,
+          "p90": 1144
+        },
+        "tts": {
+          "n": 8,
+          "median": 658,
+          "p90": 985
+        },
+        "audio": {
+          "n": 8,
+          "median": 1,
+          "p90": 3
+        },
+        "total": {
+          "n": 8,
+          "median": 1386,
+          "p90": 2187
+        },
+        "tokenToFrame": {
+          "n": 8,
+          "median": 660,
+          "p90": 987
+        },
+        "totalToFrame": {
+          "n": 8,
+          "median": 1387,
+          "p90": 2189
+        }
+      }
+    },
+    {
+      "release": "0.1.89-6d908054c0dd",
+      "committed": 33,
+      "metrics": {
+        "commit": {
+          "n": 33,
+          "median": 34,
+          "p90": 39
+        },
+        "token": {
+          "n": 14,
+          "median": 1014,
+          "p90": 5200
+        },
+        "tts": {
+          "n": 13,
+          "median": 652,
+          "p90": 1161
+        },
+        "audio": {
+          "n": 23,
+          "median": 3,
+          "p90": 51
+        },
+        "total": {
+          "n": 23,
+          "median": 1555,
+          "p90": 2774
+        },
+        "tokenToFrame": {
+          "n": 13,
+          "median": 655,
+          "p90": 1171
+        },
+        "totalToFrame": {
+          "n": 23,
+          "median": 1558,
+          "p90": 2776
+        }
+      }
+    },
+    {
+      "release": "0.1.94-703bbdbf5f8c",
+      "committed": 18,
+      "metrics": {
+        "commit": {
+          "n": 18,
+          "median": 34,
+          "p90": 70
+        },
+        "token": {
+          "n": 9,
+          "median": 1018,
+          "p90": 6924
+        },
+        "tts": {
+          "n": 8,
+          "median": 1807,
+          "p90": 3274
+        },
+        "audio": {
+          "n": 9,
+          "median": 1,
+          "p90": 3
+        },
+        "total": {
+          "n": 9,
+          "median": 3501,
+          "p90": 7277
+        },
+        "tokenToFrame": {
+          "n": 8,
+          "median": 1807,
+          "p90": 3276
+        },
+        "totalToFrame": {
+          "n": 9,
+          "median": 3503,
+          "p90": 7277
+        }
+      }
+    }
+  ],
+  "completeOrdinary": [
+    {
+      "release": "0.1.58-923d7a17dad5",
+      "committed": 7,
+      "full": 2,
+      "metrics": {
+        "commit": [
+          29,
+          30
+        ],
+        "token": [
+          746,
+          767
+        ],
+        "tts": [
+          323,
+          386
+        ],
+        "total": [
+          1098,
+          1182
+        ],
+        "buffer": [
+          149,
+          215
+        ],
+        "ttsProvider": [
+          174,
+          178
+        ]
+      }
+    },
+    {
+      "release": "0.1.60-1d09b27c43be",
+      "committed": 15,
+      "full": 7,
+      "metrics": {
+        "commit": [
+          33,
+          87
+        ],
+        "token": [
+          837,
+          980
+        ],
+        "tts": [
+          265,
+          673
+        ],
+        "total": [
+          1213,
+          1614
+        ],
+        "buffer": [
+          74,
+          177
+        ],
+        "ttsProvider": [
+          191,
+          502
+        ]
+      }
+    },
+    {
+      "release": "0.1.65-1bb54031f947",
+      "committed": 4,
+      "full": 0,
+      "metrics": {
+        "commit": [
+          null,
+          null
+        ],
+        "token": [
+          null,
+          null
+        ],
+        "tts": [
+          null,
+          null
+        ],
+        "total": [
+          null,
+          null
+        ],
+        "buffer": [
+          null,
+          null
+        ],
+        "ttsProvider": [
+          null,
+          null
+        ]
+      }
+    },
+    {
+      "release": "0.1.74-4a954a6370d7",
+      "committed": 12,
+      "full": 5,
+      "metrics": {
+        "commit": [
+          38,
+          91
+        ],
+        "token": [
+          699,
+          766
+        ],
+        "tts": [
+          428,
+          477
+        ],
+        "total": [
+          1175,
+          1251
+        ],
+        "buffer": [
+          154,
+          218
+        ],
+        "ttsProvider": [
+          268,
+          311
+        ]
+      }
+    },
+    {
+      "release": "0.1.76-fe3850011dca",
+      "committed": 3,
+      "full": 0,
+      "metrics": {
+        "commit": [
+          null,
+          null
+        ],
+        "token": [
+          null,
+          null
+        ],
+        "tts": [
+          null,
+          null
+        ],
+        "total": [
+          null,
+          null
+        ],
+        "buffer": [
+          null,
+          null
+        ],
+        "ttsProvider": [
+          null,
+          null
+        ]
+      }
+    },
+    {
+      "release": "0.1.78-574b24bd3636",
+      "committed": 43,
+      "full": 23,
+      "metrics": {
+        "commit": [
+          31,
+          45
+        ],
+        "token": [
+          663,
+          1118
+        ],
+        "tts": [
+          268,
+          432
+        ],
+        "total": [
+          988,
+          1483
+        ],
+        "buffer": [
+          49,
+          118
+        ],
+        "ttsProvider": [
+          224,
+          310
+        ]
+      }
+    },
+    {
+      "release": "0.1.83-8da00b175080",
+      "committed": 9,
+      "full": 5,
+      "metrics": {
+        "commit": [
+          37,
+          62
+        ],
+        "token": [
+          753,
+          821
+        ],
+        "tts": [
+          280,
+          401
+        ],
+        "total": [
+          1106,
+          1236
+        ],
+        "buffer": [
+          59,
+          158
+        ],
+        "ttsProvider": [
+          221,
+          255
+        ]
+      }
+    },
+    {
+      "release": "0.1.84-f49694b23d95",
+      "committed": 4,
+      "full": 0,
+      "metrics": {
+        "commit": [
+          null,
+          null
+        ],
+        "token": [
+          null,
+          null
+        ],
+        "tts": [
+          null,
+          null
+        ],
+        "total": [
+          null,
+          null
+        ],
+        "buffer": [
+          null,
+          null
+        ],
+        "ttsProvider": [
+          null,
+          null
+        ]
+      }
+    },
+    {
+      "release": "0.1.88-5e9de67e6b52",
+      "committed": 12,
+      "full": 8,
+      "metrics": {
+        "commit": [
+          31,
+          72
+        ],
+        "token": [
+          777,
+          1175
+        ],
+        "tts": [
+          658,
+          985
+        ],
+        "total": [
+          1386,
+          2187
+        ],
+        "buffer": [
+          385,
+          714
+        ],
+        "ttsProvider": [
+          265,
+          322
+        ]
+      }
+    },
+    {
+      "release": "0.1.89-6d908054c0dd",
+      "committed": 33,
+      "full": 13,
+      "metrics": {
+        "commit": [
+          36,
+          37
+        ],
+        "token": [
+          1106,
+          5315
+        ],
+        "tts": [
+          652,
+          1161
+        ],
+        "total": [
+          1698,
+          3160
+        ],
+        "buffer": [
+          391,
+          828
+        ],
+        "ttsProvider": [
+          262,
+          310
+        ]
+      }
+    },
+    {
+      "release": "0.1.94-703bbdbf5f8c",
+      "committed": 18,
+      "full": 7,
+      "metrics": {
+        "commit": [
+          34,
+          73
+        ],
+        "token": [
+          1018,
+          5130
+        ],
+        "tts": [
+          2086,
+          3549
+        ],
+        "total": [
+          3501,
+          7071
+        ],
+        "buffer": [
+          1814,
+          3220
+        ],
+        "ttsProvider": [
+          303,
+          454
+        ]
+      }
+    }
+  ],
+  "deployments": {
+    "8d04d0ce21d2d8": [
+      {
+        "at": "2026-10-13T14:12:39.863Z",
+        "image": "registry.fly.io/beeline-server:0.1.49-49f3ccb76182@sha256:79ff2b1c238ace67163b2acf591db36b53c580452f0cd91db95d96dd0965e348",
+        "version": "01M4TSQDSQMX43JW0KT0KS31SD"
+      },
+      {
+        "at": "2026-10-13T18:51:49.070Z",
+        "image": "registry.fly.io/beeline-server:0.1.50-1467ca23fda8@sha256:def830afc04acf9a40de8d6f078ea32b29d77f81bc5e72c8090a940aa4c05c0e",
+        "version": "01M4V9PJEEAMWG10263Z2578KN"
+      },
+      {
+        "at": "2026-10-13T19:21:29.432Z",
+        "image": "registry.fly.io/beeline-server:0.1.51-018207ec392f@sha256:8a47869307ff366094ad8a884a637046c7bb38d3b13d8d4195395239b9f9635b",
+        "version": "01M4VBCX2RYK4613D79DAY8RF0"
+      },
+      {
+        "at": "2026-10-13T21:02:47.477Z",
+        "image": "registry.fly.io/beeline-server:0.1.52-edb81b7b2214@sha256:4aa0841fba3a118eb401dbd505b027cf08661ce83304f1c15cc49afac0684675",
+        "version": "01M4VH6CNNSDFBHSN6B80ZTV4P"
+      },
+      {
+        "at": "2026-10-13T22:01:29.816Z",
+        "image": "registry.fly.io/beeline-server:0.1.52-f90e1345a4dd@sha256:b0b3e2e72f80e5bf55d22bd52440c0ade744da789ce75bb9bc706b8e310fbd46",
+        "version": "01M4VMHWERYPMRX74WSN90VE11"
+      },
+      {
+        "at": "2026-10-14T01:35:03.654Z",
+        "image": "registry.fly.io/beeline-server:0.1.54-638e2a3001b3@sha256:964f0336fd8366bcb1f0144f817fd46bf29bd4000155e9dad4f004c6ae9726d5",
+        "version": "01M4W0RXZ6RN158WEFKSMGA8CW"
+      },
+      {
+        "at": "2026-10-14T02:42:09.785Z",
+        "image": "registry.fly.io/beeline-server:0.1.55-20822ca3e10f@sha256:87d0d9fb74d6c7eb3f3b75ef848f3acc4a8561f7c2b039f33b6df88350af785a",
+        "version": "01M4W4KSQS9WMRKGHE63KWEXKD"
+      },
+      {
+        "at": "2026-10-14T06:17:51.488Z",
+        "image": "registry.fly.io/beeline-server:0.1.56-cfcc47ecdfcf@sha256:7ddad9cb352bf4e62a42f391da2f0543f7f5deece4a68968739b898067a73371",
+        "version": "01M4WGYR40Q06RXVSZ98TNKC4C"
+      },
+      {
+        "at": "2026-10-14T18:16:57.537Z",
+        "image": "registry.fly.io/beeline-server:0.1.57-35b5d03b3cca@sha256:13681f90f68ab71fd63825f338b345d640a22580c1653cefc469c27267a77ce6",
+        "version": "01M4XT3EY1HWTNQP97J3F1AXY5"
+      },
+      {
+        "at": "2026-10-14T20:23:54.436Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-8021ebfbb671@sha256:332ee7eabed0997469fd308b1f850bd46c82994a7818c23ad570ca8e3a935887",
+        "version": "01M4Y1BXA4RCPJGV9BHVX0J2JF"
+      },
+      {
+        "at": "2026-10-14T21:22:22.638Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-226b5cf31251@sha256:3f4d329bb5e36e4ca45e9807817e06bf01fb33c98b0ff2b8e57f3c2fcab0ba18",
+        "version": "01M4Y4PZ9ETHWKX5871NKZXMD2"
+      },
+      {
+        "at": "2026-10-14T23:58:30.874Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-4bef506e4beb@sha256:f96c31fe2596b56d313a1124845889388565d09c175516e6ed9494bf15b068b6",
+        "version": "01M4YDMVYT51YYXC5AXC45ESD8"
+      },
+      {
+        "at": "2026-10-15T00:57:47.087Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-923d7a17dad5@sha256:e9fa8ef6c31742023ef9738efaaa23e7c80fd49f26aa6650f5c9f5a0241f42ca",
+        "version": "01M4YH1CTFB565SG0JK00Y2WS0"
+      },
+      {
+        "at": "2026-10-15T02:07:37.900Z",
+        "image": "registry.fly.io/beeline-server:0.1.59-fe869f78eed9@sha256:412857bd0c962fba3002df6e2c46590729b83083da4146f74c90ff6fb741d98e",
+        "version": "01M4YN19DCS6NCZWAVBR0B0QKX"
+      },
+      {
+        "at": "2026-10-15T03:11:39.015Z",
+        "image": "registry.fly.io/beeline-server:0.1.60-1d09b27c43be@sha256:02bb7555eca6668f32eca99d4b9696a0b1b0274f673ee49bacdd117b432db754",
+        "version": "01M4YRPGG73YVHTFK0ZCYYSQWF"
+      },
+      {
+        "at": "2026-10-15T03:34:26.829Z",
+        "image": "registry.fly.io/beeline-server:0.1.60-454e64a2e58c@sha256:23706ad1be58b28b3177320ef5d4d6ae15ffa2fd387d5e6c4f7aa38fe57d99cc",
+        "version": "01M4YT088DNFMS04YSW4QE2AN4"
+      },
+      {
+        "at": "2026-10-15T16:09:44.144Z",
+        "image": "registry.fly.io/beeline-server:0.1.65-1bb54031f947@sha256:6db1fe361821bbe103eed0179382655f5d147b0b8bd816698addd4032ac860ea",
+        "version": "01M50577EGV2S27MKS73TZF90R"
+      },
+      {
+        "at": "2026-10-16T02:55:07.838Z",
+        "image": "registry.fly.io/beeline-server:0.1.67-9427c266bbb3@sha256:db12ce500568748187b4e13d65088f56340aa43a7ff3ea39418ea0f9bfd0dce1",
+        "version": "01M51A4ZHYQ8HF7W3PPSYJA4SN"
+      },
+      {
+        "at": "2026-10-16T13:03:14.745Z",
+        "image": "registry.fly.io/beeline-server:0.1.69-87b6d519c0bf@sha256:2f58d4079afc66184810fd5cd7b2a0317dd4a457db5cd024b7a2eac36fa506b6",
+        "version": "01M52CYF9SVFRR0TPVZGCWPSPX"
+      },
+      {
+        "at": "2026-10-16T15:41:22.765Z",
+        "image": "registry.fly.io/beeline-server:0.1.70-785a76e27c98@sha256:249619e63497c8653e8d02c85ebd4901598e4cdc8c20b3387d8413e2ec0c0737",
+        "version": "01M52P00YDE5TADW8YM7G53R3J"
+      },
+      {
+        "at": "2026-10-16T17:51:21.203Z",
+        "image": "registry.fly.io/beeline-server:0.1.70-785a76e27c98@sha256:249619e63497c8653e8d02c85ebd4901598e4cdc8c20b3387d8413e2ec0c0737",
+        "version": "01M52XE0KK84JZRYJNRS7F7VWB"
+      },
+      {
+        "at": "2026-10-16T19:39:09.261Z",
+        "image": "registry.fly.io/beeline-server:0.1.71-24c48a7670d9@sha256:a624c5ea471a15e4a913a37b3a44e589e3f352ca3a58651c51420ace41956969",
+        "version": "01M533KD2DJF7PPDP9RQYWE0FA"
+      },
+      {
+        "at": "2026-10-17T01:11:33.467Z",
+        "image": "registry.fly.io/beeline-server:0.1.73-d63ac53e13de@sha256:e739cc8e1beefd21b167847debdb9a036b90fa3688ed52ce7d791ea9ac1008a4",
+        "version": "01M53PM1TVAVT83GQPPF80XH2Z"
+      },
+      {
+        "at": "2026-10-17T02:17:08.180Z",
+        "image": "registry.fly.io/beeline-server:0.1.74-4a954a6370d7@sha256:bfeae4aa974d5bcaf6d419d46b8e8e744c20bffd36425fccc4e8dff23e16afc7",
+        "version": "01M53TC4AMXD9Q3G5GSFAT41N2"
+      },
+      {
+        "at": "2026-10-17T15:07:58.613Z",
+        "image": "registry.fly.io/beeline-server:0.1.76-fe3850011dca@sha256:85bdfec0d8ed6b427ea674b83a4b920d2b2f855fb3c61234e97e910b27ce7e2f",
+        "version": "01M556FJRN746ENAYY0Z5J440Y"
+      },
+      {
+        "at": "2026-10-17T16:04:08.794Z",
+        "image": "registry.fly.io/beeline-server:0.1.77-c12d9c5e96f4@sha256:2df3b286011f4d4a9d12ca2c77d9b03a06e21a59b1d7a690f45078dea80027f5",
+        "version": "01M559PDYTX0466Y5GHA59BASP"
+      },
+      {
+        "at": "2026-10-17T19:57:54.505Z",
+        "image": "registry.fly.io/beeline-server:0.1.78-574b24bd3636@sha256:b107f17effc0b5d4fc7c96f9eb0c91a3bb212f6b0df299c7a7d8052c4f5023cc",
+        "version": "01M55Q2EY912V7T29PW6ZJT3XQ"
+      },
+      {
+        "at": "2026-10-18T06:13:56.103Z",
+        "image": "registry.fly.io/beeline-server:0.1.79-a41e39721b06@sha256:137092a3e885e61ef10c0e853d053945972d808fdc6f1c77da1c994c7ffc0b17",
+        "version": "01M56TAE8793WTJQNGB20E3DCJ"
+      },
+      {
+        "at": "2026-10-18T17:49:39.892Z",
+        "image": "registry.fly.io/beeline-server:0.1.80-a24a483eb422@sha256:105a264799789bc750ffef4bd3eebf675eeefd3811f2c1a46e0a94662fbe131d",
+        "version": "01M5824BNMPSVDXR83CSYE98W6"
+      },
+      {
+        "at": "2026-10-18T18:52:03.373Z",
+        "image": "registry.fly.io/beeline-server:0.1.81-6e51856d5c76@sha256:c4e6fc7c09bc2f523e1d3d864a29984a5700ba932800ad9320b4496a6fd34131",
+        "version": "01M585PKDDJWDRVCN9S5SHMNCY"
+      },
+      {
+        "at": "2026-10-18T20:20:16.171Z",
+        "image": "registry.fly.io/beeline-server:0.1.82-27e9cf53e5fc@sha256:402ae00797fe4dde45fc141ea88851677fb023d0c78098249b0750d5170497a4",
+        "version": "01M58AR45BT9K5C82MZG8QZFFG"
+      },
+      {
+        "at": "2026-10-18T21:14:05.623Z",
+        "image": "registry.fly.io/beeline-server:0.1.83-8da00b175080@sha256:07725885483630be8586c18914aa6989650537cf3aed111bcca7e617efef1af6",
+        "version": "01M58DTNXQB4JH9KTK3E0GBS06"
+      },
+      {
+        "at": "2026-10-19T06:12:39.371Z",
+        "image": "registry.fly.io/beeline-server:0.1.84-f49694b23d95@sha256:accfa7cfa2ff2b3b081197bdfbe9b7bbf4dc6785d7673f83972b244bb7910f1c",
+        "version": "01M59CMTABRKXAWM6EV1XNYR2G"
+      },
+      {
+        "at": "2026-10-19T23:09:42.016Z",
+        "image": "registry.fly.io/beeline-server:0.1.88-5e9de67e6b52@sha256:a1b631e1dd7718813b2fbd1768c5a891d54df167bb1ea344a89b836e8ce64715",
+        "version": "01M5B6V2R0QWVY4DCXFMX9WHEH"
+      },
+      {
+        "at": "2026-10-20T07:09:55.644Z",
+        "image": "registry.fly.io/beeline-server:0.1.89-6d908054c0dd@sha256:778f2d6d6c66e2360811054e755b55d3633a107af5b6b820a4f3d82b3c8f4d9c",
+        "version": "01M5C2AD1WD844614TQV48SC9Q"
+      },
+      {
+        "at": "2026-10-21T13:07:32.961Z",
+        "image": "registry.fly.io/beeline-server:0.1.94-703bbdbf5f8c@sha256:bfa8cfc9c0b0faaa511ea3f51ca0c72843ac020fe7c43226e42e1aaa88aa06b1",
+        "version": "01M5F95YF1VPRY19FVTKAWDWX4"
+      }
+    ],
+    "892275f66e6918": [
+      {
+        "at": "2026-10-13T14:06:46.321Z",
+        "image": "registry.fly.io/beeline-server:0.1.49-49f3ccb76182@sha256:79ff2b1c238ace67163b2acf591db36b53c580452f0cd91db95d96dd0965e348",
+        "version": "01M4TSCMHHVN75XDH0203JCQ06"
+      },
+      {
+        "at": "2026-10-13T18:46:02.142Z",
+        "image": "registry.fly.io/beeline-server:0.1.50-1467ca23fda8@sha256:def830afc04acf9a40de8d6f078ea32b29d77f81bc5e72c8090a940aa4c05c0e",
+        "version": "01M4V9BZMYJZEM0FCTRFRSDBNS"
+      },
+      {
+        "at": "2026-10-13T19:15:46.375Z",
+        "image": "registry.fly.io/beeline-server:0.1.51-018207ec392f@sha256:8a47869307ff366094ad8a884a637046c7bb38d3b13d8d4195395239b9f9635b",
+        "version": "01M4VB2E27NX54NC5P0SBDE3WV"
+      },
+      {
+        "at": "2026-10-13T20:57:05.705Z",
+        "image": "registry.fly.io/beeline-server:0.1.52-edb81b7b2214@sha256:4aa0841fba3a118eb401dbd505b027cf08661ce83304f1c15cc49afac0684675",
+        "version": "01M4VGVYX9YBQE4HBQR7R32GYM"
+      },
+      {
+        "at": "2026-10-13T21:55:36.545Z",
+        "image": "registry.fly.io/beeline-server:0.1.52-f90e1345a4dd@sha256:b0b3e2e72f80e5bf55d22bd52440c0ade744da789ce75bb9bc706b8e310fbd46",
+        "version": "01M4VM73F15AJ9TP6B48NVQPBD"
+      },
+      {
+        "at": "2026-10-14T01:29:15.324Z",
+        "image": "registry.fly.io/beeline-server:0.1.54-638e2a3001b3@sha256:964f0336fd8366bcb1f0144f817fd46bf29bd4000155e9dad4f004c6ae9726d5",
+        "version": "01M4W0E9SW9V855G8DQ7SN1WGW"
+      },
+      {
+        "at": "2026-10-14T02:36:21.015Z",
+        "image": "registry.fly.io/beeline-server:0.1.55-20822ca3e10f@sha256:87d0d9fb74d6c7eb3f3b75ef848f3acc4a8561f7c2b039f33b6df88350af785a",
+        "version": "01M4W4954QQQYZVK9BFME17JWK"
+      },
+      {
+        "at": "2026-10-14T06:12:03.385Z",
+        "image": "registry.fly.io/beeline-server:0.1.56-cfcc47ecdfcf@sha256:7ddad9cb352bf4e62a42f391da2f0543f7f5deece4a68968739b898067a73371",
+        "version": "01M4WGM45S9GQ6EG4XGVGBMX0W"
+      },
+      {
+        "at": "2026-10-14T18:11:05.841Z",
+        "image": "registry.fly.io/beeline-server:0.1.57-35b5d03b3cca@sha256:13681f90f68ab71fd63825f338b345d640a22580c1653cefc469c27267a77ce6",
+        "version": "01M4XSRQFH47V46ZHQJ46KFH14"
+      },
+      {
+        "at": "2026-10-14T20:18:10.357Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-8021ebfbb671@sha256:332ee7eabed0997469fd308b1f850bd46c82994a7818c23ad570ca8e3a935887",
+        "version": "01M4Y11D9NE1WJYDFTKDY26W0Z"
+      },
+      {
+        "at": "2026-10-14T21:16:36.423Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-226b5cf31251@sha256:3f4d329bb5e36e4ca45e9807817e06bf01fb33c98b0ff2b8e57f3c2fcab0ba18",
+        "version": "01M4Y4CD67JG22F6DSMRYYKJMG"
+      },
+      {
+        "at": "2026-10-14T23:52:46.343Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-4bef506e4beb@sha256:f96c31fe2596b56d313a1124845889388565d09c175516e6ed9494bf15b068b6",
+        "version": "01M4YDABG7HKM1FX7SN04DQT7K"
+      },
+      {
+        "at": "2026-10-15T00:51:59.963Z",
+        "image": "registry.fly.io/beeline-server:0.1.58-923d7a17dad5@sha256:e9fa8ef6c31742023ef9738efaaa23e7c80fd49f26aa6650f5c9f5a0241f42ca",
+        "version": "01M4YGPSTVS9AC5D67M52FG8QE"
+      },
+      {
+        "at": "2026-10-15T02:01:56.551Z",
+        "image": "registry.fly.io/beeline-server:0.1.59-fe869f78eed9@sha256:412857bd0c962fba3002df6e2c46590729b83083da4146f74c90ff6fb741d98e",
+        "version": "01M4YMPW2775GN9M6F09FESHGP"
+      },
+      {
+        "at": "2026-10-15T03:05:53.938Z",
+        "image": "registry.fly.io/beeline-server:0.1.60-1d09b27c43be@sha256:02bb7555eca6668f32eca99d4b9696a0b1b0274f673ee49bacdd117b432db754",
+        "version": "01M4YRBZGJKBCMDHQX3ZP2F5NV"
+      },
+      {
+        "at": "2026-10-15T03:28:42.652Z",
+        "image": "registry.fly.io/beeline-server:0.1.60-454e64a2e58c@sha256:23706ad1be58b28b3177320ef5d4d6ae15ffa2fd387d5e6c4f7aa38fe57d99cc",
+        "version": "01M4YSNR4WEWJR68TXHNC6BST9"
+      },
+      {
+        "at": "2026-10-15T16:03:21.042Z",
+        "image": "registry.fly.io/beeline-server:0.1.65-1bb54031f947@sha256:6db1fe361821bbe103eed0179382655f5d147b0b8bd816698addd4032ac860ea",
+        "version": "01M504VHAJVNFSPPF361TFTPT3"
+      },
+      {
+        "at": "2026-10-16T02:49:24.067Z",
+        "image": "registry.fly.io/beeline-server:0.1.67-9427c266bbb3@sha256:db12ce500568748187b4e13d65088f56340aa43a7ff3ea39418ea0f9bfd0dce1",
+        "version": "01M519TFV3HRDJ4V0W6DX1ZZVY"
+      },
+      {
+        "at": "2026-10-16T12:57:28.806Z",
+        "image": "registry.fly.io/beeline-server:0.1.69-87b6d519c0bf@sha256:2f58d4079afc66184810fd5cd7b2a0317dd4a457db5cd024b7a2eac36fa506b6",
+        "version": "01M52CKXF6X6Z4MDR7JFDBMKRA"
+      },
+      {
+        "at": "2026-10-16T15:35:41.520Z",
+        "image": "registry.fly.io/beeline-server:0.1.70-785a76e27c98@sha256:249619e63497c8653e8d02c85ebd4901598e4cdc8c20b3387d8413e2ec0c0737",
+        "version": "01M52NNKPGQF38F3BZPBK18FHB"
+      },
+      {
+        "at": "2026-10-16T17:51:06.991Z",
+        "image": "registry.fly.io/beeline-server:0.1.70-785a76e27c98@sha256:249619e63497c8653e8d02c85ebd4901598e4cdc8c20b3387d8413e2ec0c0737",
+        "version": "01M52XDJQF4HK2RSS6QM8G4VSA"
+      },
+      {
+        "at": "2026-10-16T18:57:52.336Z",
+        "image": "registry.fly.io/beeline-server:0.1.70-785a76e27c98@sha256:249619e63497c8653e8d02c85ebd4901598e4cdc8c20b3387d8413e2ec0c0737",
+        "version": "01M5317T6GHB8FJJ0Z056QS76W"
+      },
+      {
+        "at": "2026-10-16T19:33:29.799Z",
+        "image": "registry.fly.io/beeline-server:0.1.71-24c48a7670d9@sha256:a624c5ea471a15e4a913a37b3a44e589e3f352ca3a58651c51420ace41956969",
+        "version": "01M53391J7XZ93P6X2JCBZY9VV"
+      },
+      {
+        "at": "2026-10-17T01:05:53.769Z",
+        "image": "registry.fly.io/beeline-server:0.1.73-d63ac53e13de@sha256:e739cc8e1beefd21b167847debdb9a036b90fa3688ed52ce7d791ea9ac1008a4",
+        "version": "01M53P9P39D2Q6Y81R21K6A6GW"
+      },
+      {
+        "at": "2026-10-17T02:11:27.007Z",
+        "image": "registry.fly.io/beeline-server:0.1.74-4a954a6370d7@sha256:bfeae4aa974d5bcaf6d419d46b8e8e744c20bffd36425fccc4e8dff23e16afc7",
+        "version": "01M53T1Q4ZJP51AX6BRT2H25BF"
+      },
+      {
+        "at": "2026-10-17T15:02:13.205Z",
+        "image": "registry.fly.io/beeline-server:0.1.76-fe3850011dca@sha256:85bdfec0d8ed6b427ea674b83a4b920d2b2f855fb3c61234e97e910b27ce7e2f",
+        "version": "01M55651ENM9JF3AV1PANP2PNH"
+      },
+      {
+        "at": "2026-10-17T15:58:24.505Z",
+        "image": "registry.fly.io/beeline-server:0.1.77-c12d9c5e96f4@sha256:2df3b286011f4d4a9d12ca2c77d9b03a06e21a59b1d7a690f45078dea80027f5",
+        "version": "01M559BXQS55QYRERHK081PDXX"
+      },
+      {
+        "at": "2026-10-17T19:52:17.964Z",
+        "image": "registry.fly.io/beeline-server:0.1.78-574b24bd3636@sha256:b107f17effc0b5d4fc7c96f9eb0c91a3bb212f6b0df299c7a7d8052c4f5023cc",
+        "version": "01M55PR69CTQ6XAZ2D24KR4XQF"
+      },
+      {
+        "at": "2026-10-18T06:08:06.546Z",
+        "image": "registry.fly.io/beeline-server:0.1.79-a41e39721b06@sha256:137092a3e885e61ef10c0e853d053945972d808fdc6f1c77da1c994c7ffc0b17",
+        "version": "01M56SZRWJWNA1J8WM9BZW93RK"
+      },
+      {
+        "at": "2026-10-18T17:43:54.349Z",
+        "image": "registry.fly.io/beeline-server:0.1.80-a24a483eb422@sha256:105a264799789bc750ffef4bd3eebf675eeefd3811f2c1a46e0a94662fbe131d",
+        "version": "01M581ST7DYTQMR02EVZHAK1SQ"
+      },
+      {
+        "at": "2026-10-18T18:46:20.443Z",
+        "image": "registry.fly.io/beeline-server:0.1.81-6e51856d5c76@sha256:c4e6fc7c09bc2f523e1d3d864a29984a5700ba932800ad9320b4496a6fd34131",
+        "version": "01M585C4GV85NY54EHNJ608NWV"
+      },
+      {
+        "at": "2026-10-18T20:14:32.899Z",
+        "image": "registry.fly.io/beeline-server:0.1.82-27e9cf53e5fc@sha256:402ae00797fe4dde45fc141ea88851677fb023d0c78098249b0750d5170497a4",
+        "version": "01M58ADMY3ZTM9TPPBM9T0X391"
+      },
+      {
+        "at": "2026-10-18T21:08:19.867Z",
+        "image": "registry.fly.io/beeline-server:0.1.83-8da00b175080@sha256:07725885483630be8586c18914aa6989650537cf3aed111bcca7e617efef1af6",
+        "version": "01M58DG48VNVR613N45WG50CS8"
+      },
+      {
+        "at": "2026-10-19T06:06:48.692Z",
+        "image": "registry.fly.io/beeline-server:0.1.84-f49694b23d95@sha256:accfa7cfa2ff2b3b081197bdfbe9b7bbf4dc6785d7673f83972b244bb7910f1c",
+        "version": "01M59CA3VM2G72NB1QHGESMBEG"
+      },
+      {
+        "at": "2026-10-19T23:03:49.179Z",
+        "image": "registry.fly.io/beeline-server:0.1.88-5e9de67e6b52@sha256:a1b631e1dd7718813b2fbd1768c5a891d54df167bb1ea344a89b836e8ce64715",
+        "version": "01M5B6GA5VEFTEVYXDJ2GQKYBY"
+      },
+      {
+        "at": "2026-10-20T07:04:08.747Z",
+        "image": "registry.fly.io/beeline-server:0.1.89-6d908054c0dd@sha256:778f2d6d6c66e2360811054e755b55d3633a107af5b6b820a4f3d82b3c8f4d9c",
+        "version": "01M5C1ZT9BNHBR5JR0JNP6X70J"
+      },
+      {
+        "at": "2026-10-21T13:01:40.133Z",
+        "image": "registry.fly.io/beeline-server:0.1.94-703bbdbf5f8c@sha256:bfa8cfc9c0b0faaa511ea3f51ca0c72843ac020fe7c43226e42e1aaa88aa06b1",
+        "version": "01M5F8V5X59D4DM8XAQ57M7SKV"
+      }
+    ]
+  }
+}

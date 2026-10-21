@@ -384,6 +384,48 @@ it('waits for an utterance that starts while a report claim is in flight', async
   } finally { await runtime.close(); }
 });
 
+it('prepares the playback provider and current voice concurrently without using a cached voice', async () => {
+  const { service, speech } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const prepared = deferred<typeof speech>();
+  service.speech.mockReturnValue(prepared.promise);
+  service.agents.mockResolvedValue([{ ...roster[0]!, voice: 'apollo' }]);
+  try {
+    const playing = (runtime as any).play('The answer.', roster[0], new AbortController().signal);
+    await vi.waitFor(() => expect(service.agents).toHaveBeenCalled());
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    prepared.resolve(speech); await playing;
+    expect(speech.synthesize.mock.calls[0]?.[1]).toBe('apollo');
+  } finally { prepared.resolve(speech); await runtime.close(); }
+});
+
+it('voice timing persistence never holds first audio behind a storage write', async () => {
+  const { service } = conversationService(1);
+  const timing = vi.fn(() => new Promise<void>(() => {}));
+  const runtime = await VoiceRoomRuntime.connect({ ...service, recordTiming: timing } as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby explain the answer');
+    expect(state.audio.captureFrame).toHaveBeenCalled();
+    expect(timing.mock.calls.map(([row]: any[]) => row.stage)).toContain('first_voiced_audio_published');
+  } finally { await runtime.close(); }
+});
+
+it.each([false, true])('Reproduction SPOKEN-1: records search speech before a final reply or failure (fails=%s)', async fails => {
+  const { service } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, onText, _signal, context) => {
+    await context.announce('Let me look.');
+    if (fails) throw new Error('Voice reply unavailable');
+    onText('Here is the answer.'); return { text: 'Here is the answer.', order: false };
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    const reply = runtime.utterance('human', 'Ruby find the answer');
+    if (fails) await expect(reply).rejects.toThrow('Voice reply unavailable'); else await reply;
+    expect(service.recordAnswer.mock.calls.map(call => call[2])).toEqual(fails
+      ? ['Let me look.'] : ['Let me look.', 'Here is the answer.']);
+  } finally { await runtime.close(); }
+});
+
 it('lookup goes to order: speaks a short checking line at once when the brain streams only whitespace', async () => {
   const { service, speech } = conversationService(1);
   service.config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
@@ -393,12 +435,12 @@ it('lookup goes to order: speaks a short checking line at once when the brain st
   try {
     await runtime.utterance('human', 'Ruby build a widget');
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).not.toHaveBeenCalled();
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'Checking. I’ll tell you when I have it.');
     expect(speech.synthesize.mock.calls.map(call => call[0]).join(' ')).toBe('Checking. I’ll tell you when I have it.');
   } finally { await runtime.close(); }
 });
 
-it('hands external work to the normal turn without posting a second visible reply', async () => {
+it('records the audible acknowledgement before external work completes', async () => {
   const { service } = conversationService(1);
   service.config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
     onText('You’re right to question it.');
@@ -408,7 +450,7 @@ it('hands external work to the normal turn without posting a second visible repl
   try {
     await runtime.utterance('human', 'Ruby reproduce the bug');
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).not.toHaveBeenCalled();
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'You’re right to question it.');
   } finally { await runtime.close(); }
 });
 
@@ -425,7 +467,7 @@ it('does not fall back to a second visible reply when a handoff fails', async ()
   } finally { await runtime.close(); }
 });
 
-it('demonstrates one visible reply through voice handoff, normal completion and the phone read', async () => {
+it('demonstrates spoken acknowledgements and completed replies once through the phone read', async () => {
   const db = new PgliteDatabase();
   const live = new LiveHub();
   const human = 'a'.repeat(64), agent = 'b'.repeat(64);
@@ -458,7 +500,7 @@ it('demonstrates one visible reply through voice handoff, normal completion and 
     }, agent);
     const phone = new PhoneService(db, 'http://proof');
     const replies = (await phone.readRoom(room, human))!.messages.filter(message => message.author.pubkey === agent && message.presentation === 'message');
-    expect(replies.map(reply => reply.text)).toEqual(['The cause is confirmed.']);
+    expect(replies.map(reply => reply.text)).toEqual(['You’re right to question it.', 'The cause is confirmed.']);
     // A conversation-only answer remains owned by the voice path.
     config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
       const answer = '**I’m listening.**\nWhat were you going to say?\n\nI’m listening. What were you going to say?';
@@ -468,7 +510,16 @@ it('demonstrates one visible reply through voice handoff, normal completion and 
     const view = (await phone.readRoom(room, human))!;
     expect(view.messages.filter(message => message.text.includes('I’m listening.')).map(message => message.text))
       .toEqual(['**I’m listening.**\nWhat were you going to say?']);
-    console.log('Reproduction voice-double-reply: voice handoff → ordinary agent completion → phone shows exactly one reply; repeated Luna rendition → phone shows one rendition.');
+    config.brain.answer.mockImplementation(async (_agent, _history, onText, _signal, context) => {
+      await context.announce('Let me look.');
+      onText('The answer is here.'); return { text: 'The answer is here.', order: false };
+    });
+    await runtime!.utterance(human, 'Ruby find the answer');
+    const spoken = (await phone.readRoom(room, human))!.messages.filter(message => message.author.pubkey === agent);
+    expect(spoken.slice(-2).map(message => message.text)).toEqual(['Let me look.', 'The answer is here.']);
+    await vi.waitFor(async () => expect((await db.query(`SELECT 1 FROM voice_turn_timings
+      WHERE call_id=$1 AND stage='first_voiced_audio_published'`, [joined.call.id])).rowCount).toBe(3));
+    console.log('SPOKEN-1: spoken acknowledgement → normal completion and search announcement → answer; persisted phone reads preserve every utterance once, in order.');
   } finally { await voice.close(); await db.close(); }
 }, 30_000);
 /** Real runtime and STT callback; only RTC, providers and persistence are fake. */
@@ -532,6 +583,107 @@ function phantomHarness(answer = 'Hey there is the answer.') {
       } : {}) });
     } };
 }
+
+it.each([
+  ['Hey,', 0.3, 0.2, false],
+  ['Hey', 0.95, 0.08, false],
+  ['Hey', 0.95, 0.2, true],
+  ...['yeah', 'yes', 'yep', 'ok', 'okay', 'uh', 'um', 'huh', 'hmm', 'mm'].map(text => [text, 0.3, 0.2, false]),
+] as [string, number, number, boolean][])('Reproduction filler-final-1: %s confidence=%s duration=%s delivered=%s', async (text, confidence, end, delivered) => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    const utterance = vi.spyOn(runtime as any, 'utterance');
+    harness.emit('EndOfTurn', text, 0, [{ confidence, start: 0, end }]);
+    if (delivered) {
+      await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
+      expect(harness.messages).toEqual(['@ronnie ' + text]);
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(utterance).not.toHaveBeenCalled();
+      expect(harness.messages).toEqual([]);
+    }
+  } finally { harness.finishPlayback(); await runtime.close(); }
+});
+
+it('Reproduction filler-final-2: does not append an unconfirmed filler to the previous request', async () => {
+  const harness = phantomHarness();
+  let finish!: () => void;
+  harness.service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
+    await new Promise<void>(resolve => { finish = resolve; });
+    onText('The reply.'); return { text: 'The reply.', order: false };
+  });
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Your reply seems slower than the previous version.', 0);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    harness.emit('EndOfTurn', 'Hey,', 1, [{ confidence: 0.3, start: 0, end: 0.2 }]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect((runtime as any).assembler.current('human').text).toBe('Your reply seems slower than the previous version.');
+    finish();
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(harness.messages).toEqual(['@ronnie Your reply seems slower than the previous version.']);
+  } finally { finish?.(); harness.finishPlayback(); await runtime.close(); }
+});
+
+it('Demonstration filler-final-1/2: recognizer finals reach the persisted phone transcript without phantom fillers', async () => {
+  const db = new PgliteDatabase(), live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
+  const fixture = conversationService(1);
+  let receive!: (event: any) => void, finish!: () => void;
+  fixture.service.config.stt.mockImplementation(async callback => {
+    receive = callback; return { send: vi.fn(), close: vi.fn() };
+  });
+  fixture.service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
+    await new Promise<void>(resolve => { finish = resolve; });
+    onText('The reply.'); return { text: 'The reply.', order: false };
+  });
+  const voice = new RealVoiceService(db, live, { ...fixture.service.config, speech: fixture.speech });
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Filler proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'DM',$3)`, [room, workspace, [human, agent]]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    const joined = await voice.join(room, human);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    await voice.ensureRuntime(call);
+    state.room.remoteParticipants.set(human, { identity: human });
+    state.streams = [new ReadableStream()];
+    state.room.emit('track', { kind: 1 }, {}, { identity: human });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    const phone = new PhoneService(db, 'http://proof');
+    const transcript = async () => (await phone.readRoom(room, human))!.messages
+      .filter(message => message.author.pubkey === human && message.presentation === 'message').map(message => message.text);
+    const say = (text: string, turn: number, confidence: number, end = 0.2) => receive({
+      event: 'EndOfTurn', transcript: text, turn_index: turn, sequence_id: turn,
+      words: text.split(' ').map(word => ({ word, confidence, start: 0, end })),
+    });
+    say('Hey,', 0, 0.3);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await transcript()).toEqual([]);
+    say('Ruby slower than the previous version.', 1, 0.3);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    say('Hey,', 2, 0.3);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.']);
+    finish();
+    await vi.waitFor(() => expect(fixture.speech.synthesize).toHaveBeenCalled());
+    say('Hey', 3, 0.95);
+    await vi.waitFor(async () => expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.', '@ruby Hey']));
+    console.log('filler-final-1/2: STT final → real VoiceService/database → PhoneService transcript: noise absent, prior request unchanged, confirmed Hey delivered.');
+  } finally { finish?.(); await voice.close(); await db.close(); }
+}, 30_000);
 
 it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a final at confidence %s', async confidence => {
   const harness = phantomHarness();
@@ -1033,7 +1185,7 @@ it.each([2, 960])('commits before first capture (%d bytes), with independent lat
     expect(service.recordHuman).toHaveBeenCalledTimes(2);
     expect(service.reviseHuman).not.toHaveBeenCalled();
     expect(service.dispatch).toHaveBeenCalledTimes(2);
-    expect(service.recordAnswer).not.toHaveBeenCalled();
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
   } finally { await runtime.close(); }
 });
 
@@ -1097,11 +1249,14 @@ it('does not duplicate an audible answer when barge-in races its persistence', a
   try {
     const first = runtime.utterance('human', 'Ruby first').catch(() => {});
     await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledOnce());
+    const frames = state.audio.captureFrame.mock.calls.length;
     const second = runtime.utterance('human', 'Ruby another');
-    await second; persistence.resolve(); await first;
+    await vi.waitFor(() => expect(state.audio.captureFrame.mock.calls.length).toBeGreaterThan(frames));
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
+    persistence.resolve(); await Promise.all([first, second]);
     expect(service.recordHuman).toHaveBeenCalledTimes(2);
     expect(service.recordAnswer).toHaveBeenCalledTimes(2);
-  } finally { await runtime.close(); }
+  } finally { persistence.resolve(); await runtime.close(); }
 });
 
 it('delivers external work even when acknowledgement produces no audio', async () => {

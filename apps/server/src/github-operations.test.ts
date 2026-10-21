@@ -1861,6 +1861,13 @@ describe('GitHub phone operations', () => {
       'trunk',
     );
     expect(app.dispatchWorkflow).toHaveBeenCalledWith('room-token', 'owner/widgets', 12, 'trunk');
+    // Reproduction release-dispatch-attribution: an anonymous production dispatch must be refused.
+    vi.mocked(app.listDispatchableWorkflows).mockResolvedValue([
+      { id: 13, name: 'Unified production release' },
+    ]);
+    await expect(operations.dispatchRoomWorkflow(room, 'Unified production release'))
+      .rejects.toThrow(/agent identity/);
+
   });
   it("rejects the older overlapping webhook fetch and stores GitHub's latest rollup", async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';

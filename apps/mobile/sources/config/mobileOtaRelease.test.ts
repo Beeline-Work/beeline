@@ -2080,12 +2080,12 @@ esac
     expect(unifiedWorkflow).toContain('unified-release.mjs finalize');
   });
 
-  it('runs validation beside candidate export and safely supersedes stale cumulative releases', () => {
+  it('runs validation beside candidate export and queues production releases', () => {
     expect(workflow).toContain('Validate while exporting and publishing the beta candidate');
     expect(workflow).toContain('validation_pid=$!');
     expect(workflow).toContain('wait "$validation_pid"');
     expect(workflow).toContain('parallel_candidate_wall');
-    expect(unifiedWorkflow).toMatch(/group: unified-production-release\s+cancel-in-progress: true/);
+    expect(unifiedWorkflow).toMatch(/group: unified-production-release\s+cancel-in-progress: false/);
     expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
     expect(unifiedWorkflow).toMatch(/server:[\s\S]*?helper:[\s\S]*?mobile_ota:/);
     expect(unifiedWorkflow).toContain("needs.initialize.outputs.run_mobile_ota == 'true'");

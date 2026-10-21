@@ -479,6 +479,10 @@ export type DaemonOperationMap = {
   getRoomRepositoryState: Operation<RoomInput, RoomRepositoryStateResult>;
   noteEmptyRoomRepository: Operation<RoomInput, WriteResult>;
   getRoomGitHubToken: Operation<RoomInput, RoomGitHubTokenResult>;
+  dispatchRoomWorkflow: Operation<RoomInput & TurnOutputAuthority & {
+    readonly requestId: string;
+    readonly inputs?: Readonly<Record<string, string>>;
+  }, { readonly auditMessageId: string }>;
   getRoomTargetBranch: Operation<RoomInput, RoomTargetBranchResult>;
   getIdentitySuccession: Operation<IdentityInput, IdentitySuccessionResult>;
   getAgentConfiguration: Operation<AgentConfigurationInput, AgentConfigurationResult>;

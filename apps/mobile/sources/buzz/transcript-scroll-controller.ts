@@ -90,6 +90,8 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   request(destination: TranscriptScrollDestination): void;
   /** Follow new content to the newest end, unless a drag, a row request or a held landing owns the list. */
   follow(): void;
+  /** Enter a live call at its tail unless the reader deliberately chose history. */
+  enterCall(): boolean;
   /** Same as `follow`, without waiting a frame (a measured desktop resize). */
   followNow(): void;
   /** Keep a reading row in place while nothing else owns the list. */
@@ -156,6 +158,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   // A drag ended with momentum still to come.
   let momentumOwed = false;
   let held = false;
+  let readerMoved = false;
 
   const end = (reason: TranscriptScrollCancelReason) => {
     held = false;
@@ -237,6 +240,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   };
 
   const request = (destination: TranscriptScrollDestination) => {
+    if (destination.kind === 'message' || destination.kind === 'offset') readerMoved = true;
     end('replaced');
     const current: Active = { destination, scrolled: false };
     active = current;
@@ -260,6 +264,11 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
 
   return {
     request,
+    enterCall() {
+      if (dragging || (!pinned && readerMoved)) return false;
+      request({ kind: 'newest' });
+      return true;
+    },
     follow() {
       if (!followAllowed()) return;
       if (active?.destination.kind === 'newest') return;
@@ -284,6 +293,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       active = null;
       held = false;
       momentumOwed = false;
+      readerMoved = false;
       visibleRows = [];
       visibleRowsOf = null;
     },
@@ -299,6 +309,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       pinned = next;
     },
     dragStarted() {
+      readerMoved = true;
       dragSequence += 1;
       dragging = true;
       momentum = false;
@@ -333,6 +344,7 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       if (active?.destination.kind === 'offset') attempt(active);
     },
     userScrolled() {
+      readerMoved = true;
       end('drag');
     },
     active: () => active?.destination ?? null,

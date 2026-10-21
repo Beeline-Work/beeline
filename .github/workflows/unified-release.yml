@@ -13,10 +13,15 @@
 #   by default. An OTA promoted without it is recorded as UNPROVEN in the
 #   release record.
 name: Unified production release
+run-name: "Production release · @${{ fromJSON(inputs.dispatched_by || '{}').handle || 'unknown' }} · ${{ fromJSON(inputs.dispatched_by || '{}').auditMessageId }}"
 
 on:
   workflow_dispatch:
     inputs:
+      dispatched_by:
+        description: Server-recorded agent, place, human command and audit receipt
+        type: string
+        required: true
       release_sha:
         description: Recovery only - pinned SHA from main
         type: string
@@ -79,7 +84,7 @@ permissions:
 
 concurrency:
   group: unified-production-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   initialize:
@@ -121,6 +126,19 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Verify release dispatch attribution
+        uses: actions/github-script@v7
+        env:
+          DISPATCHED_BY: ${{ inputs.dispatched_by }}
+        with:
+          script: |
+            const provenance = JSON.parse(process.env.DISPATCHED_BY || '{}');
+            for (const key of ['agentId', 'handle', 'place', 'humanCommandMessageId', 'auditMessageId']) {
+              if (typeof provenance[key] !== 'string' || !provenance[key]) {
+                throw new Error(`Production release requires dispatch attribution: ${key}`);
+              }
+            }
+            await core.summary.addHeading('Release dispatch').addCodeBlock(JSON.stringify(provenance, null, 2), 'json').write();
       - name: Record dispatch clock
         id: clock
         uses: actions/github-script@v7
@@ -1860,17 +1878,28 @@ jobs:
         env:
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          DISPATCHED_BY: ${{ inputs.dispatched_by }}
           ATTEMPT: ${{ inputs.retry_attempt || '1' }}
           SELECTION: ${{ inputs.selection || 'auto' }}
           STORE_TRACK: ${{ inputs.store_track || 'none' }}
           ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
         with:
           script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'unified-release.yml', per_page: 100,
+            });
+            const active = runs.find(run => run.id !== context.runId && run.status !== 'completed');
+            if (active) {
+              core.notice(`Production release ${active.id} is already ${active.status}; skipping automatic retry. Recover this identity explicitly after that run finishes.`);
+              return;
+            }
             const attempt = Number(process.env.ATTEMPT);
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner, repo: context.repo.repo,
               workflow_id: 'unified-release.yml', ref: 'main',
               inputs: {
+                dispatched_by: process.env.DISPATCHED_BY,
                 release_sha: process.env.RELEASE_SHA,
                 release_version: process.env.RELEASE_VERSION,
                 retry_attempt: String(attempt + 1),

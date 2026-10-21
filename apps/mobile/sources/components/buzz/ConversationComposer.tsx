@@ -23,6 +23,7 @@ import { RuntimeErrorBoundary } from './RuntimeErrorBoundary';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 import { VOICE_LONG_PRESS_MS } from '@beeline/api-contract/phone';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
+import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { DictationWaveform } from './DictationWaveform';
 import { useSpeechInput } from '@/buzz/speech-input';
 import { removeComposerTag, removeLastComposerTag, splitComposerTags } from '@/buzz/composer-tags';
@@ -335,10 +336,10 @@ function ConversationComposerContent({
   // Without Conversation the far right is always Send, disabled when empty,
   // so it still never moves — including while an agent is working, when a
   // tap queues the next instruction.
-  const showConversation = Boolean(voice) && !hasSomethingToSend && !dictationBusy;
+  const showConversation = Boolean(voice) && (voice?.connecting || (!hasSomethingToSend && !dictationBusy));
   const sendDisabled = disabled || sendingSpeech || (!hasSomethingToSend && !isListening);
   const dailyLimitError = voice?.error?.startsWith('Calls resume at ') ? voice.error : null;
-  const conversationActive = Boolean(voice?.call || voice?.connecting || (voice?.error && !dailyLimitError));
+  const conversationActive = Boolean(!voice?.connecting && (voice?.call || (voice?.error && !dailyLimitError)));
   React.useEffect(() => {
     if (Platform.OS !== 'web' || !showConversation || conversationActive) return;
     containerRef.current?.querySelector(`[data-testid="${testIDPrefix}-conversation"]`)
@@ -402,7 +403,7 @@ function ConversationComposerContent({
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
   return (
     <>
-    {conversationActive && voice && <VoiceAgentStrip voice={voice} />}
+    {(conversationActive || voice?.connecting) && voice && <VoiceAgentStrip voice={voice} />}
     <View
       ref={containerRef as React.Ref<View>}
       {...containerProps}
@@ -754,9 +755,11 @@ function ConversationComposerContent({
         ) : null}
         {showConversation ? (
           <TouchableOpacity
-            accessibilityLabel="Conversation mode"
+            accessibilityLabel={voice?.connecting ? 'Connecting conversation mode' : 'Conversation mode'}
             accessibilityRole="button"
-            disabled={disabled}
+            disabled={disabled || voice?.connecting}
+            accessibilityState={{ disabled: disabled || voice?.connecting, busy: voice?.connecting }}
+            aria-busy={Boolean(voice?.connecting)}
             hitSlop={9}
             onPress={() => {
               Keyboard.dismiss();
@@ -765,7 +768,8 @@ function ConversationComposerContent({
             style={styles.controlSlot}
             testID={`${testIDPrefix}-conversation`}
           >
-            <WaveformGlyph color={disabled ? theme.buzz.textMuted : theme.buzz.textPrimary} />
+            {voice?.connecting ? <SurfaceGlyphLoader compact size={COMPOSER_GLYPH_SIZE} testID="voice-startup-loader" />
+              : <WaveformGlyph color={disabled ? theme.buzz.textMuted : theme.buzz.textPrimary} />}
           </TouchableOpacity>
         ) : (
           <TouchableOpacity

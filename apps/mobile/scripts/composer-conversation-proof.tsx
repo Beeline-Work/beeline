@@ -63,16 +63,29 @@ async function run() {
     if (phase === 'speaking') check('CONVERSATION-2: speaking frame is brass and selection stays black', getComputedStyle(byID('voice-speaking-frame-ruby')!).borderTopColor !== faceColor('Jellybean'));
     if (phase === 'connecting') {
       check('connecting: startup glyph replaces waveform until audio is ready', !!byID('voice-startup-loader') && !latest());
-      check('connecting: mute is disabled until ready', byID('chat-mic')!.getAttribute('aria-disabled') === 'true');
+      const control = byID('chat-conversation')!;
+      const loader = byID('voice-startup-loader')!;
+      const slot = control.getBoundingClientRect();
+      const glyph = loader.getBoundingClientRect();
+      check('connecting: conversation control is disabled and busy', control.getAttribute('aria-disabled') === 'true' && control.getAttribute('aria-busy') === 'true');
+      check('connecting: existing 20px loader replaces the glyph in its 26px slot', control.contains(loader) &&
+        slot.width === 26 && slot.height === 26 && glyph.width === 20 && glyph.height === 20 &&
+        Math.abs((slot.left + slot.right) - (glyph.left + glyph.right)) < 1 &&
+        Math.abs((slot.top + slot.bottom) - (glyph.top + glyph.bottom)) < 1);
     } else {
       check(`${phase}: startup glyph clears when ready`, !byID('voice-startup-loader'));
       check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
     }
     if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
-    const field = byID('voice-waveform')!.getBoundingClientRect();
+    const field = byID(phase === 'connecting' ? 'chat-composer-input-row' : 'voice-waveform')!.getBoundingClientRect();
     check(`${phase}: avatars above waveform, no caption`, strip.bottom <= field.top && !byID('conversation-mode-label'));
-    check(`${phase}: mute, waveform and stop visible; attachment hidden`, !byID('chat-attach-button') && Boolean(byID('chat-mic')) && Boolean(byID('voice-mic')));
+    if (phase === 'connecting') {
+      check('connecting: normal composer remains visible with the loading conversation control',
+        Boolean(byID('chat-input')) && Boolean(byID('chat-attach-button')) && Boolean(byID('chat-conversation')) && !byID('voice-mic'));
+    } else {
+      check(`${phase}: mute, waveform and stop visible; attachment hidden`, !byID('chat-attach-button') && Boolean(byID('chat-mic')) && Boolean(byID('voice-mic')));
+    }
   }
   byID('voice-mic')!.click(); await pause();
   check('call end restores normal composer', Boolean(document.querySelector('textarea')) && Boolean(byID('chat-attach-button')));

@@ -478,6 +478,14 @@ describe('Conversation mode inside the composer', () => {
       muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
+    if (connecting) {
+      const control = f.renderer.root.findByProps({ testID: 'chat-conversation' });
+      expect(control.props.accessibilityState.busy).toBe(true);
+      expect(control.props.disabled).toBe(true);
+      expect(control.findByProps({ testID: 'voice-startup-loader' })).toBeTruthy();
+      expect(f.renderer.root.findAllByProps({ testID: 'voice-waveform' })).toHaveLength(0);
+      expect(f.renderer.root.findByProps({ testID: 'chat-input' })).toBeTruthy();
+    }
     act(() => f.renderer.root.findByProps({ accessibilityLabel: 'Speak to Ruby' }).props.onPress());
     expect(aim).toHaveBeenCalledWith('ruby');
   });

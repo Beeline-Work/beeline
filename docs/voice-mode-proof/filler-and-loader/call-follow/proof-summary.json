@@ -1,0 +1,115 @@
+{
+  "reproduction": "CALL-FOLLOW-1",
+  "baselineHead": "186438bacad14c1f809008e6d190d1a42de9fc6f",
+  "baselineObservations": [
+    {
+      "newestMessageId": null,
+      "pinned": true,
+      "dragging": false,
+      "landing": null,
+      "voice": false,
+      "connecting": false
+    },
+    {
+      "newestMessageId": "faddbbd2c442a0fc4e671557209c375dd2ca0f7b005c94c092412ef0623ad807",
+      "pinned": true,
+      "dragging": false,
+      "landing": null,
+      "voice": false,
+      "connecting": false
+    },
+    {
+      "newestMessageId": "b33d662b97e1bc818f217a76fc636de517b8ffb6fb04300900f969cc22a13295",
+      "pinned": true,
+      "dragging": false,
+      "landing": null,
+      "voice": false,
+      "connecting": false
+    },
+    {
+      "newestMessageId": "b33d662b97e1bc818f217a76fc636de517b8ffb6fb04300900f969cc22a13295",
+      "pinned": false,
+      "dragging": false,
+      "landing": null,
+      "voice": false,
+      "connecting": true
+    },
+    {
+      "newestMessageId": "b33d662b97e1bc818f217a76fc636de517b8ffb6fb04300900f969cc22a13295",
+      "pinned": false,
+      "dragging": false,
+      "landing": null,
+      "voice": true,
+      "connecting": false
+    },
+    {
+      "newestMessageId": "66cca3b19f453ea7152aac0f2f42c822720336afd406e931382cebf9ca60c9dc",
+      "pinned": false,
+      "dragging": false,
+      "landing": null,
+      "voice": true,
+      "connecting": false
+    },
+    {
+      "newestMessageId": "691eed09dc5f082c9bd8d99a839c1bb989c5bfb6c28f8f0e1c8e7bb0f1787daf",
+      "pinned": false,
+      "dragging": false,
+      "landing": null,
+      "voice": true,
+      "connecting": false
+    },
+    {
+      "newestMessageId": "bfb8256416b807a75278b59c1405bc5497def92895aac0d9e6b574799f53b70b",
+      "pinned": true,
+      "dragging": false,
+      "landing": null,
+      "voice": true,
+      "connecting": false
+    }
+  ],
+  "baselineMessageDeltas": [
+    {
+      "id": "a172c9ec67beba75ce637fccde1f4bc1d4cf259ebca520e0a0fbbb6346817e1d",
+      "text": "Voice call started",
+      "sequence": 12
+    },
+    {
+      "id": "66cca3b19f453ea7152aac0f2f42c822720336afd406e931382cebf9ca60c9dc",
+      "text": "@ruby Ruby, the live transcript must show this new spoken request.",
+      "sequence": 14
+    },
+    {
+      "id": "691eed09dc5f082c9bd8d99a839c1bb989c5bfb6c28f8f0e1c8e7bb0f1787daf",
+      "text": "Ready.",
+      "sequence": 16
+    },
+    {
+      "id": "069c31cb224a0bd67d15b30fa25b5fdfc9a0ad88b6f9b2c64d3d91b63f974b3c",
+      "text": "@ruby Ruby, this second spoken request tests following from the bottom.",
+      "sequence": 18
+    },
+    {
+      "id": "bfb8256416b807a75278b59c1405bc5497def92895aac0d9e6b574799f53b70b",
+      "text": "Ready.",
+      "sequence": 20
+    },
+    {
+      "id": "a172c9ec67beba75ce637fccde1f4bc1d4cf259ebca520e0a0fbbb6346817e1d",
+      "text": "Voice call started",
+      "sequence": 22
+    }
+  ],
+  "fixedCall": {
+    "ended_at": null
+  },
+  "fixedHumans": 2,
+  "fixedMicrophoneFrames": [
+    9813,
+    6118
+  ],
+  "fixedReplies": [
+    "Ruby",
+    "Ruby",
+    "Ruby"
+  ]
+}

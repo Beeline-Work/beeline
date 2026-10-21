@@ -436,7 +436,6 @@ async function main() {
   let lastReconciliationAt = Number.NEGATIVE_INFINITY;
   let pushPending = Boolean(push); // one leader-start reconciliation
   let repairedPromotedCorners = false;
-  let reconciledCornerReviewers = false;
   let reconciledMergeability = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
@@ -447,7 +446,6 @@ async function main() {
         lastReconciliationAt = Number.NEGATIVE_INFINITY;
         pushPending = Boolean(push);
         repairedPromotedCorners = false;
-        reconciledCornerReviewers = false;
         reconciledMergeability = false;
       }
       if (githubJobs && !repairedPromotedCorners) {
@@ -464,13 +462,10 @@ async function main() {
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const deadlineDue = await backgroundJobs.run('deadline-expiry', () =>
         deadlineExpiry.runOnce(newLeader));
-      // Recovery scans run once per leadership tenure. Normal writes and
-      // Repository events drive their own transitions; failures retry on the next cycle.
-      if (!reconciledCornerReviewers) {
-        const result = await backgroundJobs.run('corner-reviewers', () =>
-          reconcileConfiguredCornerReviewers(jobsDatabase));
-        reconciledCornerReviewers = result.ok;
-      }
+      // Reviewers can stop or lose a wake after startup. Repair every cycle;
+      // existing head-scoped dispatch and report keys keep replays quiet.
+      await backgroundJobs.run('corner-reviewers', () =>
+        reconcileConfiguredCornerReviewers(jobsDatabase));
       if (githubJobs) {
         await backgroundJobs.run('corner-branch-cleanup', () => githubJobs.retryBranchDeletions());
         await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());

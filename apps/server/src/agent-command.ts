@@ -1980,6 +1980,12 @@ export async function reconcileConfiguredCornerReviewers(
        AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
        AND ($1::uuid IS NULL OR parent.id=$1)
        AND NOT EXISTS (
+         SELECT 1 FROM agent_commands worker
+         WHERE worker.room_id=corner.id
+           AND worker.agent_id=${cornerImplementerSql('fact', 'corner')}
+           AND worker.action='input' AND worker.state IN ('pending','claimed')
+       )
+       AND NOT EXISTS (
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=parent.reviewer_agent_id
@@ -2042,6 +2048,12 @@ export async function reconcileConfiguredCornerReviewers(
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND ($1::uuid IS NULL OR parent.id=$1)
+       AND NOT EXISTS (
+         SELECT 1 FROM agent_commands worker
+         WHERE worker.room_id=corner.id
+           AND worker.agent_id=${cornerImplementerSql('fact', 'corner')}
+           AND worker.action='input' AND worker.state IN ('pending','claimed')
+       )
        AND NOT EXISTS (
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id

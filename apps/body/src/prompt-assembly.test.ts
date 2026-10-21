@@ -531,13 +531,13 @@ describe('prompt assembly guards', () => {
       expect(prompt).toContain(
         'Before pushing, run `git ls-remote --exit-code origin feature/corner-abc`. Exit code 0: rebase on origin/feature/corner-abc;',
       );
-      expect(prompt).toContain('Exit code 2: the branch is absent; skip rebase for the first push.');
+      expect(prompt).toContain('Exit code 2: absent branch; skip first rebase.');
       expect(prompt).toContain(
-        'Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push.',
+        'Other exit: stop; retry lookup.',
       );
       expect(prompt).not.toContain('Before pushing, rebase on origin/feature/corner-abc;');
       expect(prompt).toContain(
-        'resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests.',
+        'resolve conflicts against that branch; redo work and rerun affected tests.',
       );
     },
   );
@@ -805,6 +805,12 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
         expect(text.indexOf(rule), `${name}: ${rule}`).toBeGreaterThan(condition);
       expect(text.indexOf('You are in an isolated git worktree'), name).toBeLessThan(condition);
     }
+  });
+
+  it('stops after four pushes without PASS and names the three escalation causes', () => {
+    const text = prompt('code-corner-reviewed');
+    expect(text).toContain('4 pushes to one PR without PASS: stop; report blocked: to commander');
+    expect(text).toContain('cause: moving target, unreliable test tool, or PR too big / racing other PRs.');
   });
 
   it('appends the reviewer rules only for the Room reviewer, after the implementer rules', () => {

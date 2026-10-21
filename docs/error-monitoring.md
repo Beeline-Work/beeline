@@ -45,7 +45,10 @@ activates them. Merging alone does not deploy this receiver.
 ## Capture and recovery
 
 - Server: startup failures, unexpected HTTP failures, failed background jobs,
-  and uncaught exceptions. Request status mapping and background retries stay
+  and uncaught exceptions. `captureServerError` excludes typed
+  `ExpectedRefusalError` instances (including `CommandRefusalError`), without
+  changing caller messages or HTTP status mapping. Plain errors and unknown
+  values remain reportable; a status-shaped object alone is not a refusal. Request status mapping and background retries stay
   unchanged. Forwarder delivery failures return 503 without reporting another
   Sentry issue, preventing a notification feedback loop.
 - Helper: CLI fatal errors, hosted-agent failures, and the existing

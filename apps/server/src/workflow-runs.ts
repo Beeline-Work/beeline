@@ -1,5 +1,5 @@
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
-import { CommandRefusalError } from './command-refusal.js';
+import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
@@ -356,7 +356,7 @@ export async function getWorkflowRun(
     [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
   )).rows;
   const run = rows.at(-1)?.card;
-  if (!run) throw new Error('workflow run is unavailable in this Room');
+  if (!run) throw new ExpectedRefusalError('workflow run is unavailable in this Room');
   const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
   if (!contract) throw new Error('workflow contract version is unavailable');
   const state = contract.handoffs[run.toState];
@@ -579,7 +579,7 @@ async function openRun(db: SqlDatabase, roomId: string, runId: string): Promise<
   ).rows[0];
   if (!room) throw new Error('workflow room not found');
   const head = await loadRunHead(db, roomId, runId);
-  if (!head) throw new Error('workflow run is unavailable in this Room');
+  if (!head) throw new ExpectedRefusalError('workflow run is unavailable in this Room');
   const run = head.card;
   const contract = await loadPinnedContract(db, roomId, run.workflowSlug, run.workflowVersion);
   if (!contract) throw new Error('workflow contract version is unavailable');
@@ -1907,7 +1907,7 @@ export async function startWorkflow(
       ? await scheduleTriggerPeriod(db, command.source_message_id)
       : undefined;
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
-    if (missingRole) throw new Error(`role binding is missing for ${missingRole}`);
+    if (missingRole) throw new ExpectedRefusalError(`role binding is missing for ${missingRole}`);
     const roleBindings: Record<string, string> = {};
     const roleAgents: Record<string, string[]> = {};
     for (const role of contract.roles) {

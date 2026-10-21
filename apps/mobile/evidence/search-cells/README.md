@@ -35,3 +35,5 @@ Revision 2 is included in the same PR. RepoPicker and RepoList candidates, the o
 | Repository owner choice | [Before](repository-choice-before.png) | [After](repository-choice-after.png) |
 
 The New Room specimen renders its production RepoList in a disposable sheet, and the Repository choice specimen renders the production control with two synthetic installations. The browser Room-header proof separately walks linking a picked repository, choosing an owner, creating a repository named after the Room only on Save, and unlinking. The New Room component tests cover Connect another org, reconnect selection, taken names, failed creation, loading and empty states. All 61 tests in the phase-2 pass succeeded, including the live browser proofs and design lints. Use `capture-repos.cjs before|after` for these three additional native specimens.
+
+Final full mobile-suite pass: **581 files passed, 4 skipped; 4,806 tests passed, 5 skipped** (`npm test -- --run --maxWorkers=2`, 291.86 seconds). Root typecheck, the UI component policy and dead-code validation also passed. Unrelated screenshots rewritten by the full suite were restored and are not part of this change.

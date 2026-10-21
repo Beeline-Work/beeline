@@ -9,6 +9,7 @@ vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 import { GitHubOperations } from './github-operations.js';
 import { readAgentCommands } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
+import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { LiveHub } from './live.js';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
@@ -276,6 +277,38 @@ describe('GitHub phone operations', () => {
       .toEqual([{ head_sha: newHead }]);
     await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
       .rejects.toThrow(/^STALE_HEAD:/);
+  });
+
+  it('shows a pushed PR head as review until GitHub reports its checks', async () => {
+    const { corners, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const newHead = '2'.repeat(40);
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const rowState = async () => {
+      const facts = cornerFactsSql('NULL::text');
+      const row = (await database.query<CornerStateRow>(
+        `SELECT c.id,c.archived_at,${facts.columns} FROM rooms c ${facts.joins} WHERE c.id=$1`, [corner],
+      )).rows[0]!;
+      return cornerRowState(row).state;
+    };
+    expect(await rowState()).toBe('idle');
+    await operations.processWebhook('push', {
+      installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      ref: 'refs/heads/feature/checks-1', after: newHead, size: 1,
+    });
+    expect(await rowState()).toBe('review');
+
+    // A completed fetch that finds no checks keeps the corner idle.
+    app.readPullRequest.mockResolvedValue({ number: 1, headSha: newHead,
+      url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
+    app.readCommitCheckRollup.mockResolvedValueOnce({ state: 'passed', total: 0, failing: [], checks: [] });
+    const check = { ...payload.check_run, head_sha: newHead,
+      check_suite: { head_branch: 'feature/checks-1', head_sha: newHead } };
+    await operations.processWebhook('check_run', { ...payload, check_run: check });
+    expect((await database.query<{ lifecycle: { checksSummary: unknown } }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]!.lifecycle.checksSummary).toMatchObject({ status: 'unknown', total: 0 });
+    expect(await rowState()).toBe('idle');
   });
 
   it('does not wake on a superseded head when its completed suite arrives before push and synchronize', async () => {

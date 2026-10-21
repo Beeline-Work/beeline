@@ -77,6 +77,8 @@ export type CornerLifecycleView = {
       readonly url?: string;
     }[];
     readonly updatedAt: number;
+    /** Set by every completed GitHub check fetch. A push's reset summary has none. */
+    readonly fetchStartedAt?: number;
   };
   readonly outcome?: 'landed' | 'abandoned';
   readonly reason?: string;

@@ -27,6 +27,31 @@ fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({
   url: 'ws://proof', token: 'test', agents: [],
 })));
 import { useVoiceCall } from './use-voice-call';
+import { reportClientError } from './client-error-report';
+
+it('Reproduction MOBILE-C: Stop during connect cancels the join without reporting a failure', async () => {
+  let rejectConnect!: (error: Error) => void;
+  vi.mocked(reportClientError).mockClear();
+  fixture.closeAudio.mockClear(); fixture.fetch.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), {
+    connect: () => new Promise<void>((_resolve, reject) => { rejectConnect = reject; }),
+    disconnect: vi.fn(async () => { rejectConnect(new Error('Client initiated disconnect')); }),
+    remoteParticipants: new Map(), localParticipant: {},
+  });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    let joining!: Promise<void>;
+    await act(async () => { joining = voice.join(); });
+    await act(async () => { fixture.stop!(); await joining; });
+    expect(voice.call).toBeNull();
+    expect(voice.error).toBeNull();
+    expect(fixture.closeAudio).toHaveBeenCalledOnce();
+    expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/leave'))).toHaveLength(1);
+    expect(reportClientError).not.toHaveBeenCalled();
+  } finally { await act(async () => renderer.unmount()); }
+});
 
 it('notification Stop during RTC connect fences the late join and releases audio', async () => {
   let resolveConnect!: () => void;
@@ -70,6 +95,7 @@ it('accepts whole-call end only from the trusted voice bridge', async () => {
 });
 
 it('shows Room agents during a pending or failed join and clears the error on exit', async () => {
+  vi.mocked(reportClientError).mockClear();
   const agents = [{ pubkey: 'ruby', kind: 'agent' as const, name: 'Ruby', face: 'ruby-face' }];
   let rejectJoin!: (error: Error) => void;
   fixture.fetch.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectJoin = reject; }));
@@ -85,6 +111,7 @@ it('shows Room agents during a pending or failed join and clears the error on ex
     expect(voice.agents).toEqual(agents);
     await act(async () => { rejectJoin(new Error('TLS roots missing')); await joining; });
     expect(voice.error).toBe('TLS roots missing');
+    expect(reportClientError).toHaveBeenCalledWith('voice-join', expect.objectContaining({ message: 'TLS roots missing' }));
     expect(voice.agents).toEqual(agents);
     await act(async () => voice.end());
     expect(voice.error).toBeNull();

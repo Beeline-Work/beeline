@@ -235,7 +235,10 @@ The native leg runs the existing Expo fingerprint gate with the mobile Node 22
 toolchain, then compares both platform fingerprints and runtime pins with the
 `mobile-native.sourceSha` in the last successful `unified-release-index`. It fails
 explicitly when no released baseline exists, fingerprints differ, or a platform
-needs a new store build/verified pin restore. No signing, promotion, deployment or
+needs a new store build/verified pin restore. On PRs only, an unshipped runtime
+is reported as FAIL in the summary and as a warning instead of blocking the
+safeguards from merging; fingerprint validation and technical faults still fail.
+Scheduled and manual preflights remain strict. No signing, promotion, deployment or
 store submission runs in preflight.
 
 Every shell-bearing self-hosted unified-release job installs repository Node

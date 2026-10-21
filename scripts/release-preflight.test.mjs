@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { compareReleasedRuntime } from './release-preflight-native.mjs';
+import { compareReleasedRuntime, enforceReleasedRuntime } from './release-preflight-native.mjs';
 const require = createRequire(import.meta.url);
 const { triageFailure, watchRunners } = require('./release-preflight.cjs');
 
@@ -74,4 +74,16 @@ test('failure intake holds serialization until a new issue is visible in eventua
   await triageFailure(args);
   assert.equal(waits,2);
   assert.equal(creates,1);
+});
+
+
+test('scheduled native preflight fails unshipped runtimes; PR diagnostics warn while technical faults remain errors', () => {
+  const results = [{platform:'android', ok:false}, {platform:'ios', ok:true}];
+  assert.throws(() => enforceReleasedRuntime(results), /store build/);
+  const warnings = [];
+  enforceReleasedRuntime(results, {reportOnly:true, warn:message=>warnings.push(message)});
+  assert.match(warnings[0], /::warning::.*store build/);
+  const workflow = readFileSync('.github/workflows/release-preflight.yml','utf8');
+  assert.ok(workflow.includes("PREFLIGHT_REPORT_ONLY: ${{ github.event_name == 'pull_request' }}"));
+  assert.doesNotMatch(workflow, /continue-on-error/);
 });

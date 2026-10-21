@@ -15,6 +15,13 @@ export function compareReleasedRuntime(current, released) {
   return results;
 }
 
+export function enforceReleasedRuntime(results, { reportOnly = false, warn = console.warn } = {}) {
+  if (results.every(result => result.ok)) return;
+  const message = 'Native runtime/fingerprint differs from the last released native binary. A store build or explicit verified pin restore is needed before routine OTA release.';
+  if (reportOnly) warn(`::warning::${message}`);
+  else throw new Error(message);
+}
+
 export function run() {
   const repository = process.env.GITHUB_REPOSITORY;
   if (!repository) throw new Error('GITHUB_REPOSITORY is required');
@@ -39,7 +46,7 @@ export function run() {
     const report = `## Native release preflight\nReleased native source: ${sha}\n` + results.map(r => `- ${r.platform}: ${r.ok ? 'PASS' : 'FAIL'}; released runtime ${r.released}, current ${r.current}`).join('\n') + '\n';
     console.log(report);
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
-    if (results.some(r => !r.ok)) throw new Error('Native runtime/fingerprint differs from the last released native binary. A store build or explicit verified pin restore is needed before routine OTA release.');
+    enforceReleasedRuntime(results, { reportOnly: process.env.PREFLIGHT_REPORT_ONLY === 'true' });
   } finally { rmSync(temp, { recursive: true, force: true }); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

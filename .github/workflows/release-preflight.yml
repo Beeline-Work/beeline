@@ -60,4 +60,6 @@ jobs:
       - name: Compare against each platform's last released native runtime
         env:
           GH_TOKEN: ${{ github.token }}
+          # An unshipped runtime is a release blocker, not a defect in this PR.
+          PREFLIGHT_REPORT_ONLY: ${{ github.event_name == 'pull_request' }}
         run: node scripts/release-preflight-native.mjs

@@ -1,0 +1,55 @@
+name: Release preflight
+on:
+  schedule:
+    - cron: '30 5 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  runner:
+    name: Runner probe ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: production
+            runner: '["self-hosted", "beeline-prod-host"]'
+          - label: android
+            runner: '["self-hosted", "beeline-android"]'
+          - label: ios
+            runner: '["self-hosted", "macOS", "X64", "ios-builder"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node -v
+  runners_online:
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          script: await require('./scripts/release-preflight.cjs').watchRunners({github, context, core});
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Expo's fingerprint tool requires the mobile build toolchain's Node 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix apps/mobile
+      - name: Validate committed native fingerprints
+        run: npm run fingerprint:check --prefix apps/mobile
+      - name: Compare against each platform's last released native runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-preflight-native.mjs

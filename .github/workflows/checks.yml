@@ -218,6 +218,8 @@ jobs:
               - '.github/actions/**'
               - '.github/actionlint.yaml'
               - 'scripts/verify-workflow-paths.mjs'
+              - 'scripts/release-preflight*'
+              - 'scripts/unified-release*'
               - 'scripts/ios-store-build*'
               - 'scripts/ios-build-evidence.py'
               - 'package.json'
@@ -963,6 +965,16 @@ jobs:
         run: node --test scripts/desktop-signing.test.mjs
       - name: Test iOS upload identity and Apple processing verification
         run: node --test scripts/ios-store-build.test.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install mobile dependencies for release regressions
+        # The OTA recovery regression loads Expo config from the mobile app.
+        run: npm ci --prefix apps/mobile
+      - name: Test release preflight, failure intake and governor regressions
+        run: node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
       # every pull request (a test can be deleted without touching a workflow);
       # here it is where a workflow author gets the message.

@@ -2102,3 +2102,11 @@ export function readAgentPairingAbandonView(value: unknown): AgentPairingAbandon
   if (!item || typeof item.abandoned !== 'boolean') return null;
   return { abandoned: item.abandoned };
 }
+
+/** A message link reveals only member-readable coordinates. */
+export function readMessageLinkView(value: unknown): { roomId: string; messageId: string; workspaceId: string } | null {
+  const item = record(value);
+  return item && typeof item.roomId === 'string' && typeof item.workspaceId === 'string'
+    && typeof item.messageId === 'string' && /^[0-9a-f]{64}$/.test(item.messageId)
+    ? { roomId: item.roomId, messageId: item.messageId, workspaceId: item.workspaceId } : null;
+}

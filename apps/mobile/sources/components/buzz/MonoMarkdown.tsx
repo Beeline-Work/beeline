@@ -8,6 +8,7 @@ import {
   type ChannelReferenceIndex,
   type ChannelReferenceTarget,
 } from '@/buzz/channel-reference';
+import { messageLinkId, openMessageLink } from '@/buzz/message-link';
 import { openExternalUrl } from '@/utils/open-external-url';
 
 /**
@@ -394,6 +395,13 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   );
   const base = textStyle;
   const onLink = useCallback((url: string) => {
+    if (messageLinkId(url)) {
+      void openMessageLink(url).catch(async () => {
+        const { Modal } = await import('@/modal');
+        Modal.alert('Message not available', 'This message could not be opened. Check your access and try again.');
+      });
+      return;
+    }
     if (/^https?:\/\//i.test(url)) void openExternalUrl(url).catch(() => undefined);
   }, []);
   const first = blocks[0];

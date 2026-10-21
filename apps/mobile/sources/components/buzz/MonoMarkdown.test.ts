@@ -19,7 +19,15 @@ vi.mock('react-native', async () => {
 });
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
-const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), navigate: vi.fn() }));
+const messageLinks = vi.hoisted(() => ({ resolve: vi.fn() }));
+vi.mock('@/auth/buzz-identity-storage', () => ({
+  loadBuzzIdentity: async () => ({ publicKey: 'viewer' }),
+  getEffectiveRelayUrl: async () => 'http://local.test',
+}));
+vi.mock('@/sync/transport/room-view-client', () => ({
+  RoomViewClient: class { resolveMessageLink = messageLinks.resolve; },
+}));
 vi.mock('expo-router', () => ({ router: navigation }));
 vi.mock('./HullActionSheet', () => {
   const ReactModule = require('react');
@@ -821,5 +829,39 @@ describe('MonoMarkdown renders a pipe table as an aligned wrapping grid', () => 
     expect(text).toContain('ok');
     expect(text).not.toContain('`');
     expect(text).not.toContain('**');
+  });
+});
+
+
+describe('message reference taps', () => {
+  it('renders underlined Room, corner and labeled links and navigates to each message', async () => {
+    const roomId = 'a'.repeat(64);
+    const cornerId = 'b'.repeat(64);
+    const roomLink = `#beeline/my-room/${roomId}`;
+    const cornerLink = `#beeline/closed-corner/${cornerId}`;
+    messageLinks.resolve.mockImplementation(async (messageId: string) => ({
+      roomId: messageId === roomId ? 'room' : 'archived-corner', messageId, workspaceId: 'workspace',
+    }));
+    navigation.navigate.mockClear();
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(React.createElement(MonoMarkdown, {
+      markdown: `${roomLink}, ${cornerLink}. [approval card](${cornerLink})`, textStyle: {},
+    })); });
+    const links = tree.root.findAll((node: any) => node.type === 'Text' && node.props.accessibilityRole === 'link');
+    expect(links.map((node: any) => node.props.children)).toEqual([roomLink, cornerLink, 'approval card']);
+    for (const link of links) {
+      expect(link.props.style.flat().some((style: any) => style?.textDecorationLine === 'underline')).toBe(true);
+      await act(async () => { link.props.onPress(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    }
+    expect(navigation.navigate.mock.calls.map(([href]) => ({
+      pathname: href.pathname, channelId: href.params.channelId,
+      messageId: href.params.notificationMessageId, workspaceId: href.params.communityId,
+    }))).toEqual([
+      { pathname: '/beeline/chat/[channelId]', channelId: 'room', messageId: roomId, workspaceId: 'workspace' },
+      { pathname: '/beeline/chat/[channelId]', channelId: 'archived-corner', messageId: cornerId, workspaceId: 'workspace' },
+      { pathname: '/beeline/chat/[channelId]', channelId: 'archived-corner', messageId: cornerId, workspaceId: 'workspace' },
+    ]);
+    expect(new Set(navigation.navigate.mock.calls.map(([href]) => href.params.notificationResponseId)).size).toBe(3);
+    act(() => tree.unmount());
   });
 });

@@ -47,6 +47,8 @@ describe('Room guidance', () => {
     // Tagging, the corner action, and read-only inspection are always-on rules.
     const room = roomPrompt();
     expect(room).toContain('Tag to talk. Order to assign work.');
+    expect(room).toContain('#beeline/<name>/<message_id>');
+    expect(room).toContain('[label](#beeline/<name>/<message_id>)');
     expect(room).toContain(
       'order(address, agent, text) assigns privately',
     );

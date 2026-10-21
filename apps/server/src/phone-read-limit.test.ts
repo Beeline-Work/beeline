@@ -266,6 +266,19 @@ describe('phone history and outline reads', () => {
     expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`, MALLORY)).status).toBe(404);
   });
 
+  it('opens message links through the authenticated HTTP surface without leaking private coordinates', async () => {
+    const path = `/v1/phone/message-links/${'1'.repeat(64)}`;
+    const found = await get(path);
+    expect(found.status).toBe(200);
+    expect(await found.json()).toEqual({ roomId: ROOM, messageId: '1'.repeat(64), workspaceId: WORKSPACE });
+    const denied = await get(path, MALLORY);
+    expect(denied.status).toBe(404);
+    expect(await denied.json()).toEqual({ error: 'not_found' });
+    const missing = await get(`/v1/phone/message-links/${'f'.repeat(64)}`);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ error: 'not_found' });
+  });
+
   it('refuses a query with no searchable word before reading any message', async () => {
     const search = vi.spyOn(PhoneService.prototype, 'searchMessages');
     for (const query of ['gra', 'the%20with', 'yeah%20gr']) {

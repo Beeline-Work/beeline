@@ -100,7 +100,7 @@ describe('a real cursor Room agent opens a corner through beeline-agent', () => 
         auth.createDaemonExchange(agentId, transaction),
       env: {
         NODE_ENV: 'test',
-        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
+        BEELINE_AUTH_TENANTS_JSON: JSON.stringify([
           {
             host: 'server.test',
             community: 'cursor-tool-proof',

@@ -2802,9 +2802,9 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       if (args.action !== undefined && args.action !== 'request') throw new Error('action must be request or list');
       return execute(name);
     case 'connect': {
-      const capabilities = availableCapabilities();
       const builtin = builtinBeelineApp(String(args.service ?? args.query ?? ''));
-      if (builtin && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
+      const capabilities = await availableCapabilities(builtin === 'beeline:onboarding');
+      if (builtin && capabilities.includes(builtin) && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
         return JSON.stringify({ status: 'ready', app: builtin,
           next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` });
       if (args.mode === 'status') return JSON.stringify({ readiness: await execute('connectors_status'), capabilities });
@@ -2816,7 +2816,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       const app = String(args.app ?? '');
       if (app.startsWith('beeline:')) {
         const capability = app.slice('beeline:'.length);
-        if (!availableCapabilities().includes(app)) throw new Error('capability unavailable on this surface');
+        if (!(await availableCapabilities(app === 'beeline:onboarding')).includes(app)) throw new Error('capability unavailable on this surface');
         const routes = CAPABILITY_ROUTES[capability]!;
         if (args.tool === undefined) return JSON.stringify({ app, tools: Object.entries(routes).map(([action]) => {
           const definition = CAPABILITY_TOOLS[capability]![action]!;
@@ -2886,8 +2886,17 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
   }
 }
 
-function availableCapabilities(): string[] {
+async function availableCapabilities(checkOnboarding = false): Promise<string[]> {
+  let onboarding = false;
+  try {
+    if (checkOnboarding) {
+    const state = await daemonExecute('getRoomRepositoryState', { roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID') });
+    onboarding = state.repositoryOnboarding === true;
+    }
+  } catch { /* Missing server eligibility always leaves the feature dark. */ }
+
   return Object.keys(CAPABILITY_ROUTES).filter(capability =>
+    (capability !== 'onboarding' || onboarding) &&
     (capability !== 'workflow' || process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false') &&
     (capability !== 'corner_app' || Boolean(process.env.BEELINE_DAEMON_CORNER_ID))
   ).map(capability => `beeline:${capability}`);
@@ -3708,6 +3717,11 @@ async function executeAgentOperation(
     }
     case 'offer_connector':
       return offerConnector(args);
+    case 'post_repository_card':
+    case 'post_starters_card':
+      return JSON.stringify(await daemonExecute('postRepositoryOnboarding', {
+        ...await activeCommandContext(), kind: name === 'post_repository_card' ? 'repository' : 'starters',
+      }));
     case 'ask_choice':
       return askChoice(args);
     case 'open_poll':

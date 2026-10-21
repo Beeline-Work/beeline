@@ -76,7 +76,7 @@ const deps: NotificationActionDeps = {
   newMessageId,
   present,
   handled: createHandledActionStore(AsyncStorage),
-  inFlight: new Set(),
+  inFlight: new Map(),
   log: (message) => console.warn(message),
 };
 

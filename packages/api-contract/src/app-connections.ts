@@ -114,7 +114,7 @@ export function builtinBeelineApp(input: string): string | undefined {
   const text = input.trim().toLowerCase();
   if (/^beeline:[a-z][a-z0-9_]*$/.test(text)) return text;
   const key = text.replace(/[ _-]/g, '');
-  for (const name of ['workflow', 'wallet', 'browser_share', 'corner_app', 'avatar']) {
+  for (const name of ['workflow', 'wallet', 'browser_share', 'corner_app', 'avatar', 'onboarding']) {
     const alias = name.replace(/_/g, '');
     if (key === `beeline${alias}` || (name !== 'wallet' && key === alias)) return `beeline:${name}`;
   }

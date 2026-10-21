@@ -255,6 +255,23 @@ describe('PhoneService Needs-you tray', () => {
     expect(items[0]!.approval).toBeUndefined();
   });
 
+  it('holds an untagged blocked or needs-decision report addressed to the reader as commander', async () => {
+    const report = async (text: string, reportToId: string, ageMinutes: number) => {
+      const id = await post(ROOM, AGENT, text, ageMinutes);
+      await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [id, JSON.stringify({ reportToId })]);
+      return id;
+    };
+    const decision = await report('needs-decision: Approve the reviewer-link fetch?', VIEWER, 30);
+    const blocked = await report('blocked: The emulator needs a production sign-in.', VIEWER, 20);
+    await report('needs-decision: Pick an endpoint for Juniper?', PEER, 10);
+    await post(ROOM, AGENT, 'needs-decision: No commander recorded on this one?', 5);
+
+    const { items } = await read();
+    expect(items.map((item) => item.messageId)).toEqual([decision, blocked]);
+    expect(items[0]).toMatchObject({ text: 'Approve the reviewer-link fetch?', author: { name: 'Hoots' } });
+    expect(await count()).toBe(2);
+  });
+
   it('starts the 24-hour clock on the first read, never on the badge count', async () => {
     const id = await post(ROOM, PEER, '@ada can you look?');
     expect(await count()).toBe(1);

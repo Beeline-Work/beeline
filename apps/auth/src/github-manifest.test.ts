@@ -71,6 +71,7 @@ describe('GitHub App manifest flow', () => {
       redirectUrl: 'https://usebeeline.app/auth/github/app-setup?token=x',
     });
     expect(manifest.default_permissions).toEqual({
+      administration: 'write',
       contents: 'write',
       pull_requests: 'write',
       issues: 'write',
@@ -85,7 +86,7 @@ describe('GitHub App manifest flow', () => {
       starring: 'write',
     });
     expect(REQUIRED_GITHUB_APP_PERMISSIONS).toEqual(manifest.default_permissions);
-    expect(manifest.default_permissions).not.toHaveProperty('administration');
+    expect(manifest.default_permissions).toHaveProperty('administration', 'write');
     expect(manifest.default_permissions).not.toHaveProperty('organization');
   });
 
@@ -177,6 +178,7 @@ describe('GitHub App configuration drift', () => {
       'status',
     ],
     permissions: {
+      administration: 'write',
       contents: 'write',
       pull_requests: 'write',
       issues: 'write',
@@ -198,8 +200,8 @@ describe('GitHub App configuration drift', () => {
     expect(formatGitHubAppDriftLine(drift, LIVE_OK.slug)).toContain('match the required set');
   });
 
-  it('keeps existing Apps healthy without the new secret and environment grants', () => {
-    const { secrets, environments, ...permissions } = LIVE_OK.permissions;
+  it('keeps existing Apps healthy without optional secret, environment and discussion grants', () => {
+    const { secrets, environments, discussions, ...permissions } = LIVE_OK.permissions;
     expect(gitHubAppDrift({ ...LIVE_OK, permissions })).toEqual({ ok: true });
   });
 

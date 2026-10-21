@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { authTenantsFromEnvironment, oidcClientFromEnvironment } from '@beeline/auth/environment';
+import { readEnv, authTenantsFromEnvironment, oidcClientFromEnvironment } from '@beeline/auth/environment';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { verifyPhoneGitHubTicket } from '@beeline/auth/phone-github-ticket';
 import { buildAuthServer } from '@beeline/auth/server';
@@ -27,6 +27,7 @@ export async function createMonolithAuth(
     | undefined,
   options: {
     createDaemonExchange: TokenAuth['createDaemonExchange'];
+    completeRepositoryInstallation?: (state: string, installationId?: number) => Promise<string>;
     env?: NodeJS.ProcessEnv;
     webAppOrigins?: readonly string[];
   },
@@ -36,7 +37,7 @@ export async function createMonolithAuth(
   const publicHost = new URL(publicOrigin).host.toLowerCase();
   const tenant = tenants.find((candidate) => candidate.host.toLowerCase() === publicHost);
   if (!tenant) {
-    throw new Error(`BUZZY_AUTH_TENANTS_JSON must include monolith Host ${publicHost}`);
+    throw new Error(`BEELINE_AUTH_TENANTS_JSON (BUZZY_AUTH_TENANTS_JSON still works) must include monolith Host ${publicHost}`);
   }
 
   // Both schemas live in the monolith's one PostgreSQL database. AuthStore only
@@ -46,12 +47,13 @@ export async function createMonolithAuth(
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
+    completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
     ...(github ? { github } : {}),
     tenants,
     secureCookies: env.NODE_ENV === 'production',
     webAppOrigins: options.webAppOrigins,
-    githubSetupToken: env.BUZZY_AUTH_SETUP_TOKEN,
+    githubSetupToken: readEnv(env, 'AUTH_SETUP_TOKEN'),
     logger: false,
     claimAgentPairingCode: async (input) => {
       return pairing.claimAgentConnectPairing(input, (agentId, transaction) =>

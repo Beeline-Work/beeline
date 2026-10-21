@@ -1,3 +1,4 @@
+import { readEnv } from './env.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -688,12 +689,12 @@ export class RoomRuntimeCoordinator {
       );
     });
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
-    const fixedWorkspaceCeiling = process.env.BUZZY_BODY_MAX_SESSIONS;
+    const fixedWorkspaceCeiling = readEnv(process.env, 'BODY_MAX_SESSIONS');
     this.scheduler = new SessionScheduler({
       ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
       perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
       workspaceFloor: Number(
-        process.env.BUZZY_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
+        readEnv(process.env, 'BODY_MAX_SESSIONS_FLOOR') ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
       ),
       activeRoomCount: () => this.activeRoomCount(),
       idleMs: resolveSessionIdleMs(process.env),
@@ -1113,7 +1114,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private roomAgentHomeRoot(workspaceRoot: string, required = false): string | undefined {
-    const flag = process.env.BUZZY_BODY_ROOM_HOME;
+    const flag = readEnv(process.env, 'BODY_ROOM_HOME');
     if (!required && flag === '0') return undefined;
     const home = resolve(workspaceRoot, 'agent-home');
     if (!required && flag !== '1' && !existsSync(home) && existsSync(workspaceRoot))

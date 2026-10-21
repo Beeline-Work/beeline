@@ -214,6 +214,14 @@ try {
     'tunnel',
     () => tunnel.log().match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)?.[0],
   );
+  const authTenantsJson = JSON.stringify([
+    {
+      host: new URL(publicOrigin).host,
+      community: 'proof',
+      roomCommunityIds: ['proof'],
+      origin: publicOrigin,
+    },
+  ]);
   mark('tunnel-ready', { publicOrigin });
   launch(
     process.execPath,
@@ -222,14 +230,8 @@ try {
       DATABASE_URL: databaseUrl,
       PORT: String(serverPort),
       PUBLIC_ORIGIN: publicOrigin,
-      BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
-        {
-          host: new URL(publicOrigin).host,
-          community: 'proof',
-          roomCommunityIds: ['proof'],
-          origin: publicOrigin,
-        },
-      ]),
+      BEELINE_AUTH_TENANTS_JSON: authTenantsJson,
+      BUZZY_AUTH_TENANTS_JSON: authTenantsJson,
       BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
       BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
       BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',

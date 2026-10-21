@@ -1,3 +1,4 @@
+import { readRepositoryOnboardingCard } from './repository-onboarding.js';
 import { readAgentUsage } from './agent-usage.js';
 import { isSystemEvent } from './system-events.js';
 import { isAgentSignInHarness, isAgentSignInKeyProvider } from './agent-sign-in.js';
@@ -1116,6 +1117,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
     ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),
+    ...field('onboarding', readRepositoryOnboardingCard(item.onboarding)),
     ...field('choice', readChoiceCard(item.choice)),
     ...field('agentCommand', readAgentCommand(item.agentCommand)),
     ...field('walletTx', readWalletTx(item.walletTx)),

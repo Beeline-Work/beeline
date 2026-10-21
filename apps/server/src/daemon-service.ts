@@ -1,9 +1,12 @@
+import { onboardingEnabledForViewer } from './onboarding-rollout.js';
+import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
+import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -103,7 +106,7 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
-import type { LandCornerOutcome } from './github-operations.js';
+import type { GitHubOperations, LandCornerOutcome } from './github-operations.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import {
@@ -413,6 +416,7 @@ export class DaemonService {
       cornerId: string,
     ) => Promise<Output<'readCornerPullRequest'>>,
     private readonly subscriptionReceiverUrl?: string,
+    private readonly github?: GitHubOperations,
   ) {
     this.database = new CornerAccessDatabase(database);}
 
@@ -517,6 +521,7 @@ export class DaemonService {
       'connect',
       'listAppTools',
       'executeAppTool',
+      'postRepositoryOnboarding',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -754,6 +759,7 @@ export class DaemonService {
           this.objects,
           this.linkWallet,
           this.refreshMergeability,
+          this.landCorner, this.closePullRequest, this.readPullRequest, this.subscriptionReceiverUrl, this.github,
         );
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
@@ -1335,11 +1341,13 @@ export class DaemonService {
           input as Input<'reviseCornerBrief'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'getRoomRepositoryState':
-        return (await this.repository(
+      case 'getRoomRepositoryState': {
+        const owner = await this.repositoryOnboardingRequester(authenticatedAgentId, scopedRoom, candidate);
+        return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
-        )) as Output<Name>;
+        )), ...(owner && await onboardingEnabledForViewer(this.database, owner) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
+      }
       case 'noteEmptyRoomRepository': {
         const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
         const repository = await this.repository(roomId, authenticatedAgentId);
@@ -1395,6 +1403,7 @@ export class DaemonService {
         return (await this.configuration(
           authenticatedAgentId,
           (input as Input<'getAgentConfiguration'>).roomId,
+          candidate,
         )) as Output<Name>;
       case 'getAgentPresence':
         return (await this.presence(
@@ -1729,6 +1738,21 @@ export class DaemonService {
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postRepositoryOnboarding': {
+        const request = input as Input<'postRepositoryOnboarding'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const requester = await this.grantRequester();
+        const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
+        if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
+        if (request.kind === 'repository') await this.github?.refresh(owner);
+        const card = await postRepositoryOnboarding(this.database, this.github, {
+          roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,
+        });
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: authenticatedAgentId });
+        return card as Output<Name>;
+      }
       case 'askRoomChoice':
         return (await this.askRoomChoice(
           input as Input<'askRoomChoice'>,
@@ -3694,7 +3718,7 @@ export class DaemonService {
     }
     return { currentIdentityId: current, predecessors };
   }
-  private async configuration(agentId: string, roomId?: string) {
+  private async configuration(agentId: string, roomId?: string, context?: Record<string, unknown>) {
     if (roomId) await this.access(roomId, agentId);
     const row = (
       await this.database.query<{
@@ -3757,6 +3781,14 @@ export class DaemonService {
           target: `registry-mcp:${route.registry_server_name}`,
         }))
       : [];
+    if (row?.soul) {
+      const freeAgent = (await this.database.query(
+        `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
+      )).rowCount > 0;
+      const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
+      if (owner && await onboardingEnabledForViewer(this.database, owner))
+        row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
+    }
     const isReviewer =
       Boolean(roomId) && (await isCornerReviewer(this.database, roomId!, agentId));
     return {
@@ -3904,6 +3936,8 @@ export class DaemonService {
           input.requestId,
           input.generationId,
         )));
+    if (command && input.presentation !== 'card')
+      await refuseTagPastCommander(this.database, input.roomId, agentId, input.text, command);
     // A tag an agent writes reaches the person it names, exactly as a
     // human-authored one does: the same reading of the text, the same push
     // fan-out, the same highlight. There is no per-turn numeric cap, and no
@@ -6390,9 +6424,21 @@ export class DaemonService {
     };
   }
 
+  private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
+    if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
+    const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
+      ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId)
+      : undefined);
+    if (command) {
+      const requester = await this.grantRequester(command);
+      if (requester.kind === 'human') return requester.id;
+    }
+    return (await this.database.query<{ owner_id: string }>(
+      `SELECT owner_id FROM agents WHERE agent_id=$1`, [agentId])).rows[0]?.owner_id;
+  }
+
   /** Root command provenance is the authority even after delegation and resumes. */
-  private async grantRequester() {
-    const command = this.authorizedCommand;
+  private async grantRequester(command = this.authorizedCommand) {
     if (!command) throw new Error('resource access requires an active command');
     const requester = (
       await this.database.query<{
@@ -8107,6 +8153,8 @@ export class DaemonService {
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
+    await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
+      command.room_id === input.cornerId ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model)
@@ -8434,6 +8482,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   renameCorner: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,
+  postRepositoryOnboarding: true,
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,

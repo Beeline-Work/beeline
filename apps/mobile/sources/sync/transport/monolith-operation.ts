@@ -61,6 +61,7 @@ export function phoneOperationRequestOptions(
   input: unknown,
   options?: { timeoutMs?: number },
 ): { timeoutMs?: number; idempotent?: boolean } | undefined {
+  if (name === 'actOnRepositoryCard') return { timeoutMs: options?.timeoutMs ?? 60_000, idempotent: !['install', 'organization'].includes(String((input as { action?: unknown })?.action)) };
   const idempotent = DATABASE_READS.has(name) || repeatableWrite(name, input);
   if (!idempotent) return options;
   return { timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS, idempotent: true };

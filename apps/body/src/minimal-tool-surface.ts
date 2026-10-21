@@ -1,6 +1,7 @@
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
 export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
+  "onboarding": {"repository": "post_repository_card", "starters": "post_starters_card"},
   "workflow": {
     "save": "save_workflow",
     "start": "start_workflow",
@@ -39,6 +40,10 @@ export const REPOSITORY_ROUTES: Record<string, string> = {
 };
 export const SCRATCH_ROUTES: Record<string, string> = {"write": "write_scratch_file", "image": "fetch_image", "quota": "scratch_status"};
 export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = {
+  onboarding: {
+    repository: { name: 'repository', description: 'Post the Room repository card: create a private repo, link an installation repo, switch repos or add an organization. Returns install_missing, no_repo_linked or repo_linked. Use this instead of settings or CLI instructions.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+    starters: { name: 'starters', description: 'Read recent commits, CI and open issues in the linked repository and post 3–4 one-tap tasks. Empty repositories get useful starting tasks. A selection starts work through the normal corner flow.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  },
   "workflow": {
     "save": {
       "name": "save",

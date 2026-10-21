@@ -8,7 +8,7 @@ import {
   type CommandRow,
   type PrivateCommandPayload,
 } from './agent-command.js';
-import { tagsKnownIdentitySql } from './message-mentions.js';
+import { resolveCurrentMemberMentions, tagsKnownIdentitySql } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { systemLine } from './system-line.js';
@@ -356,6 +356,29 @@ export async function reportToCommander(
   }
   return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true,
     receipt: member.kind === 'agent' ? 'Report queued privately; not confirmation of execution.' : 'Report stored and visible.' };
+}
+
+/**
+ * Chain of command: in a corner, an agent may tag a person only when that
+ * person is its direct commander for this turn. Anyone higher hears through
+ * the commander, at the place they gave the order.
+ */
+export async function refuseTagPastCommander(
+  db: SqlDatabase, roomId: string, agentId: string, text: string, command?: CommandRow,
+): Promise<void> {
+  if (!(await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount) return;
+  const people = (await resolveCurrentMemberMentions(db, roomId, text, agentId)).filter(m => m.kind === 'human');
+  if (!people.length) return;
+  const { recipient, returnRoom } = await commanderReportAddress(db, roomId, command);
+  const skipped = people.filter(person => person.id !== recipient);
+  if (!skipped.length) return;
+  const commander = recipient && returnRoom ? (await db.query<{ handle: string | null; name: string; place: string }>(
+    `SELECT identity.handle,identity.name,room.name place FROM identities identity, rooms room
+     WHERE identity.id=$1 AND room.id=$2`, [recipient, returnRoom])).rows[0] : undefined;
+  const who = commander ? `@${(commander.handle ?? commander.name).replace(/^@/, '')} in ${commander.place}` : 'whoever assigned you';
+  throw new CommandRefusalError(
+    `post refused: ${skipped.map(person => `@${person.handle}`).join(', ')} is not your direct commander. ` +
+    `Your commander is ${who}. Use report(needs-decision:) and they decide whether to ask further up.`, 403);
 }
 
 /** The recorded return route shared by lifecycle reports and commander approvals. */

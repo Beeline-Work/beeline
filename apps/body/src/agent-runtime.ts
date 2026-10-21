@@ -193,7 +193,7 @@ export async function runAgentRuntime(
   if (sandbox.path) config.bwrapPath = sandbox.path;
   else if (sandbox.shellDetail) config.shellUnavailableDetail = sandbox.shellDetail;
   // Owner-configured credential masks ride the runtime record; the
-  // BUZZY_BODY_SANDBOX_MASK env var is already folded into `config` by
+  // BEELINE_BODY_SANDBOX_MASK (BUZZY_BODY_SANDBOX_MASK still works) env var is already folded into `config` by
   // loadBodyConfig. Both are unioned at spawn time in Body.sessionSpawnCommand.
   if (runtime.sandboxMaskPaths?.length) {
     config.sandboxMaskPaths = [...(config.sandboxMaskPaths ?? []), ...runtime.sandboxMaskPaths];

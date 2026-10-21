@@ -1,16 +1,7 @@
-# ActivityTaskManager START after this tap: 0 matches. Same ActivityRecord{105594060} MainActivity t8.
-10-20 23:13:14.850  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-route-entry","t":543257.714747}
-10-20 23:13:14.850  3280  3398 W ReactNativeJS: [PUSH ROUTING] Full notification response:
-10-20 23:13:14.863  3280  3398 W ReactNativeJS: [PUSH ROUTING] notification.request.content.data:
-10-20 23:13:14.863  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-start","t":543271.468915}
-10-20 23:13:14.864  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-target","t":543271.548804,"detail":"msg-obs3"}
-10-20 23:13:14.873  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-stack-before","t":543281.179865,"detail":"beeline/onboarding"}
-10-20 23:13:15.165  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"route-mount","t":543573.366338,"detail":"room-general"}
-10-20 23:13:15.187  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"session-effect","t":543594.638506,"detail":"room-general"}
-10-20 23:13:15.189  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"identity-start","t":543597.06952}
-10-20 23:13:15.248  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-cache","t":543655.98658,"detail":"missing:empty"}
-10-20 23:13:15.250  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-network-start","t":543657.691265}
-10-20 23:13:15.250  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-authorizing","t":543658.395719}
-10-20 23:13:15.456  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"identity-ready","t":543863.904484}
-10-20 23:13:15.551  3280  3398 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-error","t":543959.167949}
-10-20 23:13:15.551  3280  3398 W ReactNativeJS: [PUSH ROUTING] Navigating to Beeline message: room-general
+# ActivityTaskManager START after this tap: 0 matches. Same ActivityRecord{4338b7d} MainActivity t8 pid 4234.
+10-20 23:35:09.956  4234  4276 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-route-entry","t":429358.827119}
+10-20 23:35:09.956  4234  4276 W ReactNativeJS: [PUSH ROUTING] Full notification response:
+10-20 23:35:09.958  4234  4276 W ReactNativeJS: [PUSH ROUTING] notification.request.content.data:
+10-20 23:35:10.006  4234  4276 W ReactNativeJS: [PUSH ROUTING] Navigating to Beeline message: bee11e00-0000-4000-8000-000000000103
+10-20 23:35:10.207  4234  4276 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":429609.847774}
+10-20 23:35:10.290  4234  4276 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":429692.491022}

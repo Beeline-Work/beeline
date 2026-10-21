@@ -6,11 +6,14 @@ Target Room: `#proof` (`bee11e00-0000-4000-8000-000000000103`) while `#general` 
 
 Times are emulator wall clock (`logcat -v threadtime`). Tap is `date +%s%3N` immediately before `input tap`. Room paint is first `[ROOM_OPEN] newest-frame` after that tap. `#proof` header was on screen at the first UI dump after each tap.
 
+Obsidian signed-in replay (same APK, `se_api35` `emulator-5562`, system night mode, Play Review): notice [fg-in-app-notice-obsidian.png](fg-in-app-notice-obsidian.png), after tap [fg-after-tap-obsidian.png](fg-after-tap-obsidian.png). Same `#general` → `#proof` path.
+
 ## Timing table
 
 | case | tap | Room paint (newest-frame) | tap-to-Room | pid | MainActivity record | ActivityTaskManager START |
 | --- | --- | --- | --- | --- | --- | --- |
-| foreground (in-app notice) | 21:52:22.053 | 21:52:22.224 | **171 ms** | 4467 | `ActivityRecord{cc73aea u0 app.usebeeline/.MainActivity t8}` unchanged | **none** |
+| foreground (in-app notice, Bone) | 21:52:22.053 | 21:52:22.224 | **171 ms** | 4467 | `ActivityRecord{cc73aea u0 app.usebeeline/.MainActivity t8}` unchanged | **none** |
+| foreground (in-app notice, Obsidian) | 23:35:09.956 | 23:35:10.207 | **251 ms** | 4234 | `ActivityRecord{4338b7d u0 app.usebeeline/.MainActivity t8}` unchanged | **none** |
 | background (shade tap, process alive) | 21:53:45.485 | 21:53:45.715 | **230 ms** | 4467 | same `cc73aea t8` | trampoline + MainActivity `LAUNCH_SINGLE_TASK` **result=3** (`START_DELIVERED_TO_TOP`) |
 | cold (`HOME` then `am kill`, process gone, then shade tap) | 21:57:07.950 | 21:57:08.523 | **573 ms** | 4467 → **6670** | task reused `cc73aea t8` | trampoline + MainActivity `LAUNCH_SINGLE_TASK` **result=3**; **no DevLauncher** |
 

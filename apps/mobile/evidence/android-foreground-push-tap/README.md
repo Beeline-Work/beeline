@@ -4,22 +4,30 @@ Foreground Android data-only pushes show `ForegroundPushToast` inside the app.
 A tap opens the Room through the mounted navigator. The OS shade is not posted,
 so MainActivity does not restart.
 
-## Native Android (runtime 39)
+## Signed-in Play Review (release APK, runtime 39)
 
-Unsigned sign-in screen, emulator `buzzy_api36` (`emulator-5562`), release APK
-`006fcc6afc…`. Same MainActivity instance; logcat has no
-`ActivityTaskManager: START` after the tap.
+Release APK sha256 `006fcc6afc539a854959945db9b6499f191ec7bbd3ed4fcde7a7d82a218433f5`.
+Local latency-rig (`10.0.2.2:8081`). Push injected as C2DM
+`com.google.android.c2dm.intent.RECEIVE` to
+`app.usebeeline/com.google.firebase.iid.FirebaseInstanceIdReceiver`
+(project `31955293663`). Target `#proof`
+(`bee11e00-0000-4000-8000-000000000103`) while `#general` was on screen.
 
 | | Bone | Obsidian |
 | --- | --- | --- |
-| Notice | [in-app-notice.png](in-app-notice.png) | [in-app-notice-obsidian.png](in-app-notice-obsidian.png) |
-| After tap | [after-tap.png](after-tap.png) | [after-tap-obsidian.png](after-tap-obsidian.png) |
+| Notice | [fg-in-app-notice.png](../android-native-revert-proof/fg-in-app-notice.png) | [in-app-notice-obsidian.png](in-app-notice-obsidian.png) |
+| After tap | [fg-after-tap.png](../android-native-revert-proof/fg-after-tap.png) | [after-tap-obsidian.png](after-tap-obsidian.png) |
 
-Signed-in Play Review (Bone, `#general` → `#proof`) plus tap-to-Room times live
-in `../android-native-revert-proof/`. Obsidian tap logcat:
-[logcat-obsidian-tap.txt](logcat-obsidian-tap.txt). Route-mount **316 ms** after
-the JS tap handler (`push-route-entry` → `route-mount`). Unsigned prefetch
-failed, same as the Bone sign-in stand-in.
+Obsidian: emulator `se_api35` (`emulator-5562`), system night mode, Play Review
+session. In-app plate `foreground-push-notice` ("Beeline" / "proof ping from
+other room"). Tap opened `#proof`. Same MainActivity
+`ActivityRecord{4338b7d u0 app.usebeeline/.MainActivity t8}` pid 4234. Logcat
+had **0** `ActivityTaskManager: START` after the tap. Tap-to-Room
+(`push-route-entry` 23:35:09.956 → first `newest-frame` 23:35:10.207):
+**251 ms**. Logcat: [logcat-obsidian-tap.txt](logcat-obsidian-tap.txt).
+
+Bone signed-in times live in `../android-native-revert-proof/` (foreground
+**171 ms**, same no-START result).
 
 ## Both themes (production toast)
 

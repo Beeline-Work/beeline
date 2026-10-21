@@ -8086,7 +8086,7 @@ export class DaemonService {
       } else if (input.roomId) {
         await assertCornerCommandTarget(database, input.roomId, cornerId);
       }
-      await closeCornerState(database, cornerId);
+      await closeCornerState(database, cornerId, 'agent');
     });
     return this.writeResult();
   }

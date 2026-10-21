@@ -66,7 +66,7 @@ export async function cancelArchivedCornerAssignments(database: SqlDatabase): Pr
 }
 
 /** The terminal corner state shared by helper completion and a human close request. */
-export async function closeCornerState(database: SqlDatabase, cornerId: string) {
+export async function closeCornerState(database: SqlDatabase, cornerId: string, actor: 'human' | 'agent' = 'human') {
   await lockCornerLifecycle(database, cornerId);
   const corner = (
     await database.query<{ parent_id: string; name: string }>(
@@ -76,8 +76,14 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
+  if (actor === 'agent' && (await database.query(
+    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND locked`, [cornerId],
+  )).rowCount) {
+    throw new CommandRefusalError('This corner is locked. A person must unlock it before agents can close it.', 409);
+  }
   const pullRequest = await database.query(
-    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND lifecycle->'pr'->>'number' IS NOT NULL`,
+    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND lifecycle->'pr'->>'number' IS NOT NULL
+       AND lifecycle->'pr'->>'mergedAt' IS NULL`,
     [cornerId],
   );
   if (pullRequest.rowCount)

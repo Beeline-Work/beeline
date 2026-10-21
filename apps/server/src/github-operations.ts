@@ -1668,6 +1668,7 @@ export class GitHubOperations {
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) IS NOT NULL
          AND fact.feature_branch IS NOT NULL
+         AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
          AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
     );
     for (const candidate of candidates.rows) {
@@ -2484,17 +2485,17 @@ export class GitHubOperations {
     unfinishedClaimHead?: string,
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
-    let archived = false;
+    let updated = false;
     await retryOnDeadlock(() => database.transaction(async (database) => {
-      archived = false;
+      updated = false;
       await lockCornerLifecycle(database, target.corner_id);
       if (unfinishedClaimHead) {
         const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
         if (claim?.head_sha !== unfinishedClaimHead || claim.number !== expectedPrNumber) return;
       }
       const current = (
-        await database.query<{ lifecycle: CornerLifecycleView; feature_branch: string | null }>(
-          `SELECT lifecycle,feature_branch FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+        await database.query<{ lifecycle: CornerLifecycleView; feature_branch: string | null; locked: boolean }>(
+          `SELECT lifecycle,feature_branch,locked FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
           [target.corner_id],
         )
       ).rows[0];
@@ -2525,26 +2526,30 @@ export class GitHubOperations {
           : undefined);
       if (!(await database.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`,
         [target.corner_id])).rowCount) return;
-      // Command output locks commands before dispatch takes FOR SHARE on rooms.
-      // Cancel commands before updating rooms, matching that shared lock order.
-      await cancelCornerAgentCommands(database, target.corner_id);
-      const changed = await database.query(
-        `UPDATE rooms SET archived_at=now(),updated_at=now()
-         WHERE id=$1 AND archived_at IS NULL`,
-        [target.corner_id],
-      );
-      if (!changed.rowCount) return;
-      archived = true;
-      await abandonCornerWorkflowRuns(database, target.corner_id);
-      await deleteCornerWakeSources(database, [target.corner_id]);
+      const locked = current?.locked === true;
+      // Locked standing corners retain their active work and wake sources after a merge.
+      if (!locked) {
+        // Command output locks commands before dispatch takes FOR SHARE on rooms.
+        // Cancel commands before updating rooms, matching that shared lock order.
+        await cancelCornerAgentCommands(database, target.corner_id);
+        const changed = await database.query(
+          `UPDATE rooms SET archived_at=now(),updated_at=now()
+           WHERE id=$1 AND archived_at IS NULL`,
+          [target.corner_id],
+        );
+        if (!changed.rowCount) return;
+      }
+      updated = true;
+      if (!locked) await abandonCornerWorkflowRuns(database, target.corner_id);
+      if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
-        `UPDATE corner_facts SET close_requested=true,merge_attempt_head=NULL,
+        `UPDATE corner_facts SET close_requested=$3,merge_attempt_head=NULL,
            lifecycle=(lifecycle-'mergeRecovery')||$2::jsonb,
            updated_at=now() WHERE corner_id=$1`,
         [
           target.corner_id,
           JSON.stringify({
-            lifecycle: 'done',
+            lifecycle: locked ? 'working' : 'done',
             checks: 'passing',
             outcome: 'landed',
             ...(mergedPr
@@ -2560,6 +2565,7 @@ export class GitHubOperations {
                 }
               : {}),
           }),
+          !locked,
         ],
       );
       const merged: SystemPhrase = {
@@ -2594,10 +2600,9 @@ export class GitHubOperations {
         roomId: target.parent_id,
         authorId: target.author_id,
         ...merged,
-        presentation: 'card',
-        durableFact: 'merge',
-        cardType: 'daemon-fact',
-        card: {
+        ...(locked ? {} : { presentation: 'card' as const, durableFact: 'merge' as const }),
+        cardType: locked ? 'github-corner-note' : 'daemon-fact',
+        card: locked ? { source: 'github', dedupe: mergeKey } : {
           type: 'corner-complete',
           cornerId: target.corner_id,
           name: target.corner_name,
@@ -2612,13 +2617,13 @@ export class GitHubOperations {
           },
         },
       });
-      await enqueueCornerBranchDeletion(database, target.corner_id);
-      await advanceCorner(database, target.corner_id, {
+      if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
+      if (!locked) await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
     }), { attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50) });
-    if (!archived) return;
+    if (!updated) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);
     await this.retryBranchDeletions(target.corner_id);

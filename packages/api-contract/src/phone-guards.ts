@@ -1673,6 +1673,7 @@ export function readRoomView(value: unknown): RoomView | null {
     ...field('cornerBrief', readCornerBrief(item.cornerBrief)),
     ...field('repository', readRepository(item.repository)),
     ...field('cornerLifecycle', readCornerLifecycle(item.cornerLifecycle)),
+    ...field('cornerLocked', typeof item.cornerLocked === 'boolean' ? item.cornerLocked : undefined),
     ...field('cornerOwed', typeof item.cornerOwed === 'boolean' ? item.cornerOwed : undefined),
     ...field('cornerApps', readList(item.cornerApps, readCornerApp, 24)),
     ...field('boundApp', readCornerAppBinding(item.boundApp)),

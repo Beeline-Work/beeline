@@ -136,6 +136,7 @@ export type PhoneOperationMap = {
   actOnRepositoryCard: { input: RepositoryOnboardingAction; output: { readonly url?: string; readonly selected?: string } };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
+  setCornerLocked: { input: RoomInput & { readonly locked: boolean }; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };

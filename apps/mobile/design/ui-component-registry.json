@@ -193,6 +193,7 @@
     "components/buzz/MemberGrantRow.tsx": ["MemberGrantRow"],
     "components/buzz/MemberPickerSheet.tsx": ["MemberPickerSheet"],
     "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow", "Row"],
+    "components/buzz/MembersAgentsGlyph.tsx": ["MembersAgentsGlyph"],
     "components/buzz/MembersGlyph.tsx": ["APEX_X", "MembersGlyph"],
     "components/buzz/MentionSuggestionMenu.tsx": ["ChannelSuggestionMenu", "MentionSuggestionMenu"],
     "components/buzz/MessageReactionRoster.tsx": ["MessageReactionRoster", "ReactionMembers"],
@@ -266,7 +267,7 @@
     "components/buzz/RoomDeckLoadingView.tsx": ["RoomDeckLoadingView"],
     "components/buzz/RoomGlyph.tsx": ["RoomGlyph"],
     "components/buzz/RoomListSectionHeader.tsx": ["RoomListSectionHeader"],
-    "components/buzz/RoomListToolbar.tsx": ["RoomListToolbar", "RoomListTrayAction", "actions", "filters", "search"],
+    "components/buzz/RoomListToolbar.tsx": ["RoomListToolbar", "actions", "filters", "search"],
     "components/buzz/RoomMemberPickerActions.tsx": ["RoomMemberPickerActions"],
     "components/buzz/RoomOpenTraceOverlay.tsx": ["RoomOpenTraceOverlay"],
     "components/buzz/RoomRepositoryChoice.tsx": [

@@ -7,7 +7,6 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { saveActiveCommunityId, subscribeActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
-import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
   roomListCounts,
@@ -35,7 +34,7 @@ import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
@@ -355,8 +354,8 @@ export const SidebarView = React.memo(function SidebarView() {
     query,
   );
   const filteredChatSections = React.useMemo(
-    () => roomListSections(filteredChats),
-    [filteredChats],
+    () => roomListSections(filteredChats, !query.trim() && filter === 'all'),
+    [filteredChats, query, filter],
   );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
@@ -494,61 +493,9 @@ export const SidebarView = React.memo(function SidebarView() {
               />
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
-                  <WorkspaceActionsMenu
-                    traySelected={traySelected}
-                    canManageWorkspace={canManageWorkspace}
-                    onTray={() =>
-                      router.push({
-                        pathname: '/beeline/tray',
-                        params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' },
-                      } as Href)
-                    }
-                    onMembers={() =>
-                      router.push({
-                        pathname: '/beeline/members',
-                        params: { communityId: workspaceId },
-                      } as Href)
-                    }
-                    onSettings={
-                      canManageWorkspace
-                        ? () =>
-                            router.push({
-                              pathname: '/beeline/settings/workspace',
-                              params: { communityId: workspaceId },
-                            } as Href)
-                        : undefined
-                    }
-                    onCompose={
-                      viewerIsAgent
-                        ? undefined
-                        : (action) =>
-                            runRoomDeckComposeAction(action, {
-                              communityId: workspaceId,
-                              openMessagePicker: () =>
-                                router.push({
-                                  pathname: '/beeline/channels',
-                                  params: {
-                                    communityId: workspaceId,
-                                    newDirectMessage: String(Date.now()),
-                                  },
-                                } as Href),
-                              openRoomCreator: () =>
-                                router.push({
-                                  pathname: '/beeline/channels',
-                                  params: {
-                                    communityId: workspaceId,
-                                    newRoom: String(Date.now()),
-                                  },
-                                } as Href),
-                              invitePerson: () =>
-                                router.push({
-                                  pathname: '/beeline/members',
-                                  params: { communityId: workspaceId, action: 'invite' },
-                                } as Href),
-                              navigate: (target) => router.push(target as Href),
-                            })
-                    }
-                  />
+                  <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+                    icon={<MembersAgentsGlyph size={22} />}
+                    onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
                 )}
               </View>
             </View>
@@ -622,7 +569,7 @@ export const SidebarView = React.memo(function SidebarView() {
                   onPress={() => setRefreshNonce((value) => value + 1)}
                 />
               </View>
-            ) : !filteredChats.length ? (
+            ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (
                   <PinnedConversationsEmpty desktop onShowAll={() => setFilter('all')} />
@@ -764,6 +711,10 @@ export const SidebarView = React.memo(function SidebarView() {
             onAdd={() => {
               setWorkspaceSwitcherOpen(false);
               router.push('/beeline/community' as Href);
+            }}
+            onJoin={() => {
+              setWorkspaceSwitcherOpen(false);
+              router.push({ pathname: '/beeline/community', params: { mode: 'join' } } as Href);
             }}
             onClose={() => setWorkspaceSwitcherOpen(false)}
             onOpenAccount={() => {

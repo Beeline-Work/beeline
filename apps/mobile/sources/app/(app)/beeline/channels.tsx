@@ -46,19 +46,16 @@ import { Button } from '@/components/buzz/Button';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
-  RoomDeckComposeMenu,
   type RoomDeckComposeAction,
 } from '@/components/buzz/RoomDeckComposeMenu';
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { RoomListToolbar, RoomListTrayAction } from '@/components/buzz/RoomListToolbar';
+import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { readGitHubAccess, updateGitHubAccess, useGitHubAccess } from '@/buzz/github-access-surface';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
-import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
-import { MembersGlyph } from '@/components/buzz/MembersGlyph';
-import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -289,25 +286,13 @@ export default function BuzzChannels() {
     ),
   );
   const chatSections = useMemo(
-    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
+    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned), !query.trim() && filter === 'all'),
     [chatList?.chats, query, filter, pinned],
   );
   const searchClient = useMemo(
     () => (identity && relayUrl ? new RoomViewClient({ baseUrl: relayUrl, identity }) : null),
     [identity, relayUrl],
   );
-  const [memberSearch, setMemberSearch] = useState<Awaited<ReturnType<RoomViewClient['workspaceMembers']>> | null>(null);
-  useEffect(() => {
-    let active = true;
-    setMemberSearch(null);
-    if (!query.trim() || !searchClient || !activeCommunityId) return;
-    const timer = setTimeout(() => {
-      void searchClient.workspaceMembers(activeCommunityId, { q: query.trim() })
-        .then((page) => { if (active) setMemberSearch(page); })
-        .catch(() => { if (active) setMemberSearch(null); });
-    }, 200);
-    return () => { active = false; clearTimeout(timer); };
-  }, [searchClient, activeCommunityId, query]);
   const messageSearch = useMessageSearch(
     searchClient
       ? (workspaceId, text, before, signal) =>
@@ -908,35 +893,8 @@ export default function BuzzChannels() {
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
               <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
-                style={styles.headerAction}
-                icon={<MembersGlyph size={22} color={styles.headerGlyph.color} />}
+                icon={<MembersAgentsGlyph size={22} />}
                 onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
-              <RoomListTrayAction needsYouCount={needsYouCount}
-                onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: activeCommunityId, workspaceName: chatList.workspace.name } } as never)} />
-              <WorkspaceActionsMenu
-                onMembers={() =>
-                  router.push({
-                    pathname: '/beeline/members',
-                    params: { communityId: activeCommunityId },
-                  } as never)
-                }
-                onSettings={
-                  canManageWorkspace
-                    ? () =>
-                        router.push({
-                          pathname: '/beeline/settings/workspace',
-                          params: { communityId: activeCommunityId },
-                        } as never)
-                    : undefined
-                }
-              />
-              {!viewerIsAgent && (
-                <RoomDeckComposeMenu
-                  header
-                  canManageWorkspace={canManageWorkspace}
-                  onSelect={compose}
-                />
-              )}
             </View>
           )}
         </View>
@@ -948,7 +906,15 @@ export default function BuzzChannels() {
             onQuery={setQuery}
             counts={counts}
             needsYouCount={needsYouCount}
-            reserveTraySpace
+            onTray={
+              activeCommunityId
+                ? () =>
+                    router.push({
+                      pathname: '/beeline/tray',
+                      params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' },
+                    } as never)
+                : undefined
+            }
           />
         )}
         {pinError && (
@@ -1054,20 +1020,11 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title} />
+                  <RoomListSectionHeader title={section.title}
+                    actionAccessibilityLabel={section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'}
+                    onAction={viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace) ? undefined : () => compose(section.kind === 'rooms' ? 'room' : 'message')} />
                 ) : null
               }
-              ListHeaderComponent={query.trim() && memberSearch && (memberSearch.members.length || memberSearch.agents.length) ? (
-                <View>
-                  <RoomListSectionHeader title="Members" />
-                  {memberSearch.members.map((member) => <MemberRosterRow key={member.identity.pubkey}
-                    {...member.identity} kind="human" role={member.role} divider="bottom" testID={`search-member-${member.identity.pubkey}`}
-                    onPress={() => router.push({ pathname: member.identity.pubkey === identity?.publicKey ? '/beeline/settings' : '/beeline/human-profile', params: { communityId: activeCommunityId, memberId: member.identity.pubkey } } as never)} />)}
-                  {memberSearch.agents.map((member) => <MemberRosterRow key={member.identity.pubkey}
-                    {...member.identity} kind="agent" model={member.model} ownerHandle={member.owner?.handle} divider="bottom" testID={`search-member-${member.identity.pubkey}`}
-                    onPress={() => router.push({ pathname: '/beeline/agent-profile', params: { communityId: activeCommunityId, agentId: member.identity.pubkey } } as never)} />)}
-                </View>
-              ) : null}
               ListFooterComponent={
                 <MessageSearchResults
                   search={messageSearch}
@@ -1256,8 +1213,6 @@ const styles = StyleSheet.create((theme) => {
     },
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
     // and they touch, so their centres stay one complete touch target apart.
-    headerAction: { paddingHorizontal: hull.space.sm },
-    headerGlyph: { color: hull.textSecondary },
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -464,6 +464,13 @@ export default function BuzzIdentitySettings() {
           />
         </View>
 
+        {selectedWorkspace && workspaceListConfirmed && (workspaceRole === 'owner' || workspaceRole === 'admin') ? (
+          <View style={styles.section} testID="workspace-settings-section">
+            <RoomListSectionHeader title={`Workspace · ${selectedWorkspace.name}`} inset="content" />
+            <WorkspaceSettings embedded workspaceId={selectedWorkspace.id} />
+          </View>
+        ) : null}
+
         <View style={styles.section} testID="appearance-section">
           <RoomListSectionHeader title="Device" inset="content" />
           {pushSupported ? (
@@ -568,12 +575,7 @@ export default function BuzzIdentitySettings() {
           />
         </View>
 
-        {selectedWorkspace && workspaceListConfirmed && (workspaceRole === 'owner' || workspaceRole === 'admin') ? (
-          <View style={styles.section} testID="workspace-settings-section">
-            <RoomListSectionHeader title={`Workspace · ${selectedWorkspace.name}`} inset="content" />
-            <WorkspaceSettings embedded workspaceId={selectedWorkspace.id} />
-          </View>
-        ) : null}
+
 
         {githubNotice ? <Text style={styles.notice}>{githubNotice}</Text> : null}
 

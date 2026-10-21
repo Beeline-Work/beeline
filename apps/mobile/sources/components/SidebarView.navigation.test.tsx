@@ -336,9 +336,7 @@ function control(id: string) {
   if (!nodes.length) throw new Error(`Missing control ${id}`);
   return nodes[0];
 }
-function openMenu() {
-  act(() => control('workspace-menu').props.onPress());
-}
+
 
 async function settle() {
   await act(async () => {
@@ -648,73 +646,28 @@ describe('desktop Workspace navigation', () => {
   it('routes the heading glyphs to Members and Tray, with no Workbench sidebar entry', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
 
-    openMenu();
-    const members = control('workspace-menu-members');
+    const members = control('workspace-members');
     act(() => members.props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/members',
       params: { communityId: 'workspace-a' },
     });
 
-    openMenu();
-    act(() => control('workspace-menu-tray').props.onPress());
+    act(() => tree.root.findByType(RoomListToolbar).props.onTray());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/tray',
       params: { communityId: 'workspace-a', workspaceName: 'Alpha Workspace' },
     });
   });
 
-  it('offers Workspace settings to a privileged member and routes with the Workspace id', () => {
-    // ChatListView.workspace.role is the manage axis: owner/admin ⇒
-    // viewer.permissions.manage, member ⇒ not. Same signal as workspace.tsx.
-    openMenu();
-    const settings = control('workspace-menu-settings');
-
-    act(() => settings.props.onPress());
-
-    expect(routerPush).toHaveBeenCalledWith({
-      pathname: '/beeline/settings/workspace',
-      params: { communityId: 'workspace-a' },
-    });
-  });
-
-  it('offers Workspace settings to a Workspace admin', async () => {
-    workspaceRole.current = 'admin';
+  it.each(['owner', 'admin', 'member'] as const)('removes the old Workspace menu for %s', async (role) => {
+    workspaceRole.current = role;
     await refreshWorkspaceViewer();
-    await act(async () => {
-      tree.update(<SidebarView key="admin-viewer" />);
-    });
+    await act(async () => { tree.update(<SidebarView key={role} />); });
     await settle();
-
-    openMenu();
-    expect(control('workspace-menu-settings')).toBeDefined();
-  });
-
-  it('does not offer Workspace settings to an ordinary member', async () => {
-    workspaceRole.current = 'member';
-    await refreshWorkspaceViewer();
-    await act(async () => {
-      tree.update(<SidebarView key="member-viewer" />);
-    });
-    await settle();
-
-    openMenu();
-    expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
-    expect(control('workspace-menu-tray')).toBeDefined();
-  });
-
-  it('keeps Workspace settings and profile settings from appearing selected together', async () => {
-    route.pathname = '/beeline/settings/workspace';
-    await act(async () => {
-      tree.update(<SidebarView key="workspace-settings-route" />);
-    });
-    await settle();
-
-    expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
-      selected: false,
-    });
-    openMenu();
-    expect(control('workspace-menu-settings')).toBeDefined();
+    expect(tree.root.findAllByProps({ testID: 'workspace-menu' })).toHaveLength(0);
+    expect(control('workspace-members')).toBeDefined();
+    expect(control('profile-settings-navigation')).toBeDefined();
   });
 
   it('lists search matches without section heads', async () => {
@@ -772,11 +725,10 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
-    openMenu();
     expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
     expect(control('desktop-new-direct-message')).toBeDefined();
-    expect(control('workspace-menu-tray')).toBeDefined();
-    expect(control('workspace-menu-members')).toBeDefined();
+    expect(tree.root.findByType(RoomListToolbar).props.onTray).toBeDefined();
+    expect(control('workspace-members')).toBeDefined();
     expect(control('profile-settings-navigation')).toBeDefined();
   });
 
@@ -789,8 +741,7 @@ describe('desktop Workspace navigation', () => {
     await settle();
 
     expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
-    openMenu();
-    expect(control('workspace-menu-settings')).toBeDefined();
+    expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
   });
 
   it('keeps Tray and profile settings from appearing selected together', async () => {
@@ -800,8 +751,7 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    openMenu();
-    expect(control('workspace-menu-tray').props.selected).toBe(true);
+    expect(tree.root.findByType(RoomListToolbar).props.traySelected).toBe(true);
     expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
       selected: false,
     });
@@ -813,8 +763,7 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key="members-route" />);
     });
     await settle();
-    openMenu();
-    expect(control('workspace-menu-tray').props.selected).toBe(false);
+    expect(tree.root.findByType(RoomListToolbar).props.traySelected).toBe(false);
   });
 
   it('exposes the active conversation to assistive technology', async () => {

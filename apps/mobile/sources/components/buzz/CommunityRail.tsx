@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useIsDesktop } from '@/utils/responsive';
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -52,6 +53,7 @@ type CommunityRailProps = {
   activeCommunityId: string | null;
   onSelect: (communityId: string | null) => void;
   onAdd: () => void;
+  onJoin?: () => void;
   onSettings: () => void;
   /** Long-press a Workspace tile to arm its exit affordance; confirm from there. */
   onLeaveWorkspace?: (communityId: string) => void;
@@ -165,6 +167,7 @@ function RailCommand({
 }
 
 export function CommunityRail({
+  onJoin,
   communities,
   activeCommunityId,
   onSelect,
@@ -273,6 +276,9 @@ export function CommunityRail({
           testID="community-rail-add"
           presentation={presentation}
         />
+        <RailCommand accessibilityLabel="Join Workspace" glyph="↪" label="JOIN"
+          onPress={onJoin ?? (() => router.push({ pathname: '/beeline/community', params: { mode: 'join' } } as never))}
+          testID="community-rail-join" presentation={presentation} />
       </ScrollView>
 
       <View style={styles.railDivider} />
@@ -495,6 +501,10 @@ export function BuzzCommunityShell({
                 activeCommunityId={activeCommunityId}
                 onSelect={selectAndClose}
                 onAdd={addAndClose}
+                onJoin={() => {
+                  closeDrawer();
+                  router.push({ pathname: '/beeline/community', params: { mode: 'join' } } as never);
+                }}
                 onSettings={settingsAndClose}
                 onLeaveWorkspace={onLeaveWorkspace}
                 viewerPubkey={viewerPubkey}

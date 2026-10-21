@@ -45,12 +45,12 @@ const dm=randomUUID();
 await database.query(`INSERT INTO rooms(id,workspace_id,name,created_by,direct_participants) VALUES($1,$2,'Ruby',$3,$4::jsonb)`,[dm,REVIEW_WORKSPACE_ID,REVIEW_IDENTITY_ID,JSON.stringify([REVIEW_IDENTITY_ID,ids.get('Ruby')])]);
 await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[REVIEW_WORKSPACE_ID,dm,REVIEW_IDENTITY_ID]);
 await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'I can walk through the admin settings with you.',now()-interval '5 minutes')`,[createHash('sha256').update('message:dm').digest('hex'),dm,ids.get('Ruby')]);
-const phone=new PhoneService(database,'http://10.0.2.2:45861');
+const phone=new PhoneService(database, process.env.PROOF_BASE_URL ?? 'http://10.0.2.2:45861');
 await phone.completeWelcomeCards(REVIEW_IDENTITY_ID);
 const auth=new TokenAuth(database,async()=>{throw new Error('No external auth in isolated design proof');});
 const live=new LiveHub();
 const review=new ReviewAccess({secret:'isolated-design-proof-secret-5678',mint:()=>auth.exchangeReviewIdentity()});
-const app=createBeelineServer({database,auth,phone,daemon:{} as DaemonService,live,review,mediaMaximumBytes:1});
+const app=createBeelineServer({database,auth,phone,daemon:{} as DaemonService,live,review,webAppOrigins:['http://127.0.0.1:18082'],mediaMaximumBytes:1});
 await new Promise<void>(resolve=>app.listen(45862,'127.0.0.1',resolve));
 const proxy=createServer(async(req,res)=>{
   if(req.url?.startsWith('/_proof/role/')) {

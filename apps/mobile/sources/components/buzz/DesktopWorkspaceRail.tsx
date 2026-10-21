@@ -44,6 +44,7 @@ type DesktopWorkspaceRailProps = {
   readonly onClose: () => void;
   readonly onSelect: (workspaceId: string) => void;
   readonly onAdd: () => void;
+  readonly onJoin?: () => void;
   /** The account hub. The rail's scrim covers the pane that also names it. */
   readonly onOpenAccount: () => void;
   readonly viewerPubkey?: string;
@@ -59,6 +60,7 @@ export function DesktopWorkspaceRail({
   onClose,
   onSelect,
   onAdd,
+  onJoin,
   onOpenAccount,
   viewerPubkey,
   viewerName,
@@ -261,6 +263,10 @@ export function DesktopWorkspaceRail({
             >
               <Text style={styles.addGlyph}>+</Text>
             </Pressable>
+            {onJoin ? <Pressable accessibilityLabel="Join Workspace" accessibilityRole="menuitem"
+              onPress={onJoin} style={[styles.tile, styles.addTile]} testID="desktop-workspace-join">
+              <Text style={styles.addGlyph}>↪</Text>
+            </Pressable> : null}
             <View style={styles.separator} />
             {/* The account hub. The rail's scrim covers the navigation pane
                 that also names it, so without this the rail is a dead end for

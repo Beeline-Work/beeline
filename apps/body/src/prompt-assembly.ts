@@ -369,7 +369,6 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
       paragraphs(
-        'Cite Room or corner messages with #beeline/<name>/<message_id> or [label](#beeline/<name>/<message_id>); use the real name and message id.',
         'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. A report to a person reaches their tray; no tag needed. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
         CORNERS.includes(surface) &&
           'In a corner, tag a person only when they are your direct commander; everyone above hears through your commander.',

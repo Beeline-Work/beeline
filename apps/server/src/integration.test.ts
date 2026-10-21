@@ -1,3 +1,4 @@
+import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
@@ -11006,6 +11007,7 @@ describe('monolith integration', () => {
   });
 
   it('grant-src-1: creates and reads approval cards with the source message actual Room', async () => {
+    const capture = vi.spyOn(serverSentry, 'captureServerError').mockImplementation(() => undefined);
     await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);
     const opened = await operation('createHumanCorner', { roomId: ROOM, title: 'Grant-source' });
     const { id: sourceRoom } = await opened.json() as { id: string };
@@ -11059,6 +11061,24 @@ describe('monolith integration', () => {
       `SELECT card FROM messages WHERE card_type='squire-approval'`,
     )).rows[0]!.card;
     expect(squireCard).toMatchObject({ sourceRoomId: sourceRoom, sourceMessageId: root });
+    expect(capture).not.toHaveBeenCalled();
+    // Force a bad stamp at creation while retaining the already-resolved row.
+    const checkSource = approvalSources.approvalCardSource;
+    const stamp = vi.spyOn(approvalSources, 'approvalCardSource').mockImplementation((kind, source, row) =>
+      checkSource(kind, { ...source, sourceRoomId: ROOM }, row));
+    const badApproval = await daemonOperation('postSquireApproval', {
+      roomId: ROOM, requestId, tool: 'test', title: 'Approve access', detail: 'Private text must not reach telemetry',
+      approvalUrl: 'https://approve.trustysquire.test/approval/grant-src-bad',
+      approvalId: 'grant-src-bad', linkKind: 'approval',
+    });
+    expect(badApproval.status).toBe(200);
+    expect(capture).toHaveBeenCalledTimes(1);
+    expect(capture).toHaveBeenCalledWith(expect.any(Error), {
+      cardKind: 'squire-approval', sourceRoomId: ROOM, sourceMessageId: root,
+      actualRoomId: sourceRoom, actualMessageId: root,
+    });
+    stamp.mockRestore();
+    capture.mockClear();
     // A private root command id must never be passed off as a message id.
     await database.query(`UPDATE agent_commands SET root_source_message_id=id WHERE id=$1`, [command!.id]);
     const fallback = await daemonOperation('postSquireApproval', {
@@ -11070,6 +11090,8 @@ describe('monolith integration', () => {
     const fallbackId = (await fallback.json() as { id: string }).id;
     expect((await database.query<{ card: unknown }>(`SELECT card FROM messages WHERE id=$1`, [fallbackId])).rows[0]!.card)
       .toMatchObject({ sourceRoomId: ROOM, sourceMessageId: requestId });
+    expect(capture).not.toHaveBeenCalled();
+    capture.mockRestore();
   });
 
   it('rejects obsolete repository grant requests without posting a permission card', async () => {

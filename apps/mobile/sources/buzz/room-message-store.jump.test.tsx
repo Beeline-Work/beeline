@@ -17,6 +17,9 @@ import {
 } from './room-message-store';
 import type { ChatDisplayMessage } from './room-view-presentation';
 
+const mobileCapture = vi.hoisted(() => vi.fn());
+vi.mock('./sentry', () => ({ captureMobileError: mobileCapture }));
+
 const originalConsoleError = console.error;
 
 beforeAll(() => {
@@ -238,7 +241,9 @@ describe('Reproduction NOTIFICATION-TAP-HANG', () => {
     const tail = all.slice(197);
     const { state, renderer } = await mountStore(tail, serverOver(all));
 
+    mobileCapture.mockClear();
     await act(async () => state.current.jumpTo('f'.repeat(64)));
+    expect(mobileCapture).not.toHaveBeenCalled();
 
     expect(state.current.jump).toEqual({ messageId: 'f'.repeat(64), status: 'missing' });
     expect(state.current.attached).toBe(true);
@@ -258,7 +263,9 @@ describe('Reproduction NOTIFICATION-TAP-HANG', () => {
     act(() => state.current.endJump());
     expect(state.current.attached).toBe(false);
 
+    mobileCapture.mockClear();
     await act(async () => state.current.jumpTo('f'.repeat(64)));
+    expect(mobileCapture).not.toHaveBeenCalled();
 
     expect(state.current.jump).toEqual({ messageId: 'f'.repeat(64), status: 'missing' });
     expect(state.current.attached).toBe(true);

@@ -1,3 +1,4 @@
+import { approvalCardSource } from './approval-card-source.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
@@ -4683,7 +4684,7 @@ export class DaemonService {
     return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
   // Root provenance can cross Rooms or name a private command instead of a message.
-  private async approvalSource(database = this.database): Promise<{ sourceRoomId?: string; sourceMessageId?: string }> {
+  private async approvalSource(cardKind: 'grant-request' | 'squire-approval', database = this.database): Promise<{ sourceRoomId?: string; sourceMessageId?: string }> {
     const command = this.authorizedCommand;
     if (!command) return {};
     const source = (await database.query<{ id: string; room_id: string }>(
@@ -4691,7 +4692,7 @@ export class DaemonService {
        ORDER BY CASE WHEN id=$2 THEN 0 ELSE 1 END LIMIT 1`,
       [[command.root_source_message_id, command.source_message_id].filter(Boolean), command.root_source_message_id],
     )).rows[0];
-    return source ? { sourceRoomId: source.room_id, sourceMessageId: source.id } : {};
+    return approvalCardSource(cardKind, source ? { sourceRoomId: source.room_id, sourceMessageId: source.id } : {}, source);
   }
 
   /**
@@ -4717,7 +4718,7 @@ export class DaemonService {
     const roomId = await ensureSystemDirectMessageRoom(this.database, context.workspace_id, ownerId);
     const title = `Link purchase at ${input.merchant}`;
     const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
-    const source = await this.approvalSource();
+    const source = await this.approvalSource('squire-approval');
     const line = await systemLine(this.database, {
       id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
       roomId, authorId: SYSTEM_IDENTITY_ID,
@@ -4798,7 +4799,7 @@ export class DaemonService {
     const messageId = createHash('sha256')
       .update(`squire-approval:v1:${context.workspace_id}:${agentId}:${dedupeKey}`)
       .digest('hex');
-    const source = await this.approvalSource(database);
+    const source = await this.approvalSource('squire-approval', database);
     const agent = {
       pubkey: agentId,
       kind: 'agent' as const,
@@ -6144,7 +6145,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    const source = await this.approvalSource();
+    const source = await this.approvalSource('grant-request');
     const requesterRow = await this.grantRequester();
     const appOwner = target.startsWith('app:') && input.appId
       ? (await this.database.query<{ id: string; name: string; handle: string | null;

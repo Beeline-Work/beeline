@@ -38,7 +38,7 @@ vi.mock('./person-name', () => ({
 }));
 
 const { applyPersonChanged, applyWorkspaceChanged, subscribeOwnIdentityChange } = await import('./identity-live');
-const { IdentitySelection, identityScope } = await import('./identity-records');
+const { IdentitySelection, identityScope, selectIdentities } = await import('./identity-records');
 const { currentSurfaceStamp } = await import('./surface-clock');
 const { mobileSurfaceCache, surfaceAddress } = await import('./surface-storage');
 const records = await import('./workspace-records');
@@ -117,6 +117,12 @@ describe('live Workspace and person changes', () => {
     expect(selected.messages[0]!.author.name).toBe('Mate Again');
     expect(selected.messages[0]!.reactions![0]!.members![0]!.name).toBe('Mate Again');
     expect(selected.viewer).toBe(room.viewer);
+    // The open Room uses a concrete endpoint; shared routes may use a template.
+    for (const endpoint of ['/room/room-1', '/room/:id']) {
+      const projection = selectIdentities(surfaceAddress(relay, viewer, endpoint), room, readAt) as RoomView;
+      expect(projection.members[0]!.identity.name).toBe('Mate Again');
+      expect(projection.viewer).toBe(room.viewer);
+    }
     // A Room read after the change already carries the server's answer.
     const later = new IdentitySelection(identityScope(relay, viewer), currentSurfaceStamp()).roomView(room);
     expect(later).toBe(room);

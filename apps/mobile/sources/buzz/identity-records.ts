@@ -248,6 +248,7 @@ export function selectIdentities(address: SurfaceCacheAddress, value: unknown, s
   if (endpoint === '/workspace/:id/bookmarks')
     return selection.bookmarks(value as { bookmarks: readonly MessageBookmarkView[] });
   if (endpoint === '/room/:id/corners') return selection.corners(value as CornerListView);
-  if (endpoint.startsWith('/room/')) return selection.roomView(value as RoomView);
+  // Room subresources (such as scheduled work) have their own DTOs and no viewer.
+  if (/^\/room\/[^/]+$/.test(endpoint)) return selection.roomView(value as RoomView);
   return value;
 }

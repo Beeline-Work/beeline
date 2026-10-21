@@ -36,6 +36,23 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await service.close(); await db.close(); });
 
+it('stores queryable voice timing stages once per generation without transcript content', async () => {
+  const timingRoom = '99999999-9999-4999-8999-999999999999';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Timing proof')`, [timingRoom, W]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`, [W, timingRoom, H, A]);
+  const joined = await service.join(timingRoom, H);
+  const row = { traceId: '77777777-7777-4777-8777-777777777777', callId: joined.call.id,
+    stage: 'first_voiced_audio_published', elapsedMs: 1234.5 };
+  await service.recordTiming(row);
+  await service.recordTiming({ ...row, elapsedMs: 9999 });
+  const stages = (await db.query(`SELECT stage,elapsed_ms,server_release FROM voice_turn_timings WHERE trace_id=$1`, [row.traceId])).rows;
+  expect(stages).toEqual([{ stage: row.stage, elapsed_ms: 1234.5,
+    server_release: process.env.BEELINE_RELEASE_SHA ?? process.env.FLY_IMAGE_REF ?? 'local' }]);
+  await service.leave(joined.call.id, H);
+  await db.query(`DELETE FROM rooms WHERE id=$1`, [timingRoom]);
+});
+
 it('accepts Android NUL-only bodies on authenticated Room call joins', async () => {
   const roomId = '66666666-6666-4666-8666-666666666666';
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Android join proof')`, [roomId, W]);

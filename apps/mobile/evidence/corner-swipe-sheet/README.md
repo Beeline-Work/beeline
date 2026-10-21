@@ -31,7 +31,7 @@ is set, so it never reaches this sheet, and `HullActionSheetModal` keeps its
 
 1. Create and migrate a fresh local PostgreSQL database.
 2. Start `@beeline/server` with `NODE_ENV=development`, a matching HTTP
-   `PUBLIC_ORIGIN`, `BUZZY_AUTH_TENANTS_JSON`, and `BEELINE_WEB_APP_ORIGINS`
+   `PUBLIC_ORIGIN`, `BEELINE_AUTH_TENANTS_JSON`, and `BEELINE_WEB_APP_ORIGINS`
    containing the Expo web origin.
 3. Start Expo web with `EXPO_PUBLIC_BUZZY_MONOLITH_URL` pointing at that server.
 4. Exchange `local:captain` at `/v1/auth/github/exchange`, write the returned
@@ -41,3 +41,4 @@ is set, so it never reaches this sheet, and `HullActionSheetModal` keeps its
 5. Use the named `chrome-devtools-axi` session at 390×844 to swipe a message
    right and capture. The reproduced pop-up uses the base-commit bundle on the
    same server and data.
+The legacy `BUZZY_AUTH_TENANTS_JSON` name still works; `BEELINE_AUTH_TENANTS_JSON` wins when both are set.

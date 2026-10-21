@@ -1,0 +1,13 @@
+{
+  "observedAt": "2026-10-21",
+  "grant": "088c704e-b1ca-4bb0-a2b2-d091af2fd601",
+  "matchingProcessCount": 20,
+  "buzzyNames": [],
+  "inScopeBeelineNames": [],
+  "managedHelperNames": [
+    "BEELINE_BOOT_LAUNCHER_PARENT_PID",
+    "BEELINE_BOOT_LAUNCHER_PID",
+    "BEELINE_LIB_DIR",
+    "BEELINE_MANAGED_BY_SYSTEMD"
+  ]
+}

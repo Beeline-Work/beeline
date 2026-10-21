@@ -92,7 +92,7 @@ sign-in remains the visible, unchanged mobile path.
 Required configuration:
 
 - `DATABASE_URL`
-- `BUZZY_AUTH_TENANTS_JSON`, for example
+- `BEELINE_AUTH_TENANTS_JSON`, for example
   `[{"host":"auth.example","community":"stable-identity-namespace","roomCommunityIds":["community-uuid-a","community-uuid-b"],"origin":"https://auth.example"}]`.
   `community` namespaces durable identity links and may intentionally remain the old host across
   aliases. `roomCommunityIds` is the non-empty allowlist of server-stamped tenant UUIDs from
@@ -110,7 +110,7 @@ Required configuration:
 - `BEELINE_GITHUB_APP_SLUG`
 - `BEELINE_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
 - `BEELINE_GITHUB_WEBHOOK_SECRET`
-- `BUZZY_AUTH_SETUP_TOKEN` (optional) — shared secret that gates the GitHub App
+- `BEELINE_AUTH_SETUP_TOKEN` (optional) — shared secret that gates the GitHub App
   manifest setup page (`/auth/github/app-setup`) and the on-demand drift
   endpoint (`/auth/github/app-drift`). When unset both surfaces refuse; they
   are operator-only, never public.
@@ -122,8 +122,8 @@ hand-assemble checkboxes on github.com. A hand-created app once shipped with
 `"events": []`: webhook URL and secret were right, but GitHub delivered
 nothing and the repository-activity feed was silently dead.
 
-1. Set `BUZZY_AUTH_SETUP_TOKEN` on the auth service and open
-   `https://<tenant>/auth/github/app-setup?token=<BUZZY_AUTH_SETUP_TOKEN>`.
+1. Set `BEELINE_AUTH_SETUP_TOKEN` on the auth service and open
+   `https://<tenant>/auth/github/app-setup?token=<BEELINE_AUTH_SETUP_TOKEN>`.
 2. Submit the form. It POSTs a prebuilt manifest to GitHub's
    `github.com/settings/apps/new` with everything preconfigured: the webhook
    URL (`https://<tenant>/auth/github/webhook`), the events the product
@@ -140,7 +140,7 @@ The startup drift check compares the live App (`GET /app`) against the same
 required events + existing-feature permissions every time the service boots and logs one plain,
 actionable line naming anything missing plus the fix URL
 (`https://github.com/settings/apps/<slug>/permissions`); the same check runs
-on demand at `/auth/github/app-drift?token=<BUZZY_AUTH_SETUP_TOKEN>`. The
+on demand at `/auth/github/app-drift?token=<BEELINE_AUTH_SETUP_TOKEN>`. The
 check is best-effort — an unreachable api.github.com logs one line and never
 crashes the service.
 
@@ -210,3 +210,9 @@ both ports with `adb reverse` for browser-based auth fixture tests.
 This mode deliberately
 uses a non-`__Host-` browser cookie because the loopback fixture is HTTP; the
 production default remains `Secure` and `__Host-` prefixed.
+
+Environment naming: `BEELINE_AUTH_TENANTS_JSON`, `BEELINE_AUTH_SETUP_TOKEN`, and
+`BEELINE_AUTH_HOST` prefer the Beeline spelling; the matching `BUZZY_` names still work.
+When both spellings are set, `BEELINE_` wins, including an empty value.
+
+See [environment naming and compatibility](../../docs/environment-names.md) for the full migration and production staging rules.

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,7 +11,7 @@ import {
 } from '@/buzz/open-room-tracker';
 import {
   decideForegroundNotificationDisplay,
-  foregroundDataOnlyRepresentation,
+  foregroundInAppNotice,
   foregroundNotificationBehavior,
   foregroundNotificationChannelIds,
 } from './foreground-policy';
@@ -177,7 +180,7 @@ describe('open-room tracker', () => {
   });
 });
 
-describe('foreground Android data-only push re-presentation', () => {
+describe('foreground Android data-only in-app notice', () => {
   // The server's firebasePushMessage data payload, as Expo hands it to the
   // received listener for a foreground data-only push (Reproduction F3).
   const pushData = {
@@ -211,34 +214,30 @@ describe('foreground Android data-only push re-presentation', () => {
     };
   }
 
-  it('presents a push for another Room under the same identifier and data', () => {
+  it('builds an in-app notice for another Room under the same identifier and data', () => {
     expect(
-      foregroundDataOnlyRepresentation(dataOnlyPush(), {
+      foregroundInAppNotice(dataOnlyPush(), {
         platform: 'android',
         appState: 'active',
         openChannelId: 'room-proof',
       }),
     ).toEqual({
       identifier: 'msg-9',
-      content: {
-        title: 'Beeline',
-        body: 'hello from general',
-        data: pushData,
-        categoryIdentifier: 'beeline-reply',
-      },
-      trigger: null,
+      title: 'Beeline',
+      body: 'hello from general',
+      data: pushData,
     });
   });
 
-  it('presents a push while no Room is open', () => {
+  it('builds an in-app notice while no Room is open', () => {
     expect(
-      foregroundDataOnlyRepresentation(dataOnlyPush(), { platform: 'android', appState: 'active' }),
+      foregroundInAppNotice(dataOnlyPush(), { platform: 'android', appState: 'active' }),
     ).not.toBeNull();
   });
 
   it('does not present a push for the open Room', () => {
     expect(
-      foregroundDataOnlyRepresentation(dataOnlyPush(), {
+      foregroundInAppNotice(dataOnlyPush(), {
         platform: 'android',
         appState: 'active',
         openChannelId: 'room-general',
@@ -248,18 +247,16 @@ describe('foreground Android data-only push re-presentation', () => {
 
   it('leaves a push with a notification block to Expo', () => {
     expect(
-      foregroundDataOnlyRepresentation(dataOnlyPush({ notification: { title: 'Beeline' } }), {
+      foregroundInAppNotice(dataOnlyPush({ notification: { title: 'Beeline' } }), {
         platform: 'android',
         appState: 'active',
       }),
     ).toBeNull();
   });
 
-  it('does not re-present a local notification, including its own re-presentation', () => {
+  it('does not present a local notification as an in-app notice', () => {
     const local = { request: { ...dataOnlyPush().request, trigger: null } };
-    expect(
-      foregroundDataOnlyRepresentation(local, { platform: 'android', appState: 'active' }),
-    ).toBeNull();
+    expect(foregroundInAppNotice(local, { platform: 'android', appState: 'active' })).toBeNull();
   });
 
   it('does not present a silent push with no text', () => {
@@ -267,13 +264,22 @@ describe('foreground Android data-only push re-presentation', () => {
     silent.request.content.title = '';
     silent.request.content.body = '';
     expect(
-      foregroundDataOnlyRepresentation(silent, { platform: 'android', appState: 'active' }),
+      foregroundInAppNotice(silent, { platform: 'android', appState: 'active' }),
     ).toBeNull();
   });
 
   it('changes nothing on iOS', () => {
-    expect(
-      foregroundDataOnlyRepresentation(dataOnlyPush(), { platform: 'ios', appState: 'active' }),
-    ).toBeNull();
+    expect(foregroundInAppNotice(dataOnlyPush(), { platform: 'ios', appState: 'active' })).toBeNull();
+  });
+
+  it('root layout does not schedule a system notification for a foreground data-only push', () => {
+    const layout = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../app/_layout.tsx'),
+      'utf8',
+    );
+    expect(layout).toContain('foregroundInAppNotice');
+    expect(layout).toContain('presentForegroundPushNotice');
+    expect(layout).toContain('ForegroundPushToast');
+    expect(layout).not.toContain('scheduleNotificationAsync');
   });
 });

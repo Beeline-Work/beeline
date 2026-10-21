@@ -108,6 +108,7 @@
     ],
     "components/buzz/CornerOpenedMarker.tsx": ["CornerOpenedMarker"],
     "components/buzz/CornerOpenToast.tsx": ["CornerOpenRow", "CornerOpenToast"],
+    "components/buzz/ForegroundPushToast.tsx": ["ForegroundPushToast"],
     "components/buzz/CornerStatusLine.tsx": ["CornerStatusLine"],
     "components/buzz/CornerWaitingPulse.tsx": ["CornerWaitingPulse"],
     "components/buzz/CornerWorkingPulse.tsx": ["CornerWorkingPulse"],

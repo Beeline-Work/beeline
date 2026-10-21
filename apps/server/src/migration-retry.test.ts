@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PostgresDatabase } from './database.js';
+import { MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
 import { isDeadlock, lockedTables, logLockHolders, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
 
 // Optional real PostgreSQL proof: loopback only, unique schema, never a shared account.
@@ -57,6 +57,71 @@ describe('retryOnDeadlock', () => {
 });
 
 describe('retryMigrationStep', () => {
+  it('backs off across multiple push intervals with a bounded retry budget', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    await expect(retryMigrationStep('burst reader', async () => {
+      calls++;
+      throw Object.assign(new Error('lock timeout'), { code: '55P03' });
+    }, { sleep: async ms => { waits.push(ms); } })).rejects.toMatchObject({ code: '55P03' });
+    expect(calls).toBe(20);
+    expect(waits.reduce((total, ms) => total + ms, 0)).toBeGreaterThanOrEqual(145_000);
+    expect(waits.reduce((total, ms) => total + ms, 0)).toBeLessThan(155_000);
+    expect(Math.max(...waits)).toBeLessThan(10_500);
+    expect(MIGRATION_LOCK_TIMEOUT_MS).toBe(1_000);
+  });
+
+  it.skipIf(!postgresUrl)('R-MIGRATION-READER retries burst reads and alters messages in a gap', async () => {
+    const schema = `release_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    const reader = await admin.connect();
+    const migration = new PostgresDatabase('', 1, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 1,
+      options: `-c search_path=${schema} -c lock_timeout=30ms`,
+    }) });
+    try {
+      await reader.query(`CREATE SCHEMA ${schema}`);
+      await reader.query(`CREATE TABLE ${schema}.messages (id int)`);
+      const ddl = 'ALTER TABLE messages ADD COLUMN delivered boolean';
+      const runBursts = async (attempts?: number) => {
+        let bursts = 0;
+        let gaps = 0;
+        await reader.query(`BEGIN; SELECT * FROM ${schema}.messages`);
+        try {
+          await retryMigrationStep('R-MIGRATION-READER', async () => {
+            await migration.query(ddl);
+          }, {
+            attempts,
+            // Compress the 12–30s cadence; use real, separate PostgreSQL sessions
+            // and table locks. Release each read before starting the next burst.
+            sleep: async () => {
+              await reader.query('COMMIT');
+              gaps++;
+              if (gaps < 7) {
+                await reader.query(`BEGIN; SELECT * FROM ${schema}.messages`);
+                bursts++;
+              }
+            },
+          });
+        } finally { await reader.query('ROLLBACK'); }
+        return { bursts, gaps };
+      };
+      // The old six-attempt policy exhausts while reads keep recurring.
+      await expect(runBursts(6)).rejects.toMatchObject({ code: '55P03' });
+      // The default policy reaches the seventh gap without changing the worker.
+      await expect(runBursts()).resolves.toEqual({ bursts: 6, gaps: 7 });
+      const columns = await reader.query(`SELECT column_name FROM information_schema.columns
+        WHERE table_schema=$1 AND table_name='messages'`, [schema]);
+      expect(columns.rows).toContainEqual({ column_name: 'delivered' });
+    } finally {
+      await reader.query('ROLLBACK');
+      await migration.close();
+      await reader.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      reader.release();
+      await admin.end();
+    }
+  });
+
   it('keeps semicolons inside quoted strings, comments, and trigger bodies', () => {
     const script = `-- first; comment
 CREATE TABLE sample (value text DEFAULT 'a;b');

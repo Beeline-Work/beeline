@@ -43,6 +43,14 @@ const tokens = (generation: number) => ({
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
 
+  it('E23: explains preview account rejection without accepting a session', async () => {
+    const fetcher = vi.fn(async () => Response.json({ error: 'google_sign_in_failed', reason: 'preview_account_not_allowed' }, { status: 401 }));
+    const session = new MonolithSession('https://server.example', fetcher);
+    await expect(session.exchangeGoogleTicket('ticket')).rejects.toThrow('This Google account is not on the test list.');
+    expect(await session.identityId()).toBeNull();
+    expect(secure.size).toBe(0);
+  });
+
   it('uses the Room body transport with authentication and the selected fallback origin', async () => {
     const fetcher = vi.fn(async () => Response.json(tokens(1)));
     vi.stubGlobal('fetch', fetcher);

@@ -94,7 +94,9 @@ export interface PhoneTokens {
   identityId: string;
 }
 
-export class GoogleSignInError extends Error {}
+export class GoogleSignInError extends Error {
+  constructor(message: string, readonly reason?: 'preview_account_not_allowed') { super(message); }
+}
 
 export class TokenAuth {
   readonly #daemonAuthCache = new Map<string, { agentId: string | null; expiresAt: number }>();
@@ -111,7 +113,8 @@ export class TokenAuth {
     let google: GoogleIdentityProof;
     try {
       google = await this.verifyGoogleOidc(ticket);
-    } catch {
+    } catch (error) {
+      if (error instanceof GoogleSignInError) throw error;
       throw new GoogleSignInError('Google sign-in could not be verified');
     }
     if (!google.subject || !google.name || !google.audience)

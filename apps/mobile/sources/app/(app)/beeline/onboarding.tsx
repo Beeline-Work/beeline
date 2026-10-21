@@ -1,3 +1,4 @@
+import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { clearPendingGoogleSignIn, resumeGoogleSignIn, runGoogleSignIn } from '@/auth/google-auth-session';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -149,15 +150,14 @@ export default function BuzzOnboarding() {
     const runtime = getBuzzRuntimeConfig();
     if (!runtime.monolithEnabled) return;
     let alive = true;
-    void fetch(`${runtime.monolithUrl}/auth/capabilities`, { signal: AbortSignal.timeout(5_000) })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((capabilities) => {
-        if (alive) setGoogleEnabled(capabilities?.google === true);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
+    const refresh = () => {
+      void readAuthCapabilities(runtime.monolithUrl)
+        .then(capabilities => { if (alive) setGoogleEnabled(capabilities.google === true); })
+        .catch(() => undefined);
     };
+    const unwatch = watchGooglePreview(refresh);
+    refresh();
+    return () => { alive = false; unwatch(); };
   }, []);
   const [newKey, setNewKey] = useState<NewKeyDraft | null>(null);
   const [newKeyRevealed, setNewKeyRevealed] = useState(false);

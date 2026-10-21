@@ -106,6 +106,8 @@ export interface AuthServerOptions {
   store: AuthStore;
   oidc: OidcClient;
   googleSignInEnabled?: boolean;
+  googleSignInEveryone?: boolean;
+  googleSignInPreviewToken?: string;
   /** GitHub is the shipped sign-in and repository-access provider. */
   github?: {
     oauth: GitHubOAuthClient;

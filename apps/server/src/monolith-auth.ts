@@ -8,7 +8,7 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { VerifyGitHubOidc, VerifyGoogleOidc } from './auth.js';
 import type { SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
-import type { TokenAuth } from './auth.js';
+import { GoogleSignInError, type TokenAuth } from './auth.js';
 
 export interface MonolithAuthMount {
   handle(request: IncomingMessage, response: ServerResponse): void;
@@ -52,13 +52,16 @@ export async function createMonolithAuth(
       .map((value) => value.trim())
       .filter(Boolean),
   );
-  const googleSignInEnabled = env.BEELINE_GOOGLE_SIGN_IN === '1' && googleSubjects.size > 0;
+  const googleSignInEveryone = env.BEELINE_GOOGLE_SIGN_IN_EVERYONE === '1';
+  const googleSignInEnabled = env.BEELINE_GOOGLE_SIGN_IN === '1';
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
     completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
     googleSignInEnabled,
+    googleSignInEveryone,
+    googleSignInPreviewToken: env.BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN,
     ...(github ? { github } : {}),
     tenants,
     secureCookies: env.NODE_ENV === 'production',
@@ -88,8 +91,11 @@ export async function createMonolithAuth(
       if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error('invalid Google ticket');
       const hash = createHash('sha256').update(ticket).digest('hex');
       const proof = await store.findTicket(hash);
-      if (!googleSignInEnabled || !proof || !googleSubjects.has(proof.subject)) {
+      if (!googleSignInEnabled || !proof) {
         throw new Error('Google sign-in is not enabled for this account');
+      }
+      if (!googleSignInEveryone && !googleSubjects.has(proof.subject)) {
+        throw new GoogleSignInError('This Google account is not on the preview test list.', 'preview_account_not_allowed');
       }
       const result = await store.consumeTicketForPhone(
         hash,

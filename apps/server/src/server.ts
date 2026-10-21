@@ -231,7 +231,7 @@ function applyWebAppCors(
 
   response.writeHead(204, {
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'authorization, content-type, x-file-name, x-beeline-view, x-speech-language, x-speech-prompt',
+    'access-control-allow-headers': 'authorization, content-type, x-file-name, x-beeline-view, x-speech-language, x-speech-prompt, x-beeline-google-preview',
     'access-control-max-age': '600',
     'cache-control': 'private, no-store',
   });
@@ -1962,7 +1962,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 200, await options.auth.exchangeGoogleOidc(input.oidcToken));
     } catch (error) {
       if (!(error instanceof GoogleSignInError)) throw error;
-      json(response, 401, { error: 'google_sign_in_failed' });
+      json(response, 401, { error: 'google_sign_in_failed', ...(error.reason ? { reason: error.reason } : {}) });
     }
     return;
   }

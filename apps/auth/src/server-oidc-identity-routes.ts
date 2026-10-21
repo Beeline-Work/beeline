@@ -1,4 +1,5 @@
 import { repositoryOnboardingEnabled } from '@beeline/api-contract/phone';
+import { GOOGLE_PREVIEW_HEADER, googlePreviewVisible } from './google-preview.js';
 import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
@@ -47,7 +48,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     tenantFor(request);
     noStore(reply);
     return reply.send({ github: Boolean(options.github), oidc: true,
-      ...(options.googleSignInEnabled ? { google: true } : {}),
+      ...(googlePreviewVisible(options, request.headers[GOOGLE_PREVIEW_HEADER]) ? { google: true } : {}),
       ...(options.github && onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, now().getTime()) ? { repositoryOnboarding: true } : {}),
     });
   });

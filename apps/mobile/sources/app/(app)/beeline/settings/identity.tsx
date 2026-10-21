@@ -1,3 +1,4 @@
+import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
@@ -120,8 +121,15 @@ export default function BuzzIdentitySettings() {
   const [googleAvailable, setGoogleAvailable] = useState(false);
   useEffect(() => {
     if (!monolithEnabled) return;
-    void fetch(`${getBuzzRuntimeConfig().monolithUrl}/auth/capabilities`).then(response => response.json())
-      .then(capabilities => setGoogleAvailable(capabilities?.google === true)).catch(() => undefined);
+    let alive = true;
+    const refresh = () => {
+      void readAuthCapabilities(getBuzzRuntimeConfig().monolithUrl)
+        .then(capabilities => { if (alive) setGoogleAvailable(capabilities.google === true); })
+        .catch(() => undefined);
+    };
+    const unwatch = watchGooglePreview(refresh);
+    refresh();
+    return () => { alive = false; unwatch(); };
   }, [monolithEnabled]);
   useEffect(() => {
     if (!profilePubkey) return;

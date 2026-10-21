@@ -220,11 +220,23 @@ production default remains `Secure` and `__Host-` prefixed.
 
 ## Google sign-in rollout
 
-`BEELINE_GOOGLE_SIGN_IN=1` and a non-empty comma-separated
-`BEELINE_GOOGLE_SIGN_IN_SUBJECTS` allowlist enable Google test sign-ins.
-Both default off. `/auth/capabilities` exposes the Google button only while
-this test rollout is configured; `/v1/auth/google/exchange` also checks the
-verified Google subject against the allowlist before consuming its ticket.
+Google is off by default. `BEELINE_GOOGLE_SIGN_IN=1` enables the service,
+but `/auth/capabilities` reveals the button only with a matching
+`x-beeline-google-preview` header. Configure a random, URL-safe
+`BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN` of at least 32 characters. A tester opens
+`https://web.usebeeline.app/?google_preview=<token>` or
+`beeline://beeline/onboarding?google_preview=<token>` once. The client removes
+the token from navigation, stores it on that device, and sends it only to the
+capabilities endpoint. Do not log or publish a live preview link.
+
+`BEELINE_GOOGLE_SIGN_IN_SUBJECTS` remains a comma-separated Google subject
+allow list checked before ticket consumption and account creation. Preview
+enrollment never bypasses it. `BEELINE_GOOGLE_SIGN_IN_EVERYONE=1` reveals Google
+without enrollment and removes the subject restriction, but still requires
+the master switch. Keep everyone-on unset until the owner approves general
+availability after production Android, iOS, GitHub regression and org-admin
+acceptance. Production staging/deploy remains a separate authorized step.
+
 The browser requests `openid email profile`; only verified email supplies the
 initial handle. The OAuth client, nonce, PKCE, issuer, audience and one-use
 ticket remain server verified. `/auth/oidc/completion` recovers dropped

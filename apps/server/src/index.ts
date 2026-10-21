@@ -436,9 +436,7 @@ async function main() {
   let lastReconciliationAt = Number.NEGATIVE_INFINITY;
   let pushPending = Boolean(push); // one leader-start reconciliation
   let repairedPromotedCorners = false;
-  let recoveredCornerMerges = false;
   let reconciledMergeability = false;
-  let reconciledMergedCorners = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
     jobsDatabase,
@@ -448,9 +446,7 @@ async function main() {
         lastReconciliationAt = Number.NEGATIVE_INFINITY;
         pushPending = Boolean(push);
         repairedPromotedCorners = false;
-        recoveredCornerMerges = false;
         reconciledMergeability = false;
-        reconciledMergedCorners = false;
       }
       if (githubJobs && !repairedPromotedCorners) {
         const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
@@ -466,13 +462,6 @@ async function main() {
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const deadlineDue = await backgroundJobs.run('deadline-expiry', () =>
         deadlineExpiry.runOnce(newLeader));
-      // Recovery scans run once per leadership tenure. Normal writes and
-      // Repository events drive their own transitions; failures retry on the next cycle.
-      if (githubJobs && !recoveredCornerMerges) {
-        const result = await backgroundJobs.run('corner-merge-recovery', () =>
-          githubJobs.recoverUnfinishedMergeClaims());
-        recoveredCornerMerges = result.ok;
-      }
       // Reviewers can stop or lose a wake after startup. Repair every cycle;
       // existing head-scoped dispatch and report keys keep replays quiet.
       await backgroundJobs.run('corner-reviewers', () =>
@@ -486,14 +475,17 @@ async function main() {
           githubJobs.refreshStaleMergeability());
         reconciledMergeability = result.ok;
       }
-      if (githubJobs && !reconciledMergedCorners) {
-        const result = await backgroundJobs.run('github-merged-corners', () =>
-          githubJobs.reconcileMergedCorners());
-        reconciledMergedCorners = result.ok;
-      }
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {
         lastReconciliationAt = now;
+        // Merges happen throughout a leader's tenure. Keep retrying missed
+        // webhooks and claims whose grace/backoff deadline was not due at boot.
+        if (githubJobs) {
+          await backgroundJobs.run('corner-merge-recovery', () =>
+            githubJobs.recoverUnfinishedMergeClaims());
+          await backgroundJobs.run('github-merged-corners', () =>
+            githubJobs.reconcileMergedCorners());
+        }
         await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
         await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
         await backgroundJobs.run('corner-checks-blocked', () =>

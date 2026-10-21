@@ -1052,10 +1052,10 @@ export class GitHubOperations {
    * `pr_checks_status`'s `mergeAllowed` is true on GitHub's current head:
    * live checks green, a yes said on that head, and no hold. Called by
    * the implementer's `merge_corner`, a person's yes (`order_corner_merge` or
-   * the phone's approve), and recovery of an unfinished attempt.
+   * the phone's approve). Recovery only confirms or releases an unfinished attempt.
    * At most one attempt per head: the attempt is claimed under the run lock
-   * before GitHub is called. The merge webhook then lands the corner; a
-   * refusal returns it to the implementer with GitHub's reason.
+   * before GitHub is called. Confirmation, the webhook, or recurring recovery
+   * then lands the corner; a refusal returns GitHub's reason to the implementer.
    *
    * The brief gate lives here, for all of those callers: a corner whose
    * current brief does not assign repository work (no brief, or
@@ -1141,7 +1141,18 @@ export class GitHubOperations {
       this.onRoomChanged?.(cornerId);
       return { status: 'refused', reason };
     }
-    await enqueueCornerBranchDeletion(this.database, cornerId);
+    // Do not depend on delivery of the closed webhook after a successful
+    // merge. A failed confirmation leaves the claim for background recovery.
+    try {
+      const token = await this.app.installationToken(Number(target.installation_id), {
+        repositoryIds: [Number(target.repository_id)],
+      });
+      const pr = await this.app.readPullRequest(token.token, target.full_name, target.number);
+      if (pr.merged && pr.headSha === status.headSha && pr.headRef === target.feature_branch)
+        await this.recordConfirmedCornerMerge(target, target.full_name, target.number, pr);
+    } catch (error) {
+      console.error(`[server] merged corner confirmation deferred for ${cornerId}:`, error);
+    }
     return { status: 'started' };
   }
 
@@ -1587,9 +1598,9 @@ export class GitHubOperations {
             throw new Error(`Merged PR #${claim.number} does not match the claimed branch and head`);
           await this.recordConfirmedCornerMerge(target, target.repository, claim.number, pr, claim.head_sha);
         } else {
-          // The attempt never landed: retry it once the gate is still open.
-          if (await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number))
-            await this.landCorner(claim.corner_id);
+          // Confirmation-only recovery releases a known-unmerged attempt.
+          // A fresh explicit land request must read the gate and claim again.
+          await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number);
         }
       } catch (error) {
         const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);

@@ -21,7 +21,7 @@ describe.skipIf(!existsSync(CHROME))('viewer conversation layout', () => {
     }
     const evidence = path.join(mobile, 'evidence/viewer-dock-overflow'); mkdirSync(evidence, { recursive: true });
     const proof = await runBrowserProof({ mobile, shims, width: 390, height: state === 'newest' ? 600 : 900,
-      entry: path.join(mobile, 'scripts/viewer-dock-overflow-proof.tsx'), query: `?${state}`,
+      entry: path.join(mobile, 'scripts/viewer-dock-overflow-proof.tsx'), query: `?${state}`, budgetMs: 12000,
       head: `<style>#result{display:none}${['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold', 'IBMPlexMono-Regular'].map(font => `@font-face{font-family:${font};src:url(data:font/ttf;base64,${readFileSync(path.join(mobile, 'sources/assets/fonts', font + '.ttf')).toString('base64')})}`).join('')}</style><script>window.addEventListener('error',e=>{document.getElementById('result').textContent=e.message+' '+e.error?.stack;});</script>`, screenshotPath: path.join(evidence, `${state}.png`) });
     console.log(proof.result); expect(proof.status, proof.stderr).toBe(0); expect(proof.result).toContain('RESULT PASS');
   }, 90_000);

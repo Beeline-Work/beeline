@@ -37,7 +37,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
-import { backfillFeedbackTriageWorkflow } from './feedback-triage-workflow.js';
+import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk } from './feedback-triage-workflow.js';
 import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
@@ -769,6 +769,10 @@ CREATE TABLE IF NOT EXISTS service_review_visits (
 
 ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS agent_id text;
 ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS run_id text;
+ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS read_from timestamptz;
+ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS read_through timestamptz;
+ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS receipt jsonb;
+ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 
 -- Retained but unused: agent classes and weight tiers were removed
 -- (retireAgentClasses clears it). Kept so an older server image stays
@@ -3278,6 +3282,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
     workflowBackfillOnce(database, 'feedback-triage-prompt-cases-v1', backfillFeedbackTriageWorkflow));
+  await dataStep('feedback signal walk', () =>
+    workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('repair workflow step descriptions', () =>

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { readRoomViewMessage } from '@beeline/api-contract/phone';
+import { displayRoomMessages, foldSettledActivityRuns } from '@/buzz/room-view-presentation';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -258,5 +260,23 @@ it('keeps only one preloaded full viewer and releases it when its last card unmo
   expect(host().findByType('WebView').props.source.uri).toContain('/session-2/');
   await act(async () => { tree!.update(<WarmComputerSessionHost />); });
   expect(tree!.root.findAllByType('WebView')).toHaveLength(0);
+  await act(async () => tree!.unmount());
+});
+
+it('Reproduction SHARE-CARD-DM-1: renders a parsed live DM card independently of the agent turn', async () => {
+  const id = 's'.repeat(43);
+  const wire = readRoomViewMessage({
+    id: 'd'.repeat(64), text: '@agent shared a live browser', presentation: 'card', createdAt: 1,
+    version: 0, author: { pubkey: 'b'.repeat(64), kind: 'agent', name: 'Agent' },
+    systemEvent: { subject: { kind: 'agent', id: 'b'.repeat(64), name: '@agent' }, verb: 'shared', object: { text: 'a live browser' } },
+    computerSession: { id, title: 'Shared browser', status: 'live', url: `https://server.usebeeline.app/s/${id}/` },
+  });
+  expect(wire).not.toBeNull();
+  const [message] = foldSettledActivityRuns(displayRoomMessages([wire!], 'a'.repeat(64)));
+  expect(message?.computerSession).toBeDefined();
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard session={message!.computerSession!} />); });
+  expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
+  expect(tree!.root.findAllByProps({ testID: 'computer-session-open' }).length).toBeGreaterThan(0);
   await act(async () => tree!.unmount());
 });

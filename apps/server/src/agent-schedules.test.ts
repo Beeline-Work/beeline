@@ -439,6 +439,80 @@ describe('agent schedule background posting', () => {
 });
 
 describe('agent tool schedule daemon operations', () => {
+  it.each(['Room', 'corner', 'DM'])('manages only its own schedules across places from a %s (cross-place-schedules-1)', async (surface) => {
+    const database = await fixture();
+    const elsewhere = '55555555-5555-4555-8555-555555555555';
+    try {
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Other place')`,
+        [elsewhere, WORKSPACE, OWNER],
+      );
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+          ($1,$2,$3,'member'),($1,$2,$4,'member')`,
+        [WORKSPACE, elsewhere, AGENT, OTHER_AGENT],
+      );
+      if (surface === 'corner') {
+        await database.query(`DELETE FROM memberships WHERE room_id=$1`, [elsewhere]);
+        await database.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [elsewhere, ROOM]);
+      } else if (surface === 'DM') {
+        await database.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`,
+          [elsewhere, JSON.stringify([OWNER, AGENT])]);
+      }
+      const daemon = new DaemonService(database, new LiveHub());
+      const create = (agentId: string, roomId: string) => daemon.execute('createAgentSchedule', {
+        agentId, roomId, prompt: 'Audit velocity.',
+        cadence: { kind: 'interval', everyMinutes: 60 },
+      }, agentId);
+      const own = await create(AGENT, ROOM);
+      const local = await create(AGENT, elsewhere);
+      const rival = await create(OTHER_AGENT, ROOM);
+      const otherWorkspace = '66666666-6666-4666-8666-666666666666';
+      const otherRoom = '77777777-7777-4777-8777-777777777777';
+      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other Workspace')`, [otherWorkspace]);
+      await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Outside Workspace')`,
+        [otherRoom, otherWorkspace, OWNER]);
+      await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+        ($1,NULL,$2,'member'),($1,$3,$2,'member')`, [otherWorkspace, AGENT, otherRoom]);
+      const outside = await create(AGENT, otherRoom);
+
+      const listed = await daemon.execute('listAgentSchedules', {
+        agentId: AGENT, roomId: elsewhere, selfOnly: true,
+      }, AGENT);
+      expect(listed.schedules).toEqual([
+        expect.objectContaining({ scheduleId: own.scheduleId, roomId: ROOM, roomName: 'Scheduled Room' }),
+        expect.objectContaining({ scheduleId: local.scheduleId, roomId: elsewhere, roomName: 'Other place' }),
+      ]);
+      const cadence = { kind: 'cron' as const, expression: '0 19 * * *', timeZone: 'America/New_York' };
+      await daemon.execute('updateAgentSchedule', {
+        agentId: AGENT, roomId: elsewhere, selfOnly: true,
+        scheduleId: own.scheduleId, prompt: 'Evening audit.', cadence,
+      }, AGENT);
+      expect((await daemon.execute('listAgentSchedules', {
+        agentId: AGENT, roomId: elsewhere, selfOnly: true,
+      }, AGENT)).schedules).toContainEqual(expect.objectContaining({
+        scheduleId: own.scheduleId, roomId: ROOM, prompt: 'Evening audit.', cadence,
+      }));
+      for (const scheduleId of [rival.scheduleId, outside.scheduleId]) {
+        for (const operation of ['updateAgentSchedule', 'deleteAgentSchedule'] as const) {
+          await expect(daemon.execute(operation, {
+            agentId: AGENT, roomId: elsewhere, selfOnly: true,
+            scheduleId, prompt: 'Forbidden.',
+          }, AGENT)).rejects.toThrow('schedule not found');
+        }
+      }
+      await daemon.execute('deleteAgentSchedule', {
+        agentId: AGENT, roomId: elsewhere, selfOnly: true, scheduleId: own.scheduleId,
+      }, AGENT);
+      expect((await daemon.execute('listAgentSchedules', {
+        agentId: AGENT, roomId: elsewhere, selfOnly: true,
+      }, AGENT)).schedules.map(schedule => schedule.scheduleId)).toEqual([local.scheduleId]);
+      console.info('Demonstrated cross-place-schedules-1: own schedules listed with Room names; remote cadence/prompt updated and deleted; rival mutations refused.');
+    } finally {
+      await database.close();
+    }
+  });
+
   it('creates, lists, and deletes via daemon operations with agent scoping', async () => {
     const database = await fixture();
     try {

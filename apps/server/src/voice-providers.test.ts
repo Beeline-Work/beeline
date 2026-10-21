@@ -356,3 +356,44 @@ it('enforces the total provider budget when a later long-report chunk stalls aft
     expect(fetcher).toHaveBeenCalledTimes(2);
   } finally { vi.useRealTimers(); }
 });
+
+
+it('VOICE-TIMEOUT-1: short Aura playback cannot consume the provider budget', async () => {
+  vi.useFakeTimers();
+  try {
+    let body!: ReadableStreamDefaultController<Uint8Array>;
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { body = controller; controller.enqueue(new Uint8Array([1, 2])); },
+    })));
+    const iterator = new AuraSpeech('test', 'account', fetcher)
+      .synthesize('A spoken answer. '.repeat(50), 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+    expect((await iterator.next()).done).toBe(false);
+    await vi.advanceTimersByTimeAsync(31000);
+    const next = iterator.next();
+    const passing = expect(next).resolves.toMatchObject({ done: false });
+    body.enqueue(new Uint8Array([3, 4]));
+    body.close();
+    await passing;
+    await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
+});
+
+
+it('VOICE-TIMEOUT-1: playback pauses preserve the remaining provider budget rather than resetting it', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  try {
+    let body!: ReadableStreamDefaultController<Uint8Array>;
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } })));
+    const iterator = new AuraSpeech('test', 'account', fetcher).synthesize('Hello.', 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+    const first = iterator.next();
+    await vi.advanceTimersByTimeAsync(4000);
+    body.enqueue(new Uint8Array([1, 2])); await first;
+    await vi.advanceTimersByTimeAsync(31000);
+    const next = iterator.next();
+    const failed = expect(next).rejects.toThrow('timed out; please try again');
+    await vi.advanceTimersByTimeAsync(25999);
+    expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await failed;
+  } finally { vi.useRealTimers(); }
+});

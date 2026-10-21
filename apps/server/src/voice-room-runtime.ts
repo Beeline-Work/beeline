@@ -751,6 +751,8 @@ export class VoiceRoomRuntime {
       if (reply.order && !committed) await commitReply();
     } catch (error) {
       rejectSource?.(error);
+      // Assembler cancellation reasons are strings, not AbortError instances.
+      if (generation.signal.aborted && error === generation.signal.reason) return;
       if (!delivered && request.state !== 'replying' && request.state !== 'retryable' && !(generation.signal.aborted && error instanceof Error && error.name === 'AbortError'))
         this.assembler.finish(human, request);
       if (delivered && !(error instanceof Error && error.name === 'AbortError')) throw new DeliveredVoicePlaybackError(error);

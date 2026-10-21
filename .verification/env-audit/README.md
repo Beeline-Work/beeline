@@ -16,12 +16,15 @@ not only this feature branch. Free-agent images are digest-pinned and suspended
 or stopped; their source SHA was not exposed in machine metadata. Their four
 configured names have current helper readers; no machine was woken for the audit.
 
-The squire host helper is outside this session's PID namespace. A names-only
-host audit is pending grant `088c704e-b1ca-4bb0-a2b2-d091af2fd601`; its unapproved
-script has not run on the host. **No observation of squire's actual helper env
-is claimed.** The brief supplies chad's names-only observation: no `BUZZY_`
-variables. Until squire is verified, otherwise unset live knobs remain **ask**,
-not removal candidates. The owner decision goes through Niglet.
+The names-only squire audit ran successfully under approved command grant
+`088c704e-b1ca-4bb0-a2b2-d091af2fd601` on 2026-10-21. Across 20 matching Beeline
+processes it found no `BUZZY_` names and no in-scope `BEELINE_` knobs. The managed
+helper carried only bootstrap/library/systemd names; see [the observation](squire-names.json)
+and [the approved audit script](helper-env-names.py). The script is archived here
+with the same bytes after execution; its old scratch path is no longer needed.
+The brief supplies chad's names-only observation: no `BUZZY_` variables.
+Live knobs absent from these observations remain **ask**, not removal candidates.
+The owner decision goes through Niglet.
 
 | Legacy name                            | Production reader                            | Known setter                                               | Verdict            | Evidence                                                                                                                                                                         |
 | -------------------------------------- | -------------------------------------------- | ---------------------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -99,5 +102,17 @@ that it refuses before opening a database. Production cleanup was not executed.
 
 Full typecheck and affected helper config/free-agent suites are rerun for this
 revision; earlier broad helper/auth results remain recorded in the PR history.
-The squire host audit and owner decisions are still pending and are not presented
-as completed validation.
+The squire host audit is complete. Optional owner decisions about retained ask
+knobs remain with Niglet; none was removed.
+
+## CI repair proof
+
+CI-ENV-01: the free-allowance integration case seeded the database's current UTC
+day but mocked Date.now to a fixed October 20. On October 21, running that exact
+test reproduced used=0 instead of 123000/paused. The test now derives its clock
+from the inserted budget row's UTC day; all six agent-usage integration tests
+pass. This changes only the fixture, retaining the timestamp/privacy assertions.
+
+CI-ENV-02: the dead-code checker identified the manually invoked compatibility
+proof as an unregistered entry. Its explicit Knip entry makes the proof reachable
+without increasing the baseline or excluding production code.

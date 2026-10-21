@@ -180,11 +180,13 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
     /^Usage: 123K of 3M free tokens today \(shared with your other free agents\), resets/,
   );
   expect(own).not.toHaveProperty('spend');
-  await db.query(
-    `INSERT INTO free_agent_budget(day,usd) VALUES((now() AT TIME ZONE 'UTC')::date,25)`,
+  const budget = await db.query<{ day: string }>(
+    `INSERT INTO free_agent_budget(day,usd) VALUES((now() AT TIME ZONE 'UTC')::date,25)
+     RETURNING day::text`,
   );
-  // A valid usage timestamp can contain the private operator budget's digits.
-  const clock = vi.spyOn(Date, 'now').mockReturnValue(1792512525000);
+  // Keep the query clock on the seeded UTC day while retaining the budget's digits.
+  const clockTime = Date.parse(`${budget.rows[0]!.day}T12:25:25.000Z`);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(clockTime);
   let paused;
   try {
     paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
@@ -194,7 +196,7 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   expect(paused?.free).toMatchObject({ used: 123000, paused: true });
   // Exact fields keep the operator budget private without matching digits in timestamps.
   expect(paused).toEqual({
-    updatedAt: 1792512525,
+    updatedAt: clockTime / 1000,
     windows: [],
     free: {
       used: 123000,

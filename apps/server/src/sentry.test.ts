@@ -43,3 +43,43 @@ it.each([['server', false], ['body', false], ['server', true], ['body', true]] a
     expect(events[0].request).toBeUndefined(); expect(events[0].user).toBeUndefined();
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 });
+
+
+it('R-GH-403: actual PR read rate limits send no Sentry event; plain 403 still sends one', async () => {
+  const envelopes: string[] = [];
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    envelopes.push(Buffer.concat(chunks).toString());
+    response.writeHead(200, { 'content-type': 'application/json' }); response.end('{}');
+  });
+  await new Promise<void>(r => collector.listen(0, '127.0.0.1', r));
+  try {
+    const port = (collector.address() as AddressInfo).port;
+    const source = `import { captureServerError, flushServerErrors } from ${JSON.stringify(resolve('src/sentry.ts'))};
+      import { GitHubAppClient } from '@beeline/auth/github';
+      const client = new GitHubAppClient({appId:'42',privateKey:'unused',slug:'beeline'});
+      for (const headers of [
+        {'x-ratelimit-remaining':'0','x-ratelimit-reset':String(Math.floor(Date.now()/1000)+600)},
+        {'retry-after':'120'}, {}
+      ]) {
+        globalThis.fetch = async () => new Response('{}',{status:403,headers});
+        try { await client.readPullRequest('fake','owner/widgets',1); }
+        catch (error) { captureServerError(error); }
+      }
+      await flushServerErrors();`;
+    const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      let error = ''; child.stderr.on('data', value => { error += String(value); });
+      child.on('error', reject); child.on('exit', code => done({ code, error }));
+    });
+    expect(result, result.error).toMatchObject({ code: 0 });
+    const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
+      .filter(item => item.exception);
+    expect(events).toHaveLength(1);
+    expect(events[0].exception.values[0].value).toBe('GitHub PR checks failed: HTTP 403');
+  } finally { await new Promise<void>(r => collector.close(() => r())); }
+});

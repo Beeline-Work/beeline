@@ -120,4 +120,14 @@ describe('background shutdown', () => {
     expect(shutdown).toContain('await leader.stop();');
     expect(shutdown.indexOf('await leader.stop();')).toBeLessThan(shutdown.indexOf('database.close()'));
   });
+
+  it('Reproduction MA-1: merge recovery repeats after startup on the reconciliation interval', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const recurring = source.slice(source.indexOf('if (now - lastReconciliationAt >= reconciliationMs)'));
+    const cycle = recurring.slice(0, recurring.indexOf('if (freeAgents)'));
+    expect(cycle).toContain('githubJobs.recoverUnfinishedMergeClaims()');
+    expect(cycle).toContain('githubJobs.reconcileMergedCorners()');
+    expect(source).not.toContain('recoveredCornerMerges');
+    expect(source).not.toContain('reconciledMergedCorners');
+  });
 });

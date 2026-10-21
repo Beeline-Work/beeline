@@ -1045,8 +1045,8 @@ export class GitHubOperations {
    * the implementer's `merge_corner`, a person's yes (`order_corner_merge` or
    * the phone's approve), and recovery of an unfinished attempt.
    * At most one attempt per head: the attempt is claimed under the run lock
-   * before GitHub is called. The merge webhook then lands the corner; a
-   * refusal returns it to the implementer with GitHub's reason.
+   * before GitHub is called. Confirmation, the webhook, or recurring recovery
+   * then lands the corner; a refusal returns GitHub's reason to the implementer.
    *
    * The brief gate lives here, for all of those callers: a corner whose
    * current brief does not assign repository work (no brief, or
@@ -1132,7 +1132,18 @@ export class GitHubOperations {
       this.onRoomChanged?.(cornerId);
       return { status: 'refused', reason };
     }
-    await enqueueCornerBranchDeletion(this.database, cornerId);
+    // Do not depend on delivery of the closed webhook after a successful
+    // merge. A failed confirmation leaves the claim for background recovery.
+    try {
+      const token = await this.app.installationToken(Number(target.installation_id), {
+        repositoryIds: [Number(target.repository_id)],
+      });
+      const pr = await this.app.readPullRequest(token.token, target.full_name, target.number);
+      if (pr.merged && pr.headSha === status.headSha && pr.headRef === target.feature_branch)
+        await this.recordConfirmedCornerMerge(target, target.full_name, target.number, pr);
+    } catch (error) {
+      console.error(`[server] merged corner confirmation deferred for ${cornerId}:`, error);
+    }
     return { status: 'started' };
   }
 

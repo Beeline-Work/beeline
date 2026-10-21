@@ -2757,6 +2757,38 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
   }
 
+  it('Reproduction MA-1: a successful gated merge archives without the closed webhook', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false));
+    githubApp.mergePullRequest.mockImplementationOnce(async () => {
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+    });
+    expect(await implementersMerge()).toBe(1);
+    await landing(cornerId);
+    await github.reconcileMergedCorners();
+    await recover();
+    await landing(cornerId);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('Reproduction MA-1: failed confirmation retains the claim and later recovery archives once', async () => {
+    const cornerId = await approved();
+    githubApp.mergePullRequest.mockImplementationOnce(async () => {
+      githubApp.readPullRequest.mockRejectedValue(new Error('temporary GitHub outage'));
+    });
+    expect(await implementersMerge()).toBe(1);
+    expect(await claimHead(cornerId)).toBe(SHA);
+    await recover(); // Still inside the grace deadline.
+    expect(await currentState(cornerId)).toBe('review');
+    await backdate(cornerId);
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+    await recover();
+    await landing(cornerId);
+    await recover();
+    await landing(cornerId);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
   it('Reproduction F2-1: human input keeps a fresh merge claim until its grace deadline', async () => {
     const cornerId = await claimed(false);
     githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false));

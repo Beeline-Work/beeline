@@ -54,14 +54,12 @@ export function scheduleWhere(
 
 /** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
-  return schedule.workflowSlug
-    ? workflowDisplayName(schedule.workflowSlug)
-    : promptLead(schedule.message);
+  return schedule.title ?? 'Scheduled task';
 }
 
 /** The detail page's Runs row: the cadence and the next firing. */
 export function scheduleRuns(schedule: RoomScheduleView): string {
-  return `${scheduleCadenceLabel(schedule.cadence)} · next ${NEXT_RUN.format(
+  return `${schedule.maxRuns === 1 ? 'Once' : scheduleCadenceLabel(schedule.cadence)} · next ${NEXT_RUN.format(
     new Date(schedule.nextRunAt * 1_000),
   )}`;
 }

@@ -5021,6 +5021,7 @@ describe('monolith integration', () => {
     await expect(listed.json()).resolves.toEqual({
       schedules: [
         {
+          title: 'Scheduled task',
           scheduleId,
           agentId: AGENT,
           agentHandle: 'bee',

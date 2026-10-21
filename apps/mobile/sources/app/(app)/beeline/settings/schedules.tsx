@@ -7,10 +7,8 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { roomTitle, type RoomScheduleView, type RoomSubscriptionView } from '@beeline/api-contract/phone';
-import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import {
   scheduleTitle,
-  scheduleWhere,
   subscriptionTitle,
   subscriptionWhen,
   subscriptionWhere,
@@ -73,8 +71,8 @@ function ListTail({ agent, corner, compact }: {
 /**
  * Everything that wakes the Room's agents without a human tag: timers and
  * subscriptions. Agents set both up. A flat list orders this Room before its
- * corners, schedules by next run before subscriptions. Each row says what,
- * then when · who · where, and opens its own detail page.
+ * corners, schedules by next run before subscriptions. Schedule rows name the work;
+ * subscriptions name their trigger. Each opens its own detail page.
  */
 export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules');
@@ -99,10 +97,7 @@ export default function ScheduledWork() {
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
       chevron="right"
-      description={`· @${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName)}`}
-      descriptionContent={<ListTail agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'}
-        compact={scheduleCadenceLabel(schedule.cadence).length > 24} corner={schedule.corner} />}
-      descriptionLead={scheduleCadenceLabel(schedule.cadence)}
+      description={schedule.maxRuns === 1 ? 'Once' : undefined}
       key={schedule.id}
       leading={<View style={styles.leadingSlot}>
         {schedule.workflowSlug ? (

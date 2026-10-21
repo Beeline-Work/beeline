@@ -1815,6 +1815,17 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS creator_agent_id text REFE
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized boolean NOT NULL DEFAULT false;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_slug text;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS title text;
+-- Owner-approved labels for the existing #beeline schedules and its corners.
+UPDATE agent_schedules SET title=labels.title FROM (VALUES
+  ('ea5594a0-42ec-49dd-8957-5582216ebedd'::uuid,'Prompt replay'),
+  ('0487e469-2907-47e7-8432-7ec4ec49ad42'::uuid,'Morning card'),
+  ('df2db89e-4a28-4db0-9b54-36bd0f671f03'::uuid,'App speed test'),
+  ('213bcf80-8846-42b1-9d49-6399b770fe87'::uuid,'Release'),
+  ('92803c2f-e007-42af-a244-999750212ae9'::uuid,'Feedback triage'),
+  ('b13d3597-6504-4e2a-b89d-b47b02f02e91'::uuid,'Play downloads check')) AS labels(id,title)
+WHERE agent_schedules.id=labels.id AND agent_schedules.title IS NULL;
+
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS last_reported_blocking_run_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS updated_by text REFERENCES identities(id);
 CREATE TABLE IF NOT EXISTS workflow_owner_transfers (

@@ -84,7 +84,7 @@ request. The new case must pass, and no other case may fail.
 
 ### Production database access
 
-The `pull` step reads production directly. The triager does not ask anyone
+The `pull` step reads `feedback_items` and each report's `message_ids` context from production directly. The triager does not ask anyone
 for access on each run. It reads through a Neon connection string kept in its
 owner's Trusty Squire vault. That credential is the access boundary, not a
 Beeline setting. It reads every Workspace's reports on purpose: the loop covers

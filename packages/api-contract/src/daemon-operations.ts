@@ -62,6 +62,8 @@ import type {
 export const AGENT_TO_AGENT_HOP_CAP = 3;
 
 export type CreateAgentScheduleInput = AgentRoomInput & {
+  /** Plain schedule label, one to four words. */
+  readonly title?: string;
   readonly workflowName?: string;
   /** Delivered as a creator-authored Room mention to this agent on every run. */
   readonly prompt: string;
@@ -74,6 +76,7 @@ export type AgentScheduleResult = {
   readonly nextRunAt: number;
 };
 export type AgentScheduleEntry = {
+  readonly title?: string;
   /** Location included by workspace-wide self-only wake reads. */
   readonly roomId?: string;
   readonly roomName?: string;
@@ -94,6 +97,8 @@ export type AgentScheduleListResult = { readonly schedules: readonly AgentSchedu
 export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string; readonly selfOnly?: boolean };
 /** Replaces only the fields given; a new cadence restarts the next run from now. */
 export type UpdateAgentScheduleInput = AgentRoomInput & {
+  /** Plain schedule label, one to four words. */
+  readonly title?: string;
   readonly workflowName?: string;
   readonly scheduleId: string;
   readonly selfOnly?: boolean;

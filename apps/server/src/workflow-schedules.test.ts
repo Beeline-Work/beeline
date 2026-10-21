@@ -480,3 +480,45 @@ it('Reproduction R1: answers a stop of an already-deleted schedule with its own 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+it('Reproduction ebc844ec744260fdaf5b93010d0ffe549b6e30e1a33efbd47cd8b939ef54f162: names and one-time facts survive wake writes and phone reads', async () => {
+  const input = { roomId: ROOM, prompt: 'One-time 24-hour Play report access check.',
+    title: 'Play downloads check', cadence: { kind: 'interval' as const, everyMinutes: 1440 }, maxRuns: 1 };
+  const created = await daemon.execute('createAgentSchedule', input, AGENT);
+  let rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
+  expect(rows).toEqual([expect.objectContaining({ title: 'Play downloads check', maxRuns: 1 })]);
+  await daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,
+    title: 'Downloads check' }, AGENT);
+  rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
+  expect(rows[0]).toMatchObject({ title: 'Downloads check', maxRuns: 1, cadence: input.cadence });
+  await expect(daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,
+    title: 'This title has too many words' }, AGENT)).rejects.toThrow('one to four words');
+  await db.query(`UPDATE agent_schedules SET title=NULL,workflow_slug='feedback-triage' WHERE id=$1`, [created.scheduleId]);
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('Feedback triage');
+  await db.query('UPDATE agent_schedules SET workflow_slug=NULL WHERE id=$1', [created.scheduleId]);
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('Scheduled task');
+});
+
+it('backfills the existing Beeline labels without editing cadence or instructions', async () => {
+  const labels = [
+    ['ea5594a0-42ec-49dd-8957-5582216ebedd', 'Prompt replay'],
+    ['0487e469-2907-47e7-8432-7ec4ec49ad42', 'Morning card'],
+    ['df2db89e-4a28-4db0-9b54-36bd0f671f03', 'App speed test'],
+    ['213bcf80-8846-42b1-9d49-6399b770fe87', 'Release'],
+    ['92803c2f-e007-42af-a244-999750212ae9', 'Feedback triage'],
+    ['b13d3597-6504-4e2a-b89d-b47b02f02e91', 'Play downloads check'],
+  ];
+  const cadence = { kind: 'interval', everyMinutes: 1440 };
+  for (const [id] of labels) await db.query(
+    `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+      VALUES($1,$2,$3,$4,$4,$5::jsonb,'Original instructions','2030-01-01')`,
+    [id, WORKSPACE, ROOM, AGENT, JSON.stringify(cadence)]);
+  await migrate(db);
+  for (const [id, title] of labels) expect((await db.query(
+    'SELECT title,cadence,message FROM agent_schedules WHERE id=$1', [id])).rows[0])
+    .toMatchObject({ title, cadence, message: 'Original instructions' });
+  await db.query("UPDATE agent_schedules SET title='Custom name' WHERE id=$1", [labels[0]![0]]);
+  await migrate(db);
+  expect((await db.query('SELECT title FROM agent_schedules WHERE id=$1', [labels[0]![0]])).rows[0]?.title)
+    .toBe('Custom name');
+});

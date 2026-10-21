@@ -52,6 +52,7 @@ function shims(mobile: string): Record<string, string> {
         throw new Error('schedule read unavailable');
       }
       const gone = globalThis.__gone ?? new Set();
+      const once = new URLSearchParams(location.search).has('once');
       const work = {
         roomName: 'beeline', agentNames: [['agent-1', 'Hoots'], ['agent-2', 'Ruby']],
         subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
@@ -61,16 +62,28 @@ function shims(mobile: string): Record<string, string> {
             prompt: 'Start feedback triage.', workflowSlug: 'feedback-triage',
             corner: { id: 'corner-1', name: 'issues-triage' } }],
         schedules: [
-        { id: 'daily', workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1',
+        { id: 'daily', title: once ? 'Play downloads check' : 'Morning card', maxRuns: once ? 1 : undefined, workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1',
           creatorId: 'agent-1', cadence: { kind: 'cron', expression: '0 9 * * 1-5', timeZone: 'UTC' },
           message: "Summarize yesterday's merged PRs for the Room. Group them by area and link each PR.",
           nextRunAt: ${NEXT_RUN}, createdAt: 0, runCount: 14 },
-        { id: 'video', workspaceId: 'workspace-1', roomId: 'corner-1', agentId: 'agent-2',
+        { id: 'video', title: 'Feedback triage', workspaceId: 'workspace-1', roomId: 'corner-1', agentId: 'agent-2',
           creatorId: 'agent-2', cadence: { kind: 'cron', expression: '0 14 * * *', timeZone: 'America/New_York' },
           message: 'Start the feedback-triage workflow with start_workflow.', nextRunAt: ${NEXT_RUN}, createdAt: 0,
           runCount: 3, workflowSlug: 'feedback-triage', corner: { id: 'corner-1', name: 'issues-triage' } },
       ],
     };
+      if (new URLSearchParams(location.search).has('ownerSchedules')) {
+        work.subscriptions = [];
+        work.schedules = [
+          ['Morning card', null], ['Prompt replay', null], ['App speed test', null],
+          ['Play downloads check', null, 1], ['Feedback triage', 'feedback-triage'], ['Release', null]
+        ].map(([title, workflowSlug, maxRuns], index) => ({
+          id: 'owner-' + index, title, workflowSlug, maxRuns,
+          workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1', creatorId: 'agent-1',
+          cadence: { kind: 'interval', everyMinutes: 1440 },
+          message: 'Original instructions stay in details.', nextRunAt: 1790000000 + index, createdAt: 0, runCount: 0,
+        }));
+      }
       return { ...work, schedules: work.schedules.filter((item) => !gone.has(item.id)),
         subscriptions: work.subscriptions.filter((item) => !gone.has(item.id)) };
     };`,
@@ -137,7 +150,7 @@ async function proof(query: string, screenshotPath?: string): Promise<Page> {
     query,
     ...(screenshotPath ? { screenshotPath, height: 844 } : {}),
     // A screenshot shows the page alone, not the proof's own result line.
-    head: `<style>${fontsCss(mobile)}${screenshotPath ? '#result{display:none}' : ''}</style>`,
+    head: `<style>html,body,#root{height:100%;}#root{display:flex;}${fontsCss(mobile)}${screenshotPath ? '#result{display:none}' : ''}</style>`,
   });
   expect(status, stderr).toBe(0);
   if (process.env.PRINT_PROOF) console.log(result);
@@ -163,18 +176,12 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       eyebrowAboveTitle: true,
     });
     expect(page.text.slice(2)).toEqual([
-      "Summarize yesterday's merged PRs for the Room…",
-      'Weekdays at 09:00 UTC',
-      '\u2009·\u2009', '@Hoots', '\u2009·\u2009',
-      'this Room',
+      'Morning card',
       'Triage incoming work',
       'On new pull request in owner/widgets',
       '\u2009·\u2009', '@R', '\u2009·\u2009',
       'this Room',
       'Feedback triage',
-      'Daily at 14:00 America/New_York',
-      '\u2009·\u2009', '@R', '\u2009·\u2009',
-      'issues-triage',
       'Feedback triage',
       'On someone joining this Room',
       '\u2009·\u2009', '@R', '\u2009·\u2009',
@@ -183,9 +190,9 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
     expect(page.workflowFills).toEqual(['#b08a4a', '#b08a4a']);
     expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold']));
-    expect(page.listAxes).toEqual([[45, 45], [45, 45], [45, 45], [45, 45]]);
-    expect(page.listPolygonCounts).toEqual([0, 2, 0, 2]);
-    expect(page.listLines).toEqual(Array(4).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true }));
+    expect(page.listAxes).toEqual([[45], [45], [45, 45], [45, 45]]);
+    expect(page.listPolygonCounts).toEqual([0, 1, 0, 2]);
+    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true })]);
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },
@@ -195,10 +202,30 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     ]);
   }, 120_000);
 
+  it('shows the one-time Play check without a daily cadence', async () => {
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&once');
+    expect(page.text).toContain('Play downloads check');
+    expect(page.text).toContain('Once');
+    expect(page.text.join(' ')).not.toContain('Weekdays at');
+    const detail = await proof('?page=schedule&roomId=room-1&scheduleId=daily&once');
+    expect(detail.text.join(' ')).toContain('Once · next');
+    expect(detail.text.join(' ')).not.toContain('Weekdays at');
+  }, 120_000);
+
+  it('Reproduction ebc844ec: owner schedules use short titles in both themes', async () => {
+    for (const theme of ['dark', 'light']) {
+      const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&ownerSchedules&theme=' + theme,
+        process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'schedule-titles-' + theme + '.png') : undefined);
+      expect(page.text.slice(2)).toEqual(['Morning card', 'Prompt replay', 'App speed test',
+        'Play downloads check', 'Once', 'Feedback triage', 'Release']);
+      expect(page.text.join(' ')).not.toMatch(/Every day|America|Original instructions|this Room/);
+    }
+  }, 120_000);
+
   it('uses dark brass workflow marks on the light list', async () => {
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&theme=light');
     expect(page.workflowFills).toEqual(['#8a6323', '#8a6323']);
-    expect(page.listLines).toEqual(Array(4).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true }));
+    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true })]);
   }, 120_000);
 
   it('opens a prompt schedule with When, Agent, Where, Does, then Stop', async () => {

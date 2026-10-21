@@ -221,3 +221,41 @@ missing artifacts, completion/publication checks, and the workflow time budget.
   `--production-history <path>` with `--dry-run`. Live releases reject that
   override and always query EAS.
 - Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives in `ANDROID_SIDELOAD_*` secrets and the Trusty Squire vault; see the [signing guide](../apps/mobile/android-signing/README.md) for rotation and recovery.
+
+## Release preflight and failure triage
+
+`Release preflight` runs at 05:30 UTC and on manual dispatch. Trusted repository
+PRs touching the release safeguards also exercise it without shipping. It installs
+Node from `.nvmrc` on the production, Android and Intel iOS release runner labels
+and executes `node -v`. A hosted watchdog cancels unfinished probes after five
+minutes, so offline or busy runners cannot leave a preflight queued indefinitely.
+Its failure identifies queued/running probes for investigation.
+
+The native leg runs the existing Expo fingerprint gate with the mobile Node 22
+toolchain, then compares both platform fingerprints and runtime pins with the
+`mobile-native.sourceSha` in the last successful `unified-release-index`. It fails
+explicitly when no released baseline exists, fingerprints differ, or a platform
+needs a new store build/verified pin restore. No signing, promotion, deployment or
+store submission runs in preflight.
+
+Every shell-bearing self-hosted unified-release job installs repository Node
+before commands or composite actions. Existing component toolchain upgrades
+(including npm publishing's Node 24 and mobile composites' Node 22) still apply.
+The iOS signing/build steps preserve the installed Node path while retaining the
+system rsync precedence required by Xcode.
+
+`Release failure triage` listens for completed unified-release and preflight runs,
+including cancellations before initialization. It uses trusted default-branch
+code on a hosted runner to file a GitHub issue labeled `release-failure`. A marker
+keyed by run ID and serialized delivery prevent duplicates across redelivery,
+reruns and closed issues. It never downloads or executes triggering artifacts.
+The existing saved `feedback-triage-steps` procedure's pull step includes all open
+issues with that label, without an age cutoff, alongside feedback and Sentry.
+This is the GitHub issue intake path, not a new server endpoint.
+
+Local proofs: `node --test scripts/release-preflight.test.mjs` covers forced
+failure/redelivery producing one issue, cancellation, offline runner timeout,
+per-platform released runtime comparisons and setup-before-command ordering.
+A live PR preflight proves the runner and native paths; failure triage activates
+from the default branch after merge because GitHub requires `workflow_run`
+listeners there. The failure/redelivery fixture is its pre-merge stand-in.

@@ -1,3 +1,4 @@
+import { ExpectedRefusalError } from './command-refusal.js';
 import { normalizeLegacyWorkflowRuns, saveUnsavedWorkflowRunStatus } from './migrations/workflow-cleanup.js';
 import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -509,7 +510,7 @@ describe('start_workflow', () => {
         name: 'corner',
         roleBindings: { implementer: IMPLEMENTER, reviewer: REVIEWER },
       }),
-    ).rejects.toThrow('role binding is missing for approver');
+    ).rejects.toMatchObject({ constructor: ExpectedRefusalError, message: 'role binding is missing for approver' });
   });
 
   it('rejects a role bound to someone who is not a current agent member of this Room (a person or an outsider)', async () => {

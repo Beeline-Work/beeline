@@ -1,5 +1,5 @@
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
-import { CommandRefusalError } from './command-refusal.js';
+import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
@@ -1907,7 +1907,7 @@ export async function startWorkflow(
       ? await scheduleTriggerPeriod(db, command.source_message_id)
       : undefined;
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
-    if (missingRole) throw new Error(`role binding is missing for ${missingRole}`);
+    if (missingRole) throw new ExpectedRefusalError(`role binding is missing for ${missingRole}`);
     const roleBindings: Record<string, string> = {};
     const roleAgents: Record<string, string[]> = {};
     for (const role of contract.roles) {

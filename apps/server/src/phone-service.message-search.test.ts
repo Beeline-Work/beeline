@@ -189,3 +189,28 @@ describe('searchMessages', () => {
   });
 });
 
+
+
+describe('message link resolution', () => {
+  it('resolves Room and archived corner messages by id with inherited membership', async () => {
+    const roomMessage = await message(ROOM, 'room', '2026-09-01T10:00:00Z');
+    const cornerMessage = await message(CORNER, 'corner', '2026-09-01T10:00:00Z');
+    await database.query('UPDATE rooms SET archived_at=now(),name=$2 WHERE id=$1', [CORNER, 'mobile']);
+    expect(await phone.resolveMessageLink(roomMessage, VIEWER)).toEqual({ roomId: ROOM, messageId: roomMessage, workspaceId: WORKSPACE });
+    expect(await phone.resolveMessageLink(cornerMessage, VIEWER)).toEqual({ roomId: CORNER, messageId: cornerMessage, workspaceId: WORKSPACE });
+    expect(await phone.resolveMessageLink(cornerMessage, STRANGER)).toBeNull();
+    await database.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2', [VIEWER, ROOM]);
+    expect(await phone.resolveMessageLink(cornerMessage, VIEWER)).toBeNull();
+  });
+
+  it('does not reveal missing, deleted, inaccessible or former-workspace messages', async () => {
+    const hidden = await message(NEVER_JOINED, 'private', '2026-09-01T10:00:00Z');
+    const deleted = await message(ROOM, 'deleted', '2026-09-01T10:00:00Z', { deleted: true });
+    expect(await phone.resolveMessageLink(hidden, VIEWER)).toBeNull();
+    expect(await phone.resolveMessageLink(deleted, VIEWER)).toBeNull();
+    expect(await phone.resolveMessageLink('f'.repeat(64), VIEWER)).toBeNull();
+    const visible = await message(ROOM, 'room', '2026-09-01T10:00:00Z');
+    await database.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NULL', [VIEWER]);
+    expect(await phone.resolveMessageLink(visible, VIEWER)).toBeNull();
+  });
+});

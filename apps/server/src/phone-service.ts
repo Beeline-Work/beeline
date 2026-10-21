@@ -2352,6 +2352,23 @@ export class PhoneService {
     return view;
   }
 
+  /** Resolve only coordinates readable through current Room and Workspace membership. */
+  async resolveMessageLink(messageId: string, viewerId: string) {
+    const result = await this.database.query<{ room_id: string; workspace_id: string }>(
+      `SELECT room.id room_id,room.workspace_id FROM messages message
+       JOIN rooms room ON room.id=message.room_id
+       JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
+         AND member.identity_id=$2 AND member.removed_at IS NULL
+       JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+         AND workspace_member.removed_at IS NULL
+       WHERE message.id=$1 AND message.deleted_at IS NULL`,
+      [messageId, viewerId],
+    );
+    const row = result.rows[0];
+    return row ? { roomId: row.room_id, messageId, workspaceId: row.workspace_id } : null;
+  }
+
   /**
    * The Room list's message search: the terms messageSearchTerms makes of
    * `query` are matched against `messages.search_document` (its GIN index

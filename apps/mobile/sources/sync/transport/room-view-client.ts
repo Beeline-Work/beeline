@@ -8,6 +8,7 @@ import {
   readCornerListView,
   readInviteView,
   readMessageSearchView,
+  readMessageLinkView,
   readRoomHistoryOutline,
   readRoomHistoryView,
   readRoomView,
@@ -93,6 +94,9 @@ const COMPACT_ROOM_READ: Record<string, string> | undefined =
 class MonolithRoomViewClient {
   private readonly baseUrl = getBuzzRuntimeConfig().monolithUrl;
 
+  resolveMessageLink(messageId: string) {
+    return this.get(`/v1/phone/message-links/${encodeURIComponent(messageId)}`, readMessageLinkView);
+  }
   workspaces(): Promise<WorkspaceListView> {
     return this.get('/v1/phone/workspaces', readWorkspaceListView);
   }
@@ -397,6 +401,9 @@ export class RoomViewClient {
   private readonly implementation = new MonolithRoomViewClient();
   // Callers still describe their relay and identity; the monolith reader authenticates itself.
   constructor(_options: RoomViewClientOptions) {}
+  resolveMessageLink(messageId: string) {
+    return this.implementation.resolveMessageLink(messageId);
+  }
   workspaces() {
     return this.implementation.workspaces();
   }

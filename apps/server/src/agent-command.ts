@@ -981,7 +981,8 @@ export async function routeAgentResult(
   sourceId: string,
 ) {
   const source = (await db.query<{ text: string }>(
-    `SELECT text FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3`,
+    `SELECT text FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3
+       AND presentation='message' AND deleted_at IS NULL`,
     [sourceId, parent.room_id, parent.agent_id],
   )).rows[0];
   const woken: string[] = [];

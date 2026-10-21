@@ -15,15 +15,16 @@ LLM file values still replace ambient values of the same spelling.
 | Helper policy     | `BODY_ROOM_HOME`, `BODY_AGENT_DELEGATION_MAX_HOPS`, `BODY_AUTO_APPROVE`                                                        |
 | Private state     | `AGENT_PRIVATE_DIR`                                                                                                            |
 | LLM file          | `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`                                                                                     |
-| Live-test relay   | `RELAY_HOST`, `RELAY_SCHEME`, `RELAY_URL`                                                                                      |
-| Cleanup script    | `PUSH_DATABASE_URL` (still falls back to `DATABASE_URL`)                                                                       |
 
-The helper's child environment, free-agent model file, and live-test relay
-configuration export both spellings with the selected value so older programs
+The helper's child environment and free-agent model file export both spellings with the selected value so older programs
 keep working. Auth proof scripts use the Beeline tenant name; launchers
 also export the old spelling. `AGENT_PRIVATE_DIR` is currently only inspected
 for sandbox state directories and forwarded if supplied; agent-home preparation
 does not create or set this variable.
+
+The unused `BUZZY_RELAY_HOST`, `BUZZY_RELAY_SCHEME`, and `BUZZY_RELAY_URL`
+assignments were removed. The legacy cleanup script now accepts only `DATABASE_URL`;
+its unused `BUZZY_PUSH_DATABASE_URL` alias was removed rather than renamed.
 
 `BUZZY_BODY_LLM_FILE` occurred in a historical CLI example but had no reader.
 Neither spelling selects a file: retain the existing runtime record's
@@ -42,3 +43,7 @@ Validation: `node scripts/prove-env-aliases.mjs` after `npm run build` exercises
 an operator LLM file through the built helper into a real child process with
 each prefix, plus auth tenant loading and dual-name precedence. It uses fixture
 values and does not start a daemon or contact production.
+
+The [environment audit](../.verification/env-audit/README.md) records each
+keep/remove/ask verdict and the names-only Fly inventory. Unset knobs are retained
+with compatible aliases while the owner considers the ask list.

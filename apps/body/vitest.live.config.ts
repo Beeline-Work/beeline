@@ -1,10 +1,6 @@
-import { readEnv, envPair } from './src/env.js';
 import { defineConfig } from 'vitest/config';
 
 // Live tests intentionally target the developer relay stack, never production.
-Object.assign(process.env, envPair('RELAY_HOST', readEnv(process.env, 'RELAY_HOST') ?? '127.0.0.1:3010'));
-Object.assign(process.env, envPair('RELAY_SCHEME', readEnv(process.env, 'RELAY_SCHEME') ?? 'http'));
-Object.assign(process.env, envPair('RELAY_URL', readEnv(process.env, 'RELAY_URL') ?? 'http://127.0.0.1:3010'));
 process.env.BUZZ_RELAY_URL ??= 'ws://127.0.0.1:3010';
 
 /**

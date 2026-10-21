@@ -488,7 +488,7 @@ export const AGENT_ENV_PASSTHROUGH_PREFIXES = [
 
 function isPassthroughName(name: string, extra: Set<string>): boolean {
   if (name === 'BEELINE_FREE_AGENT_ID' || name === 'BEELINE_FREE_AGENT_MAX_TURN_SECONDS') return true;
-  if (/^BEELINE_(BODY_|LLM_|AGENT_PRIVATE_DIR$|RELAY_)/.test(name)) return true;
+  if (/^BEELINE_(BODY_|LLM_|AGENT_PRIVATE_DIR$)/.test(name)) return true;
   if (extra.has(name)) return true;
   if ((AGENT_ENV_PASSTHROUGH_NAMES as readonly string[]).includes(name)) return true;
   return AGENT_ENV_PASSTHROUGH_PREFIXES.some((prefix) => name.startsWith(prefix));
@@ -531,7 +531,7 @@ export function buildAgentEnv(
     if (isPassthroughName(name, extraPassthrough)) agentEnv[name] = value;
   }
   for (const name of Object.keys(agentEnv)) {
-    if (/^(BEELINE|BUZZY)_(BODY_|LLM_|AGENT_PRIVATE_DIR|RELAY_)/.test(name)) {
+    if (/^(BEELINE|BUZZY)_(BODY_|LLM_|AGENT_PRIVATE_DIR)/.test(name)) {
       const suffix = name.replace(/^(BEELINE|BUZZY)_/, '');
       Object.assign(agentEnv, envPair(suffix, readEnv(merged, suffix)!));
     }

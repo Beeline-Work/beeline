@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { readEnv, envPair } from './env.js';
 import { buildAgentEnv, loadBodyConfig, parseSandboxMaskEnv } from './config.js';
 import {
@@ -30,9 +30,6 @@ const suffixes = [
   'LLM_API_KEY',
   'LLM_BASE_URL',
   'LLM_MODEL',
-  'RELAY_HOST',
-  'RELAY_SCHEME',
-  'RELAY_URL',
 ];
 
 describe.each(suffixes)('%s compatibility', (suffix) => {
@@ -136,24 +133,3 @@ it.each(['BEELINE_', 'BUZZY_'])('reads the operator LLM file using %s names', (p
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-it.each(['BEELINE_', 'BUZZY_'])(
-  'live config exports both relay spellings from %s',
-  async (prefix) => {
-    try {
-      vi.resetModules();
-      for (const suffix of ['RELAY_HOST', 'RELAY_SCHEME', 'RELAY_URL']) {
-        vi.stubEnv('BEELINE_' + suffix, undefined);
-        vi.stubEnv('BUZZY_' + suffix, undefined);
-        vi.stubEnv(prefix + suffix, 'fixture');
-      }
-      await import('../vitest.live.config.js');
-      for (const suffix of ['RELAY_HOST', 'RELAY_SCHEME', 'RELAY_URL']) {
-        expect(process.env['BEELINE_' + suffix]).toBe('fixture');
-        expect(process.env['BUZZY_' + suffix]).toBe('fixture');
-      }
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  },
-);

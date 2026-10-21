@@ -759,6 +759,7 @@ function ConversationComposerContent({
             accessibilityRole="button"
             disabled={disabled || voice?.connecting}
             accessibilityState={{ disabled: disabled || voice?.connecting, busy: voice?.connecting }}
+            aria-busy={Boolean(voice?.connecting)}
             hitSlop={9}
             onPress={() => {
               Keyboard.dismiss();

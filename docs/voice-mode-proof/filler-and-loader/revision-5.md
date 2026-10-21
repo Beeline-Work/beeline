@@ -92,3 +92,7 @@ No filler audio sample is attached: a voice-matched cached sample would require 
 ## Validation
 
 Four server suites passed **211 tests**: runtime, VoiceService integration, request assembler and database migration/deletion coverage. Root typecheck passed. Dead-code baseline holds with zero introduced findings. The original speech/search regression failed on the prior runtime in both success and failure cases; the fixed search and actual phone-read demonstrations pass. Mobile source is unchanged in this revision; the prior composer Android screenshots and 60-test mobile validation remain applicable to items 1–2.
+
+### Connecting browser proof
+
+The MOBILE SUITE failure on the original PR head was an outdated connecting-state expectation: the browser proof tried to read the mute and waveform controls after those controls had intentionally been replaced by the normal composer and loading conversation button. It now checks that the existing 20px loader occupies the 26px conversation slot, is centered, and preserves the agent strip and normal input. The button exposes its busy state explicitly to React Native Web as well as native accessibility. Both browser themes and the composer/trailing-control suites pass: 53 tests. Call-end attachment selection and upload reuse remain exercised.

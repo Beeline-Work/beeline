@@ -1,8 +1,9 @@
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { leaseEmulator, runLeasedEmulator } from './android-emulator-lease.js';
 
 const roots: string[] = [];
@@ -83,5 +84,60 @@ describe('Android emulator instance leases', () => {
     const next = await leaseEmulator(env.BEELINE_ANDROID_LEASE_ROOT, env.BEELINE_ANDROID_INSTANCE_ROOT);
     expect(next.port).toBe(port);
     await next.release();
+  });
+
+  it('fails cleanly without a lease when the base AVD .avd directory is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-missing-avd-'));
+    roots.push(root);
+    const avd = join(root, 'base/avd');
+    await mkdir(avd, { recursive: true });
+    await writeFile(join(avd, 'test.ini'), `path=${join(avd, 'test.avd')}\n`);
+    const leaseRoot = join(root, 'shared/leases');
+    const instanceRoot = join(root, 'private');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect(await runLeasedEmulator(['-avd', 'test', '-no-window'], {
+        BEELINE_ANDROID_LEASE_ROOT: leaseRoot,
+        BEELINE_ANDROID_INSTANCE_ROOT: instanceRoot,
+        BEELINE_ANDROID_BASE_AVD_HOME: avd,
+        BEELINE_ANDROID_EMULATOR_BINARY: join(root, 'fake-emulator'),
+      })).toBe(1);
+      const message = errors.mock.calls.flat().join(' ');
+      expect(message).toContain('test');
+      expect(message).toContain('avdmanager create avd');
+      expect(message).toContain('emulator -list-avds');
+      expect(existsSync(leaseRoot)).toBe(false);
+      expect(existsSync(instanceRoot)).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('fails cleanly without a lease when the base AVD config.ini is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-missing-config-'));
+    roots.push(root);
+    const avd = join(root, 'base/avd');
+    await mkdir(join(avd, 'test.avd'), { recursive: true });
+    await writeFile(join(avd, 'test.ini'), `path=${join(avd, 'test.avd')}\n`);
+    const leaseRoot = join(root, 'shared/leases');
+    const instanceRoot = join(root, 'private');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      expect(await runLeasedEmulator(['-avd', 'test', '-no-window'], {
+        BEELINE_ANDROID_LEASE_ROOT: leaseRoot,
+        BEELINE_ANDROID_INSTANCE_ROOT: instanceRoot,
+        BEELINE_ANDROID_BASE_AVD_HOME: avd,
+        BEELINE_ANDROID_EMULATOR_BINARY: join(root, 'fake-emulator'),
+      })).toBe(1);
+      const message = errors.mock.calls.flat().join(' ');
+      expect(message).toContain('test');
+      expect(message).toContain('config.ini');
+      expect(message).toContain('avdmanager create avd');
+      expect(message).toContain('emulator -list-avds');
+      expect(existsSync(leaseRoot)).toBe(false);
+      expect(existsSync(instanceRoot)).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

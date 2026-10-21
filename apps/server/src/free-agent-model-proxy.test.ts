@@ -10,6 +10,7 @@ import {
   StreamUsageReader,
   reserveAllowance,
   retryAfterMs,
+  promptTokenBound,
   type FreeAgentModelProxyOptions,
 } from './free-agent-model-proxy.js';
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
@@ -88,6 +89,72 @@ describe('free agent model proxy', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+
+  it('Reproduction SUB0ZERO-admission: admits the reconstructed refusal size and settles exact usage', async () => {
+    config = { ...CONFIG, dailyTokenCap: 3_000_000, lifetimeTokenCap: 0 };
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,current_date,2135302)`, [OWNER]);
+    // Content-free stand-in for the 14:56:48 request: 31,901 transport
+    // fragments, 244,809 reasoning-text bytes, 2,719,303 total message bytes.
+    const details = Array.from({ length: 31_901 }, (_, i) => ({ type: 'reasoning.text',
+      text: 'r'.repeat(i < 244_809 % 31_901 ? 8 : 7), format: 'unknown', index: 0 }));
+    const messages = [{ role: 'user', content: '' }, { role: 'assistant', reasoning_details: details }];
+    messages[0]!.content = 'x'.repeat(2_719_303 - Buffer.byteLength(JSON.stringify({ messages })));
+    const body = { messages, max_tokens: 1024 };
+    expect(Math.ceil(Buffer.byteLength(JSON.stringify({ messages })) / 3) + 256).toBe(906_691);
+    expect(promptTokenBound(body)).toBeLessThan(864_698);
+    reply = () => Response.json({ choices: [{ message: { content: 'admitted' } }],
+      usage: { prompt_tokens: 170_000, completion_tokens: 500, prompt_tokens_details: { cached_tokens: 165_000 } } });
+    expect((await (await call(body)).json()).choices[0].message.content).toBe('admitted');
+    expect(upstream).toHaveLength(1);
+    expect((upstream[0]!.body.messages as unknown[])[1]).toMatchObject({ reasoning_details: details });
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(2_135_302 + 46_750);
+    expect(Number((await db.query(`SELECT reservation_credit FROM free_agent_usage`)).rows[0]!.reservation_credit)).toBe(0);
+    console.log(`Demonstrated SUB0ZERO-admission: old message-only estimate 906691 > 864698 remaining; new estimate ${promptTokenBound(body)}; HTTP reply admitted; exact settlement 2182052.`);
+  });
+
+  it('discounts an observed matching warm prefix at 0.25 and settles an ensuing cache miss exactly', async () => {
+    config = { ...CONFIG, dailyTokenCap: 100_000, lifetimeTokenCap: 0 };
+    const body = { stream: true, messages: [{ role: 'user', content: 'prior context '.repeat(300) }], max_tokens: 1024 };
+    reply = () => new Response('data: {"usage":{"prompt_tokens":1000,"completion_tokens":10,"prompt_tokens_details":{"cached_tokens":900}}}\n\ndata: [DONE]\n\n');
+    await (await call(body)).text();
+    let finish!: () => void;
+    reply = () => new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[]}\n\n'));
+      finish = () => {
+        controller.enqueue(new TextEncoder().encode('data: {"usage":{"prompt_tokens":1000,"completion_tokens":10}}\n\ndata: [DONE]\n\n'));
+        controller.close();
+      };
+    } }));
+    const response = await call(body);
+    const expectedReservation = promptTokenBound(body) - 900 + 225 + 1024;
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(335 + expectedReservation);
+    finish();
+    await response.text();
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(335 + 1010);
+    expect(Number((await db.query(`SELECT reservation_credit FROM free_agent_usage`)).rows[0]!.reservation_credit)).toBe(0);
+  });
+
+  it('bounds aggregate reservation uncertainty across parallel owner calls, even with a total cache miss', async () => {
+    const now = new Date();
+    const calls = await Promise.all(Array.from({ length: 8 }, () => reserveAllowance(db, OWNER, now,
+      { ...CONFIG, dailyTokenCap: 1_000_000, lifetimeTokenCap: 0 }, 2_500, 256, DEFAULT_FREE_AGENT_LIMITS, 50_000, 50_000)));
+    const admitted = calls.filter(call => 'reserved' in call);
+    expect(admitted).toHaveLength(8);
+    const credits = admitted.reduce((sum, call) => sum + call.credit, 0);
+    expect(credits).toBe(32_768);
+    expect(admitted.reduce((sum, call) => sum + call.reserved, 0)).toBe(8 * (50_000 + 256) - 32_768);
+    expect(Number((await db.query(`SELECT reservation_credit FROM free_agent_usage`)).rows[0]!.reservation_credit)).toBe(32_768);
+  });
+
+  it.each([
+    { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,' + 'A'.repeat(100_000) } }] },
+    { role: 'user', content: 'data:image/png;base64,' + 'A'.repeat(100_000) },
+    { role: 'assistant', reasoning_details: [{ type: 'reasoning.encrypted', data: 'A'.repeat(100_000) }] },
+  ])('refuses unsupported binary input before reservation instead of counting it as text', async message => {
+    expect((await call({ messages: [message] })).status).toBe(400);
+    expect(upstream).toEqual([]);
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0);
+  });
 
   it('Reproduction free-allowance-bytes-overcount: forwards 180 KB at 123478 of 300000 tokens used', async () => {
     config = { ...CONFIG, dailyTokenCap: 300_000, lifetimeTokenCap: 0 };

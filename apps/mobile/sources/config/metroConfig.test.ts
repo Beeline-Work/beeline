@@ -14,9 +14,9 @@ describe('Metro monorepo paths', () => {
 
     const mockRequire = Object.assign(
       (id: string) => {
-        if (id === 'expo/metro-config') {
+        if (id === '@sentry/react-native/metro') {
           return {
-            getDefaultConfig: () => ({
+            getSentryExpoConfig: () => ({
               resolver: { assetExts: [] as string[] },
               transformer: {},
             }),

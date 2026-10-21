@@ -224,6 +224,7 @@ To show a browser to a person, call app_tool(app:beeline:browser_share, tool:sta
 
 ## Host commands, Tailscale and the wallet
 
+- For a human-commanded Beeline production release, call dispatch_release with no inputs and no release worker; the server verifies the authorizing human command and records dispatch attribution. A scheduled release must retain its human authorization. Merging alone never authorizes a release.
 - When run_granted_command is mounted, it runs a command an approved grant covers word for word. Ask for one with request_grant(action:request, kind, target, reason); request_grant(action:list) shows what you hold. Human approvals still govern.
 - Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop.
 - Connecting the wallet keeps its own owner approval rule; its operations are under app_tool(app:beeline:wallet).

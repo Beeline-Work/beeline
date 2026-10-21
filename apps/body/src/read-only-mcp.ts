@@ -2792,6 +2792,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'report':
     case 'report_feedback':
     case 'notify_feedback_fixed': return execute(name);
+    case 'dispatch_release': return execute(name);
     case 'approve_merge':
     case 'merge_corner':
     case 'set_corner_hold':
@@ -3427,6 +3428,11 @@ async function executeAgentOperation(
       return prChecksStatus(args);
     case 'approve_merge':
       return approveMerge(args);
+    case 'dispatch_release':
+      return JSON.stringify(await daemonExecute('dispatchRoomWorkflow', {
+        ...await activeCommandContext(),
+        ...(args.inputs === undefined ? {} : { inputs: args.inputs }),
+      }));
     case 'merge_corner':
       return JSON.stringify(
         await daemonExecute('mergeCorner', { cornerId: targetCornerId(args) }),

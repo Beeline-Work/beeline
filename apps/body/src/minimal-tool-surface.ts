@@ -898,6 +898,16 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    name: 'dispatch_release',
+    description: 'Dispatch a production Beeline release only when explicitly commanded by a workspace owner or admin in this turn. Routine releases use no inputs. Recovery inputs require an explicit recovery instruction. Returns the audit receipt; creates no command approval card.',
+    inputSchema: { type: 'object', properties: {
+      inputs: { type: 'object', properties: Object.fromEntries(
+        ['release_sha', 'release_version', 'retry_attempt', 'selection', 'store_track', 'plan_only', 'run_release_proof', 'allow_pin_restore']
+          .map(key => [key, { type: 'string', maxLength: 256 }])
+      ), additionalProperties: false },
+    }, additionalProperties: false },
+  },
+  {
     "name": "report_feedback",
     "description": "Report one rough patch in Beeline itself (not in the user's project) to the Beeline team: simpler_path (a simpler way existed), contradiction (instructions, tools, or prompts disagree), tooling_gap (a missing tool would have done the job better), context_gap (missing or discontinuous data, prompts, or memory), or bug. Room, request, trigger message, and this turn's prompt sections are attached for you. Never include secrets, and quote nobody's words: describe the problem. Returns the item id; a failure here never affects your turn.",
     "inputSchema": {

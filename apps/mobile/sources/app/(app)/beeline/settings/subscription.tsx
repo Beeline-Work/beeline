@@ -26,9 +26,10 @@ export default function Subscription() {
   const params = useLocalSearchParams<{ roomId?: string | string[]; subscriptionId?: string | string[] }>();
   const roomId = first(params.roomId);
   const subscriptionId = first(params.subscriptionId);
-  const { work, loading, error, setError, retry } = useScheduledWork(roomId);
+  const { work, loading, error, retry } = useScheduledWork(roomId);
   useLatencyRouteFrame('/beeline/settings/subscription', !loading, true);
   const [working, setWorking] = useState(false);
+  const [stopFailed, setStopFailed] = useState(false);
   const subscription = work?.subscriptions.find((candidate) => candidate.id === subscriptionId);
   const creatorName = subscription ? (work?.agentNames.get(subscription.agentId) ?? 'Agent' )
     : 'Agent';
@@ -36,11 +37,13 @@ export default function Subscription() {
   const stop = async () => {
     if (!roomId || !subscription) return;
     setWorking(true);
+    setStopFailed(false);
     try {
-      await stopSubscription(roomId, subscription.id);
-      router.back();
-    } catch (caught) {
-      setError(`Could not stop the subscription: ${String(caught)}`);
+      // Already gone on the server: the page shows it stopped and rereads the list.
+      if ((await stopSubscription(roomId, subscription.id)) === 'already-stopped') retry();
+      else router.back();
+    } catch {
+      setStopFailed(true);
     } finally {
       setWorking(false);
     }
@@ -55,7 +58,18 @@ export default function Subscription() {
         testID="subscription-header"
         title="Subscription"
       />
-      {error && (
+      {stopFailed ? (
+        <View accessibilityRole="alert" style={styles.error} testID="subscription-stop-error">
+          <Text style={styles.errorText}>Could not stop this subscription.</Text>
+          <Button
+            label="Try again"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={() => void stop()}
+            testID="subscription-stop-error-retry"
+          />
+        </View>
+      ) : error ? (
         <View style={styles.error}>
           <Text style={styles.errorText}>{error}</Text>
           <Button
@@ -65,7 +79,7 @@ export default function Subscription() {
             onPress={retry}
           />
         </View>
-      )}
+      ) : null}
       {loading && !work ? (
         <View style={styles.loading}><SurfaceGlyphLoader testID="subscription-loader" /></View>
       ) : subscription ? (
@@ -100,6 +114,8 @@ const styles = StyleSheet.create((theme) => ({
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
   stop: { marginTop: theme.buzz.space.md },
   gone: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, padding: theme.buzz.space.md },
-  error: { minHeight: 44, justifyContent: 'center', paddingHorizontal: theme.buzz.space.md, backgroundColor: theme.buzz.bgHighlight },
+  error: { minHeight: 44, justifyContent: 'center', gap: theme.buzz.space.sm,
+    paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm,
+    backgroundColor: theme.buzz.bgHighlight },
   errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
 }));

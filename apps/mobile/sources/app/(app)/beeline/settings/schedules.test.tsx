@@ -32,7 +32,13 @@ vi.mock('@/components/buzz/CornerGlyph', () => ({ CORNER_META_SIZE: 10, CornerGl
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () => null }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'viewer' }), getEffectiveRelayUrl: async () => 'http://local' }));
 vi.mock('@/sync/transport/room-view-client', () => ({ RoomViewClient: class { room = room; } }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation }));
+const PhoneError = vi.hoisted(() => class MonolithPhoneOperationError extends Error {
+  constructor(readonly operation: string, readonly status: number, readonly code: string) {
+    super(`Monolith ${operation} failed (${status}): ${code}`);
+    this.name = 'MonolithPhoneOperationError';
+  }
+});
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: operation, MonolithPhoneOperationError: PhoneError }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
   register: async () => () => undefined,
 }) }));
@@ -153,6 +159,90 @@ it('stops a subscription from its page only after the same confirm step', async 
     await act(async () => press(tree, 'stop-subscription-confirm'));
     expect(operation).toHaveBeenCalledWith('deleteRoomSubscription', { roomId: 'room', subscriptionId: 'sub' });
     expect(router.back).toHaveBeenCalled();
+  } finally { await act(async () => tree.unmount()); }
+});
+
+/** Every word the page shows, joined. */
+const words = (tree: any) => tree.root.findAll((node: any) => node.type === 'Text')
+  .flatMap((node: any) => [node.props.children].flat()).filter((child: unknown) => typeof child === 'string').join(' ');
+
+/**
+ * Answers each stop with `failure`, the way the server answered on the phone.
+ * With `gone`, the row is deleted once the page has loaded it, so the reads
+ * after that stop omit it.
+ */
+function failStops(failure: (name: string) => Error, gone?: string) {
+  const original = operation.getMockImplementation()!;
+  let deleted = false;
+  operation.mockImplementation(async (name: string, input?: unknown): Promise<any> => {
+    if (name === 'deleteRoomSchedule' || name === 'deleteRoomSubscription') {
+      deleted = true;
+      throw failure(name);
+    }
+    const value: any = await original(name, input);
+    return name === 'readScheduledWork' && gone && deleted ? { ...value,
+      schedules: value.schedules.filter((item: any) => item.id !== gone),
+      subscriptions: value.subscriptions.filter((item: any) => item.id !== gone) } : value;
+  });
+  return () => operation.mockImplementation(original);
+}
+
+it.each([
+  ['schedule', PromptSchedule, { scheduleId: 'daily' }, 'stop-schedule', 'schedule not found', 'schedule-gone'],
+  ['subscription', Subscription, { subscriptionId: 'sub' }, 'stop-subscription', 'subscription not found', 'subscription-gone'],
+] as const)('R1: shows a %s the server already deleted as stopped, with no error', async (_kind, Page, ids, stopId, code, goneId) => {
+  params.value = { roomId: 'room', ...ids };
+  const restore = failStops((name) => new PhoneError(name, 404, code), Object.values(ids)[0]);
+  const tree = await render(<Page />);
+  try {
+    await act(async () => press(tree, stopId));
+    await act(async () => press(tree, `${stopId}-confirm`));
+    expect(tree.root.findAll((node: any) => /stop-error/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: goneId })).toBeTruthy();
+    expect(words(tree)).not.toMatch(/Could not|Monolith|404/);
+    // The list is read again rather than trusting the stale copy.
+    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork').length).toBeGreaterThan(1);
+  } finally { restore(); await act(async () => tree.unmount()); }
+});
+
+it.each([
+  ['schedule', PromptSchedule, { scheduleId: 'daily' }, 'stop-schedule', 'deleteRoomSchedule', 503, 'request failed'],
+  ['schedule', PromptSchedule, { scheduleId: 'daily' }, 'stop-schedule', 'deleteRoomSchedule', 404, 'room not found'],
+  ['subscription', Subscription, { subscriptionId: 'sub' }, 'stop-subscription', 'deleteRoomSubscription', 503, 'request failed'],
+] as const)('R1: says a failed %s stop in one plain sentence and tries the stop again', async (kind, Page, ids, stopId, stopOperation, status, code) => {
+  params.value = { roomId: 'room', ...ids };
+  const restore = failStops((name) => new PhoneError(name, status, code));
+  const tree = await render(<Page />);
+  try {
+    await act(async () => press(tree, stopId));
+    await act(async () => press(tree, `${stopId}-confirm`));
+    const banner = tree.root.findByProps({ testID: `${kind}-stop-error` });
+    expect(banner.props.accessibilityRole).toBe('alert');
+    expect(words(tree)).toContain(`Could not stop this ${kind}.`);
+    expect(words(tree)).not.toMatch(/MonolithPhoneOperationError|deleteRoom|\(\d{3}\)|not found/);
+    expect(router.back).not.toHaveBeenCalled();
+    await act(async () => press(tree, `${kind}-stop-error-retry`));
+    expect(operation.mock.calls.filter(([name]) => name === stopOperation)).toHaveLength(2);
+  } finally { restore(); await act(async () => tree.unmount()); }
+});
+
+it.each([
+  ['schedule', PromptSchedule, { scheduleId: 'daily' }, 'stop-schedule', 'Stop schedule'],
+  ['subscription', Subscription, { subscriptionId: 'sub' }, 'stop-subscription', 'Stop subscription'],
+] as const)('R1: confirms a %s stop on the same row the first tap hit', async (_kind, Page, ids, stopId, label) => {
+  params.value = { roomId: 'room', ...ids };
+  const tree = await render(<Page />);
+  try {
+    const settingsRow = (testID: string) =>
+      tree.root.find((node: any) => node.type === 'SettingsRow' && node.props.testID === testID);
+    const parent = settingsRow(stopId).parent;
+    await act(async () => press(tree, stopId));
+    const confirm = settingsRow(`${stopId}-confirm`);
+    // Same row primitive, same slot, same leading title: the label does not move.
+    expect(confirm.parent).toBe(parent);
+    expect(confirm.props).toMatchObject({ title: label, tone: 'destructive', action: 'Cancel' });
+    await act(async () => confirm.props.trailingPress.onPress());
+    expect(settingsRow(stopId).parent).toBe(parent);
   } finally { await act(async () => tree.unmount()); }
 });
 

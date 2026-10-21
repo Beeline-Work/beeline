@@ -4,7 +4,7 @@ import { parseReviewSecret } from '@/buzz/review-link';
 
 export type DesktopDeepLinkDestination = {
   href: Href;
-  kind: 'review' | 'invite' | 'github-callback' | 'github-installation';
+  kind: 'review' | 'invite' | 'github-callback' | 'github-installation' | 'browser-share';
 };
 
 function routeValue(url: URL): string {
@@ -50,6 +50,12 @@ export function desktopDeepLinkDestination(rawUrl: string): DesktopDeepLinkDesti
   }
   if (url.hostname !== 'beeline') return null;
 
+  if (url.pathname === '/browser-share') {
+    return {
+      kind: 'browser-share',
+      href: { pathname: '/beeline/browser-share', params: { id: url.searchParams.get('id') ?? '' } },
+    };
+  }
   if (url.pathname === '/github-callback') {
     return {
       kind: 'github-callback',

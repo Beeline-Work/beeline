@@ -173,7 +173,7 @@ export async function createComputerSession(
   live: LiveHub,
   input: { roomId: string; agentId: string; sessionId: string; upstreamUrl: string; title?: string; expiresAt?: number },
   allowUpstream: (upstream: URL) => boolean = trustedComputerShareUpstream,
-): Promise<{ id: string; url: string }> {
+): Promise<{ id: string; url: string; messageId: string; beelineUrl: string }> {
   const bodySource = input.upstreamUrl === 'body:';
   let upstream: URL | undefined;
   try { upstream = bodySource ? undefined : new URL(input.upstreamUrl); } catch { /* rejected below */ }
@@ -209,8 +209,8 @@ export async function createComputerSession(
       [id, input.roomId, messageId, input.agentId, input.sessionId, upstream?.toString() ?? 'body:', process.env.FLY_MACHINE_ID ?? null, randomBytes(32), input.expiresAt ?? null],
     );
   });
-  live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId: input.agentId });
-  return { id, url };
+  live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId: input.agentId, messageId });
+  return { id, url, messageId, beelineUrl: `https://web.usebeeline.app/beeline/browser-share?id=${id}` };
 }
 
 export async function getComputerSession(database: SqlDatabase, id: string): Promise<ComputerSessionRow | undefined> {
@@ -353,6 +353,16 @@ function serveComputerRetry(request: IncomingMessage, response: ServerResponse):
     </script>`);
 }
 
+function computerSharePage(response: ServerResponse, status: number, message: string, id: string): void {
+  const path = `/beeline/browser-share?id=${encodeURIComponent(id)}`;
+  response.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
+  });
+  response.end(`<!doctype html><html lang="en"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shared browser · Beeline</title><h1>Shared browser</h1><p>${message}</p><p><a href="https://web.usebeeline.app${path}">Open in Beeline on the web</a></p><p><a href="beeline://${path.slice(1)}">Open in the Beeline app</a></p></html>`);
+}
+
 /** The public session path needs a viewer token and current Room/agent authority. */
 export async function serveComputerSession(
   request: IncomingMessage,
@@ -361,9 +371,22 @@ export async function serveComputerSession(
   live: LiveHub,
   id: string,
 ): Promise<void> {
+  const token = new URL(request.url ?? '/', 'http://beeline.local').searchParams.get('access');
+  // A public link reveals no session metadata, even when the id is unknown.
+  if (token === null) {
+    computerSharePage(response, 200, 'Open Beeline and sign in to view this shared browser.', id);
+    return;
+  }
   const row = await getComputerSession(database, id);
-  if (!row || !(await authorizedViewer(request, database, row))) { response.writeHead(403).end(); return; }
-  if (!row || row.status !== 'live') {
+  if (!row || !(await authorizedViewer(request, database, row))) {
+    const parts = /^([0-9a-f]{64})\.([0-9]{13})\.([0-9a-f]{64})$/.exec(token);
+    const expired = parts && Number(parts[2]) <= Date.now();
+    computerSharePage(response, 403, expired
+      ? 'This browser access link has expired. Open Beeline to request access again.'
+      : 'You do not have access to this shared browser. Open Beeline with an allowed account.', id);
+    return;
+  }
+  if (row.status !== 'live') {
     response.writeHead(410, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
     response.end('This browser session has ended.');
     return;

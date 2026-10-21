@@ -333,7 +333,7 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
   "browser_share": {
     "start": {
       "name": "start",
-      "description": "Share an already open browser tab in this Room or corner while you keep using that same browser session. Squire requires an existing operate session id. Chromium attaches to an already running debug port and selects an open tab; it does not launch a browser. The tool returns as soon as the live card is ready. Human browser activity arrives as Room events. End the share explicitly with app_tool(app:beeline:browser_share, tool:end, args:...).",
+      "description": "Share an already open browser tab in this Room or corner while you keep using that same browser session. Squire requires an existing operate session id. Chromium attaches to an already running debug port and selects an open tab; it does not launch a browser. The tool returns as soon as the live card is ready. The live browser card is posted in this place. Ask the person to open the card. The result contains no URL. Human browser activity arrives as Room events. End the share explicitly with app_tool(app:beeline:browser_share, tool:end, args:...).",
       "inputSchema": {
         "type": "object",
         "required": ["source"],

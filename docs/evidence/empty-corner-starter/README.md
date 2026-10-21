@@ -84,10 +84,13 @@ Metro on port 18433 serves this PR’s normal `index.ts` against
 `http://10.0.2.2:18431`. Device logs report build/release SHA
 `ec4ef66e09bf208a0a90d89854b13dac5ca7fa22` and the local server origin.
 The runtime-37 binary successfully loaded this head and signed in locally.
-The initial asynchronous proof bootstrap caused “App entry not found”; restoring
-the normal entry point fixed it. An initial workspace read timed out and Retry
-loaded the Room deck. Expo’s floating Tools overlay was disabled in the local
-dev-client preferences for the captures, without changing native source.
+For a fresh device, temporarily use a sign-in entry that synchronously registers
+an Expo root, exchanges `local:cornercaptain` with the local server, and writes
+the returned session through SecureStore. Then restore normal package main and
+restart Metro before opening the real app. This avoids trying to register the
+real app only after an asynchronous sign-in. Expo’s floating Tools overlay was
+disabled in local dev-client preferences for the captures, without changing
+native source.
 
 The Android native app was driven through #general → Corners → +, creating
 `hidden-atlas-corner` (`4d7eafdc-5596-4261-8dc2-eeddc8079a2f`). The note showed
@@ -104,8 +107,8 @@ for this new corner while the Room read DTO returns no transcript messages.
 
 This is a real app/server demonstration, not the focused renderer stand-in.
 The installed native runtime is 37, so it does **not** claim the brief’s exact
-runtime-39 acceptance. The concrete remaining decision is whether to accept
-this successful native proof or repeat it with a supplied runtime-39 dev client.
+runtime-39 acceptance. Ruby accepted this runtime-37 proof in the revision-3 assignment because the
+change is JavaScript-only; no runtime-39 client will be built.
 
 ## Validation
 
@@ -116,3 +119,42 @@ this successful native proof or repeat it with a supplied runtime-39 dev client.
   5 skip; no failures** (581 files, 4772 tests).
 - The earlier run’s unrelated viewer-dock failure passed in the isolated retry
   and in this full run.
+
+## First-message prefill (brief revision 3)
+
+The existing automatic reply rule is `answerPrefillCandidate` in
+`apps/mobile/sources/buzz/composer-prefill.ts`, followed by `planAnswerPrefill`.
+`BuzzChatSurface` applies its plan through `applyComposerPrefill` and registers
+both mention maps. The extension supplies the Room/corner roster and offers its
+sole agent before the viewer has sent a message. Room-scoped candidate ids reuse
+the existing once-only guard, and the existing planner preserves any draft.
+Agent viewers, DMs, and zero/multiple-agent first-message behavior stay unchanged.
+
+The same local #general now contains only Beebee's seeded hello, with no human
+message. `desktop-04-first-message.jpg` captures the real desktop app opening
+that Room: the @beebee chip appears automatically without typing or tapping a
+starter. The initial tag is offered even before the hello arrives; the stable
+candidate prevents reinsertion after a person deliberately deletes it.
+
+Unit cases cover an empty Room and a hello, two agents, no agent, an existing
+draft, an agent viewer, deletion followed by a hello, and the normal answer rule
+after the viewer has spoken.
+
+First-message implementation commit: `d5923e63e`. The revision-2 native runtime-37 acceptance remains in force.
+
+`android-04-first-message.png` captures the same real #general path on the
+accepted runtime-37 client, with Metro reporting implementation SHA
+`d5923e63eebcd4ea504b24041cf2c402c12758e4`. The Room shows Beebee's hello and the
+@beebee composer chip automatically, without typing, tapping the note, or
+sending a message. `android-first-message.xml` records the native input text.
+`first-message-state.json` confirms one agent member and zero messages authored
+by cornercaptain in #general.
+The temporary native sign-in bootstrap was removed and normal package main and
+`index.ts` restored before this capture; no native code changed.
+
+Revision-3 checks: root typecheck, UI component policy and workflow-path lint
+pass; the composer-prefill suite passes all 28 tests. The first full mobile run
+passed 4773 tests with 5 skipped and one unrelated five-second timeout in
+`DirectMessagePickerSheet.browser.test.ts`; that file passes both tests on its
+isolated retry. A full repeat uses two workers and one retry. Current-head CI
+must pass before this PR leaves draft; final results are recorded in the PR.

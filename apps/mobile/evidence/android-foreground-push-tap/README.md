@@ -4,6 +4,11 @@ Foreground Android data-only pushes show `ForegroundPushToast` inside the app.
 A tap opens the Room through the mounted navigator. The OS shade is not posted,
 so MainActivity does not restart.
 
+Governing proof for this PR is the Metro local-stack run in
+[`../android-metro-local-stack/`](../android-metro-local-stack/README.md)
+(debug/dev-client APK, PR JS from Metro, local Postgres + server). Release APK
+shots below remain as a signed-in Play Review stand-in.
+
 ## Signed-in Play Review (release APK, runtime 39)
 
 Release APK sha256 `006fcc6afc539a854959945db9b6499f191ec7bbd3ed4fcde7a7d82a218433f5`.

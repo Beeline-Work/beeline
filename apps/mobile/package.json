@@ -23,7 +23,7 @@
     "release:build:apk": "npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive",
     "prebuild": "rm -rf android ios && expo prebuild",
     "typecheck": "node scripts/generate-typed-routes.cjs && tsc --noEmit",
-    "postinstall": "patch-package || true; (command -v setup-skia-web >/dev/null && setup-skia-web public) || true",
+    "postinstall": "(patch-package || true) && node scripts/patch-livekit-abort.cjs && ((command -v setup-skia-web >/dev/null && setup-skia-web public) || true)",
     "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
     "identity-mark:proof": "node scripts/render-identity-axis-proof.mjs",
     "turn-band:proof": "node scripts/turn-band-hold-proof.mjs",

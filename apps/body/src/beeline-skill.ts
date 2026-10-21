@@ -302,6 +302,15 @@ For UI changes, compare rendered screens with any supplied mock and DESIGN.md. U
 
 Test one concrete failure sequence for each changed behavior. Confirm every blocker by a command or exact source evidence. Check resource authority, credentials and migration safety. Reject unrequested machinery, redundant paths and scope creep. Plausible concerns and cosmetic preferences do not block delivery.
 
+## Check mandate
+
+- List each user-visible behavior the diff adds, removes or brings back.
+- Match each one to a quoted line in the brief's Intent. An item with no match is outside the mandate.
+- For each touched feature, look for an earlier human decision: Search the Room for the feature name together with remove, revert or "don't". Run \`git log -S<symbol>\` on the touched files to find earlier removals and reverts.
+- A conflict, or a change much larger than the brief, blocks PASS. The reviewer then reports \`needs-decision:\` to its commander, quoting the old decision and the diff line. It does not send a FAIL to the worker, because the worker cannot resolve a missing mandate.
+
+Block only on a behavior with no Intent match or a quoted conflicting human decision, never on taste. For a no-match behavior, quote the applicable Intent and the unmatched diff line; do not invent an old decision.
+
 ## Report the verdict
 
 Lead with the verdict and the one blocking reason, then the concrete next step for the worker. List only blocking items. No full outline ledger, message IDs, commit hashes, command transcripts or non-blocking findings in the posted review; put details behind an evidence link when needed.

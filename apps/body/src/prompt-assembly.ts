@@ -491,7 +491,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['code-corner'],
     render: ({ brief, reviewer, reviewerHandle, worktree, githubCli, cornerPrepareScript }) => {
       const repositoryWork = cornerHasRepositoryWork(brief);
-      const push = `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push.`;
+      const push = `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts against that branch; redo work and rerun affected tests. Exit code 2: absent branch; skip first rebase. Other exit: stop; retry lookup.`;
       return paragraphs(
         `Implementer rules: any agent in this corner may commit, push and open a pull request. The rules below${reviewer ? ', up to the reviewer rules,' : ''} apply whenever you write code in this corner.`,
         repositoryWork && cornerPrepareScript === true && 'Run npm run corner:prepare first.',
@@ -499,6 +499,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           (githubCli === 'rest'
             ? `${push} Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
             : `${push} Open the pull request with gh.`),
+        repositoryWork && '4 pushes to one PR without PASS: stop; report blocked: to commander, cause: moving target, unreliable test tool, or PR too big / racing other PRs.',
         repositoryWork ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
         repositoryWork &&
           'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',

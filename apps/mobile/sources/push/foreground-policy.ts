@@ -12,13 +12,9 @@ import { ACTION_OUTCOME_DATA_KEY } from './notification-actions';
  * tracker), so the whole rule is unit-testable without React Native.
  *
  * Contracts:
- * - iOS keeps the OS banner while the app is active: a push for another
- *   conversation is shown and listed silently (no sound).
- * - Android data-only pushes skip Expo's handler in the foreground. Those
- *   become an in-app notice (`foregroundInAppNotice`) so a tap uses the
- *   mounted navigator and never posts a system notification that would
- *   relaunch MainActivity. Background and cold-start taps still use the OS
- *   shade.
+ * - While React Native AppState is 'active', a push for another conversation
+ *   is shown and kept in the notification list, but silently: no sound and no
+ *   vibration. It stays there until its conversation is opened.
  * - Always suppress when the notification's channel/Room id is the currently
  *   open Room, regardless of app state — even mid-transition they are already
  *   reading exactly that conversation.
@@ -134,12 +130,17 @@ export type ReceivedNotification = {
   };
 };
 
-/** In-app notice for an Android data-only push received while the app is open. */
-export type ForegroundInAppNotice = {
+/** The `Notifications.scheduleNotificationAsync` request that re-presents a push. */
+export type ForegroundRepresentation = {
   identifier: string;
-  title: string;
-  body: string;
-  data: Record<string, unknown>;
+  content: {
+    title?: string;
+    subtitle?: string;
+    body: string;
+    data: Record<string, unknown>;
+    categoryIdentifier?: string;
+  };
+  trigger: null;
 };
 
 function isAndroidDataOnlyPush(trigger: unknown): boolean {
@@ -152,20 +153,21 @@ function isAndroidDataOnlyPush(trigger: unknown): boolean {
 /**
  * expo-notifications 55 does not call `handleNotification` for an Android
  * data-only push received in the foreground (`NotificationsHandler` returns
- * early), so nothing posts it. Beeline's Android pushes are data-only. Posting
- * a local system notification would relaunch MainActivity on tap; the
- * received listener therefore builds an in-app notice instead. A tap routes
- * through the mounted navigator with the push's data, the same as a
- * background tap, without an activity restart.
+ * early), so nothing posts it. Beeline's Android pushes are data-only, so the
+ * received listener re-presents one as a local notification when this policy
+ * allows it. The local notification keeps the push's identifier (its tag), so
+ * it replaces, never duplicates, a post of the same push; it then passes
+ * through `handleNotification` like any local notification. Its data is the
+ * push's data, so a tap routes and dedupes as a background push does.
  *
  * Returns null for anything else: other platforms, a push Expo presents itself
- * (it has a `notification` block), a local notification, a silent push with
- * no text, or a push the policy hides (the open Room).
+ * (it has a `notification` block), a local notification (including this
+ * re-presentation), a silent push with no text, or a push the policy hides.
  */
-export function foregroundInAppNotice(
+export function foregroundDataOnlyRepresentation(
   notification: ReceivedNotification,
   input: { platform: string; appState?: string | null; openChannelId?: string | null },
-): ForegroundInAppNotice | null {
+): ForegroundRepresentation | null {
   if (input.platform !== 'android') return null;
   const { identifier, content, trigger } = notification.request;
   if (!isAndroidDataOnlyPush(trigger)) return null;
@@ -182,8 +184,13 @@ export function foregroundInAppNotice(
   if (!decision.shouldPresent) return null;
   return {
     identifier,
-    title: content.title || 'Beeline',
-    body: content.body ?? '',
-    data,
+    content: {
+      ...(content.title ? { title: content.title } : {}),
+      ...(content.subtitle ? { subtitle: content.subtitle } : {}),
+      body: content.body ?? '',
+      data,
+      ...(content.categoryIdentifier ? { categoryIdentifier: content.categoryIdentifier } : {}),
+    },
+    trigger: null,
   };
 }

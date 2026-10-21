@@ -63,13 +63,9 @@ import { reportRunningUpdateReceipt } from '@/push/update-receipt';
 import { getOpenBuzzChannelId } from '@/buzz/open-room-tracker';
 import {
   decideForegroundNotificationDisplay,
-  foregroundInAppNotice,
+  foregroundDataOnlyRepresentation,
   foregroundNotificationBehavior,
 } from '@/push/foreground-policy';
-import {
-  presentForegroundPushNotice,
-  setForegroundPushOpenHandler,
-} from '@/push/foreground-push-notice';
 import {
   clearLegacyPresentedNotificationsOnce,
   reconcilePresentedNotificationBadge,
@@ -84,7 +80,6 @@ import { readIdentitySettings } from '@/buzz/managed-identity-surface';
 import { loadActiveCommunityId } from '@/buzz/community-storage';
 import { UpdateProvider } from '@/hooks/useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
-import { ForegroundPushToast } from '@/components/buzz/ForegroundPushToast';
 import { DesktopDeepLinkBridge } from '@/components/DesktopDeepLinkBridge';
 import { useIsDesktop } from '@/utils/responsive';
 import { startDesktopNotifications } from '@/push/desktop-notifications';
@@ -106,10 +101,9 @@ function afterFirstFrame(run: () => void): () => void {
   };
 }
 
-// Foreground OS-banner policy: iOS still lists other-Room pushes silently
-// while active. Android data-only pushes skip this handler; those become an
-// in-app notice so a tap never relaunches MainActivity. Background display
-// and response routing are untouched; see push/foreground-policy.ts.
+// Foreground OS-banner policy: while the app is active, pushes for other
+// conversations are shown and listed silently. Native background display and
+// response routing are untouched; see push/foreground-policy.ts.
 Notifications.setNotificationHandler({
   handleNotification: async (notification) =>
     foregroundNotificationBehavior(
@@ -122,16 +116,18 @@ Notifications.setNotificationHandler({
 });
 
 // Expo skips the handler above for an Android data-only push in the
-// foreground and posts nothing. Show it inside the app, not as a system
-// notification whose tap would start MainActivity again.
+// foreground and posts nothing; re-present it under the same policy.
 if (Platform.OS === 'android') {
   Notifications.addNotificationReceivedListener((notification) => {
-    const notice = foregroundInAppNotice(notification, {
+    const representation = foregroundDataOnlyRepresentation(notification, {
       platform: Platform.OS,
       appState: AppState.currentState,
       openChannelId: getOpenBuzzChannelId(),
     });
-    if (notice) presentForegroundPushNotice(notice);
+    if (!representation) return;
+    void Notifications.scheduleNotificationAsync(representation).catch((error) =>
+      console.warn('[PUSH] Could not present foreground push:', error),
+    );
   });
 }
 
@@ -479,20 +475,6 @@ export default function RootLayout() {
     });
   }, [handleNotificationResponse]);
 
-  React.useEffect(() => {
-    return setForegroundPushOpenHandler((notice) => {
-      void handleNotificationResponse({
-        actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
-        notification: {
-          request: {
-            identifier: notice.identifier,
-            content: { data: notice.data },
-          },
-        },
-      });
-    });
-  }, [handleNotificationResponse]);
-
   // Track the screens
   useTrackScreens();
 
@@ -536,7 +518,6 @@ export default function RootLayout() {
                 <WarmComputerSessionHost />
               </ModalProvider>
               <UpdateReadyPrompt />
-              <ForegroundPushToast />
             </ThemeProvider>
           </UpdateProvider>
         </GestureHandlerRootView>

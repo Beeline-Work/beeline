@@ -1,0 +1,9 @@
+{
+  "serial": "emulator-5566",
+  "source": "real Room snapshot replay through production components",
+  "roomId": "bb91a1c7-7cad-4fde-aafc-94fccb651ac8",
+  "issue": "https://github.com/Beeline-Work/beeline/issues/2722",
+  "pr": "https://github.com/Beeline-Work/beeline/pull/2721",
+  "corner": "e683ae2a-5b60-41c3-875a-cabf3c1313d5",
+  "apkSha256": "e165ff0b519357db8ab19021d82ec9b01b10a38e14938d1bfe81fff85d02c190"
+}

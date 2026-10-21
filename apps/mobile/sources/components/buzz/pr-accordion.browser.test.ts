@@ -5,7 +5,7 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 for (const width of [390, 1280])
   for (const reduced of [false, true]) {
     it.skipIf(!existsSync(CHROME))(
-      `PR-ACCORDION-1: ${width}px reduced=${reduced}`,
+      `EVENT-ROWS-V2: ${width}px reduced=${reduced}`,
       async () => {
         const mobile = process.cwd();
         const shims = webProofShims(mobile);
@@ -13,6 +13,8 @@ for (const width of [390, 1280])
           'useReducedMotion = () => true',
           `useReducedMotion = () => ${reduced}`,
         );
+        shims['expo-router'] = 'export const router = {}; export const useRouter = () => ({}); export const useLocalSearchParams = () => ({});';
+        shims['./HullActionSheet'] = 'export const HullActionSheetModal = () => null; export const HullActionSheetRow = () => null; export const HULL_SHEET_INSET = 22;';
         const proof = await runBrowserProof({
           entry: path.join(mobile, 'scripts/pr-accordion-proof.tsx'),
           mobile,
@@ -24,7 +26,7 @@ for (const width of [390, 1280])
             : undefined,
         });
         expect(proof.status, proof.stderr).toBe(0);
-        expect(proof.result, proof.stderr).toContain('PASS PR-ACCORDION-1');
+        expect(proof.result, proof.stderr).toContain('PASS EVENT-ROWS-V2');
       },
       90_000,
     );

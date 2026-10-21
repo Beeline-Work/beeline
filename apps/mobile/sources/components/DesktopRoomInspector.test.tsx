@@ -116,6 +116,10 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
     HullActionSheetRow: host('HullActionSheetRow'),
   };
 });
+vi.mock('@/components/buzz/CornerOpenedMarker', async () => {
+  const ReactModule = await import('react');
+  return { CornerOpenedMarker: (props: any) => ReactModule.createElement('CornerOpenedMarker', props) };
+});
 vi.mock('@/components/buzz/Ledger', async () => {
   const ReactModule = await import('react');
   return {
@@ -341,16 +345,30 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
-  it('opens a standalone lifecycle corner through the inspector navigation callback', async () => {
+  it('hides standalone corner-close notices in the inspector transcript', async () => {
     const detail = { ...room(), room: corners[0].corner, parent: room().room,
       messages: [{ id: 'closed-fact', text: 'Corner closed', createdAt: 5, author: agent,
         presentation: 'system', daemonFact: { type: 'corner-complete', outcome: 'abandoned',
           cornerId: 'closed-target', name: 'Closed target', objective: 'Keep archived navigation' } }] } as any;
+    const tree = await render(props({ client: { room: vi.fn(async () => detail) } }));
+    expect(tree.root.findAllByType('DaemonFactCard' as any)).toHaveLength(0);
+    expect(text(tree)).not.toContain('Corner closed');
+    act(() => tree.unmount());
+  });
+
+  it.each([false, true])('opens a corner from its opening marker (source resident=%s)', async (sourceResident) => {
+    const detail = { ...room(), room: corners[0].corner, parent: room().room,
+      messages: [...(sourceResident ? [{ id: 'source', text: 'Start here', createdAt: 4, author: agent, presentation: 'message' }] : []), { id: 'opened-fact', text: 'Corner opened', createdAt: 5, author: agent,
+        presentation: 'card', daemonFact: { type: 'corner-open',
+          cornerId: 'opened-target', name: 'Opened target', objective: 'Navigate to the corner',
+          ...(sourceResident ? { sourceMessageId: 'source' } : {}) } }] } as any;
     const onOpenCorner = vi.fn();
     const tree = await render(props({ onOpenCorner, client: { room: vi.fn(async () => detail) } }));
-    const card = tree.root.findByType('DaemonFactCard' as any);
-    act(() => card.props.onOpenCorner('closed-target'));
-    expect(onOpenCorner).toHaveBeenCalledWith('closed-target');
+    const marker = tree.root.findByType('CornerOpenedMarker' as any);
+    expect(marker.props.title).toBe('Opened target');
+    act(() => marker.props.onOpen());
+    expect(onOpenCorner).toHaveBeenCalledWith('opened-target');
+    expect(tree.root.findAllByType('DaemonFactCard' as any)).toHaveLength(0);
     act(() => tree.unmount());
   });
 

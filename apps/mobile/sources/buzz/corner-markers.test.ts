@@ -50,3 +50,11 @@ describe('anchorCornerMarkers', () => {
     expect(anchored[0]!.cornerMarkers?.map((row) => row.id)).toEqual(['m1']);
   });
 });
+
+it('never attaches a settled close to its source as a visible closed marker', () => {
+  const source = { id: 'source', text: 'Open a corner' };
+  const closed = { id: 'closed', daemonFact: { type: 'corner-complete', sourceMessageId: 'source' } };
+  const rows = anchorCornerMarkers([source, closed]);
+  expect(rows).toEqual([source, closed]);
+  expect(rows[0]).not.toHaveProperty('cornerMarkers');
+});

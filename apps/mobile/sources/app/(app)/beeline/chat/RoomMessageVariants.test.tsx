@@ -14,10 +14,6 @@ import {
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
 import { beginReplyTarget } from '@/buzz/message-reply';
-import { LifecycleCard } from '@/components/buzz/LifecycleCard';
-import { lifecycleFixtures } from '../../../../../scripts/lifecycle-card-fixtures';
-import { LifecycleRow } from '@/components/buzz/LifecycleRow';
-import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { beelineThemes } from '@/buzz/groknight';
@@ -244,256 +240,29 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
   return { id: 'message', text: 'hello', isUser: false, timestamp: 1, ...overrides };
 }
 
-describe('Reproduction lifecycle-cards-2 shared shell and row', () => {
-  it.each(lifecycleFixtures)('$name uses the shared anatomy and available destinations', ({ message: item }) => {
-    const onOpenCorner = vi.fn();
-    const onOpenUrl = vi.fn();
-    const props = { message: item, onOpenCorner, onOpenUrl };
-    const renderer = render(item.notificationLifecycleRun ? <NotificationLifecycleCard {...props} />
-      : item.githubEvent ? <GitHubEventCard {...props} /> : <DaemonFactCard {...props} />);
-    const shell = renderer.root.findByType(LifecycleCard);
-    expect(shell.props.title).toContain(' · ');
-    expect(shell.props.title).not.toContain('@');
-    const rows = renderer.root.findAllByType(LifecycleRow);
-    expect(rows).toHaveLength(1);
-    const row = rows[0];
-    const buttons = renderer.root.findAllByType('Button');
-    expect(buttons.map((button: ReactTestInstance) => button.props.label)).toEqual([
-      ...(row.props.item.cornerId ? ['Corner →'] : []), ...(row.props.item.url ? ['View ↗'] : []),
-    ]);
-    expect(buttons[0]?.props.variant).toBe('primary');
-    if (buttons.length === 2) expect(buttons[1].props.variant).toBe('quiet');
-    for (const button of buttons) act(() => button.props.onPress());
-    if (row.props.item.cornerId) expect(onOpenCorner).toHaveBeenCalledWith(row.props.item.cornerId);
-    if (row.props.item.url) expect(onOpenUrl).toHaveBeenCalledWith(row.props.item.url);
-    if (item.notificationLifecycleRun && item.notificationLifecycleRun.items.length > 1) {
-      act(() => renderer.root.findByProps({ testID: `notification-run-expand-${item.id}` }).props.onPress());
-      const expanded = renderer.root.findAllByType(LifecycleRow);
-      expect(expanded).toHaveLength(item.notificationLifecycleRun.items.length);
-      for (const child of expanded) {
-        expect(child.findAllByType('Button')).toHaveLength(Number(Boolean(child.props.item.cornerId)) + Number(Boolean(child.props.item.url)));
-      }
-    }
-  });
-});
-
-describe('NotificationLifecycleCard', () => {
-  it.each(['android', 'web'])('Reproduction corner-pr-cards-1: single and grouped PR rows share actions on %s', (platform) => {
-    const previous = Platform.OS;
-    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true });
-    try {
-      const single = message({
-        authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
-        daemonFact: { type: 'corner-complete', cornerId: 'corner-42', name: 'Same row',
-          objective: 'Same row', outcome: 'landed', pullRequest: {
-            number: 42, title: 'Same row', url: 'https://github.com/acme/repo/pull/42',
-          } },
-      });
-      const grouped = foldPrLifecycleRuns([single, { ...single, id: 'second',
-        daemonFact: { ...single.daemonFact!, cornerId: 'corner-43', pullRequest: {
-          number: 43, title: 'Another row', url: 'https://github.com/acme/repo/pull/43',
-        } } }])[0];
-      const onOpenCorner = vi.fn();
-      const onOpenUrl = vi.fn();
-      const one = render(<DaemonFactCard message={single} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
-      const group = render(<NotificationLifecycleCard message={grouped} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
-      const labels = (tree: ReactTestRenderer) => tree.root.findAllByType('Button')
-        .map((node: ReactTestInstance) => node.props.accessibilityLabel).filter(Boolean);
-      expect(JSON.stringify(one.toJSON())).toContain('PR · 1 merged');
-      for (const tree of [one, group]) {
-        expect(tree.root.findAllByType(LifecycleRow)).toHaveLength(1);
-        expect(tree.root.findAllByType('Button').map((node: ReactTestInstance) => node.props.variant)).toEqual(['primary', 'quiet']);
-        expect(labels(tree)).toContain('Corner →');
-        expect(labels(tree)).toContain('View ↗');
-        const button = (label: string) => tree.root.findAllByType('Button')
-          .find((node: ReactTestInstance) => node.props.accessibilityLabel === label)!;
-        act(() => button('Corner →').props.onPress());
-        act(() => button('View ↗').props.onPress());
-      }
-      expect(onOpenCorner.mock.calls).toEqual([['corner-42'], ['corner-43']]);
-      expect(onOpenUrl.mock.calls).toEqual([
-        ['https://github.com/acme/repo/pull/42'], ['https://github.com/acme/repo/pull/43'],
-      ]);
-    } finally {
-      Object.defineProperty(Platform, 'OS', { value: previous, configurable: true });
-    }
-  });
-
-  it('renders a deduplicated group of one with the identical single PR row', () => {
-    const single = message({
-      authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
-      daemonFact: { type: 'corner-complete', cornerId: 'corner-42', name: 'Same row',
-        objective: 'Same row', outcome: 'landed', pullRequest: {
-          number: 42, title: 'Same row', url: 'https://github.com/acme/repo/pull/42',
-        } },
-    });
-    const props = { onOpenCorner: vi.fn(), onOpenUrl: vi.fn() };
-    const one = render(<DaemonFactCard message={single} {...props} />);
-    const group = render(<NotificationLifecycleCard message={foldPrLifecycleRuns([
-      single, { ...single, id: 'duplicate' },
-    ])[0]} {...props} />);
-    const singleRow = one.root.findByType(LifecycleRow);
-    const groupedRow = group.root.findByType(LifecycleRow);
-    expect({ ...singleRow.props.item, updatedBy: '' }).toEqual({ ...groupedRow.props.item, updatedBy: '' });
-    expect(singleRow.props.state).toBe(groupedRow.props.state);
-    expect(singleRow.props.stateColor).toEqual(groupedRow.props.stateColor);
-    expect(singleRow.props.titleColor).toEqual(groupedRow.props.titleColor);
-    expect(group.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(0);
-  });
-
-  it('Reproduction lifecycle-cards-4: a nameless legacy corner has one title in single and group-of-one cards', () => {
-    for (const type of ['corner-open', 'corner-complete'] as const) {
-      const single = message({
-        authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
-        daemonFact: { type, cornerId: 'corner-42', name: undefined,
-          objective: 'Keep every lifecycle card consistent across both platforms', outcome: 'landed',
-          pullRequest: { number: 42, title: 'Align lifecycle cards', url: 'https://github.com/acme/repo/pull/42' } },
-      });
-      const props = { onOpenCorner: vi.fn(), onOpenUrl: vi.fn() };
-      const one = render(<DaemonFactCard message={single} {...props} />);
-      const group = render(<NotificationLifecycleCard message={foldPrLifecycleRuns([
-        single, { ...single, id: 'duplicate' },
-      ])[0]} {...props} />);
-      const singleRow = one.root.findByType(LifecycleRow);
-      const groupedRow = group.root.findByType(LifecycleRow);
-      expect(groupedRow.props.item.title).toBe(singleRow.props.item.title);
-      expect(groupedRow.props.item.title).not.toBe('Align lifecycle cards');
-    }
-  });
-
-  it('renders a deduplicated issue group of one with the identical single issue row', () => {
-    for (const action of ['opened', 'closed'] as const) {
-      const single = message({ githubEvent: { type: 'issue', action, actor: 'octocat',
-        title: 'Same issue', url: 'https://github.com/acme/repo/issues/2468' } });
-      const props = { onOpenCorner: vi.fn(), onOpenUrl: vi.fn() };
-      const one = render(<GitHubEventCard message={single} onOpenUrl={props.onOpenUrl} />);
-      const group = render(<NotificationLifecycleCard message={foldPrLifecycleRuns([
-        single, { ...single, id: 'duplicate' },
-      ])[0]} {...props} />);
-      const singleRow = one.root.findByType(LifecycleRow);
-      const groupedRow = group.root.findByType(LifecycleRow);
-      expect(singleRow.props.item.kindLine).toBe('Issue #2468');
-      for (const key of ['title', 'kindLine', 'actor', 'url', 'cornerId'] as const) {
-        expect(singleRow.props.item[key]).toEqual(groupedRow.props.item[key]);
-      }
-      expect(singleRow.props.state).toBe(groupedRow.props.state);
-      expect(singleRow.props.stateColor).toEqual(groupedRow.props.stateColor);
-      expect(singleRow.props.titleColor).toEqual(groupedRow.props.titleColor);
-      expect(one.root.findByType(LifecycleCard).props.title)
-        .toBe(group.root.findByType(LifecycleCard).props.title);
-    }
-  });
-
-  it('opens the corner from a stacked corner cell and the PR from a PR cell', () => {
-    const onOpenCorner = vi.fn();
-    const onOpenUrl = vi.fn();
-    const renderer = render(
-      <NotificationLifecycleCard
-        message={message({
-          notificationLifecycleRun: {
-            subline: 'by @sol · 09:41 – 10:28',
-            items: [
-              {
-                id: 'corner',
-                title: 'Duplicate draft settle',
-                state: 'Merged',
-                kindLine: 'corner · PR #1126',
-                kind: 'corner',
-                cornerId: 'corner-1126',
-                actor: 'sol',
-                updatedBy: 'corner',
-              },
-              {
-                id: 'pr',
-                title: 'Change',
-                state: 'PR opened',
-                kindLine: 'PR #1130',
-                kind: 'pull-request',
-                url: 'https://github.com/acme/repo/pull/1130',
-                actor: 'octocat',
-                updatedBy: 'pr',
-              },
-            ],
-          },
-        })}
-        onOpenCorner={onOpenCorner}
-        onOpenUrl={onOpenUrl}
-      />,
-    );
-    expect(JSON.stringify(renderer.toJSON())).toContain('Corner →');
-    act(() =>
-      renderer.root.findByProps({ testID: 'notification-run-cell-corner-corner' }).props.onPress(),
-    );
-    expect(onOpenCorner).toHaveBeenCalledWith('corner-1126');
-    act(() =>
-      renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress(),
-    );
-    act(() =>
-      renderer.root.findByProps({ testID: 'notification-run-contracted-pr' }).props.onPress(),
-    );
-    expect(
-      renderer.root.findAllByProps({ testID: 'notification-run-cell-corner-pr' }),
-    ).toHaveLength(0);
-    act(() =>
-      renderer.root.findByProps({ testID: 'notification-run-cell-url-pr' }).props.onPress(),
-    );
-    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/repo/pull/1130');
-  });
-});
-
-describe('NotificationLifecycleCard against the corner header (9.4)', () => {
-  const head = 'a'.repeat(40);
-  const earlier = 'b'.repeat(40);
-  const run = message({
-    id: 'checks',
-    notificationLifecycleRun: {
-      subline: 'by @github · 09:41 – 09:50',
-      items: [
-        { id: 'now', title: 'mobile-tests', state: 'Checks passed', kindLine: 'Check · aaaaaaa',
-          kind: 'check', headSha: head, actor: 'github', updatedBy: 'now' },
-        { id: 'then', title: 'mobile-tests', state: 'Checks passed', kindLine: 'Check · bbbbbbb',
-          kind: 'check', headSha: earlier, actor: 'github', updatedBy: 'then' },
-      ],
-    },
-  });
-  const lifecycle = (status: 'pending' | 'passed' | 'failed') => ({
-    lifecycle: 'in-review' as const,
-    checks: status === 'failed' ? 'failing' as const : status === 'passed' ? 'passing' as const : 'pending' as const,
-    pr: { number: 1, url: 'https://github.com/acme/repo/pull/1', title: 'Fix', targetBranch: 'main', headSha: head },
-    checksSummary: { status: status === 'failed' ? 'failing' as const : 'passing' as const, total: 1,
-      failing: status === 'failed' ? ['mobile-tests'] : [], updatedAt: 2,
-      checks: [{ name: 'mobile-tests', status }] },
-  });
-  const card = (status: 'pending' | 'passed' | 'failed') => (
-    <NotificationLifecycleCard message={run} cornerLifecycle={lifecycle(status)}
-      onOpenCorner={() => undefined} onOpenUrl={() => undefined} />
-  );
-  const text = (renderer: ReactTestRenderer) => JSON.stringify(renderer.toJSON());
-
-  it('follows the header\'s check state for the current head after the card is posted', () => {
-    const renderer = render(card('passed'));
-    expect(text(renderer)).toContain('"passed"');
-    // The checks re-ran and failed after the card was posted; the corner row changed.
-    act(() => renderer.update(card('failed')));
-    const words = (node: ReactTestInstance | string): string[] =>
-      typeof node === 'string' ? [node] : node.children.flatMap(words);
-    expect(words(renderer.root.findByProps({ testID: 'notification-run-cell-now' })))
-      .toContain('failed');
-    expect(text(renderer)).toContain('1 failed');
-    // The older head keeps its own state and says which push it belongs to.
-    act(() =>
-      renderer.root.findByProps({ testID: 'notification-run-expand-checks' }).props.onPress(),
-    );
-    expect(text(renderer)).toContain('checks for an earlier push');
-  });
-
-  it('keeps the posted state outside a corner', () => {
-    const renderer = render(
-      <NotificationLifecycleCard message={run} onOpenCorner={() => undefined}
-        onOpenUrl={() => undefined} />,
-    );
-    expect(text(renderer)).toContain('2 passed');
-    expect(text(renderer)).not.toContain('earlier push');
+describe('Event disclosure v2', () => {
+  it('starts collapsed, expands every event, opens its destinations and collapses again', () => {
+    const onOpenCorner = vi.fn(); const onOpenUrl = vi.fn();
+    const item = message({ notificationLifecycleRun: { subline: '', items: [
+      { id: 'merge', title: 'Readable transcript', state: 'Merged', kind: 'pull-request', kindLine: 'PR #42',
+        cornerId: 'corner-42', url: 'https://github.com/acme/repo/pull/42', actor: 'ruby', updatedBy: 'merge' },
+      { id: 'issue', title: 'Issue title', state: 'Filed', kind: 'issue', kindLine: 'Issue #5',
+        url: 'https://github.com/acme/repo/issues/5', actor: 'ruby', updatedBy: 'issue' },
+    ] } });
+    const renderer = render(<NotificationLifecycleCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
+    const toggle = () => renderer.root.findByProps({ testID: 'notification-run-expand-message' });
+    expect(toggle().props.accessibilityState).toEqual({ expanded: false });
+    expect(toggle().props.accessibilityLabel).toBe('1 PR merged · 1 issue filed');
+    expect(renderer.root.findAllByProps({ testID: 'notification-run-cell-merge' })).toHaveLength(0);
+    act(() => toggle().props.onPress());
+    expect(toggle().props.accessibilityState).toEqual({ expanded: true });
+    act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-merge' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-merge' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-issue' }).props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith('corner-42');
+    expect(onOpenUrl.mock.calls).toEqual([['https://github.com/acme/repo/pull/42'], ['https://github.com/acme/repo/issues/5']]);
+    act(() => toggle().props.onPress());
+    expect(renderer.root.findAllByProps({ testID: 'notification-run-cell-merge' })).toHaveLength(0);
   });
 });
 
@@ -4106,4 +3875,17 @@ describe('private untagged message hint', () => {
     />);
     expect(renderer.root.findAllByType('LedgerUntaggedHint' as any)).toHaveLength(count);
   });
+});
+
+it('links a corner-local PR notice to the current corner when the note has no corner field', () => {
+  const onOpenCorner = vi.fn();
+  const item = message({ notificationLifecycleRun: { subline: '', items: [{
+    id: 'local-pr', title: 'Change', kind: 'pull-request', kindLine: 'PR #42', state: 'PR opened',
+    actor: 'ruby', updatedBy: 'local-pr', url: 'https://github.com/acme/repo/pull/42',
+  }] } });
+  const renderer = render(<NotificationLifecycleCard message={item} cornerId="current-corner"
+    onOpenCorner={onOpenCorner} onOpenUrl={() => undefined} />);
+  act(() => renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress());
+  act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-local-pr' }).props.onPress());
+  expect(onOpenCorner).toHaveBeenCalledWith('current-corner');
 });

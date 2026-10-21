@@ -74,6 +74,7 @@ vi.mock('react-native-unistyles', async () => {
   },
   useUnistyles: () => ({ theme: fullTheme }),
 }); });
+vi.mock('@/components/buzz/CornerOpenedMarker', () => ({ CornerOpenedMarker: () => null }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('@/components/buzz/TurnProgressLine', () => ({ TurnProgressLine: () => null }));
 vi.mock('@/components/buzz/ConversationComposer', () => ({

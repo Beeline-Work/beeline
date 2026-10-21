@@ -11,7 +11,8 @@
 type MarkerCarrier = {
   id: string;
   relayId?: string;
-  daemonFact?: { sourceMessageId?: string };
+  systemEvent?: { kind?: string };
+  daemonFact?: { sourceMessageId?: string; type?: string };
 };
 
 export function anchorCornerMarkers<T extends MarkerCarrier>(
@@ -27,6 +28,12 @@ export function anchorCornerMarkers<T extends MarkerCarrier>(
   const markers = new Map<string, T[]>();
   const anchored = new Set<string>();
   for (const message of messages) {
+    if (
+      message.daemonFact?.type &&
+      message.daemonFact.type !== 'corner-open' &&
+      message.systemEvent?.kind !== 'corner-opened'
+    )
+      continue;
     const source = message.daemonFact?.sourceMessageId;
     const anchor = source ? resident.get(source) : undefined;
     if (!anchor) continue;

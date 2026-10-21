@@ -40,6 +40,8 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
 import { ComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
+import { CornerOpenedMarker } from '@/components/buzz/CornerOpenedMarker';
+import { lifecycleCornerTitle } from '@/buzz/pr-lifecycle';
 import { CornerBriefLink } from '@/components/buzz/CornerObjectiveLine';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -492,10 +494,15 @@ function CornerCockpit({
       const immediatelyPrecedingMessage = index > 0 ? messages[index - 1] : undefined;
       const kind = inspectorMessageKind(item);
       if (kind === 'hidden') return null;
+      const marker = (message: ChatDisplayMessage) => (
+        <CornerOpenedMarker key={message.id} title={lifecycleCornerTitle(message.daemonFact!)}
+          onOpen={() => onOpenCorner(message.daemonFact!.cornerId)} />
+      );
       const node =
         item.notificationLifecycleRun ? (
           <NotificationLifecycleCard
             message={item}
+            cornerId={detail?.parent ? roomId : undefined}
             onOpenCorner={onOpenCorner}
             onOpenUrl={openUrl}
           />
@@ -503,6 +510,8 @@ function CornerCockpit({
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
         ) : kind === 'github' ? (
           <GitHubEventCard message={item} onOpenUrl={openUrl} />
+        ) : kind === 'daemon' && (item.daemonFact?.type === 'corner-open' || item.systemEvent?.kind === 'corner-opened') ? (
+          marker(item)
         ) : kind === 'daemon' ? (
           <DaemonFactCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={openUrl} />
         ) : kind === 'system' ? (
@@ -537,7 +546,7 @@ function CornerCockpit({
           />
         );
       const captioned = withLedgerDayCaption(
-        node,
+        item.cornerMarkers?.length ? <View>{node}{item.cornerMarkers.map(marker)}</View> : node,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
       ) as React.ReactElement | null;
       if (focusMessageId && messageMatchesFocus(item, focusMessageId)) {
@@ -549,7 +558,7 @@ function CornerCockpit({
       }
       return captioned;
     },
-    [bylineOpeners, channelIndex, detail, focusMessageId, hintMessageIds, messages, onOpenCorner, onChannelReference],
+    [bylineOpeners, channelIndex, detail, focusMessageId, hintMessageIds, messages, onOpenCorner, onChannelReference, roomId],
   );
   const storedName = summary?.corner.name ?? detail?.room.name;
   const cornerId = summary?.corner.id ?? detail?.room.id;

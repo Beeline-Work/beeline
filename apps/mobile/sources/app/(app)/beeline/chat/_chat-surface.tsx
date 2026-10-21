@@ -5318,7 +5318,6 @@ export function BuzzChatSurface({
         <View key={marker.id}>
           <CornerOpenedMarker
             title={cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
-            closed={fact.type === 'corner-complete' || fact.type === 'worktree-cleaned'}
             onOpen={() => openCorner(fact.cornerId)}
             testID={`corner-opened-marker-${fact.cornerId}`}
           />
@@ -5809,6 +5808,18 @@ export function BuzzChatSurface({
         );
       }
 
+      if (item.notificationLifecycleRun) {
+        return (
+          <NotificationLifecycleCard
+            message={item}
+            cornerId={isCorner ? decodedId : undefined}
+            onOpenCorner={openCorner}
+            onOpenUrl={handleOpenGitHubEvent}
+          />
+        );
+      }
+
+
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {
         return <WalletCards message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
@@ -5847,22 +5858,12 @@ export function BuzzChatSurface({
         return null;
       }
 
-      if (item.notificationLifecycleRun) {
-        return (
-          <NotificationLifecycleCard
-            message={item}
-            cornerLifecycle={cornerHeaderSource?.lifecycle}
-            onOpenCorner={openCorner}
-            onOpenUrl={handleOpenGitHubEvent}
-          />
-        );
-      }
 
       if (item.githubEvent) {
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
-      if (item.daemonFact?.sourceMessageId) {
+      if (item.daemonFact?.type === 'corner-open' || (item.daemonFact && item.systemEvent?.kind === 'corner-opened')) {
         // Its source message is not resident, so the marker stands on its own row.
         return renderCornerMarker(item);
       }
@@ -6054,7 +6055,6 @@ export function BuzzChatSurface({
       isArchived,
       isCorner,
       decodedId,
-      cornerHeaderSource?.lifecycle,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

@@ -6,7 +6,7 @@ for (const theme of ['obsidian', 'bone'])
   for (const width of [390, 1280])
     for (const reduced of [false, true]) {
       it.skipIf(!existsSync(CHROME))(
-        `CI-ACCORDION-1: ${theme} ${width}px reduced=${reduced}`,
+        `EVENT-ROWS-V2: ${theme} ${width}px reduced=${reduced}`,
         async () => {
           const mobile = process.cwd();
           const shims = webProofShims(mobile);
@@ -39,9 +39,7 @@ for (const theme of ['obsidian', 'bone'])
           });
           console.log(proof.result);
           expect(proof.status, proof.stderr).toBe(0);
-          expect(proof.result, proof.stderr).toContain(
-            mixed ? 'Mixed CI checks:' : reproduce ? 'Reproduction CI-ACCORDION-1' : 'PASS CI-ACCORDION-1',
-          );
+          expect(proof.result, proof.stderr).toContain('PASS EVENT-ROWS-V2');
         },
         90_000,
       );

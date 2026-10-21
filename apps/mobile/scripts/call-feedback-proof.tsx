@@ -22,6 +22,16 @@ function lastBarHeight() {
 }
 async function run() {
   await pause(300);
+  if (fixture.cancelConnect) {
+    check('MOBILE-C: connecting loader is visible', Boolean(document.querySelector('[data-testid="voice-startup-loader"]')));
+    document.querySelector<HTMLElement>('[data-testid="voice-mic"]')!.click();
+    await pause(300);
+    check('Stop clears the pending call and loader', !voice!.call && !voice!.connecting);
+    check('Stop shows no connection error', !document.querySelector('[data-testid="voice-connection-error"]'));
+    check('audio and server session released once', fixture.closed === 1 && fixture.leaves === 1);
+    check('expected disconnect is not reported', fixture.reports.length === 0);
+    return;
+  }
   fixture.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'speaker', agentId: 'ruby' })),
     { identity: 'beeline-voice-proof-call' }, undefined, VOICE_DATA_TOPIC);
   fixture.room.localParticipant.audioLevel = 0.02;

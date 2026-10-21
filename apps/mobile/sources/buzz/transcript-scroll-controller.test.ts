@@ -68,6 +68,40 @@ const message = (messageId: string) =>
   ({ kind: 'message', messageId, align: 'top', jump: true }) as const;
 
 describe('transcript scroll controller', () => {
+  it('CALL-FOLLOW-1: leaves an automatic unread landing for a call and follows arrivals', () => {
+    const { controller, moves, flush } = setup();
+    controller.request({ kind: 'firstUnread', messageId: 'm2' });
+    flush();
+    controller.observeTailPinned(false);
+    expect(controller.enterCall()).toBe(true);
+    flush();
+    expect(controller.isPinnedToTail()).toBe(true);
+    controller.follow();
+    flush();
+    expect(moves).toEqual(['row:m2@1:center', 'newest', 'newest']);
+  });
+
+  it('CALL-FOLLOW-1: preserves deliberate history reading on call entry', () => {
+    for (const move of ['drag', 'wheel', 'scrub', 'message'] as const) {
+      const { controller, moves, flush } = setup();
+      if (move === 'drag') { controller.dragStarted(); controller.dragEnded(false); }
+      if (move === 'wheel') controller.userScrolled();
+      if (move === 'scrub') controller.request({ kind: 'offset', offset: 200 });
+      if (move === 'message') controller.request(message('m2'));
+      flush();
+      controller.observeTailPinned(false);
+      const before = [...moves];
+      expect(controller.enterCall()).toBe(false);
+      flush();
+      expect(moves).toEqual(before);
+      controller.request({ kind: 'newest' });
+      flush();
+      expect(controller.enterCall()).toBe(true);
+      flush();
+      expect(moves.at(-1)).toBe('newest');
+    }
+  });
+
   it('scrolls to the newest end on the next frame and is then done', () => {
     const { controller, moves, flush } = setup();
     controller.request({ kind: 'newest' });

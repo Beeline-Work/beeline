@@ -1,6 +1,6 @@
 # Revision 5: spoken transcript and first-reply latency
 
-This extends PR #2729 without implementing the paragraph design or filler audio. The item 6 mock was posted in the corner; Ruby's approval is still required for that visual change. The live-call transcript-follow issue (item 8) still needs an Android reproduction and is not claimed fixed by these server changes.
+This extends PR #2729 without implementing the paragraph design or filler audio. Ruby approved the item 6 mock, with unchanged spoken wording and an in-place message update; that implementation follows the bug fixes. Item 8 now has an Android reproduction and fix: [CALL-FOLLOW-1](call-follow/README.md).
 
 ## Spoken reply reproduction and demonstration
 

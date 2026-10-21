@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, StyleProp, Text, View, ViewStyle } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
     formatShortcut,
@@ -71,19 +71,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontFamily: theme.buzz.monoSemibold,
         color: theme.colors.text,
     },
-    badge: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingHorizontal: theme.buzz.space.sm,
-        paddingVertical: theme.buzz.space.xs,
-        borderRadius: theme.buzz.radius,
-        backgroundColor: theme.colors.surfaceHighest,
-    },
-    badgeText: {
-        ...theme.buzz.type.machine,
-        fontFamily: theme.buzz.monoSemibold,
-        color: theme.colors.textSecondary,
-    },
 }));
 
 const shortcutLabels: Record<GlobalShortcutId, () => string> = {
@@ -91,10 +78,6 @@ const shortcutLabels: Record<GlobalShortcutId, () => string> = {
     newSession: () => "New session",
     settings: () => "Settings",
 };
-
-export function useShortcutHints() {
-    return React.useContext(ShortcutHintsContext);
-}
 
 export function ShortcutHintsProvider({
     modifier,
@@ -142,41 +125,4 @@ export function ShortcutHintsProvider({
             )}
         </ShortcutHintsContext.Provider>
     );
-}
-
-export function ShortcutHintBadge({
-    shortcutKey,
-    style,
-}: {
-    shortcutKey: string;
-    style?: StyleProp<ViewStyle>;
-}) {
-    const { browserSafeShortcuts, modifier, visible } = useShortcutHints();
-    if (!visible || !modifier) {
-        return null;
-    }
-
-    return (
-        <View pointerEvents="none" style={[stylesheet.badge, style]}>
-            <Text style={stylesheet.badgeText}>
-                {formatShortcut(modifier, shortcutKey, browserSafeShortcuts)}
-            </Text>
-        </View>
-    );
-}
-
-export function SessionShortcutHintBadge({
-    sessionId,
-    style,
-}: {
-    sessionId: string;
-    style?: StyleProp<ViewStyle>;
-}) {
-    const { sessionShortcutNumbers } = useShortcutHints();
-    const shortcutNumber = sessionShortcutNumbers[sessionId];
-    if (!shortcutNumber) {
-        return null;
-    }
-
-    return <ShortcutHintBadge shortcutKey={String(shortcutNumber)} style={style} />;
 }

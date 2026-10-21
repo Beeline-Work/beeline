@@ -481,10 +481,6 @@ export function readAgentGrantView(value: unknown): AgentGrantView | null {
   };
 }
 
-export function isAgentGrantView(value: unknown): value is AgentGrantView {
-  return readAgentGrantView(value) !== null;
-}
-
 function readWorkspaceMemberGrantView(value: unknown): WorkspaceMemberGrantView | null {
   const item = record(value);
   const grant = readAgentGrantView(value);
@@ -2095,26 +2091,14 @@ export function readAgentPairingClaimWireView(value: unknown): AgentPairingClaim
   };
 }
 
-export function isAgentPairingClaimWireView(value: unknown): value is AgentPairingClaimWireView {
-  return readAgentPairingClaimWireView(value) !== null;
-}
-
 export function readAgentPairingClaimView(value: unknown): AgentPairingClaimView | null {
   const wire = readAgentPairingClaimWireView(value);
   if (!wire) return null;
   return { ...wire, attachedRoomIds: wire.attachedRoomIds ?? [] };
 }
 
-export function isAgentPairingClaimView(value: unknown): value is AgentPairingClaimView {
-  return readAgentPairingClaimView(value) !== null;
-}
-
 export function readAgentPairingAbandonView(value: unknown): AgentPairingAbandonView | null {
   const item = record(value);
   if (!item || typeof item.abandoned !== 'boolean') return null;
   return { abandoned: item.abandoned };
-}
-
-export function isAgentPairingAbandonView(value: unknown): value is AgentPairingAbandonView {
-  return readAgentPairingAbandonView(value) !== null;
 }

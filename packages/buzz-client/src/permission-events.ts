@@ -26,7 +26,6 @@ import {
   token,
   uniqueStrings,
   type ParsedPermissionDecision,
-  type ParsedPermissionEvent,
   type ParsedPermissionExecution,
   type ParsedPermissionRequest,
   type ParsedPermissionRevocation,
@@ -481,20 +480,6 @@ export function parsePermissionExecution(
     return undefined;
   }
   return { type: 'execution', event, value };
-}
-
-export function parsePermissionEvent(
-  event: NostrEvent,
-  request?: ParsedPermissionRequest,
-): ParsedPermissionEvent | undefined {
-  if (marker(event) === PERMISSION_REQUEST_MARKER) return parsePermissionRequest(event);
-  if (!request) return undefined;
-  if (marker(event) === PERMISSION_DECISION_MARKER) return parsePermissionDecision(event, request);
-  if (marker(event) === PERMISSION_REVOCATION_MARKER)
-    return parsePermissionRevocation(event, request);
-  if (marker(event) === PERMISSION_EXECUTION_MARKER)
-    return parsePermissionExecution(event, request);
-  return undefined;
 }
 
 function sign(

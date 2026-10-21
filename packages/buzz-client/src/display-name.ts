@@ -118,9 +118,6 @@ export const AGENT_NAME_MAX_LENGTH = 32;
 /** Neutral default identity name for a freshly minted agent (no soul set). */
 export const DEFAULT_AGENT_IDENTITY_NAME = 'beeline-agent';
 
-/** Neutral default identity name for the daemon's operator-side body key. */
-export const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
-
 /**
  * Generic identity names the system itself mints (`newIdentity(
  * DEFAULT_AGENT_IDENTITY_NAME)`, the daemon's `|| 'Agent'` guard), including

@@ -130,4 +130,3 @@ export const obsidianLargeTheme = createSizedBeelineTheme(beelineThemes.obsidian
 export const boneTheme = createSizedBeelineTheme(beelineThemes.bone, 'medium');
 export const boneSmallTheme = createSizedBeelineTheme(beelineThemes.bone, 'small');
 export const boneLargeTheme = createSizedBeelineTheme(beelineThemes.bone, 'large');
-export type BeelineAppTheme = typeof obsidianTheme;

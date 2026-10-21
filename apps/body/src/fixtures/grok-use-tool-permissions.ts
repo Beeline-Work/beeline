@@ -21,31 +21,6 @@
  * (C90).
  */
 
-/**
- * The frame grok emits as the call starts. A permission request is built from
- * this tool call, which is why the refusal the model reads back names
- * `use_tool` and not the tool it asked for.
- */
-export const GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL = {
-  sessionUpdate: 'tool_call',
-  toolCallId: 'call-429226ae-21fa-40f3-90e9-981bd34549f5-1',
-  title: 'use_tool',
-  rawInput: {
-    tool_name: 'beeline-agent__open_corner',
-    tool_input: { name: 'Fix it', objective: 'Fix the thing' },
-  },
-  _meta: {
-    'x.ai/tool': {
-      version: 1,
-      name: 'use_tool',
-      kind: 'use_tool',
-      namespace: 'grok_build',
-      label: 'Use Tool',
-      read_only: false,
-    },
-  },
-} as const;
-
 /** The follow-up update: same call, now titled with the qualified tool name. */
 export const GROK_USE_TOOL_OPEN_CORNER_TOOL_CALL_UPDATE = {
   sessionUpdate: 'tool_call_update',

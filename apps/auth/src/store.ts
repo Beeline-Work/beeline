@@ -474,21 +474,6 @@ function agentConnectDeviceFromRow(row: AgentConnectDeviceRow): AgentConnectDevi
   };
 }
 
-/**
- * One recorded device-key replacement: the identity's authority moved from
- * `oldPubkey` to `newPubkey`. Multiple rows chain (A→B, B→C); a key's current
- * successor is found by walking rows forward.
- */
-export interface KeySuccession {
-  community: string;
-  issuer: string;
-  audience: string;
-  subject: string;
-  oldPubkey: string;
-  newPubkey: string;
-  createdAt: Date;
-}
-
 export interface GitHubInstallFlow {
   community: string;
   pubkey: string;

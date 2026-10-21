@@ -182,29 +182,6 @@ export type InstitutionalMemoryCandidateType =
 export type InstitutionalMemoryKind = 'workspace_fact' | 'human_profile_fact';
 export type InstitutionalMemoryAudience = 'workspace' | 'human_profile';
 export type InstitutionalMemoryItemState = 'active' | 'stale';
-export type InstitutionalMemoryJobState = 'pending' | 'claimed' | 'retry' | 'completed' | 'dead';
-
-export interface InstitutionalMemoryJobLedgerEntry {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly triggerKind: 'turn_review' | 'merge_review' | 'curator';
-  readonly mode: 'shadow' | 'live';
-  readonly sourceRoomId: string;
-  readonly sourceMessageId: string;
-  readonly sourceRequestId?: string;
-  readonly requesterIdentityId: string;
-  readonly sourceAudienceKind: 'workspace_candidate' | 'human_private';
-  readonly idempotencyKey: string;
-  readonly status: InstitutionalMemoryJobState;
-  /** Processing attribution only; never memory ownership or visibility. */
-  readonly leaseOwnerAgentId?: string;
-  readonly leaseOwnerMachineId?: string;
-  readonly attempts: number;
-  readonly maxAttempts: number;
-  readonly proposal?: InstitutionalMemoryJobProposal | null;
-  readonly usage?: InstitutionalMemoryJobUsage;
-  readonly error?: string;
-}
 
 /** Server-owned sourced item. Processing agent ids are attribution, never scope. */
 export interface InstitutionalMemoryItem {
@@ -225,42 +202,6 @@ export interface InstitutionalMemoryItem {
   readonly createdByJobId?: string;
   readonly createdByCommandId?: string;
   readonly deletedAt?: number;
-}
-
-/** One immutable measurement row. Shadow rows must have served=false and zero bytes. */
-export interface InstitutionalContextServeLedgerEntry {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly roomId: string;
-  readonly requestId?: string;
-  readonly requesterIdentityId: string;
-  readonly snapshotRevision: number;
-  readonly mode: 'shadow' | 'live';
-  readonly served: boolean;
-  readonly shadowJobId?: string;
-  readonly itemIds: readonly string[];
-  readonly skillCandidates: readonly string[];
-  readonly workspaceFactBytes: number;
-  readonly profileBytes: number;
-  readonly skillIndexBytes: number;
-  readonly wrapperBytes: number;
-  readonly totalBytes: number;
-  readonly estimatedTokens: number;
-  readonly actualTokens?: number;
-  readonly candidateCount: number;
-  readonly droppedCounts: Readonly<Record<string, number>>;
-}
-
-export interface InstitutionalMemoryOutcomeLedgerEntry {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly serveId?: string;
-  readonly jobId?: string;
-  readonly roomId: string;
-  readonly requestId?: string;
-  readonly kind: string;
-  readonly success?: boolean;
-  readonly detail: Readonly<Record<string, unknown>>;
 }
 
 export interface InstitutionalMemoryProposalSource {
@@ -293,16 +234,6 @@ export interface InstitutionalMemoryProposal {
     readonly rationale: string;
   };
   readonly cas: InstitutionalMemoryProposalCas;
-}
-
-export interface InstitutionalMemoryJobUsage {
-  readonly inputTokens?: number;
-  readonly outputTokens?: number;
-  readonly estimatedCostUsdMicros?: number;
-  readonly inputBytes: number;
-  readonly outputBytes: number;
-  readonly model: string;
-  readonly extractorVersion: string;
 }
 
 export interface InstitutionalContextSnapshot {
@@ -455,20 +386,6 @@ export interface WorkspaceSkillProposal {
   readonly anchor: WorkspaceSkillCodeAnchor;
 }
 
-export interface InstitutionalReviewFindingProposal {
-  readonly taxonomy: string;
-  readonly summary: string;
-  readonly severity: 'info' | 'warning' | 'error';
-  readonly confidence: number;
-  readonly path?: string;
-}
-
-export interface InstitutionalMergeReviewProposal {
-  readonly proposalVersion: 1;
-  readonly skill: WorkspaceSkillProposal | null;
-  readonly findings: readonly InstitutionalReviewFindingProposal[];
-}
-
 export interface InstitutionalCuratorAction {
   readonly action: 'retain' | 'stale' | 'archive' | 'consolidate';
   readonly targetType: 'memory_item' | 'workspace_skill';
@@ -486,9 +403,6 @@ export interface InstitutionalCuratorProposal {
   readonly partition: string;
   readonly actions: readonly InstitutionalCuratorAction[];
 }
-
-export type InstitutionalMemoryJobProposal =
-  InstitutionalMemoryProposal | InstitutionalMergeReviewProposal | InstitutionalCuratorProposal;
 
 export interface LoadWorkspaceSkillInput {
   readonly agentId: string;

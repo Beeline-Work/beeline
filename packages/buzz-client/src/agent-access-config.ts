@@ -3,7 +3,6 @@ import { signEvent, verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { KIND_AGENT_ACCESS_CONFIG, TAG_AGENT_ACCESS_CONFIG } from './kinds.js';
 import type { Identity } from './types.js';
 
-export const AGENT_ACCESS_CONFIG_VERSION = 1 as const;
 export const MAX_AGENT_ACCESS_ALLOWLIST = 64;
 const HEX_64 = /^[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
@@ -18,53 +17,6 @@ export interface AgentAccessConfigV1 {
   allowlist?: string[];
   revision: number;
   updatedAt: number;
-}
-
-export interface AgentAccessAuthority {
-  policy: AgentAccessPolicyV1;
-  allowlist?: string[];
-  ownerPubkey: string;
-}
-
-export function resolveAgentAccessAuthority(input: {
-  events: readonly NostrEvent[];
-  workspaceId: string;
-  agentPubkey: string;
-  pairedOwnerPubkey: string;
-  currentOwnerPubkey: string;
-  seed?: Pick<AgentAccessConfigV1, 'policy' | 'allowlist'>;
-}): AgentAccessAuthority | 'denied' | undefined {
-  const key = agentAccessConfigKey(input.workspaceId, input.agentPubkey);
-  const relevant = input.events
-    .filter((event) => uniqueTag(event, 'd') === key)
-    .sort((left, right) => right.created_at - left.created_at || right.id.localeCompare(left.id));
-  const newestOwner = relevant.find((event) => event.pubkey === input.currentOwnerPubkey);
-  if (newestOwner) {
-    const parsed = parseAgentAccessConfig(newestOwner);
-    if (
-      !parsed ||
-      parsed.workspaceId !== input.workspaceId ||
-      parsed.agentPubkey !== input.agentPubkey
-    ) {
-      return 'denied';
-    }
-    return {
-      policy: parsed.policy,
-      ...(parsed.allowlist ? { allowlist: parsed.allowlist } : {}),
-      ownerPubkey: input.currentOwnerPubkey,
-    };
-  }
-  if (
-    input.currentOwnerPubkey !== input.pairedOwnerPubkey &&
-    relevant.some((event) => event.pubkey === input.pairedOwnerPubkey)
-  )
-    return 'denied';
-  if (!input.seed) return undefined;
-  return {
-    policy: input.seed.policy,
-    ...(input.seed.allowlist ? { allowlist: [...input.seed.allowlist] } : {}),
-    ownerPubkey: input.currentOwnerPubkey,
-  };
 }
 
 export function agentAccessConfigKey(workspaceId: string, agentPubkey: string): string {

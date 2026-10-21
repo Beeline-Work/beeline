@@ -45,7 +45,7 @@ const DEFAULT_FLOW_TTL_MS = 5 * 60_000;
 const DEFAULT_TICKET_TTL_MS = 2 * 60_000;
 const GITHUB_INSTALLATION_RECONCILE_INTERVAL_MS = 5 * 60_000;
 /** Repository-activity event types the webhook stores for Room delivery. */
-export const GITHUB_REPO_EVENT_TYPES = new Set(['star', 'issues', 'pull_request']);
+const GITHUB_REPO_EVENT_TYPES = new Set(['star', 'issues', 'pull_request']);
 /** Max stored events released per room-events read; a longer backlog needs more reads. */
 const GITHUB_REPO_EVENT_FETCH_LIMIT = 100;
 /** Hard ceiling on a room-events long-poll hold. */

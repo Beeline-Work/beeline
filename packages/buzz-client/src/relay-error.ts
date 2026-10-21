@@ -251,7 +251,3 @@ export function asRelayPublishError(error: unknown): RelayPublishError {
     cause: error,
   });
 }
-
-export function isRetryableRelayPublishError(error: unknown): boolean {
-  return asRelayPublishError(error).retryable;
-}

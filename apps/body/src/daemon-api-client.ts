@@ -62,23 +62,6 @@ export class DaemonApiError extends Error {
 /** The server's one settled answer that this agent no longer exists. */
 export const AGENT_REMOVED_CODE = 'agent_removed';
 
-/** Cursor maximum without treating the opaque message id as a number. */
-export function laterInboxCursor(
-  left: string | undefined,
-  right: string | undefined,
-): string | undefined {
-  if (!left) return right;
-  if (!right) return left;
-  const leftMatch = left.match(/^(\d+),([0-9a-f]{64})$/);
-  const rightMatch = right.match(/^(\d+),([0-9a-f]{64})$/);
-  // The cursor is contractually opaque to helpers. Keep accepting an older
-  // server's alternate shape instead of making a rolling deploy fatal.
-  if (!leftMatch || !rightMatch) return right;
-  const timeOrder = BigInt(leftMatch[1]!) - BigInt(rightMatch[1]!);
-  if (timeOrder !== 0n) return timeOrder > 0n ? left : right;
-  return leftMatch[2]! >= rightMatch[2]! ? left : right;
-}
-
 export function orderInboxItems(items: readonly InboxItem[]): InboxItem[] {
   return [...items].sort((left, right) => {
     const leftMatch = left.cursor?.match(/^(\d+),([0-9a-f]{64})$/);

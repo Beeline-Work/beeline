@@ -865,9 +865,13 @@ describe('message reference taps', () => {
     })); });
     const links = tree.root.findAll((node: any) => node.type === 'Text' && node.props.accessibilityRole === 'link');
     expect(links.map((node: any) => node.props.children)).toEqual([roomLink, cornerLink, 'approval card']);
-    for (const link of links) {
+    for (const [index, link] of links.entries()) {
       expect(link.props.style.flat().some((style: any) => style?.textDecorationLine === 'underline')).toBe(true);
-      await act(async () => { link.props.onPress(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+      await act(async () => {
+        link.props.onPress();
+        // Navigation includes dynamic imports; a timer tick does not await them.
+        await vi.waitFor(() => expect(navigation.navigate).toHaveBeenCalledTimes(index + 1));
+      });
     }
     expect(navigation.navigate.mock.calls.map(([href]) => ({
       pathname: href.pathname, channelId: href.params.channelId,

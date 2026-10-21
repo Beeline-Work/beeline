@@ -31,8 +31,8 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * The one transcript primitive a Room and a Corner both render, in the
  * approved Editorial direction: ONE message size everywhere (16/~1.55), Space
  * Grotesk prose with IBM Plex Mono reserved for bylines, code, tool readouts,
- * and system lines. Hierarchy on a long agent turn comes from weight and
- * brightness — a medium-weight bright lead line, then regular secondary
+ * and system lines. Hierarchy on a long agent turn comes from
+ * brightness — a regular bright lead line, then regular secondary
  * prose — never from size. Same-speaker chunks use one compact vertical
  * rhythm; a new byline gets exactly twice that separation on its visual-top
  * edge so a voice change reads without speaker rails, bubbles, dividers, or
@@ -1049,10 +1049,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   bylineStatus: { marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs },
   bookmarkMark: { color: theme.buzz.accent },
-  // ONE message size. The lead differs from the body by weight (medium) and
-  // brightness (primary), never by size.
+  // One face and size throughout the turn; the lead differs only in brightness.
   ledgerLead: {
-    fontFamily: theme.buzz.proseMedium,
+    fontFamily: theme.buzz.proseRegular,
     width: '100%',
     minWidth: 0,
     color: theme.buzz.ledgerBright,

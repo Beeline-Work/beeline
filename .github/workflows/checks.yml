@@ -970,6 +970,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Install mobile dependencies for release regressions
+        # The OTA recovery regression loads Expo config from the mobile app.
+        run: npm ci --prefix apps/mobile
       - name: Test release preflight, failure intake and governor regressions
         run: node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on

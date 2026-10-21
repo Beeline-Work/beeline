@@ -1291,3 +1291,118 @@ it('OPEN-1: an agent-initiated opening does not authorize a worker revision', as
     expectedRevision: 1, brief: { spec: 'Change the widget', change: 'Adjust scope' },
   }, WORKER)).rejects.toThrow('corner brief approval must name a human message or commander order');
 });
+
+const duplicateReproduction = '572a0de1c06be02cb120b38294e3d9b80b9bdfa8cdf6e53dcb708819b41393c3';
+it.each([false, true])('Reproduction 572a0de1: same-address post then matching final is visible once (tagged=%s)', async tagged => {
+  const text = `${tagged ? '@captain ' : ''}Google sign-in (#2676) is merged. The checks passed.`;
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  await daemon.execute('postRoomMessage', { ...authority(order), text }, RUBY);
+  const messages = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message');
+  expect(messages.map(m => m.id)).toEqual([posted.id]);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [order.id])).rows[0]?.state).toBe('complete');
+  console.info(`Demonstrated Reproduction ${duplicateReproduction}: post + final -> one visible message`);
+});
+
+it('dedupe preserves a final with an additional sentence', async () => {
+  const text = 'Google sign-in (#2676) is merged. The checks passed.';
+  await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  const final = `${text} You still need to approve the release.`;
+  await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.text))
+    .toEqual([text, final]);
+});
+
+it.each(['other-address', 'other-generation', 'other-request', 'deleted'] as const)('dedupe does not suppress a final after a post in %s', async scope => {
+  const text = 'Google sign-in is merged.';
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: scope === 'other-address' ? ROOM : DM, text }, RUBY);
+  if (scope === 'other-generation') await db.query(`UPDATE messages SET legacy_event='{"turnGenerationId":"old"}' WHERE id=$1`, [posted.id]);
+  if (scope === 'other-request') await db.query(`UPDATE messages SET request_id='old' WHERE id=$1`, [posted.id]);
+  if (scope === 'deleted') await db.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [posted.id]);
+  const final = await daemon.execute('postRoomMessage', { ...authority(order), text }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.find(m => m.id === final.id)?.presentation).toBe('message');
+});
+
+it('dedupe retains activity and accepts an identical final retry', async () => {
+  const text = 'Google sign-in is merged.';
+  await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  const steps = [{ kind: 'tool' as const, title: 'post', status: 'completed' as const }];
+  const final = await daemon.execute('postRoomMessage', { ...authority(order), text, steps }, RUBY);
+  const replay = await daemon.execute('postRoomMessage', { ...authority(order), text, steps }, RUBY);
+  expect(replay.id).toBe(final.id);
+  expect((await db.query(`SELECT presentation,activity FROM messages WHERE id=$1`, [final.id])).rows[0])
+    .toMatchObject({ presentation: 'activity', activity: steps });
+});
+
+it('dedupe does not wake a tagged agent again for the collapsed final', async () => {
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, DM, WORKER]);
+  const text = '@worker Google sign-in is merged.';
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  await daemon.execute('postRoomMessage', { ...authority(order), text }, RUBY);
+  expect((await db.query(`SELECT source_message_id FROM agent_commands WHERE agent_id=$1 AND reason='agent_tag'`, [WORKER])).rows)
+    .toEqual([{ source_message_id: posted.id }]);
+});
+
+it('dedupe keeps a lightly reworded summary in collapsed activity', async () => {
+  const text = 'Google sign-in (#2676) is merged. The checks passed and the account linking flow is ready for review.';
+  await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  const final = text.replace('and the account', 'and account');
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  expect((await db.query(`SELECT presentation,activity FROM messages WHERE id=$1`, [result.id])).rows[0])
+    .toMatchObject({ presentation: 'activity', activity: [{ kind: 'note', title: 'Turn summary', text: final }] });
+});
+
+it.each([false, true])('dedupe keeps a final carrying a new attachment (tagged=%s)', async tagged => {
+  const text = `${tagged ? '@captain ' : ''}Google sign-in is merged.`;
+  await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  const objectId = randomUUID();
+  await db.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+    VALUES($1,$2,'artifact',$3,'text/plain','proof',10,$4,'ready',now()+interval '24 hours')`,
+    [objectId, RUBY, `artifact/${objectId}`, randomBytes(32).toString('hex')]);
+  await daemon.execute('postAgentAttachment', { ...authority(order), attachment: {
+    url: `http://test/v1/media/${objectId}`, name: 'proof.txt', mimeType: 'text/plain', size: 10,
+  } }, RUBY);
+  const final = await daemon.execute('postRoomMessage', { ...authority(order), text }, RUBY);
+  const message = (await phone.readRoom(DM, HUMAN))!.messages.find(m => m.id === final.id)!;
+  expect(message.presentation).toBe('message');
+  expect(message.attachments).toHaveLength(1);
+});
+
+it.each([
+  ['The balance is -5. The checks passed.', 'The balance is 5.', true],
+  ['Open https://example.com/a-b. The checks passed.', 'Open https://example.com/a/b.', true],
+  ['The balance is -5. The checks passed.', 'The balance is -5.', false],
+  ['Open https://example.com/a-b. The checks passed.', 'Open https://example.com/a-b.', false],
+])('dedupe preserves literal corrections in contained summaries: %s -> %s', async (post, final, corrected) => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  const messages = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message');
+  expect(messages.map(m => m.id)).toEqual(corrected ? [posted.id, result.id] : [posted.id]);
+  if (corrected) expect(messages[1]?.text).toBe(final);
+});
+
+it.each([
+  ['Read /tmp/a-b. The checks passed.', 'Read /tmp/a/b.'],
+  ['The identifier is account_ready. The checks passed.', 'The identifier is account-ready.'],
+  ['Run `send(a-b)`. The checks passed.', 'Run `send(a/b)`.'],
+  ['Run `send(a-b)`.', 'Run `send(a/b)`.'],
+  ['Run `READY`.', 'Run `ready`.'],
+  ['Run `a  b`.', 'Run `a b`.'],
+])('dedupe keeps a corrected path, identifier or code span visible: %s -> %s', async (post, final) => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
+    .toEqual([posted.id, result.id]);
+});
+
+it.each([
+  ['Do not deploy the release.', 'deploy the release.', true],
+  ['If checks pass, deploy the release.', 'deploy the release.', true],
+  ['Deploy the release only after checks pass.', 'Deploy the release', true],
+  ['Deploy the release. Only after checks pass.', 'Deploy the release.', true],
+  ['Do not deploy the release. The checks passed.', 'Do not deploy the release.', false],
+])('dedupe preserves polarity and qualifying context: %s -> %s', async (post, final, changed) => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
+    .toEqual(changed ? [posted.id, result.id] : [posted.id]);
+});

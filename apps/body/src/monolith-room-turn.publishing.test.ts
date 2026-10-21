@@ -41,7 +41,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
 `;
 
 /** Run one Room turn against the scripted harness; return every server write. */
-async function roomTurnWrites(updates: readonly Update[]) {
+async function roomTurnWrites(updates: readonly Update[], agentKind: BodyConfig['agentKind'] = 'codex') {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-publishing-'));
   const script = join(root, 'harness.mjs');
   await writeFile(script, harnessSource(updates));
@@ -57,7 +57,7 @@ async function roomTurnWrites(updates: readonly Update[]) {
   } as unknown as AgentRuntimeRecord;
   const config = {
     agentBinary: process.execPath, agentCommand: process.execPath, agentArgs: [script],
-    agentKind: 'codex', agentEnv: {}, workspaceRoot: join(root, 'room'),
+    agentKind, agentEnv: {}, workspaceRoot: join(root, 'room'),
     agentHomeRoot: join(root, 'agent-home'), operatorHome: join(root, 'operator-home'),
     mcpBinary: '/fake-dev-mcp', readonlyMcpCommand: '/fake-beeline-mcp',
     autoApprovePermissions: true, accessPolicy: 'everyone',
@@ -202,4 +202,12 @@ it('keeps more than 200 earlier runs as notes and the reply clean', async () => 
   const notes = shape(reply.steps).filter(step => step.startsWith('note: '));
   expect(notes).toEqual(Array.from({ length: 201 }, (_, index) => `note: Note ${index}.`));
   expect(shape(reply.steps)).toHaveLength(402);
+});
+
+it('Reproduction 572a0de1: streamed intermediate prose then matching final has one visible reply', async () => {
+  const prose = 'Google sign-in (#2676) is merged. The checks passed.';
+  const writes = await roomTurnWrites([text(prose), ...tool('post', 'read status'), text(prose)], 'claude');
+  const reply = posted(writes);
+  expect(reply.text).toBe(prose);
+  expect(shape(reply.steps)).toEqual(['tool: read status']);
 });

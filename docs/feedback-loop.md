@@ -136,12 +136,19 @@ separate CI job. See `docs/workflows/feedback-triage-steps.md`.
 
 ### Daily schedule
 
-The triage corner runs daily at 2 PM America/New_York (`0 14 * * *` with that time zone). On deploy the
-server rewrites that schedule's prompt, and its cadence, preserving the assigned agent, to start the workflow:
+The workspace-walk workflow starts at 06:00 America/New_York and reads every
+eligible workspace with human activity in the last 24 hours. The feedback-triage
+workflow starts at 10:00 America/New_York and merges that walk's findings with
+feedback into one ranked card. Server-seeded schedules preserve their assigned
+agent; team-authored workflows and prompts are not overwritten.
 
-> Start the feedback-triage workflow with start_workflow, binding triager to
-> yourself, and follow the feedback-triage-steps procedure (load_workspace_skill)
-> at each step.
+Agent feedback is grouped by tool, normalized error and category using
+`scripts/feedback-signals.mjs`. Groups retain occurrence count and first/last
+seen. Confirmed distinct humans affected outrank agent volume. Single agent
+occurrences without human impact cannot open fix corners. Each dispatch records
+a stable signal; the next day's verification checks whether it stopped after
+release, still occurs, or has not been released. See the
+[step procedure](workflows/feedback-triage-steps.md).
 
 ## Close the loop: Fixed DMs
 
@@ -228,7 +235,7 @@ settings. It defaults on; turning it off excludes that workspace from browsing,
 including subsequent pages of a read already in progress. Feedback reports remain
 available to triage regardless of this flag.
 
-The scheduled triager owns a separate one-hour browse step; no web browser or
+The scheduled triager owns a separate workspace-walk workflow; no web browser or
 separate agent binding is involved. The workflow engine reserves eligible
 workspaces on entering that step. It then reads through the read-only
 `beeline-prod-db` credential using Trusty Squire `use_credential`, calling the
@@ -240,14 +247,18 @@ published inventory. Keep that inventory current when providers change.
 Workspace opt-out, the effective date, current run/agent reservation and
 pagination are rechecked server-side; raw table reads are not a fallback.
 
-Reservations cap the day at five workspaces, prioritize signups within seven days
-then seven-day message activity, and do not repeat a workspace within 14 days.
+Legacy feedback-triage browse runs retain their original capped reservations.
+New workspace-walk runs reserve every eligible active workspace.
 
 The `service_review_rollout` row enables browsing from 18 October 2026.
 No notice record or waiting period is required. No email, UI banner or System
 message is sent. Workspaces with Allow fix sweep off remain excluded.
 
-The browser reports at most five findings in the same report/card as feedback,
-with paraphrased evidence and build/hold/drop verdicts. Never quote content or name
-people, Rooms or workspace ids. Incomplete reads are declared; they do not count
-as full workspace reviews. The sweep also reviews feedback and Sentry.
+The daily walk uses the same privacy-filtered SQL functions, with a window from
+the last completed walk through reservation time (24 hours on its first run).
+It has no five-workspace cap or 14-day rotation. Every active eligible workspace
+needs a receipt with rows read, first/last message times and short findings.
+The workflow rejects missing coverage and zero-row receipts while active targets
+exist. Failed walks do not advance the read window. The 10am card uses one
+ranked list; incomplete walks are reported as incomplete, never as no findings.
+See [workspace-browse-sweep](workflows/workspace-browse-sweep.md).

@@ -29,6 +29,8 @@
     "test:dead-code": "node --test scripts/dead-code.test.mjs scripts/review-exact-head.test.mjs",
     "typecheck": "turbo run typecheck && npm run typecheck --prefix apps/mobile && tsc -p tsconfig.scripts.json",
     "test": "turbo run test",
+    "feedback:group": "node scripts/feedback-signals.mjs",
+    "test:feedback-signals": "node --test scripts/feedback-signals.test.mjs",
     "prove:no-self-review": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-no-self-review.mjs",
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:onboarding": "node scripts/onboarding-walkthrough.mjs",

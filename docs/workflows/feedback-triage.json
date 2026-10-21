@@ -2,7 +2,7 @@
   "version": 1,
   "name": "feedback-triage",
   "description": "Daily Beeline feedback sweep; steps: feedback-triage-steps",
-  "summary": "Report merged fixes, rank new feedback, ask a person, and open fix corners.",
+  "summary": "Rank human pain and repeated feedback with the morning walk, then check released fixes the next day.",
   "roles": [
     "triager"
   ],
@@ -17,8 +17,8 @@
         "unnotifiedPullRequests"
       ],
       "on": {
-        "notified": "pull",
-        "skipped": "pull",
+        "notified": "verify",
+        "skipped": "verify",
         "timeout": "failed"
       },
       "timeoutSeconds": 1800
@@ -35,21 +35,6 @@
         "timeout": "failed"
       },
       "timeoutSeconds": 1800
-    },
-    "browse": {
-      "does": "Read 3–5 opted-in workspaces in full from 18 October 2026, with no notice wait, and add at most five redacted findings to this sweep.",
-      "role": "triager",
-      "requires": [
-        "findings",
-        "reviewedCount",
-        "skipReason"
-      ],
-      "on": {
-        "reviewed": "approve",
-        "skipped": "approve",
-        "timeout": "approve"
-      },
-      "timeoutSeconds": 3600
     },
     "approve": {
       "does": "A person approves dispatching the ranked problems, or skips them.",
@@ -69,7 +54,8 @@
       "does": "Open a fix corner for each approved problem.",
       "role": "triager",
       "requires": [
-        "corners"
+        "corners",
+        "signals"
       ],
       "on": {
         "dispatched": "done",
@@ -96,9 +82,35 @@
         "skipReason"
       ],
       "on": {
-        "checked": "browse",
-        "failed": "browse",
-        "timeout": "browse"
+        "checked": "present",
+        "failed": "present",
+        "timeout": "present"
+      },
+      "timeoutSeconds": 1800
+    },
+    "verify": {
+      "does": "Check each dispatched signal after release and record whether it stopped.",
+      "role": "triager",
+      "requires": [
+        "signalChecks"
+      ],
+      "on": {
+        "checked": "pull",
+        "timeout": "failed"
+      },
+      "timeoutSeconds": 1800
+    },
+    "present": {
+      "does": "Merge feedback and the completed 6am walk into one list ranked by people affected.",
+      "role": "triager",
+      "requires": [
+        "rankedProblems",
+        "walkRunId"
+      ],
+      "on": {
+        "presented": "approve",
+        "nothing_to_build": "done",
+        "timeout": "failed"
       },
       "timeoutSeconds": 1800
     }

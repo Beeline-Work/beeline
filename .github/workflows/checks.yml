@@ -364,6 +364,8 @@ jobs:
       # buzz-client resolves @beeline/nostr and @beeline/api-contract from
       # built dist, the same as every app that imports those packages.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract
+      - name: Test feedback grouping and ranking
+        run: npm run test:feedback-signals
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
 

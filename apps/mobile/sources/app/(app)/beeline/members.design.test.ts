@@ -84,15 +84,16 @@ describe('Members page layout contract', () => {
     expect(source).toContain('testID="members-agents-head"');
   });
 
-  it('aligns the section + on the same trailing axis as the row chevron (C99)', () => {
-    // The row's trailing chevron sits flush against the row's own padding
-    // edge; the section head's + control is a 44pt hit target, so its
-    // content must align to that same trailing edge rather than centering
-    // inside the hit box, or the two visually disagree by half the glyph
-    // width (captain report, second complaint on this page).
-    expect(source).toContain('<RoomListSectionHeader');
-    expect(styleBlock(memberRow, 'row')).toContain('paddingHorizontal: hull.space.sm');
-    expect(source).toContain('actionTestID="members-add-people"');
+  it('uses the production room-list header for both Members sections', () => {
+    // All four sections share the same centered 44pt action target.
+    // Members supplies the screen inset on its content container.
+    const headers = [...source.matchAll(/<RoomListSectionHeader\b[\s\S]*?\/>/g)];
+    expect(headers).toHaveLength(2);
+    expect(headers[0][0]).toContain('title="People"');
+    expect(headers[1][0]).toContain('title="Agents"');
+    for (const [header] of headers) expect(header).toContain('inset="content"');
+    expect(styleBlock(source, 'content')).toContain('padding: hull.space.md');
+    expect(source).not.toMatch(/sectionHeaderAction|sectionHeaderText/);
   });
 
   it('opens an agent profile from the roster row instead of expanding settings inline', () => {

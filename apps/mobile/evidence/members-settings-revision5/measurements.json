@@ -1,0 +1,31 @@
+{
+  "sharedComponent": "apps/mobile/sources/components/buzz/RoomListSectionHeader.tsx",
+  "android": {
+    "surfaceRight": 412,
+    "people": {
+      "actionRight": 396,
+      "actionTop": 222
+    },
+    "agents": {
+      "actionRight": 396,
+      "actionTop": 486
+    }
+  },
+  "desktop": {
+    "surfaceRight": 1279,
+    "people": {
+      "actionRight": 1263,
+      "actionTop": 170
+    },
+    "agents": {
+      "actionRight": 1263,
+      "actionTop": 434
+    }
+  },
+  "allFourSections": {
+    "actionRightInsetPx": 16,
+    "glyphBoxRightInsetPx": 30,
+    "actionCenterRightInsetPx": 38,
+    "hitTargetWidthPx": 44
+  }
+}

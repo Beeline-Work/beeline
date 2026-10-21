@@ -92,6 +92,38 @@ const post = async (id: string, text: string, author = WORKER, age = '0 hours') 
   );
 const commanderFlags = async () => (await readAgentCommands(db, ROOM, COMMANDER)).commands;
 
+it.each([REVIEWER, COMMANDER])('Reproduction IDLE-WAIT: only a configured reviewer check subscription keeps the corner quiet (%s)', async agent => {
+  await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
+    VALUES(gen_random_uuid(),$1,$2,$3,'room','check-passed','Review when green')`, [WS,C,agent]);
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(agent === REVIEWER ? 0 : 1);
+});
+
+it('Reproduction IDLE-EPISODE: check churn alone does not repeat an idle alert', async () => {
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+  for (let sweep=0;sweep<3;sweep++) {
+    await db.query(`UPDATE corner_facts SET lifecycle='{"checks":"pending"}' WHERE corner_id=$1`,[C]);
+    await runCornerAttention(db);
+    expect(await commanderFlags()).toHaveLength(1);
+    await db.query(`UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,[C]);
+    await runCornerAttention(db);
+  }
+  expect(await commanderFlags()).toHaveLength(1);
+});
+
+it('Reproduction IDLE-DELIVERY: checks starting between record and delivery defer the alert', async () => {
+  await recordCornerAttention(db);
+  await db.query(`UPDATE corner_facts SET lifecycle='{"checks":"pending"}' WHERE corner_id=$1`,[C]);
+  await deliverCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await db.query(`UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,[C]);
+  await db.query(`UPDATE corner_attention_flags SET due_at=now()`);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+});
+
 it('an untagged needs-decision report waits on the human who ordered the turn', async () => {
   await phone.execute(
     'sendRoomMessage',

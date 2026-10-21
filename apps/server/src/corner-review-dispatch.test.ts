@@ -380,6 +380,14 @@ describe('corner message attribution', () => {
       expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
     expect((await commands(A, C)).map(command => command.id)).toEqual(handback.map(command => command.id));
     expect(await commands(B, C)).toEqual([]);
+    // Completing the handback without a push must not automatically repeat
+    // the rejected review on each background reconciliation.
+    await claim(handback[0]!);
+    await result(handback[0]!, 'The draft still needs its demonstration.');
+    for (let sweep=0;sweep<3;sweep++) {
+      await reconcileConfiguredCornerReviewers(db, R);
+      expect(await commands(B, C)).toEqual([]);
+    }
     // A new head is a new review.
     await greenHead(28, 'd'.repeat(40));
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);

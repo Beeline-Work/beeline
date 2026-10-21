@@ -65,6 +65,7 @@ BEGIN
   INSERT INTO corner_attention_spans(corner_id,revision)
   SELECT NEW.room_id,1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL
   ON CONFLICT(corner_id) DO UPDATE SET revision=corner_attention_spans.revision+1,
+    episode=corner_attention_spans.episode+CASE WHEN NEW.agent_id=(SELECT COALESCE(worker_agent_id,owner_agent_id) FROM corner_facts WHERE corner_id=NEW.room_id) THEN 1 ELSE 0 END,
     last_state=CASE WHEN NEW.agent_id=(SELECT COALESCE(worker_agent_id,owner_agent_id) FROM corner_facts WHERE corner_id=NEW.room_id) THEN 'working' ELSE corner_attention_spans.last_state END;
   RETURN NULL;
 END
@@ -125,6 +126,10 @@ function attentionSql(where: string): string {
       AND schedule.agent_id=${worker} AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))
     OR EXISTS(SELECT 1 FROM agent_subscriptions subscription WHERE subscription.room_id=c.id
       AND subscription.agent_id=${worker})
+    OR EXISTS(SELECT 1 FROM agent_subscriptions subscription
+      JOIN rooms parent ON parent.id=c.parent_id
+      WHERE subscription.room_id=c.id AND subscription.event='check-passed'
+      AND subscription.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids))
     OR EXISTS(SELECT 1 FROM corner_watches watch WHERE watch.watcher_room_id=c.id
       AND watch.agent_id=${worker} AND jsonb_array_length(watch.kinds)>0)
     OR EXISTS(SELECT 1 FROM effective_memberships membership WHERE membership.room_id=c.id
@@ -148,7 +153,9 @@ export async function recordCornerAttention(db: SqlDatabase): Promise<void> {
     ).rows;
     for (const row of rows) {
       const state = cornerRowState(row).state;
-      const episode = BigInt(row.episode) + (row.last_state !== 'idle' && state === 'idle' ? 1n : 0n);
+      // Only worker activity opens another episode; CI and reviewer churn
+      // can change observed state without making another idle alert useful.
+      const episode = BigInt(row.episode) || (state === 'idle' ? 1n : 0n);
       await tx.query(
         `UPDATE corner_attention_spans SET episode=$2,last_state=$3,checked_at=now() WHERE corner_id=$1`,
         [row.id, episode.toString(), state],
@@ -208,13 +215,13 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
       }
       const state = cornerRowState(row).state;
       if (flag.kind === 'idle') {
-        if (row.episode !== String(flag.revision) || row.last_state !== 'idle' || state !== 'idle') {
+        if (row.episode !== String(flag.revision) || state === 'archived') {
           await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [
             flag.id,
           ]);
           return;
         }
-        if (row.worker_wait) {
+        if (row.worker_wait || state !== 'idle' || row.last_state !== 'idle') {
           await tx.query(
             `UPDATE corner_attention_flags SET due_at=now()+interval '5 seconds' WHERE id=$1`,
             [flag.id],

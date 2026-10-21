@@ -94,9 +94,14 @@ interface PendingBind {
 
 async function exchangeFunnelTicket(ticket:string, provider: 'github' | 'google' = 'github'){
   const context=await pendingFunnelAttempt().catch(()=>undefined);
-  return provider === 'google'
-    ? monolithSession.exchangeGoogleTicket(ticket, context)
-    : monolithSession.exchangeGitHubTicket(ticket, context);
+  if (provider === 'google') {
+    return context
+      ? monolithSession.exchangeGoogleTicket(ticket, context)
+      : monolithSession.exchangeGoogleTicket(ticket);
+  }
+  return context
+    ? monolithSession.exchangeGitHubTicket(ticket, context)
+    : monolithSession.exchangeGitHubTicket(ticket);
 }
 
 function randomState(): string {

@@ -51,14 +51,32 @@ export function textTagsAgent(text: string, handle: string, pubkey: string): boo
 /**
  * The newest message in the Room, when it is an agent's answer to the viewer:
  * it tags the viewer, or its reply/request references a viewer message. Live turn
- * rows are transient and never count as the newest message.
+ * rows are transient and never count as the newest message. Before the viewer's
+ * first message, a sole agent member is also offered, even before its hello.
+ * Its stable Room-scoped key lets the same once-only/draft guards apply.
  */
 export function answerPrefillCandidate(
   messages: readonly ChatDisplayMessage[],
   viewerPubkey: string,
   handleFor: (message: ChatDisplayMessage) => string | undefined,
+  firstMessage?: {
+    readonly roomId: string;
+    readonly agents: readonly { readonly pubkey: string; readonly handle?: string }[];
+    readonly viewerIsAgent: boolean;
+  },
 ): AnswerPrefillCandidate | undefined {
-  if (!viewerPubkey) return undefined;
+  if (!viewerPubkey || firstMessage?.viewerIsAgent) return undefined;
+  const soleAgent = firstMessage?.agents.length === 1 ? firstMessage.agents[0] : undefined;
+  const firstHandle = soleAgent?.handle?.replace(/^@/, '');
+  const initial =
+    firstMessage && soleAgent && firstHandle &&
+    !messages.some((message) => message.pubkey === viewerPubkey)
+      ? {
+          handle: firstHandle,
+          pubkey: soleAgent.pubkey,
+          sourceMessageId: `first-message:${firstMessage.roomId}:${soleAgent.pubkey}`,
+        }
+      : undefined;
   let newest: ChatDisplayMessage | undefined;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
@@ -66,9 +84,9 @@ export function answerPrefillCandidate(
     newest = message;
     break;
   }
-  if (!newest?.isAgentAuthor || !newest.pubkey || newest.deleted) return undefined;
+  if (!newest?.isAgentAuthor || !newest.pubkey || newest.deleted) return initial;
   const handle = handleFor(newest)?.replace(/^@/, '');
-  if (!handle) return undefined;
+  if (!handle) return initial;
   const replyToId = newest.replyToId;
   const requestId = newest.requestId;
   const answersViewer =
@@ -82,7 +100,7 @@ export function answerPrefillCandidate(
           message.pubkey === viewerPubkey,
       ),
     );
-  if (!answersViewer) return undefined;
+  if (!answersViewer) return initial;
   return { handle, pubkey: newest.pubkey, sourceMessageId: newest.relayId ?? newest.id };
 }
 

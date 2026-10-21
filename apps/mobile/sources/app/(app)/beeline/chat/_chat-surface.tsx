@@ -2759,7 +2759,8 @@ export function BuzzChatSurface({
   chronologicalMessagesRef.current = visibleMessages;
   // The composer offers an agent's handle as visible, deletable text: on a
   // quote-reply, and when the newest message is that agent's answer to the
-  // viewer. Each answer is offered once (`buzz/composer-prefill.ts`).
+  // viewer, or before a first message to a sole agent member. Each candidate
+  // is offered once (`buzz/composer-prefill.ts`).
   const composerPrefillRef = useRef<ComposerPrefill | null>(null);
   const offeredPrefillsRef = useRef(new Set<string>());
   const answerPrefill = useMemo(
@@ -2772,8 +2773,15 @@ export function BuzzChatSurface({
             (message) =>
               message.authorIdentity?.handle ??
               (message.pubkey ? agentByPubkey.get(message.pubkey)?.handle : undefined),
+            isDirectMessage ? undefined : {
+              roomId: decodedId,
+              agents: roomSurface?.members
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity) ?? [],
+              viewerIsAgent,
+            },
           ),
-    [agentByPubkey, anchoredSegmentActive, userPubkey, viewerIsAgent, visibleMessages],
+    [agentByPubkey, anchoredSegmentActive, decodedId, isDirectMessage, roomSurface?.members, userPubkey, viewerIsAgent, visibleMessages],
   );
   const answerPrefillRef = useRef(answerPrefill);
   answerPrefillRef.current = answerPrefill;

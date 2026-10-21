@@ -4328,11 +4328,11 @@ export class PhoneService {
       case 'setCornerLocked': {
         const value = input as Input<'setCornerLocked'>;
         if (typeof value.locked !== 'boolean') throw new Error('locked must be a boolean');
-        await this.updateCornerClosure(value.roomId, viewerId, value.locked);
+        await this.requestCornerClose(value.roomId, viewerId, value.locked);
         return undefined as Output<Name>;
       }
       case 'requestCornerClose':
-        await this.updateCornerClosure((input as Input<'requestCornerClose'>).roomId, viewerId);
+        await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
         return undefined as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
@@ -6124,7 +6124,7 @@ export class PhoneService {
    * Apply a human close or lock change using the same corner management permission.
    * A lock change preserves the corner's assignments; a close cancels them.
    */
-  private async updateCornerClosure(roomId: string, viewerId: string, locked?: boolean) {
+  private async requestCornerClose(roomId: string, viewerId: string, locked?: boolean) {
     await this.database.transaction(async (database) => {
       await lockCornerLifecycle(database, roomId);
       const access = await database.query<{ workspace_role: string }>(

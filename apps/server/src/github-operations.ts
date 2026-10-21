@@ -2594,15 +2594,16 @@ export class GitHubOperations {
         },
       });
       const summary = target.summary.trim() || pullRequest.title;
-      // The merge summary card in the parent Room: a tap opens the pull request.
-      await systemLine(database, {
+      // Completion cards belong only to corners that actually close.
+      if (!locked) await systemLine(database, {
         id: hash(`beeline:${target.parent_id}:${mergeKey}`),
         roomId: target.parent_id,
         authorId: target.author_id,
         ...merged,
-        ...(locked ? {} : { presentation: 'card' as const, durableFact: 'merge' as const }),
-        cardType: locked ? 'github-corner-note' : 'daemon-fact',
-        card: locked ? { source: 'github', dedupe: mergeKey } : {
+        presentation: 'card',
+        durableFact: 'merge',
+        cardType: 'daemon-fact',
+        card: {
           type: 'corner-complete',
           cornerId: target.corner_id,
           name: target.corner_name,

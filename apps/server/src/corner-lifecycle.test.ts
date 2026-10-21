@@ -542,6 +542,10 @@ describe('corner lock', () => {
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
     expect(await commands(A, cornerId)).toEqual(before);
     expect((await phone.readRoom(cornerId, H))?.cornerLifecycle?.pr?.mergedAt).toBeDefined();
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND card->>'type'='corner-complete' AND card->>'cornerId'=$2`, [R, cornerId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND card_type='github-corner-note' AND card->>'dedupe' LIKE 'github:pull-request:merged:%'`, [cornerId])).rowCount).toBe(1);
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
     await github.reconcileMergedCorners();
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();

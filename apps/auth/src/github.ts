@@ -1233,6 +1233,15 @@ export class GitHubAppClient {
     return (await this.userInstallationIds(accessToken)).installationIds;
   }
 
+  /** A linked installation may change owners only with an explicit admin grant. */
+  async organizationAdmin(accessToken: string, organization: string): Promise<boolean> {
+    const response = await fetch(`${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
+      { headers: githubHeaders(accessToken) });
+    if (!response.ok) return false;
+    const body = await response.json() as Record<string, unknown>;
+    return body.state === 'active' && body.role === 'admin';
+  }
+
   /**
    * What a user's own token can prove about their membership in `organization`.
    *

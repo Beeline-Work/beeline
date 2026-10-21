@@ -201,9 +201,9 @@ async function main() {
       createDaemonExchange: (agentId, transaction) =>
         auth.createDaemonExchange(agentId, transaction),
       webAppOrigins,
-      completeRepositoryInstallation: async (state, installationId) => {
+      completeRepositoryInstallation: async (state, installationId, code, callbackUri) => {
         if (!github) throw new Error('GitHub installation service is unavailable');
-        return github.completeInstallation(state, installationId);
+        return github.completeInstallation(state, installationId, code, callbackUri);
       },
     },
   );

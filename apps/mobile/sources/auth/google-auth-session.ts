@@ -8,7 +8,7 @@ import { desktopAuthRedirectUri } from './desktop-auth-redirect';
 
 const STORAGE_KEY = 'beeline.google-sign-in.v1';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-type PendingGoogle = { state: string; recoveryToken: string; startedAt: number };
+type PendingGoogle = { state: string; recoveryToken: string; startedAt: number; linkIdentity?: string };
 
 function googleSignInRedirectUri(): string {
   return desktopAuthRedirectUri('google-callback', Linking.createURL('beeline/google-callback'));
@@ -64,11 +64,12 @@ export async function resumeGoogleSignIn(callbackUrl: string | null): Promise<st
 export async function runGoogleSignIn(input: {
   state: string;
   recoveryToken: string;
+  linkIdentity?: string;
   openAuthSession(url: string, redirect: string): Promise<{ type: string; url?: string }>;
   subscribeToUrls(listener: (url: string) => void): { remove(): void } | Promise<{ remove(): void }>;
 }): Promise<string> {
   if (!TOKEN.test(input.state) || !TOKEN.test(input.recoveryToken)) throw new OidcBindError('invalid_state', 'Invalid Google sign-in state');
-  const pending = { state: input.state, recoveryToken: input.recoveryToken, startedAt: Date.now() };
+  const pending = { state: input.state, recoveryToken: input.recoveryToken, startedAt: Date.now(), ...(input.linkIdentity ? { linkIdentity: input.linkIdentity } : {}) };
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(pending));
   const redirect = googleSignInRedirectUri();
   const base = getBuzzRuntimeConfig().monolithUrl;
@@ -116,4 +117,24 @@ export async function runGoogleSignIn(input: {
     await clearPendingGoogleSignIn();
     throw error;
   } finally { subscription.remove(); }
+}
+
+export async function pendingGoogleLinkIdentity(): Promise<string | null> {
+  return (await pendingGoogle())?.linkIdentity ?? null;
+}
+
+let linking: Promise<void> | undefined;
+let completedLink: string | undefined;
+export function completeGoogleAccountLink(ticket: string, identityId: string): Promise<void> {
+  if (completedLink === `${identityId}:${ticket}`) return Promise.resolve();
+  if (linking) return linking;
+  linking = (async () => {
+    if (await pendingGoogleLinkIdentity() !== identityId) throw new Error('Google connection does not match this account. Try again.');
+    const { monolithSession } = await import('./monolith-session');
+    if (await monolithSession.identityId() !== identityId) throw new Error('Your account changed. Connect Google again.');
+    await monolithSession.linkGoogleTicket(ticket);
+    await clearPendingGoogleSignIn();
+    completedLink = `${identityId}:${ticket}`;
+  })().finally(() => { linking = undefined; });
+  return linking;
 }

@@ -7515,7 +7515,7 @@ export class PhoneService {
   }
   private async actOnRepositoryCard(input: Input<'actOnRepositoryCard'>, viewerId: string): Promise<Output<'actOnRepositoryCard'>> {
     if (!await onboardingEnabledForViewer(this.database, viewerId)) throw new Error('repository onboarding unavailable');
-    if (['create', 'link'].includes(input.action)) await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    if (['create', 'link', 'install', 'organization'].includes(input.action)) await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     else {
       if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
       await this.requireTopLevelChatMember(input.roomId, viewerId);

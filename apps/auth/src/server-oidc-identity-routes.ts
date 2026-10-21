@@ -368,15 +368,15 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub sign-in is not configured');
     const query = request.query as Record<string, unknown>;
-    if (process.env.BEELINE_REPOSITORY_ONBOARDING === '1' && typeof query.state === 'string' && query.state.startsWith('repository_install_')) {
+    if (typeof query.state === 'string' && (query.state.startsWith('github_bind_') || (process.env.BEELINE_REPOSITORY_ONBOARDING === '1' && query.state.startsWith('repository_install_')))) {
       const installationId = query.installation_id === undefined ? undefined : Number(query.installation_id);
-      if (query.error || (installationId !== undefined && (!Number.isSafeInteger(installationId) || installationId <= 0)) ||
+      if ((query.error && !query.state.startsWith('github_bind_')) || (installationId !== undefined && (!Number.isSafeInteger(installationId) || installationId <= 0)) ||
           !options.completeRepositoryInstallation) {
         throw new ProtocolError(400, 'invalid_installation_flow', 'GitHub installation did not complete');
       }
       // The monolith verifies access with the flow owner's stored GitHub user grant,
       // locks and consumes the state, and supplies the previously validated return URI.
-      const location = await options.completeRepositoryInstallation(query.state, installationId);
+      const location = await options.completeRepositoryInstallation(query.state, installationId, typeof query.code === 'string' ? query.code : undefined, `${tenantFor(request).origin}/auth/github/callback`);
       noStore(reply);
       return reply.redirect(location, 302);
     }

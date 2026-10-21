@@ -769,6 +769,7 @@ export type GitHubRepositoryListResult = {
   readonly githubReconnectNeeded?: boolean;
 };
 export type BeginGitHubInstallationInput = {
+  readonly reconnect?: boolean;
   readonly redirectUri: string;
   readonly installationId?: number;
 };

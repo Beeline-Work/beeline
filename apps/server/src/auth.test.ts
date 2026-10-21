@@ -60,6 +60,19 @@ describe('opaque token ceremony', () => {
         .rows,
     ).toEqual([{ identity_id: google.identityId }]);
   });
+  it('E13: linking Google preserves the GitHub account and either provider signs into that identity', async () => {
+    const auth = new TokenAuth(db, async () => ({subject:'42',login:'githubname',name:'GitHub Name'}), () => new Date(),
+      async () => ({subject:'google-sub',name:'Google Name',email:'same@gmail.com',audience:'client'}));
+    const github = await auth.exchangeGitHubOidc('github');
+    await auth.linkGoogleOidc(github.identityId, 'google');
+    const google = await auth.exchangeGoogleOidc('google-again');
+    expect(google.identityId).toBe(github.identityId);
+    expect((await auth.exchangeGitHubOidc('github-again')).identityId).toBe(github.identityId);
+    expect((await db.query(`SELECT name,handle FROM identities WHERE id=$1`, [github.identityId])).rows[0]).toEqual({name:'GitHub Name',handle:'githubname'});
+    const other = 'e'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+    await expect(auth.linkGoogleOidc(other, 'google')).rejects.toThrow('already linked');
+  });
   it('E16: uses email handles, the smallest collision suffix, reserved names and the 30-character limit', async () => {
     const emails = [
       'Alex.Chen@gmail.com',

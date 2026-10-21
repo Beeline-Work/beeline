@@ -193,6 +193,15 @@ export class MonolithSession {
     return tokens.identityId;
   }
 
+  async linkGoogleTicket(ticket: string): Promise<void> {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/google/link`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${await this.authorization()}` },
+      body: JSON.stringify({ oidcToken: ticket }),
+    });
+    if (response.status === 409) throw new Error('That Google account belongs to another Beeline account.');
+    if (!response.ok) throw new Error('Could not connect Google. Try again.');
+  }
+
   async reconnectGitHubTicket(ticket: string): Promise<void> {
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/github/reconnect`, {
       method: 'POST',

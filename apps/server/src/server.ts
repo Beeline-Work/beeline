@@ -245,7 +245,9 @@ function isWebAppCorsPath(pathname: string): boolean {
     pathname === '/healthz' ||
     pathname.startsWith('/v1/') ||
     pathname === '/auth/github/completion' ||
-    pathname === '/auth/github/completion/cancel'
+    pathname === '/auth/github/completion/cancel' ||
+    pathname === '/auth/oidc/completion' ||
+    pathname === '/auth/oidc/completion/cancel'
   );
 }
 
@@ -642,7 +644,8 @@ export function createBeelineServer(options: ServerOptions): Server {
               message.includes('too large') ||
               message.includes('size is outside')
             ? 400
-            : message.includes('already linked') ||
+            : message === 'github_account_mismatch' ||
+                message.includes('already linked') ||
                 message.includes('already claimed') ||
                 message.includes('conflict') ||
                 message.includes('checks are failing')
@@ -1939,6 +1942,16 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       response.writeHead(204);
       response.end();
     }
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/auth/google/link') {
+    const viewerId = await phoneIdentity(request, options);
+    if (!viewerId) { json(response, 401, { error: 'unauthorized' }); return; }
+    const input = await body(request);
+    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
+    await options.auth.linkGoogleOidc(viewerId, input.oidcToken);
+    response.writeHead(204);
+    response.end();
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/auth/google/exchange') {

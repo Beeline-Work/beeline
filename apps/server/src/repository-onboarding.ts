@@ -49,8 +49,12 @@ export function repositoryStarters(signals: RepositorySignals): RepositoryStarte
 export async function postRepositoryOnboarding(database: SqlDatabase, github: GitHubOperations | undefined,
   input: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' }): Promise<RepositoryOnboardingCard> {
   if (!await onboardingEnabledForViewer(database, input.requesterId)) throw new Error('repository onboarding unavailable');
-  const room = (await database.query<{ repository_name: string | null; name: string; can_link: boolean }>(
-    `SELECT r.repository_name,i.name,(w.role IN ('owner','admin')) can_link FROM rooms r
+  const room = (await database.query<{ repository_name: string | null; name: string; can_link: boolean; owner_handle: string | null; github_linked: boolean }>(
+    `SELECT r.repository_name,i.name,(w.role IN ('owner','admin')) can_link,
+     (SELECT owner.handle FROM memberships membership JOIN identities owner ON owner.id=membership.identity_id
+      WHERE membership.workspace_id=r.workspace_id AND membership.room_id IS NULL AND membership.role='owner'
+      AND membership.removed_at IS NULL ORDER BY owner.id LIMIT 1) owner_handle,
+     EXISTS(SELECT 1 FROM identity_external_links link WHERE link.identity_id=$3 AND link.provider='github') github_linked FROM rooms r
      JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
      JOIN memberships w ON w.workspace_id=r.workspace_id AND w.room_id IS NULL AND w.identity_id=$3 AND w.removed_at IS NULL
      JOIN identities i ON i.id=$2
@@ -67,7 +71,7 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
   const kind = input.kind === 'starters' && room.repository_name ? 'starters' : 'repository';
   if (kind === 'starters' && !github) throw new Error('GitHub is not configured');
   const card: RepositoryOnboardingCard = {
-    id, ...input, kind, status: 'open', canLink: room.can_link,
+    id, ...input, ...(room.owner_handle ? { ownerHandle: room.owner_handle } : {}), githubLinked: room.github_linked, kind, status: 'open', canLink: room.can_link,
     state: room.repository_name ? 'repo_linked' : installation ? 'no_repo_linked' : 'install_missing',
     ...(room.repository_name ? { repository: room.repository_name } : {}),
     defaultName: `new-project-${id.slice(0, 6)}`,

@@ -27,6 +27,8 @@ export type RepositoryOnboardingCard = {
   readonly state: 'install_missing' | 'no_repo_linked' | 'repo_linked';
   readonly status: 'open' | 'settled';
   readonly canLink: boolean;
+  readonly ownerHandle?: string;
+  readonly githubLinked?: boolean;
   readonly repository?: string;
   readonly defaultName: string;
   readonly installationId?: number;
@@ -55,6 +57,8 @@ export function readRepositoryOnboardingCard(value: unknown): RepositoryOnboardi
       !['install_missing', 'no_repo_linked', 'repo_linked'].includes(String(v.state)) ||
       !['open', 'settled'].includes(String(v.status)) || typeof v.canLink !== 'boolean' || !text(v.defaultName) ||
       (v.repository !== undefined && !text(v.repository)) ||
+      (v.ownerHandle !== undefined && !text(v.ownerHandle)) ||
+      (v.githubLinked !== undefined && typeof v.githubLinked !== 'boolean') ||
       (v.installationId !== undefined && !positive(v.installationId)) ||
       (v.selected !== undefined && !text(v.selected)) ||
       !Array.isArray(v.repositories) || !v.repositories.every(r => r && positive(r.id) &&

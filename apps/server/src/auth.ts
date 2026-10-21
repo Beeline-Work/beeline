@@ -146,6 +146,24 @@ export class TokenAuth {
     return this.issuePhoneTokens(id, randomUUID());
   }
 
+  async linkGoogleOidc(viewerId: string, ticket: string): Promise<void> {
+    if (viewerId === REVIEW_IDENTITY_ID) throw new Error('GitHub access denied for the review identity');
+    if (!this.verifyGoogleOidc) throw new GoogleSignInError('Google sign-in is unavailable');
+    const google = await this.verifyGoogleOidc(ticket);
+    if (!google.subject || !google.audience) throw new GoogleSignInError('Invalid Google identity');
+    await this.database.transaction(async database => {
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, ['workspace-handle-allocation']);
+      const links = (await database.query<{ subject: string; identity_id: string }>(
+        `SELECT subject,identity_id FROM identity_external_links WHERE provider='google' AND (identity_id=$1 OR subject=$2)`,
+        [viewerId, google.subject])).rows;
+      if (links.some(link => link.identity_id !== viewerId || link.subject !== google.subject))
+        throw new Error('Google account already linked to another Beeline account');
+      await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+        VALUES('google',$1,$2,'https://accounts.google.com',$3,$4) ON CONFLICT(provider,subject) DO NOTHING`,
+        [google.subject, viewerId, google.audience, google.email ?? null]);
+    });
+  }
+
   async exchangeGitHubOidc(oidcToken: string): Promise<PhoneTokens> {
     const github = await this.verifyGitHubOidc(oidcToken);
     if (!github.subject || !github.login || !github.name)

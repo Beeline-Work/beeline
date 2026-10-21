@@ -118,7 +118,7 @@ export interface AuthServerOptions {
     onWebhook?: (eventType: string, payload: unknown) => Promise<void>;
   };
   /** Complete a monolith-owned installation using its single-use state and existing user grant. */
-  completeRepositoryInstallation?: (state: string, installationId?: number) => Promise<string>;
+  completeRepositoryInstallation?: (state: string, installationId?: number, code?: string, callbackUri?: string) => Promise<string>;
   tenants: AuthTenant[];
   now?: () => Date;
   flowTtlMs?: number;

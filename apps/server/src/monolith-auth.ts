@@ -29,7 +29,7 @@ export async function createMonolithAuth(
     | undefined,
   options: {
     createDaemonExchange: TokenAuth['createDaemonExchange'];
-    completeRepositoryInstallation?: (state: string, installationId?: number) => Promise<string>;
+    completeRepositoryInstallation?: (state: string, installationId?: number, code?: string, callbackUri?: string) => Promise<string>;
     env?: NodeJS.ProcessEnv;
     webAppOrigins?: readonly string[];
   },

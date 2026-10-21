@@ -1,0 +1,24 @@
+name: Release failure triage
+on:
+  workflow_run:
+    workflows: ['Unified production release', 'Release preflight']
+    types: [completed]
+permissions:
+  contents: read
+  issues: write
+concurrency:
+  group: release-failure-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+jobs:
+  triage:
+    if: contains(fromJSON('["failure", "cancelled"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Always use trusted default-branch code, never the triggering run's checkout/artifacts.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/github-script@v7
+        with:
+          script: await require('./scripts/release-preflight.cjs').triageFailure({github, context});

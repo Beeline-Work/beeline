@@ -109,9 +109,9 @@ knobs remain with Niglet; none was removed.
 
 CI-ENV-01: the free-allowance integration case seeded the database's current UTC
 day but mocked Date.now to a fixed October 20. On October 21, running that exact
-test reproduced used=0 instead of 123000/paused. The test now derives its clock
-from the inserted budget row's UTC day; all six agent-usage integration tests
-pass. This changes only the fixture, retaining the timestamp/privacy assertions.
+test reproduced used=0 instead of 123000/paused. The test now anchors its clock
+to the current UTC day; all six agent-usage integration tests pass. Current main
+contains the same fix, so the merge retains that upstream fixture unchanged. This changes only the fixture, retaining the timestamp/privacy assertions.
 
 CI-ENV-02: the dead-code checker identified the manually invoked compatibility
 proof as an unregistered entry. Its explicit Knip entry makes the proof reachable

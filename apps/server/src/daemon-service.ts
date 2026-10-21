@@ -565,7 +565,15 @@ export class DaemonService {
       // reviewer takes the transactional path below, where the verdict and the
       // handoff commit together or not at all.
       !cornerReviewer &&
-      !privateCommand
+      !privateCommand &&
+      // A same-turn post needs the transactional path: insert the ordinary
+      // reply, then demote repeated prose before any reader can observe it.
+      !(await this.database.query(
+        `SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2 AND request_id=$3
+           AND presentation='message' AND deleted_at IS NULL
+           AND legacy_event->>'turnGenerationId'=$4 LIMIT 1`,
+        [scopedRoom, authenticatedAgentId, candidate.requestId, candidate.generationId],
+      )).rowCount
     ) {
       const output = await this.postRoomMessage(
         input as Input<'postRoomMessage'>,
@@ -4025,7 +4033,7 @@ export class DaemonService {
         input.text,
         // The daemon posts conversation (or a card); a system line is only
         // ever phrased by the server (`system-line.ts`).
-        input.presentation === 'card' ? 'card' : repeated && !pending.length ? 'activity' : 'message',
+        input.presentation === 'card' ? 'card' : 'message',
         input.requestId ?? null,
         JSON.stringify(input.tags ?? {}),
         input.replyToMessageId ?? null,
@@ -4167,9 +4175,7 @@ export class DaemonService {
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
-             ) SELECT $1,$2,$3,$4,
-                 CASE WHEN $13::boolean AND jsonb_array_length(attachment_payload.attachments)=0
-                   THEN 'activity' ELSE $5 END,$6,$7::jsonb,$8,$9,
+             ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
                  writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
@@ -4245,7 +4251,6 @@ export class DaemonService {
           input.generationId,
           STAR_PROMPT_MILESTONES,
           steps,
-          repeated,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -4277,6 +4282,17 @@ export class DaemonService {
       if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);
+    }
+    if (repeated && this.commandTransaction && saved.presentation === 'message' && !saved.attachments.length) {
+      // This is still inside the authorized command transaction. System/card
+      // producers keep their existing insert path and are never demoted here.
+      const demoted = (await this.database.query<{ presentation: 'activity'; version: number }>(
+        `UPDATE messages SET presentation='activity'
+         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND presentation='message'
+         RETURNING presentation,version`,
+        [saved.id, input.roomId, agentId],
+      )).rows[0];
+      if (demoted) saved = { ...saved, ...demoted };
     }
     const emittedAt = Date.now();
     this.live.publish({

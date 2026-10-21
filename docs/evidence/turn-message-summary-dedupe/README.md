@@ -12,10 +12,10 @@ The recorded messages were 572a0de1… and cefee946… (brief revision 2).
 - `apps/body/src/monolith-room-turn.ts:2174` sanitizes that final run and
   collects preceding assistant runs as notes in reply steps.
 - `apps/body/src/turn-stream.ts:305` sends the final through `postRoomMessage`.
-- `apps/server/src/daemon-service.ts:8184` handles explicit `post` through
+- `apps/server/src/daemon-service.ts:8200` handles explicit `post` through
   `postCornerMessage`. Previously it stored an independent visible message
   without the active request or generation.
-- `apps/server/src/daemon-service.ts:3906` stores final replies, on both
+- `apps/server/src/daemon-service.ts:3914` stores final replies, on both
   transactional routing and atomic completion paths.
 
 PR [#2627](https://github.com/Beeline-Work/beeline/pull/2627), corner
@@ -71,3 +71,20 @@ path. Required follow-up after an explicitly authorized deployment: sign in
 with the GitHub reviewer bypass on web.usebeeline.app, run a Claude turn that
 posts to its own address then ends with matching final prose, and verify one
 visible message. Do not describe this production criterion as passed.
+
+## CI integration repair
+
+Server shard 1 rejected the first implementation because changing the final
+insert's presentation expression also changed a producer fingerprint in the
+System-message lock. The repair preserves that locked insert expression.
+A turn with an earlier same-address post uses the authorized transaction;
+a repeated ordinary message is demoted before commit with an update constrained
+to `presentation='message'`. Cards and System messages are not candidates.
+The original fast completion path remains available when no same-turn post
+exists. The guard and its lock file are unchanged.
+
+Server shard 6 separately exceeded the unchanged room-list timing budget
+(167.1ms versus 150ms). Its exact width-corpus test passed locally: four tests,
+EXPLAIN p95 41ms, Room-list median 56ms. The personal GitHub token's job-rerun
+request was refused with HTTP 403 (Actions write required). No timing budget
+was relaxed and no unrelated read query was changed.

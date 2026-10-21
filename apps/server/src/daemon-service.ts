@@ -1,3 +1,4 @@
+import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
@@ -7242,7 +7243,7 @@ export class DaemonService {
          AND app.state='active'`,
       [appId, roomId, agentId],
     )).rows[0];
-    if (!row) throw new Error('Connected app is unavailable in this Room');
+    if (!row) throw new ExpectedRefusalError('Connected app is unavailable in this Room');
     if (row.transport !== 'composio') {
       // Only managed-OAuth apps run through app tools; name the route that serves this one.
       if (row.owner_identity_id !== row.agent_owner_id)
@@ -7812,7 +7813,7 @@ export class DaemonService {
             [roomId, input.implementer],
           )
         ).rows[0];
-        if (!implementer) throw new Error('implementer must be a current member of the parent Room');
+        if (!implementer) throw new ExpectedRefusalError('implementer must be a current member of the parent Room');
         if (implementer.kind !== 'agent') throw new Error('implementer must be an agent');
         implementerAgentId = implementer.id;
       }

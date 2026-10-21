@@ -61,6 +61,19 @@ it('Reproduction R1/R2: feedback cap and workflow lookup refuse without Sentry e
     console.log('R1/R2 evidence', JSON.stringify({ cap, missing, captured: events().length }));
     expect(cap).toEqual({ status: 429, body: { error: 'feedback cap reached: 50 reports per agent per UTC day' } });
     expect(missing).toEqual({ status: 404, body: { error: 'workflow run is unavailable in this Room' } });
+    // Full IDs skip prefix resolution and reach the read/mutation lookups.
+    const fullMissingId = 'deadbeef' + '0'.repeat(56);
+    for (const [operation, input] of [
+      ['getWorkflowRun', { roomId: room, runId: fullMissingId }],
+      ['cancelWorkflowRun', { ...turn, runId: fullMissingId, reason: 'Missing run proof' }],
+    ] as const) {
+      const result = await post(operation, input);
+      console.log('R2 full-ID HTTP evidence', JSON.stringify({ operation, ...result }));
+      expect(result).toEqual({ status: 503,
+        body: { error: 'workflow run is unavailable in this Room' } });
+      await Sentry.flush(2000);
+      expect(events()).toHaveLength(0);
+    }
     for (const [runId, message] of [
       ['', 'runId is required'],
       ['short', 'workflow run ID prefixes must contain at least 8 characters'],

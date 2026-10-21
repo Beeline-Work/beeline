@@ -15,7 +15,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
 import * as updateJournal from './force-update-journal.js';
-import { daemonFailurePath } from './daemon-failure.js';
 import { AgentLifecycle, type AgentExitReason } from './helper-lifecycle.js';
 import { helperStatusLines, helperStatusPath } from './helper-status.js';
 import { quiesceHostedAgents, runMachineHelper } from './machine-helper.js';
@@ -330,10 +329,12 @@ describe('one helper process hosts every agent on the machine', () => {
     // Restarted in this process, 5 s then 10 s later, like the unit used to be.
     await vi.advanceTimersByTimeAsync(5_000);
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(2));
-    await waitForRestart(firstRestart);
+    const secondRestart = await waitForRestart(firstRestart);
     await vi.advanceTimersByTimeAsync(10_000);
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(3));
-    await vi.waitFor(async () => expect(JSON.parse(await readFile(daemonFailurePath(dirname(configPaths[0]!)), 'utf8'))).toMatchObject({ lastError: 'harness exploded' }));
+    // The failure file can still describe an earlier attempt; wait until this
+    // attempt has recorded its restart and armed the next delay.
+    await waitForRestart(secondRestart);
     await vi.advanceTimersByTimeAsync(20_000);
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(4));
     // The sibling started once and was never touched.

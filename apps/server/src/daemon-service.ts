@@ -1,3 +1,4 @@
+import { turnMessageRepetition } from './turn-repetition.js';
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -3909,7 +3910,27 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
-    const steps = replySteps(input.steps);
+    let steps = replySteps(input.steps);
+    // Explicit same-address posts can already have
+    // committed this answer. Keep the terminal row for receipts, replay and
+    // tool activity, but remove repeated prose from the conversation surface.
+    const earlier = input.requestId && input.presentation !== 'card'
+      ? (await this.database.query<{ text: string }>(
+          `SELECT text FROM messages
+           WHERE room_id=$1 AND author_id=$2 AND request_id=$3
+             AND presentation='message' AND deleted_at IS NULL
+             AND legacy_event->>'turnGenerationId'=$4
+           ORDER BY created_at DESC,id DESC LIMIT 64`,
+          [input.roomId, agentId, input.requestId, input.generationId],
+        )).rows
+      : [];
+    const matches = earlier.map(row => turnMessageRepetition(input.text, row.text));
+    const same = matches.includes('same');
+    const similar = matches.includes('similar') && (input.steps?.length ?? 0) < MAX_REPLY_STEPS;
+    const repeated = same || similar;
+    if (!same && similar) steps = replySteps([
+      ...(input.steps ?? []), { kind: 'note', title: 'Turn summary', text: input.text },
+    ]);
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -4004,7 +4025,7 @@ export class DaemonService {
         input.text,
         // The daemon posts conversation (or a card); a system line is only
         // ever phrased by the server (`system-line.ts`).
-        input.presentation === 'card' ? 'card' : 'message',
+        input.presentation === 'card' ? 'card' : repeated && !pending.length ? 'activity' : 'message',
         input.requestId ?? null,
         JSON.stringify(input.tags ?? {}),
         input.replyToMessageId ?? null,
@@ -4146,7 +4167,9 @@ export class DaemonService {
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
-             ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
+             ) SELECT $1,$2,$3,$4,
+                 CASE WHEN $13::boolean AND jsonb_array_length(attachment_payload.attachments)=0
+                   THEN 'activity' ELSE $5 END,$6,$7::jsonb,$8,$9,
                  writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
@@ -4222,6 +4245,7 @@ export class DaemonService {
           input.generationId,
           STAR_PROMPT_MILESTONES,
           steps,
+          repeated,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -8168,11 +8192,13 @@ export class DaemonService {
       command.room_id === input.cornerId ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model)
-         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3)
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event)
+         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
+           CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
+           jsonb_build_object('turnGenerationId',$7::text)
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
          RETURNING id,created_at`,
-        [id(), input.cornerId, agentId, text],
+        [id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId],
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);

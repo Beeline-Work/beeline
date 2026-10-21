@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import {
+  newestCountableMessage,
   newestVisibleMessageId,
+  pinnedTailReadReport,
   ReadCursorAdvancer,
   READ_CURSOR_DEBOUNCE_MS,
 } from './read-cursor-advance';
@@ -50,6 +52,39 @@ describe('newestVisibleMessageId', () => {
   it('names the newest visible row for a phone reader, whose list is inverted', () => {
     const visible = [NATIVE_ORDER[1]!, NATIVE_ORDER[2]!]; // 'c' and 'b'
     expect(newestVisibleMessageId(TRANSCRIPT, visible)).toBe('c');
+  });
+});
+
+describe('newestCountableMessage', () => {
+  it('names the newest durable row even when a provisional lane trails it', () => {
+    const rows = [row('stored'), row('reply'), row('lane', { isAgentLiveTurn: true })];
+    expect(newestCountableMessage(rows)?.id).toBe('reply');
+  });
+
+  it('credits every durable relay report a host row carries', () => {
+    const rows = [row('a'), row('b', { foldedIds: ['b', 'b1', 'b2'] })];
+    expect(newestCountableMessage(rows)?.id).toBe('b');
+  });
+
+  it('names nothing when every row is provisional or the transcript is empty', () => {
+    expect(newestCountableMessage([])).toBeNull();
+    expect(
+      newestCountableMessage([
+        row('draft', { isAgentDraft: true }),
+        row('lane', { isAgentLiveTurn: true }),
+        row('activity', { isAgentActivity: true }),
+      ]),
+    ).toBeNull();
+  });
+
+  // Reproduction TAIL-ARRIVAL-READ-DOT. An agent reply finalises while the
+  // reader already rests at the tail. The list may run no new viewability pass,
+  // so the surface re-asks with `pinnedTailReadReport`; the mark below is the
+  // write that clears the Room list's dot.
+  it('reports the durable reply beneath a settling live lane, and nothing for a lone lane', () => {
+    const settling = [row('earlier'), row('reply'), row('lane', { isAgentLiveTurn: true })];
+    expect(pinnedTailReadReport(settling).map((message) => message.id)).toEqual(['reply']);
+    expect(pinnedTailReadReport([row('lane', { isAgentLiveTurn: true })])).toEqual([]);
   });
 });
 
@@ -211,6 +246,15 @@ describe('ReadCursorAdvancer', () => {
 describe('ReadCursorAdvancer and the mark the server already holds', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it('publishes the pinned-tail report as a forward read mark', () => {
+    const publish = vi.fn();
+    const advancer = new ReadCursorAdvancer(publish);
+    const chronological = [row('older'), row('reply')];
+    advancer.observe(chronological, pinnedTailReadReport(chronological));
+    vi.advanceTimersByTime(READ_CURSOR_DEBOUNCE_MS);
+    expect(publish).toHaveBeenCalledWith('reply');
+  });
 
   it('writes nothing when the viewport reaches no further than the server’s own mark', () => {
     const publish = vi.fn();

@@ -363,6 +363,7 @@ import {
   messageBoundaryIds,
   newestTranscriptRowId,
 } from '@/buzz/room-new-message-boundary';
+import { pinnedTailReadReport } from '@/buzz/read-cursor-advance';
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { BubblePressable } from '@/components/BubblePressable';
 import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
@@ -3039,6 +3040,27 @@ export function BuzzChatSurface({
     },
     [advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
   );
+  // The viewport pass above owns the read boundary, but it does not run when
+  // an arrival only changes which row is NEWEST while the list already rests
+  // at the tail — the same stale report `useNewMessageControl` re-asks for.
+  // Re-ask the read cursor there: a DM opened at, or held at, its tail must
+  // move the server mark too, or the Room list's unread dot outlives the read.
+  // A reader scrolled into history is not at the tail and writes nothing, and
+  // a provisional draft or live lane is skipped for the durable row beneath.
+  useEffect(() => {
+    if (anchoredSegmentActive || !isFocused) return;
+    if (!scrollController.isPinnedToTail()) return;
+    const chronological = chronologicalMessagesRef.current;
+    const report = pinnedTailReadReport(chronological);
+    if (!report.length) return;
+    advanceReadCursor(chronological, report);
+  }, [
+    advanceReadCursor,
+    anchoredSegmentActive,
+    isFocused,
+    newestTranscriptMessageId,
+    scrollController,
+  ]);
   // Back from the code reader: center the row the reader opened it from.
   const scrollToArtifactOrigin = useCallback(
     (index: number) => {

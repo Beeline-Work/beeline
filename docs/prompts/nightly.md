@@ -8,10 +8,11 @@ will not cancel it. The old corner schedule
 `e4ef62d4-6277-46cf-aa2c-fdc00912fdd7` was deleted to avoid duplicate runs.
 
 The weekly cadence was approved by lunchboxfortwo and relayed through Ruby.
-The Room schedule's cadence must be updated from a turn in #beeline on helpers
-that still restrict schedule edits to their own place; a cross-place 404 does
-not mean the schedule is absent. Verify it with `wake(action:list)` there.
-The next weekly occurrence is Sunday 2026-10-25, 04:00 EDT / 08:00 UTC.
+Ruby confirmed the surviving Room schedule is weekly, with its next run on
+Sunday 2026-10-25, 04:00 EDT / 08:00 UTC. Both corner schedule-list reads
+returned `schedules: []`; there is no remaining corner copy. On helpers that
+restrict schedule edits to their own place, verify the Room schedule from a
+turn in #beeline; a cross-place 404 does not mean it is absent.
 
 The schedule uses the owner's OpenRouter key through vault `use_credential`;
 no Actions secret or exported key is needed. The GitHub replay workflow was removed.

@@ -39,9 +39,9 @@ for daily replay, then superseded by Room schedule
 `ea5594a0-42ec-49dd-8957-5582216ebedd` in #beeline. The corner duplicate was
 deleted. The approved cadence is now weekly: Sundays, `0 4 * * 0`,
 `America/New_York`; next weekly occurrence is 2026-10-25 04:00 EDT / 08:00 UTC.
-At this cadence update, the surviving schedule still needs its own #beeline
-turn to apply and verify the change; cross-place update returned 404. The
-recorded experiment above remains historical evidence, independent of cadence.
+Ruby subsequently confirmed the surviving Room schedule has that weekly cadence
+and next-run time. Two corner `wake(action:list)` reads returned `schedules: []`.
+The recorded experiment above remains historical evidence, independent of cadence.
 The existing schedule prompt, sealed exchange, 6M-token/$3 caps and every
 per-run rule remain unchanged. Ruby owns procedure and digest wording updates.
 

@@ -32,10 +32,30 @@
 Firstmate runs one command directly, without creating a release worker:
 
 ```sh
-gh-axi workflow run unified-release.yml --ref main
+node scripts/dispatch-production-release.mjs
 ```
 
-Pass no inputs. The workflow pins current `main`, includes every merge at that
+Pass no inputs. The dispatch command refuses while any production release is
+queued, waiting, or in progress, and stops if the GitHub listing fails. Recovery
+operators pass the existing `-f name=value` inputs to the same command. This
+check is advisory against simultaneous callers: workflow concurrency serializes
+those races with `cancel-in-progress: false`. GitHub keeps at most one pending
+run in a concurrency group, so use this command to avoid stacking dispatches.
+Manual dispatches through GitHub still serialize behind the running release.
+
+A person can cancel a stuck run in GitHub Actions → Unified production release
+→ the run → Cancel workflow, or run `gh-axi run cancel <run-id>`. Wait for
+cancellation to finish before dispatching recovery. Automatic same-identity
+retries remain inside the workflow and queue behind their parent as it ends;
+they skip redispatch if another release is active.
+
+Keep the v0.1.90–v0.1.94 draft releases and their assets intact. They represent
+partially shipped attempts, not verified successful releases. On an explicit
+owner release command, use a fresh routine identity (allocation skips drafts),
+or deliberately recover an existing identity after inspecting its checkpoints.
+Do not publish a draft merely because a server or OTA leg completed.
+
+The workflow pins current `main`, includes every merge at that
 HEAD, keeps automatic component selection, uses the established `store_track=none`
 policy, promotes the OTA without a device proof (recorded UNPROVEN unless
 `run_release_proof=true`), publishes one release record, runs component checks,

@@ -1259,7 +1259,7 @@ test('a desktop-carrying retry fetches this release\'s installers, never the pre
 test('canonical routine release guidance is a single no-input dispatch', () => {
   const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
   const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
-  const command = 'gh-axi workflow run unified-release.yml --ref main';
+  const command = 'node scripts/dispatch-production-release.mjs';
   assert.match(guide, new RegExp(command.replaceAll('.', '\\.')));
   assert.match(agents, new RegExp(command.replaceAll('.', '\\.')));
   assert.match(guide, /Pass no inputs/);
@@ -1948,4 +1948,60 @@ test('both native builds apply the one resolved store version before EAS, with n
       assert.equal(JSON.parse(readFileSync(join(dir, 'package.json'))).version, '0.2.23');
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Reproduction release-dispatch-serialization: production-free stand-in.
+test('release-dispatch-serialization: a second production release cannot cancel the running release', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  assert.equal(workflow.concurrency.group, 'unified-production-release');
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+});
+
+test('release-dispatch-serialization: the operator command refuses active runs and preserves recovery arguments', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'release-dispatch-'));
+  const script = fileURLToPath(new URL('./dispatch-production-release.mjs', import.meta.url));
+  try {
+    const cli = join(dir, 'gh-axi');
+    writeFileSync(cli, `#!/usr/bin/env node
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'api') {
+  if (process.env.LIST_FAILURE === '1') process.exit(1);
+  console.log(process.env.RUN_PAGES);
+} else fs.writeFileSync(process.env.DISPATCH_LOG, JSON.stringify(args));
+`);
+    chmodSync(cli, 0o755);
+    const log = join(dir, 'dispatch.json');
+    const run = (pages, extra = {}) => spawnSync(process.execPath, [script, '-f', 'release_version=v0.1.94', '-f', 'retry_attempt=2'], {
+      encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, DISPATCH_LOG: log, RUN_PAGES: JSON.stringify(pages), ...extra },
+    });
+    for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
+      const result = run([{ workflow_runs: [] }, { workflow_runs: [{ id: 123, status }] }]);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, new RegExp(`Production release 123 is already ${status}`));
+      assert.throws(() => readFileSync(log));
+    }
+    assert.equal(run([], { LIST_FAILURE: '1' }).status, 1);
+    assert.equal(run({}).status, 1);
+    assert.throws(() => readFileSync(log));
+    assert.equal(run([{ workflow_runs: [{ id: 123, status: 'completed' }] }]).status, 0);
+    assert.deepEqual(JSON.parse(readFileSync(log, 'utf8')), ['workflow', 'run', 'unified-release.yml', '--ref', 'main', '-f', 'release_version=v0.1.94', '-f', 'retry_attempt=2']);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('release-dispatch-serialization: automatic retry ignores itself but refuses another queued release', async () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const script = workflow.jobs.retry.steps.find(step => step.name.startsWith('Redispatch')).with.script;
+  const execute = new (Object.getPrototypeOf(async function () {}).constructor)('github', 'context', 'core', script);
+  for (const status of ['queued', 'in_progress', 'waiting', 'completed']) {
+    const dispatches = [];
+    const notices = [];
+    const github = {
+      paginate: async () => [{ id: 1, status: 'in_progress' }, { id: 2, status }],
+      rest: { actions: { listWorkflowRuns() {}, createWorkflowDispatch: async args => dispatches.push(args) } },
+    };
+    await execute(github, { repo: { owner: 'Beeline-Work', repo: 'beeline' }, runId: 1 }, { notice: text => notices.push(text) });
+    assert.equal(dispatches.length, status === 'completed' ? 1 : 0);
+    if (status !== 'completed') assert.match(notices[0], /already .*; skipping automatic retry/);
+  }
 });

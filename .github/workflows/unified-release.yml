@@ -79,7 +79,7 @@ permissions:
 
 concurrency:
   group: unified-production-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   initialize:
@@ -1866,6 +1866,15 @@ jobs:
           ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
         with:
           script: |
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              owner: context.repo.owner, repo: context.repo.repo,
+              workflow_id: 'unified-release.yml', per_page: 100,
+            });
+            const active = runs.find(run => run.id !== context.runId && run.status !== 'completed');
+            if (active) {
+              core.notice(`Production release ${active.id} is already ${active.status}; skipping automatic retry. Recover this identity explicitly after that run finishes.`);
+              return;
+            }
             const attempt = Number(process.env.ATTEMPT);
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner, repo: context.repo.repo,

@@ -224,8 +224,8 @@ missing artifacts, completion/publication checks, and the workflow time budget.
 
 ## Release preflight and failure triage
 
-`Release preflight` runs at 05:30 UTC and on manual dispatch. Trusted repository
-PRs touching the release safeguards also exercise it without shipping. It installs
+`Release preflight` runs at 05:30 UTC and on manual dispatch. PRs use the
+preflight tests and actionlint without depending on live runner availability. It installs
 Node from `.nvmrc` on the production, Android and Intel iOS release runner labels
 and executes `node -v`. A hosted watchdog cancels unfinished probes after five
 minutes, so offline or busy runners cannot leave a preflight queued indefinitely.
@@ -235,10 +235,8 @@ The native leg runs the existing Expo fingerprint gate with the mobile Node 22
 toolchain, then compares both platform fingerprints and runtime pins with the
 `mobile-native.sourceSha` in the last successful `unified-release-index`. It fails
 explicitly when no released baseline exists, fingerprints differ, or a platform
-needs a new store build/verified pin restore. On PRs only, an unshipped runtime
-is reported as FAIL in the summary and as a warning instead of blocking the
-safeguards from merging; fingerprint validation and technical faults still fail.
-Scheduled and manual preflights remain strict. No signing, promotion, deployment or
+needs a new store build/verified pin restore. Scheduled and manual preflights
+remain strict. No signing, promotion, deployment or
 store submission runs in preflight.
 
 Every shell-bearing self-hosted unified-release job installs repository Node
@@ -259,6 +257,6 @@ This is the GitHub issue intake path, not a new server endpoint.
 Local proofs: `node --test scripts/release-preflight.test.mjs` covers forced
 failure/redelivery producing one issue, cancellation, offline runner timeout,
 per-platform released runtime comparisons and setup-before-command ordering.
-A live PR preflight proves the runner and native paths; failure triage activates
+A manually dispatched preflight proves the runner and native paths; failure triage activates
 from the default branch after merge because GitHub requires `workflow_run`
 listeners there. The failure/redelivery fixture is its pre-merge stand-in.

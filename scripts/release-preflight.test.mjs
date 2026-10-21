@@ -77,13 +77,15 @@ test('failure intake holds serialization until a new issue is visible in eventua
 });
 
 
-test('scheduled native preflight fails unshipped runtimes; PR diagnostics warn while technical faults remain errors', () => {
+test('native preflight fails unshipped runtimes; diagnostic mode can warn', () => {
   const results = [{platform:'android', ok:false}, {platform:'ios', ok:true}];
   assert.throws(() => enforceReleasedRuntime(results), /store build/);
   const warnings = [];
   enforceReleasedRuntime(results, {reportOnly:true, warn:message=>warnings.push(message)});
   assert.match(warnings[0], /::warning::.*store build/);
   const workflow = readFileSync('.github/workflows/release-preflight.yml','utf8');
-  assert.ok(workflow.includes("PREFLIGHT_REPORT_ONLY: ${{ github.event_name == 'pull_request' }}"));
+  assert.doesNotMatch(workflow, /pull_request|PREFLIGHT_REPORT_ONLY/);
+  assert.match(workflow, /schedule:/);
+  assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /continue-on-error/);
 });

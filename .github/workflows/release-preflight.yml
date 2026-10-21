@@ -3,18 +3,11 @@ on:
   schedule:
     - cron: '30 5 * * *'
   workflow_dispatch:
-  pull_request:
-    paths:
-      - '.github/workflows/unified-release.yml'
-      - '.github/workflows/release-preflight.yml'
-      - '.github/workflows/release-failure.yml'
-      - 'scripts/release-preflight*'
 permissions:
   contents: read
   actions: write
 jobs:
   runner:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     name: Runner probe ${{ matrix.label }}
     strategy:
       fail-fast: false
@@ -35,7 +28,6 @@ jobs:
           node-version-file: .nvmrc
       - run: node -v
   runners_online:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
@@ -60,6 +52,4 @@ jobs:
       - name: Compare against each platform's last released native runtime
         env:
           GH_TOKEN: ${{ github.token }}
-          # An unshipped runtime is a release blocker, not a defect in this PR.
-          PREFLIGHT_REPORT_ONLY: ${{ github.event_name == 'pull_request' }}
         run: node scripts/release-preflight-native.mjs

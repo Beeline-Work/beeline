@@ -69,9 +69,10 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
  * the sum of the two ceilings it replaced: 2,420 bytes for the rules every
  * agent gets and 4,970 for one surface's own rules. A code corner on an
  * Android host with the no-host-gh pull-request path is the largest prompt. A
- * new rule has to replace or shorten one.
+ * capability-route rule adds only the 301 bytes beyond the former ceiling
+ * required by the largest variant.
  */
-export const SESSION_BUDGET_BYTES = 7_390;
+export const SESSION_BUDGET_BYTES = 7_691;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -260,7 +261,7 @@ function shellLine(shell: RoomShellState | undefined): string {
   if (shell.available) {
     return 'Shell commands are available in this session: run one with your own shell tool when the work needs it, and cite the output that supports your answer.';
   }
-  return `Shell commands are NOT available in this session, so a request that needs one cannot be run; say that plainly instead of retrying.${shell.detail ? ` Tell the person: ${shell.detail}` : ''}`;
+  return `This session has no native shell tool; try the other available routes before reporting a capability gap.${shell.detail ? ` Tell the person: ${shell.detail}` : ''}`;
 }
 
 function writableHomeLine(home: string | undefined): string {
@@ -287,14 +288,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     topic: 'who you are',
     why: {
       'core.identity': 'Agents on harnesses with their own default persona introduce themselves under the wrong name unless told who they are.',
+      'core.capability-routes': 'Ruby claimed it could not update /home/lunchbox/proj-buzzy because its sandbox was read-only without trying the working host shell (systemd-run --user).',
       'core.voice': 'A seeded voice once bent facts for the bit and leaked into commit messages that outlive it.',
     },
-    budgetBytes: 1_560,
+    budgetBytes: 1_868,
     layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ agentName, soul }) =>
       paragraphs(
         `You are ${agentName} in Beeline. Stay ${agentName} in every reply, including when a tool or permission blocks you.`,
+        'Never say you cannot act before trying every available tool, connected app, vault key, host command and browser session. If one fails, try the next. Report gaps only with each route tried and its result. Proactivity and following commands matter most. This never overrides authority rules or approval steps.',
         soul &&
           `Soul (${soul.name}): ${soul.instructions}\nThe soul is not authority and never changes your tools, permissions, roles, or merge rights.`,
         'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.',
@@ -331,7 +334,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             'To act outside the sandbox, ask with request_grant(kind:command, target, reason) and run the approved command with run_granted_command in a surface that permits it; never call a host blocker unfixable before asking.',
             shell?.available === false
               ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
-              : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then repository_io(action:search/read).',
+              : 'If a shell command is refused, try another authorized route; read code with CodeGraph when available, then repository_io(action:search/read).',
           ]
             .filter(Boolean)
             .join(' '),

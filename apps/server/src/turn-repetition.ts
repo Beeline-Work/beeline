@@ -6,14 +6,24 @@ export function turnMessageRepetition(final: string, earlier: string): 'same' | 
   const tokens = (text: string) => text.match(/(`+)[\s\S]*?\1|[^\s]+/g) ?? [];
   const next = tokens(final), previous = tokens(earlier);
   if (!next.length || !previous.length) return false;
-  const contains = (haystack: string[], needle: string[]) => {
+  // A subset must retain polarity and explicit conditions from the post.
+  // Dropping one may turn an instruction into its opposite even when every
+  // remaining token is unchanged. Preserve the reply when context is unclear.
+  const context = (text: string) => JSON.stringify(text.toLowerCase().match(
+    /\b(?:not|no|never|only|unless|until|if|except|without|before|after|when|provided|assuming|requires|required|must|should|may|cannot|can't|don't|won't|now)\b/g) ?? []);
+  if (context(final) !== context(earlier)) return false;
+  const sentenceEnd = (word: string) => /[.!?][\"')\]]*$/.test(word);
+  const contains = (haystack: string[], needle: string[], completeSentences = false) => {
     if (needle.length > haystack.length) return false;
     for (let start = 0; start <= haystack.length - needle.length; start++) {
+      if (completeSentences &&
+          ((start > 0 && !sentenceEnd(haystack[start - 1]!)) ||
+           (start + needle.length < haystack.length && !sentenceEnd(needle.at(-1)!)))) continue;
       if (needle.every((word, offset) => word === haystack[start + offset])) return true;
     }
     return false;
   };
-  if (contains(previous, next)) return 'same';
+  if (contains(previous, next, true)) return 'same';
   // Any appended sentence is new information, even when most words repeat.
   if (contains(next, previous)) return false;
   // A near match remains in collapsed activity rather than losing authored text.

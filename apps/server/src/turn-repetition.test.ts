@@ -29,3 +29,13 @@ it.each([
 ])('protects contained literal facts: %s', (final, previous, expected) => {
   expect(turnMessageRepetition(final, previous)).toBe(expected);
 });
+
+it.each([
+  ['deploy the release.', 'Do not deploy the release.', false],
+  ['deploy the release.', 'If checks pass, deploy the release.', false],
+  ['Deploy the release', 'Deploy the release only after checks pass.', false],
+  ['Deploy the release.', 'Deploy the release. Only after checks pass.', false],
+  ['Do not deploy the release.', 'Do not deploy the release. The checks passed.', 'same'],
+])('preserves qualifying context: %s', (final, previous, expected) => {
+  expect(turnMessageRepetition(final, previous)).toBe(expected);
+});

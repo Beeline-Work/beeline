@@ -109,3 +109,14 @@ is preserved. Six additional service regressions failed before this change
 spacing). Near matching rejects any new final token and permits only small
 omissions of connective words; a wording change introducing a new word keeps
 the final visible. This deliberately favors showing a possible duplicate.
+
+## Review correction: polarity and qualifying context
+
+The service sequence `post("Do not deploy the release.")` followed by final
+`deploy the release.` failed before the repair: only the prohibiting post
+remained visible. Three conditional variants also failed; the unchanged
+negative-summary control passed. Containment now requires complete sentence
+boundaries, and polarity/condition markers must retain their order and count.
+Dropping a negation, an if-clause, an until/after condition or a separate
+only-clause keeps the final visible. The unchanged negative sentence still
+deduplicates when followed by an ordinary checks-passed status sentence.

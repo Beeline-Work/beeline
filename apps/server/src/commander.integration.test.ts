@@ -1393,3 +1393,16 @@ it.each([
   expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
     .toEqual([posted.id, result.id]);
 });
+
+it.each([
+  ['Do not deploy the release.', 'deploy the release.', true],
+  ['If checks pass, deploy the release.', 'deploy the release.', true],
+  ['Deploy the release only after checks pass.', 'Deploy the release', true],
+  ['Deploy the release. Only after checks pass.', 'Deploy the release.', true],
+  ['Do not deploy the release. The checks passed.', 'Do not deploy the release.', false],
+])('dedupe preserves polarity and qualifying context: %s -> %s', async (post, final, changed) => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
+    .toEqual(changed ? [posted.id, result.id] : [posted.id]);
+});

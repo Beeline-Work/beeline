@@ -30,6 +30,7 @@ def tap(label=None, resource=None):
     time.sleep(.3)
     return node.attrib
 
+snapshot = json.loads(Path(__file__).with_name('corner-callsite-proof-snapshot.json').read_text())
 receipts = []
 def capture(name):
     raw, current = nodes()
@@ -66,6 +67,12 @@ for theme in ['bone', 'obsidian']:
     _, current = nodes()
     assert any(n.get('resource-id') == 'notification-run-cell-long-4' for n in current)
     tap(label='Next frame')
-    capture(f'android-{theme}-dm-presentation')
+    capture(f'android-{theme}-dm-callsite')
+    tap(label='Open corner requested-work')
+    destination(next(m['daemonFact']['cornerId'] for m in snapshot['dm']['messages'] if m.get('daemonFact')))
+    tap(label='Next frame')
+    capture(f'android-{theme}-parent-callsite')
+    tap(label='Open corner requested-work')
+    destination(next(m['daemonFact']['cornerId'] for m in snapshot['parent']['messages'] if m.get('daemonFact')))
 (out / 'android-receipts.json').write_text(json.dumps(receipts, indent=2) + '\n')
-print('PASS: both themes, collapsed/expanded/single/long/DM presentation, separate destinations')
+print('PASS: both themes, collapsed/expanded/single/long/DM and parent call sites, separate destinations')

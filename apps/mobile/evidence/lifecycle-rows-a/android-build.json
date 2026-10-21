@@ -1,6 +1,7 @@
 {
-  "apkSha256": "5aa31bd51ae50cd85346b9ea0b5628d6393455a7a1f141da6094d1425880f056",
+  "apkSha256": "75092657109e653ee8334f41aa66f4daff86320337904d130c17ab72a80ea8a9",
   "platform": "Android 36 x86_64",
   "proofEntry": "scripts/lifecycle-rows-a-native-proof.tsx",
-  "dmServerDelivery": "pending approval; presentation fixture only"
+  "dmServerDelivery": "local createCorner \u2192 PhoneService.readRoom response replayed by native proof",
+  "parentCornerDelivery": "local createCorner \u2192 PhoneService.readRoom response replayed by native proof"
 }

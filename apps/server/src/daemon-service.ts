@@ -7961,20 +7961,36 @@ export class DaemonService {
            ON CONFLICT(watcher_room_id,agent_id,corner_id) DO NOTHING`,
           [commandRoomId, agentId, cornerId, parentCommand.id],
         );
-      // One durable open marker in the parent Room; the phone renders this as
-      // a daemon-fact card. Corner lifecycle is outside the push ceiling
-      // (`background.ts`), so this marker never notifies a device.
-      await systemLine(db, {
-        roomId,
-        subject: { kind: 'agent', id: agentId, name: opener.name },
-        verb: 'opened a corner',
-        kind: 'corner-opened',
-        // The NAME titles the corner everywhere; the objective is the card body.
-        object: { text: name, id: cornerId },
-        presentation: 'card',
-        cardType: 'daemon-fact',
-        card: { type: 'corner-open', cornerId, name, objective },
-      });
+      // Only a real message in the command's transcript is a call site. Private
+      // orders/reports have no message row; automatic wakes must not borrow a root.
+      const source = (
+        await db.query<{ id: string }>(
+          `SELECT id FROM messages WHERE id=$1 AND room_id=$2
+             AND presentation='message' AND system_event IS NULL AND deleted_at IS NULL`,
+          [parentCommand.source_message_id, commandRoomId],
+        )
+      ).rows[0];
+      const destinations = [
+        { roomId, sourceMessageId: commandRoomId === roomId ? source?.id : undefined },
+        ...(source && commandRoomId !== roomId
+          ? [{ roomId: commandRoomId, sourceMessageId: source.id }] : []),
+      ];
+      // The parent record never carries a private origin. Only that origin's
+      // own transcript receives its source id, with no second lifecycle wake.
+      for (const destination of destinations) {
+        await systemLine(db, {
+          roomId: destination.roomId,
+          subject: { kind: 'agent', id: agentId, name: opener.name },
+          verb: 'opened a corner',
+          kind: destination.roomId === roomId ? 'corner-opened' : undefined,
+          object: { text: name, id: cornerId },
+          presentation: 'card',
+          cardType: 'daemon-fact',
+          card: { type: 'corner-open', cornerId, name, objective,
+            ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },
+          afterMessageId: destination.sourceMessageId,
+        });
+      }
       await advanceCorner(db, cornerId, {
         kind: 'open',
         workspaceId: parent.workspace_id,

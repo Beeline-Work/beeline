@@ -2304,10 +2304,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:8e6383b1021cbf5c",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:eaddee1e9532d453",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(db, {\n    roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: 'corner-opened',\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name, objective },\n})",
+    "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name, objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
     "literals": [
       "''",
       "'agent'",

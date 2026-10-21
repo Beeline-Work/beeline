@@ -1,3 +1,4 @@
+import callsites from './corner-callsite-proof-snapshot.json';
 import React, { useState } from 'react';
 import { registerRootComponent } from 'expo';
 import { useFonts } from 'expo-font';
@@ -84,10 +85,18 @@ function Proof() {
         onOpenUrl={setDestination}
       />
     ));
-  const dm = anchorCornerMarkers([
-    { ...base, id: 'dispatch', text: 'Open a corner to clear the unread dot.', isUser: true },
-    opened,
-  ]);
+  const callsite = variant === 3 ? callsites.parent : callsites.dm;
+  const projected = callsite.messages.map((message) => ({
+    ...message,
+    timestamp: message.createdAt,
+    isUser: message.author.kind === 'human',
+  })) as ChatDisplayMessage[];
+  const anchored = foldPrLifecycleRuns(anchorCornerMarkers(projected));
+  const roomRecords = callsite.roomMessages.map((message) => ({
+    ...message,
+    timestamp: message.createdAt,
+    isUser: false,
+  })) as ChatDisplayMessage[];
   if (!loaded) return null;
   return (
     <ScrollView
@@ -108,7 +117,7 @@ function Proof() {
         <Pressable
           accessibilityLabel="Next frame"
           onPress={() => {
-            setVariant((variant + 1) % 3);
+            setVariant((variant + 1) % 4);
             setDestination('');
           }}
           style={{ minHeight: 44 }}
@@ -120,7 +129,14 @@ function Proof() {
         accessibilityLabel={`Frame ${variant}`}
         style={{ ...theme.buzz.type.hero, color: theme.buzz.textPrimary }}
       >
-        {['A · lifecycle rows', 'A · single and long run', 'DM · call-site presentation'][variant]}
+        {
+          [
+            'A · lifecycle rows',
+            'A · single and long run',
+            'DM · service-projected call site',
+            'Parent corner · service-projected call site',
+          ][variant]
+        }
       </Text>
       <View key={variant} style={{ marginTop: 24 }}>
         {variant === 0 ? (
@@ -159,7 +175,7 @@ function Proof() {
             </View>
           </>
         ) : (
-          dm.map((message) => (
+          anchored.map((message) => (
             <View key={message.id}>
               <Text style={{ ...theme.buzz.type.body, color: theme.buzz.textPrimary }}>
                 {message.text}
@@ -174,6 +190,14 @@ function Proof() {
             </View>
           ))
         )}
+        {variant >= 2 ? (
+          <View style={{ marginTop: 24 }}>
+            <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet }}>
+              Room record
+            </Text>
+            {card(roomRecords)}
+          </View>
+        ) : null}
       </View>
       <Text
         accessibilityLabel={`Destination ${destination}`}

@@ -63,16 +63,36 @@
     ]
   },
   {
-    "frame": "android-bone-dm-presentation",
+    "frame": "android-bone-dm-callsite",
     "texts": [
       "bone",
-      "DM \u00b7 call-site presentation",
+      "DM \u00b7 service-projected call site",
       "obsidian",
       "Next frame",
-      "Open a corner to clear the unread dot.",
-      "Corner opened \u00b7 dm-unread-clear",
-      "Open \u2192"
+      "@ruby open a corner for the requested work",
+      "Corner opened \u00b7 #requested-work",
+      "Room record",
+      "Opened corner #requested-work"
     ]
+  },
+  {
+    "destination": "945a30b6-5922-4049-98c8-2564cfad3a7e"
+  },
+  {
+    "frame": "android-bone-parent-callsite",
+    "texts": [
+      "bone",
+      "Parent corner \u00b7 service-projected call site",
+      "obsidian",
+      "Next frame",
+      "@ruby open a corner for the requested work",
+      "Corner opened \u00b7 #requested-work",
+      "Room record",
+      "Opened corner #requested-work"
+    ]
+  },
+  {
+    "destination": "485a6e88-b1e4-45ca-b434-a37a58eb4eae"
   },
   {
     "frame": "android-obsidian-collapsed",
@@ -138,15 +158,35 @@
     ]
   },
   {
-    "frame": "android-obsidian-dm-presentation",
+    "frame": "android-obsidian-dm-callsite",
     "texts": [
       "bone",
-      "DM \u00b7 call-site presentation",
+      "DM \u00b7 service-projected call site",
       "obsidian",
       "Next frame",
-      "Open a corner to clear the unread dot.",
-      "Corner opened \u00b7 dm-unread-clear",
-      "Open \u2192"
+      "@ruby open a corner for the requested work",
+      "Corner opened \u00b7 #requested-work",
+      "Room record",
+      "Opened corner #requested-work"
     ]
+  },
+  {
+    "destination": "945a30b6-5922-4049-98c8-2564cfad3a7e"
+  },
+  {
+    "frame": "android-obsidian-parent-callsite",
+    "texts": [
+      "bone",
+      "Parent corner \u00b7 service-projected call site",
+      "obsidian",
+      "Next frame",
+      "@ruby open a corner for the requested work",
+      "Corner opened \u00b7 #requested-work",
+      "Room record",
+      "Opened corner #requested-work"
+    ]
+  },
+  {
+    "destination": "485a6e88-b1e4-45ca-b434-a37a58eb4eae"
   }
 ]

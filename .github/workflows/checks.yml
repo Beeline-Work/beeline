@@ -542,7 +542,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: isolated-proof
         ports:
@@ -562,6 +562,10 @@ jobs:
         run: npm test -w @beeline/server -- --run src/migration-retry.test.ts --maxWorkers=1 --minWorkers=1
         env:
           BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+      - name: Prove push outbox migration lock handoff on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/push-outbox.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_PUSH_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       # This file subtracts the measured synthetic 206 ms timer wait before
       # checking claim query overhead. It runs with one worker on its own host.
       - name: Run the claim latency budget alone

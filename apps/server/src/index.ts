@@ -500,9 +500,12 @@ async function main() {
       }
       if (freeAgents) await backgroundJobs.run('free-agents', () => freeAgents.sweep());
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
+      const pushDue = push ? await backgroundJobs.run('push-next-due', () => push.nextDueAt()) : null;
+      if (pushDue?.ok && pushDue.value) pushPending = true;
       const sentryDue = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
       return Math.min(
         reconciliationMs,
+        ...(pushDue?.ok && pushDue.value ? [Math.max(1000, pushDue.value.getTime() - Date.now())] : []),
         ...(sentryDue.ok && sentryDue.value ? [Math.max(1000, sentryDue.value.getTime() - Date.now())] : []),
         ...(freeAgents ? [FREE_AGENT_SWEEP_MS] : []),
         ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),

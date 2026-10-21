@@ -827,10 +827,10 @@ describe('cascade-path foreign keys stay indexed', () => {
 });
 
 describe('release-owned schema readiness', () => {
-  it('rejects the previous schema marker until the store downloads migration is released', async () => {
-    const query = vi.fn().mockResolvedValue(result([{ version: 33 }]));
+  it('rejects the previous schema marker until the push outbox migration is released', async () => {
+    const query = vi.fn().mockResolvedValue(result([{ version: REQUIRED_SCHEMA_VERSION - 1 }]));
     await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
-      /expected schema version 34, found 33/,
+      new RegExp(`expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${REQUIRED_SCHEMA_VERSION - 1}`),
     );
   });
 
@@ -873,9 +873,9 @@ describe('PostgresDatabase reconnects', () => {
       connectionTimeoutMillis: ENRICHMENT_POOL_WAIT_TIMEOUT_MS,
       application_name: 'beeline_enrichment',
     });
-    expect(postgresPoolConfig('postgres://owner', 1, 'long-running')).not.toHaveProperty(
-      'statement_timeout',
-    );
+    expect(postgresPoolConfig('postgres://owner', 1, 'long-running')).toMatchObject({
+      statement_timeout: 2_000, options: '-c lock_timeout=500ms',
+    });
   });
 
   it('retries a transient pool query with a fresh attempt', async () => {

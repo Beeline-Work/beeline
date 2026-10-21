@@ -155,28 +155,32 @@ message and provisioning/waking cannot start Machines. Queued wakes remain for
 the next UTC day. Operators must keep fallback prices at or above their pinned
 model's worst-case prices; changing models requires checking these prices.
 
-Prompt reservations estimate tokens as `ceil(UTF-8 bytes / 3) + 256` for every
-allowlisted forwarded field, including response-format schemas and tool selectors.
-On 2026-10-18, DeepSeek v4.1 flash via OpenRouter reported 1,951 prompt tokens
-for an 11,738-byte English request (6.02 bytes/token) and 3,091 for a 15,158-byte
-Arabic request (4.90 bytes/token). Both sent 60 repetitions of a project-summary
-request, with a 16-token reply limit; full request bytes include model and output
-settings. Short four-message onboarding/checklist conversations with a read-tool
-schema measured 954 bytes / 418 tokens for English (2.28 bytes/token) and
-1,208 bytes / 455 tokens for Arabic (2.65 bytes/token). The 256-token framing
-margin covers those shorter samples; division by 3 leaves margin on the long
-samples. This is not a strict
-tokenizer bound for arbitrary text. The shared dollar budget still reserves
-using the original byte bound plus framing at configured prices. Remote media
-is refused.
+Admission estimates tokenized text as `ceil(UTF-8 bytes / 3) + 256`, including
+schemas and selectors. OpenRouter `reasoning.text`/`reasoning.summary` fragments
+are concatenated for this calculation: thousands of repeated transport envelopes
+are not model text. The original request is forwarded unchanged. Unknown detail
+types/extra fields count in full. Image blocks, inline binary data URLs and
+encrypted reasoning are refused before reservation by this text-only proxy.
 
-If actual prompt tokens exceed the estimate, overspend is the sum of positive
-prompt underestimates across admitted calls (output stays capped). Reservations
-are serialized, not the calls themselves; the process concurrency gate also
-queues already-reserved calls. There is no small fixed overspend guarantee for
-arbitrary input. The 8 MiB request ceiling, owner rate limit, turn deadline and
-shared dollar budget remain the abuse controls. Interrupted replies without
-usage may have incurred provider cost; their dollar reservations remain held.
+A matching recent prefix may use the server's own previously reported cache
+reads at `cachedTokenWeight` (default 0.25). Evidence stores only hashes, counts
+and time; changed model, upstream, tools or history and five-minute expiry start
+cold. A process restart or routing to another server also starts cold. Caller
+cache hints are not trusted.
+
+The estimated reservation cannot fall below a cold text-byte ceiling plus
+256 framing tokens minus **32,768 tokens shared across all outstanding requests
+for one owner and UTC day**. `free_agent_usage.reservation_credit` tracks that
+uncertainty under the existing global/owner advisory locks, across server
+instances. Settlement/refunds release the credit and use exact reported usage,
+including cache misses. This bounds admission uncertainty for the supported
+text representation even when every cache prediction misses; it is not a
+claim to know a missing provider usage record. A crashed request can leave its
+reservation/credit held conservatively, as with the existing token reservation.
+The shared dollar budget retains its original full wire-byte reservation;
+binary/metadata accounting never creates a dollar-budget bypass. The 8 MiB
+request ceiling, owner rate limit and turn deadline also remain in force.
+See [SUB0ZERO admission and instruction replay proof](free-agent-token-admission-proof.md).
 
 Free-agent ACP turns have a hard wall clock cap of **15 minutes**, measured from
 local command intake across prompt retries. Activity does not extend it. The

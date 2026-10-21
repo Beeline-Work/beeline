@@ -17,7 +17,7 @@ import { DEFAULT_SESSION_IDLE_MS } from './session-scheduler.js';
  *    agent's own rows: that session wrote them.
  *  - only the transcript window is ever elided. The session rules, the corner
  *    objective and brief, and the newest message are outside it and always
- *    render.
+ *    render. Pi separately deduplicates unchanged rules at the ACP boundary.
  */
 export type TranscriptRow = {
   /** The message id the row was rendered from; identity for "already sent". */

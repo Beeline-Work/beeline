@@ -4,6 +4,12 @@ import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, type FreeAgentLim
 import type { SqlDatabase } from './database.js';
 import { warnFreeAgentOwner } from './free-agent-warning.js';
 import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-agents.js';
+import { FreeAgentPromptCache, promptTextBytes } from './free-agent-prompt-budget.js';
+
+const promptCache = new FreeAgentPromptCache();
+// Shared across all in-flight calls for one owner/day, including other servers.
+// Even a complete cache miss cannot add more than this much admission risk.
+const MAX_RESERVATION_CREDIT = 32_768;
 
 /**
  * The only model access a free agent's Machine has: an OpenAI-compatible
@@ -154,12 +160,15 @@ async function adjustUsage(
   ownerId: string,
   day: string,
   tokens: number,
+  credit = 0,
 ): Promise<void> {
-  if (tokens === 0) return;
+  if (tokens === 0 && credit === 0) return;
   await database.query(
-    `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,$2::date,GREATEST($3::bigint,0))
-     ON CONFLICT(owner_id,day) DO UPDATE SET tokens=GREATEST(free_agent_usage.tokens+$3::bigint,0)`,
-    [ownerId, day, tokens],
+    `INSERT INTO free_agent_usage(owner_id,day,tokens,reservation_credit)
+     VALUES($1,$2::date,GREATEST($3::bigint,0),GREATEST($4::bigint,0))
+     ON CONFLICT(owner_id,day) DO UPDATE SET tokens=GREATEST(free_agent_usage.tokens+$3::bigint,0),
+       reservation_credit=GREATEST(free_agent_usage.reservation_credit+$4::bigint,0)`,
+    [ownerId, day, tokens, credit],
   );
 }
 
@@ -169,14 +178,14 @@ const DEFAULT_OUTPUT_RESERVATION = 8_192;
 const MINIMUM_CALL_TOKENS = 256;
 
 /**
- * Estimate every forwarded field from UTF-8 bytes plus framing overhead. Schemas
- * and tool selectors can also contribute model input, so use the forwarding
- * allowlist itself to include new fields. DeepSeek v4.1 flash measurements gave
+ * Estimate model-facing text plus framing overhead. Count schemas and tool
+ * selectors, but not repeated reasoning-fragment transport envelopes.
+ * DeepSeek v4.1 flash measurements gave
  * 6.0 bytes/token for English and 4.9 for Arabic; dividing by 3 leaves margin.
  * This is an estimate, not a tokenizer guarantee for arbitrary input.
  */
 export function promptTokenBound(body: Record<string, unknown>): number {
-  return Math.ceil(Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') / 3) + 256;
+  return Math.ceil(promptTextBytes(forwardedFields(body)) / 3) + 256;
 }
 
 /**
@@ -194,7 +203,8 @@ export async function reserveAllowance(
   requestedOutput: number | undefined,
   limits: FreeAgentLimits = DEFAULT_FREE_AGENT_LIMITS,
   budgetPromptTokens = promptTokens,
-): Promise<{ reserved: number; maxOutput: number; reservedUsd: number } | { limit: 'daily' | 'lifetime' | 'budget' | 'rate' }> {
+  promptUpperBound = promptTokens,
+): Promise<{ reserved: number; maxOutput: number; reservedUsd: number; credit: number } | { limit: 'daily' | 'lifetime' | 'budget' | 'rate' }> {
   return database.transaction(async (db) => {
     // Every reservation takes locks in the same order across server instances.
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
@@ -210,10 +220,17 @@ export async function reserveAllowance(
     )).rows[0];
     if (rate && Number(rate.minute) === minute && rate.calls >= limits.callsPerMinute) return { limit: 'rate' };
     const used = await freeAgentAllowance(db, ownerId, now);
+    const outstanding = Number((await db.query<{ reservation_credit: string }>(
+      `SELECT reservation_credit FROM free_agent_usage WHERE owner_id=$1 AND day=$2::date`, [ownerId, day],
+    )).rows[0]?.reservation_credit ?? 0);
+    // The estimate (including any trusted warm-cache discount) is bounded by
+    // a cold byte ceiling minus a small, owner-wide pool of admission credit.
+    const reservedPrompt = Math.max(promptTokens, promptUpperBound - Math.max(0, MAX_RESERVATION_CREDIT - outstanding));
+    const credit = Math.max(0, promptUpperBound - reservedPrompt);
     const daily = config.dailyTokenCap - used.today;
     const lifetime =
       config.lifetimeTokenCap > 0 ? config.lifetimeTokenCap - used.lifetime : Number.POSITIVE_INFINITY;
-    const room = Math.min(daily, lifetime) - promptTokens;
+    const room = Math.min(daily, lifetime) - reservedPrompt;
     if (room < MINIMUM_CALL_TOKENS) return { limit: lifetime <= daily ? 'lifetime' : 'daily' };
     const dollarRoom = limits.dailyBudgetUsd - budget - budgetPromptTokens * limits.inputUsdPerMillion / 1_000_000;
     const affordableOutput = Math.floor(dollarRoom * 1_000_000 / limits.outputUsdPerMillion);
@@ -221,15 +238,15 @@ export async function reserveAllowance(
     const maxOutput = Math.floor(Math.min(
       room, affordableOutput, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION, limits.maxOutputTokens,
     ));
-    const reserved = promptTokens + maxOutput;
-    await adjustUsage(db, ownerId, now.toISOString().slice(0, 10), reserved);
+    const reserved = reservedPrompt + maxOutput;
+    await adjustUsage(db, ownerId, now.toISOString().slice(0, 10), reserved, credit);
     const reservedUsd = (budgetPromptTokens * limits.inputUsdPerMillion + maxOutput * limits.outputUsdPerMillion) / 1_000_000;
     await db.query(`INSERT INTO free_agent_budget(day,usd) VALUES($1::date,$2)
       ON CONFLICT(day) DO UPDATE SET usd=free_agent_budget.usd+$2`, [day, reservedUsd]);
     await db.query(`INSERT INTO free_agent_call_rate(owner_id,minute,calls) VALUES($1,$2,1)
       ON CONFLICT(owner_id) DO UPDATE SET minute=$2,calls=CASE WHEN free_agent_call_rate.minute=$2
         THEN free_agent_call_rate.calls+1 ELSE 1 END`, [ownerId, minute]);
-    return { reserved, maxOutput, reservedUsd };
+    return { reserved, maxOutput, reservedUsd, credit };
   });
 }
 
@@ -382,6 +399,13 @@ export async function handleFreeAgentModelRequest(
       if (!message || typeof message !== 'object') throw new Error('invalid message');
       if (Array.isArray(message.content) && message.content.some((part: { type?: string }) => part?.type !== 'text'))
         throw new Error('free agent model requests support text content only');
+      const content = typeof message.content === 'string' ? message.content
+        : Array.isArray(message.content) ? message.content.map((part: { text?: string }) => part?.text ?? '').join('') : '';
+      if (/data:[^\s,]+;base64,[a-z0-9+/=]{64}/i.test(content))
+        throw new Error('free agent model requests do not support inline binary data');
+      if (Array.isArray(message.reasoning_details) && message.reasoning_details.some(
+        (detail: { type?: string }) => detail?.type === 'reasoning.encrypted'))
+        throw new Error('free agent model requests support text reasoning only');
     }
   } catch (error) {
     sendJson(response, 400, { error: { message: error instanceof Error ? error.message : 'invalid request' } });
@@ -407,16 +431,23 @@ export async function handleFreeAgentModelRequest(
   const requested = [body.max_tokens, body.max_completion_tokens]
     .map(Number)
     .filter((value) => Number.isFinite(value) && value > 0);
+  const forwarded = forwardedFields(body);
+  const cacheBody = { ...forwarded, model: options.config.model,
+    upstream: options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1' };
+  const cacheKey = `${agent.agent_id}:${now.toISOString().slice(0, 10)}`;
+  const estimated = promptTokenBound(body);
+  const cached = Math.min(estimated, promptCache.cached(cacheKey, cacheBody, now.getTime()));
   const reservation = await reserveAllowance(
     options.database,
     agent.owner_id,
     now,
     options.config,
-    promptTokenBound(body),
+    estimated - cached + Math.ceil(cached * limits.cachedTokenWeight),
     requested.length ? Math.min(...requested) : undefined,
     limits,
     // Keep the dollar budget's existing byte-based worst-case reservation.
     Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') + 256,
+    promptTextBytes(forwarded) + 256,
   );
   if ('limit' in reservation) {
     if (reservation.limit === 'rate') {
@@ -438,7 +469,7 @@ export async function handleFreeAgentModelRequest(
   const settle = (spent: number, usd = reservation.reservedUsd) =>
     options.database.transaction(async db => {
       await db.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
-      await adjustUsage(db, agent.owner_id, day, spent - reservation.reserved);
+      await adjustUsage(db, agent.owner_id, day, spent - reservation.reserved, -reservation.credit);
       await db.query(`UPDATE free_agent_budget SET usd=GREATEST(0,usd+$2) WHERE day=$1::date`,
         [day, usd - reservation.reservedUsd]);
       await recordFreeAgentEvent(db, agent.agent_id, 'model_usage', { day, tokens: spent, usd });
@@ -564,6 +595,10 @@ export async function handleFreeAgentModelRequest(
       }
     }
     // Settle before the reply completes, so the next request sees this one.
+    promptCache.observe(cacheKey, cacheBody,
+      upstream.ok && reported ? Math.min(Math.max(0, Number(reported.prompt_tokens) || 0),
+        Math.max(0, Number(reported.prompt_tokens_details?.cached_tokens) || 0)) : 0,
+      now.getTime());
     await settle(
       reported ? chargedTokens(reported, limits.cachedTokenWeight)
         : upstream.ok && !interrupted && !abort.signal.aborted ? reservation.reserved : 0,

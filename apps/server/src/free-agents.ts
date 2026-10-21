@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS free_agent_usage (
   tokens bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (owner_id, day)
 );
+ALTER TABLE free_agent_usage ADD COLUMN IF NOT EXISTS reservation_credit bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS free_agent_budget (
   day date PRIMARY KEY,
   usd numeric NOT NULL DEFAULT 0

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
+import { uploadSentrySourcemaps } from './upload-sentry-sourcemaps.mjs';
 import {
   RELEASE_PLATFORMS,
   classifyFailure,
@@ -671,15 +672,22 @@ function publish(options) {
         message,
         '--input-dir',
         join(exportRoot, target.platform),
+        '--source-maps',
         ...(reuseExport ? ['--skip-bundler'] : []),
         '--json',
         '--non-interactive',
       ],
       {
         dryRun: options.dryRun,
-        env: { EXPO_RUNTIME_OVERRIDE: target.runtimeVersion },
+        env: {
+          EXPO_RUNTIME_OVERRIDE: target.runtimeVersion,
+          EXPO_PUBLIC_BEELINE_RELEASE_SHA: options.sha,
+        },
       },
     );
+    if (!options.dryRun && !reuseExport) {
+      uploadSentrySourcemaps(join(exportRoot, target.platform), options.sha);
+    }
     return options.dryRun
       ? null
       : requireTargetUpdate(candidate, `Beta publish ${targetKey(target)}`, target);

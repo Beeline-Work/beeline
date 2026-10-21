@@ -168,9 +168,9 @@ describe('GitHub App manifest setup + drift endpoints', () => {
       headers: { host: alphaTenant.host },
     });
     expect(result.statusCode).toBe(200);
-    expect(result.body).toContain('BEELINE_GITHUB_APP_ID=42');
-    expect(result.body).toContain('BEELINE_GITHUB_APP_SLUG=beeline-fresh');
-    expect(result.body).toContain('BEELINE_GITHUB_WEBHOOK_SECRET=fresh-webhook-secret');
+    expect(result.body).toContain('GITHUB_APP_ID=42');
+    expect(result.body).toContain('GITHUB_APP_SLUG=beeline-fresh');
+    expect(result.body).toContain('GITHUB_WEBHOOK_SECRET=fresh-webhook-secret');
     // The PEM is newline-escaped exactly as github.ts unescapes it.
     expect(result.body).toContain(pem.replaceAll('\n', '\\n'));
     // The private key never reaches the log — only its slug summary.

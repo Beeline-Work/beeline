@@ -3,14 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "default": "./dist/index.js"
-    },
     "./environment": {
       "types": "./dist/environment.d.ts",
       "import": "./dist/environment.js",
@@ -43,7 +36,6 @@
     }
   },
   "scripts": {
-    "dev": "node --import tsx src/index.ts",
     "dev:emulator": "node --import tsx scripts/oidc-emulator.ts",
     "clean": "rm -rf dist",
     "build": "npm run clean && tsc -p tsconfig.json",

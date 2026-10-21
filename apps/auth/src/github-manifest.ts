@@ -176,18 +176,18 @@ export async function convertAppManifestCode(
 
 /**
  * Copy-paste environment block in exactly the shape the auth service env
- * expects (BEELINE_GITHUB_* per github-config.ts). PEM newlines are escaped to
+ * expects (GITHUB_* in the monolith). PEM newlines are escaped to
  * literal `\n` sequences, matching how github.ts unescapes the private key.
  * Callers render this for the operator ONCE; it must never be logged.
  */
 export function appSetupEnvBlock(conversion: GitHubAppManifestConversion): string {
   return [
-    `BEELINE_GITHUB_CLIENT_ID=${conversion.clientId}`,
-    `BEELINE_GITHUB_CLIENT_SECRET=${conversion.clientSecret}`,
-    `BEELINE_GITHUB_APP_ID=${conversion.appId}`,
-    `BEELINE_GITHUB_APP_SLUG=${conversion.slug}`,
-    `BEELINE_GITHUB_APP_PRIVATE_KEY=${conversion.pem.replace(/\n/g, '\\n')}`,
-    `BEELINE_GITHUB_WEBHOOK_SECRET=${conversion.webhookSecret}`,
+    `GITHUB_CLIENT_ID=${conversion.clientId}`,
+    `GITHUB_CLIENT_SECRET=${conversion.clientSecret}`,
+    `GITHUB_APP_ID=${conversion.appId}`,
+    `GITHUB_APP_SLUG=${conversion.slug}`,
+    `GITHUB_APP_PRIVATE_KEY=${conversion.pem.replace(/\n/g, '\\n')}`,
+    `GITHUB_WEBHOOK_SECRET=${conversion.webhookSecret}`,
     '',
   ].join('\n');
 }

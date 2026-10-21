@@ -507,6 +507,7 @@ interface RoomReadRow {
       plan: RoomView['cornerPlan'] | null;
       objective: string;
       owner_agent_id: string | null;
+      locked: boolean;
       lifecycle: NonNullable<RoomView['cornerLifecycle']> | null;
     } | null;
     owed: boolean;
@@ -2314,6 +2315,7 @@ export class PhoneService {
           }
         : {}),
       repositoryResolution: (parent ?? room).repository_resolution,
+      ...(room.parent_id ? { cornerLocked: facts?.locked === true } : {}),
       ...(cornerLifecycle ? { cornerLifecycle: cornerLifecycle.lifecycle } : {}),
       ...(cornerLifecycle?.owed !== undefined ? { cornerOwed: cornerLifecycle.owed } : {}),
       ...(cornerApps.length ? { cornerApps } : {}),
@@ -4340,6 +4342,12 @@ export class PhoneService {
         return (await this.database.transaction((db) =>
           setCornerHold(db, input as Input<'setCornerHold'>, viewerId),
         )) as Output<Name>;
+      case 'setCornerLocked': {
+        const value = input as Input<'setCornerLocked'>;
+        if (typeof value.locked !== 'boolean') throw new Error('locked must be a boolean');
+        await this.requestCornerClose(value.roomId, viewerId, value.locked);
+        return undefined as Output<Name>;
+      }
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
         return undefined as Output<Name>;
@@ -6130,13 +6138,10 @@ export class PhoneService {
     // in a corner, the very reader that must hear this.
   }
   /**
-   * Close a corner at a current human member's explicit request.
-   *
-   * The server owns both effects: it applies the same terminal corner state
-   * as helper completion and turns every active assignment into the existing
-   * structured stop command. No chat sentence is created or interpreted.
+   * Apply a human close or lock change using the same corner management permission.
+   * A lock change preserves the corner's assignments; a close cancels them.
    */
-  private async requestCornerClose(roomId: string, viewerId: string) {
+  private async requestCornerClose(roomId: string, viewerId: string, locked?: boolean) {
     await this.database.transaction(async (database) => {
       await lockCornerLifecycle(database, roomId);
       const access = await database.query<{ workspace_role: string }>(
@@ -6170,7 +6175,14 @@ export class PhoneService {
           'corner close access denied: only the creator or a workspace owner or admin can close this corner',
         );
 
-      await closeCornerState(database, roomId);
+      if (locked !== undefined) {
+        await database.query(
+          `UPDATE corner_facts SET locked=$2,updated_at=now() WHERE corner_id=$1`,
+          [roomId, locked],
+        );
+      } else {
+        await closeCornerState(database, roomId);
+      }
     });
   }
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
@@ -10541,6 +10553,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'cancelAgentTurn',
   'createHumanCorner',
   'requestCornerClose',
+  'setCornerLocked',
   'setCornerHold',
   'decideWritePermission',
   'decideAgentGrant',

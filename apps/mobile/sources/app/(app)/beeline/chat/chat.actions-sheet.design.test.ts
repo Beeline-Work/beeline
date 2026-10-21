@@ -347,3 +347,9 @@ describe('Room and corner actions sheets', () => {
     expect(variants).not.toContain('message-actions-sheet');
   });
 });
+
+it('mounts the server-backed Lock corner toggle in the corner actions menu', () => {
+  expect(cornerSheet).toContain('<CornerLockAction');
+  expect(cornerSheet).toContain('locked={roomSurface?.cornerLocked === true}');
+  expect(cornerSheet).toContain('transport.setCornerLocked(decodedId, locked)');
+});

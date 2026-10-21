@@ -565,6 +565,16 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('persists the corner lock through the human operation', async () => {
+    controls.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const transport = new MonolithRigTransport(identity);
+    await expect(transport.setCornerLocked(ROOM, true)).resolves.toBeUndefined();
+    expect(controls.fetch).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/operations/setCornerLocked',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ roomId: ROOM, locked: true }) }),
+    );
+  });
+
   it('closes a corner through the explicit operation without posting prose', async () => {
     controls.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
     const transport = new MonolithRigTransport(identity);

@@ -98,6 +98,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   reportMessageIssue: true,
   reportRunningUpdate: true,
   requestCornerClose: true,
+  setCornerLocked: true,
   resolveDirectMessage: true,
   resolveInvite: true,
   revokeAgentGrant: true,

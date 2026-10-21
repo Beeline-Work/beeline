@@ -507,6 +507,53 @@ describe('lifecycle wording in agent conversations', () => {
   });
 });
 
+describe('corner lock', () => {
+  it('persists the human toggle, refuses agent close, and allows close after unlocking', async () => {
+    const cornerId = await open();
+    expect((await phone.readRoom(cornerId, H))?.cornerLocked).toBe(false);
+    await phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, H);
+    expect((await phone.readRoom(cornerId, H))?.cornerLocked).toBe(true);
+    const before = await commands(A, cornerId);
+    await expect(daemon.execute('archiveCorner', { cornerId }, A)).rejects.toThrow(/corner is locked/);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
+    expect(await commands(A, cornerId)).toEqual(before);
+    await phone.execute('setCornerLocked', { roomId: cornerId, locked: false }, H);
+    expect((await phone.readRoom(cornerId, H))?.cornerLocked).toBe(false);
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    expect(await currentState(cornerId)).toBe('closed');
+  });
+
+  it('allows a person to close a locked corner and rejects agents changing the lock', async () => {
+    const cornerId = await open();
+    await expect(phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, A)).rejects.toThrow(/access denied/);
+    await phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, H);
+    await expect(phone.execute('setCornerLocked', { roomId: cornerId, locked: false }, A)).rejects.toThrow(/access denied/);
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect(await currentState(cornerId)).toBe('closed');
+  });
+
+  it('keeps a locked corner and its assignment open after merge and permits a later human close', async () => {
+    const cornerId = await open('owner/widgets');
+    const sha = 'd'.repeat(40);
+    await greenHead(cornerId, 7, sha);
+    await phone.execute('setCornerLocked', { roomId: cornerId, locked: true }, H);
+    const before = await commands(A, cornerId);
+    await mergedWebhook(cornerId, 7, sha);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
+    expect(await commands(A, cornerId)).toEqual(before);
+    expect((await phone.readRoom(cornerId, H))?.cornerLifecycle?.pr?.mergedAt).toBeDefined();
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND card->>'type'='corner-complete' AND card->>'cornerId'=$2`, [R, cornerId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND card_type='github-corner-note' AND card->>'dedupe' LIKE 'github:pull-request:merged:%'`, [cornerId])).rowCount).toBe(1);
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+    await github.reconcileMergedCorners();
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect(await currentState(cornerId)).toBe('closed');
+  });
+});
+
 describe('bookkeeping cards never appear in the corner conversation a human reads', () => {
   it('readRoom shows the real conversation but no workflow-handoff card, through open, checks, and review', async () => {
     const cornerId = await open('owner/widgets');

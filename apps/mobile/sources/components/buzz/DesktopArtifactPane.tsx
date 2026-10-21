@@ -17,6 +17,7 @@ import { ZoomableArtifactImage } from '@/components/buzz/ZoomableArtifactImage';
 import { ArtifactPdfView } from '@/components/buzz/ArtifactPdfView';
 import { MonoMarkdown } from '@/components/buzz/MonoMarkdown';
 import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
+import { RunnableArtifact } from './RunnableArtifact';
 
 /**
  * The desktop work pane's artifact view (mock 1c, desktop): markup rendered in
@@ -104,7 +105,9 @@ export function DesktopArtifactPane({
           <Text style={styles.close}>✕</Text>
         </Pressable>
       </View>
-      {format === 'markdown' ? (
+      {format === 'game' ? (
+        <RunnableArtifact attachment={attachment} />
+      ) : format === 'markdown' ? (
         <DesktopArtifactMarkdown attachment={attachment} />
       ) : format === 'html' || format === 'svg' ? (
         <DesktopArtifactFrame attachment={attachment} format={format} />

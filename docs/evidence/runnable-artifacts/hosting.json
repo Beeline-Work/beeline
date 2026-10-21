@@ -1,0 +1,13 @@
+{
+  "app": "beeline-games",
+  "origin": "https://beeline-games.fly.dev",
+  "machine": "8e4649c7156278",
+  "region": "iad",
+  "memoryMiB": 256,
+  "script": "scripts/runnable-artifact-proxy.mjs",
+  "scriptSha256": "6b596bacffbbce07f21a3a44580312e05c8fe49c1e791839ba9063e328a5d03c",
+  "deployedSourceCompared": true,
+  "apiPathStatus": 404,
+  "gamePathBeforeServerReleaseStatus": 503,
+  "productionServerChanged": false
+}

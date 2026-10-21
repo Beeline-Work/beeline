@@ -29,6 +29,7 @@ import type { AppFile } from './composio-apps.js';
 import type { SqlDatabase } from './database.js';
 import { ARTIFACT_TTL_HOURS, mediaTtlHours } from './media-ttl.js';
 import type { ObjectStorage } from './object-storage.js';
+import { RUNNABLE_MIME } from './runnable-artifact.js';
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -420,14 +421,17 @@ export class ObjectService {
     if (expired.rows[0])
       return { kind: 'expired', ttlHours: Number(expired.rows[0].retention_hours) };
     const row = (
-      await this.database.query<{ key: string; state: string }>(
-        `SELECT key,state FROM objects WHERE id=$1`,
+      await this.database.query<{ key: string; state: string; mime: string }>(
+        `SELECT key,state,mime FROM objects WHERE id=$1`,
         [mediaId],
       )
     ).rows[0];
     if (!row) return undefined;
     if (row.state !== 'ready') return { kind: 'pending' };
-    const location = await this.#requireStorage().presignGet(row.key, { expiresIn: 600 });
+    const location = await this.#requireStorage().presignGet(row.key, {
+      expiresIn: 600,
+      ...(row.mime === RUNNABLE_MIME ? { responseContentType: 'text/plain' } : {}),
+    });
     return { kind: 'redirect', location };
   }
 
@@ -439,6 +443,25 @@ export class ObjectService {
    * never appear in a shareable link; `openMediaLink` redeems it. Only stored
    * objects have a link; a missing or pending id answers undefined.
    */
+  async runnableLink(mediaId: string, origin: string): Promise<{ url: string; expiresIn: number } | undefined> {
+    const row = (await this.database.query<{ mime: string }>('SELECT mime FROM objects WHERE id=$1', [mediaId])).rows[0];
+    if (row?.mime !== RUNNABLE_MIME) return undefined;
+    const link = await this.mediaLink(mediaId);
+    if (!link) return undefined;
+    const capability = new URL(link.url);
+    return { ...link, url: `${origin}/play/${mediaId}${capability.search}` };
+  }
+
+  async openRunnableArtifact(mediaId: string, expires: number, token: string): Promise<Uint8Array | undefined> {
+    // Reuse media capability verification and expiry/tombstone checks. Neither
+    // a caller-supplied URL nor an application session reaches the game host.
+    const access = await this.openMediaLink(mediaId, expires, token);
+    if (access.kind !== 'redirect') return undefined;
+    const row = (await this.database.query<{ key: string; mime: string }>('SELECT key,mime FROM objects WHERE id=$1', [mediaId])).rows[0];
+    if (row?.mime !== RUNNABLE_MIME) return undefined;
+    return (await this.#requireStorage().getObject(row.key)) ?? undefined;
+  }
+
   async mediaLink(mediaId: string): Promise<{ url: string; expiresIn: number } | undefined> {
     const row = (
       await this.database.query<{ key: string; mime: string; title: string | null; state: string }>(
@@ -499,7 +522,7 @@ export class ObjectService {
     const location = await this.#requireStorage().presignGet(row.key, {
       expiresIn: MEDIA_LINK_EXPIRY_SECONDS,
       responseContentDisposition: `inline; filename="${(row.title ?? 'download').replaceAll('"', '')}"`,
-      responseContentType: row.mime,
+      responseContentType: row.mime === RUNNABLE_MIME ? 'text/plain' : row.mime,
     });
     return { kind: 'redirect', location };
   }

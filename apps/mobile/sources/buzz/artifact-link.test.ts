@@ -34,6 +34,7 @@ import {
   artifactBase64,
   artifactImageSource,
   artifactMediaUrl,
+  runnableArtifactUrl,
   releaseArtifactImageSource,
 } from './artifact-link';
 
@@ -139,5 +140,19 @@ describe('the PDF bytes as a string for the hosts that take one', () => {
       /not a monolith media URL/,
     );
     expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('runnable capability URL', () => {
+  it('mints through the configured session origin and rejects application-host execution', async () => {
+    for (const origin of ['https://server.usebeeline.app', 'https://usebeeline.app', 'https://games.usebeeline.app', 'http://games.example.net']) {
+      mocks.fetch.mockResolvedValue({ok:true,json:async()=>({url:`${origin}/play/${ID}`})});
+      await expect(runnableArtifactUrl(attachment(`/v1/media/${ID}`))).rejects.toThrow(/not isolated/);
+    }
+    const url = `https://beeline-games.fly.dev/play/${ID}?token=opaque`;
+    mocks.fetch.mockResolvedValue({ok:true,json:async()=>({url})});
+    expect(await runnableArtifactUrl(attachment(`https://evil.example/v1/media/${ID}`))).toBe(url);
+    expect(mocks.fetch).toHaveBeenLastCalledWith(`${mocks.monolithUrl}/v1/media/${ID}/play`,{}, {timeoutMs:10_000});
   });
 });

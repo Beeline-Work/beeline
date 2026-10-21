@@ -11,6 +11,7 @@ const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([36, 0, 0, 0]), Buff
 describe('post_artifact validation matrix', () => {
   it.each([
     ['text/html', '<p>html</p>'],
+    ['application/vnd.beeline.game+html', '<canvas></canvas><script>game()</script>'],
     ['image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"/>'],
     ['application/pdf', '%PDF-1.7 minimal'],
     ['text/markdown', '# Markdown'],
@@ -36,6 +37,7 @@ describe('post_artifact validation matrix', () => {
   it('keeps the validation inventory exhaustive with the shared contract', () => {
     const tested = [
       'text/html',
+      'application/vnd.beeline.game+html',
       'image/svg+xml',
       'application/pdf',
       'text/markdown',

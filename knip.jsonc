@@ -158,6 +158,7 @@
         "scripts/composer-waveform-web-proof.tsx",
         "scripts/voice-multi-tips-native-proof.tsx",
         "scripts/multi-human-silence-native-proof.tsx",
+        "scripts/runnable-native-proof.tsx",
         "scripts/call-error-android-proof.tsx",
         "scripts/voice-delivery-android-proof.tsx",
         "scripts/voice-multi-tips-web-proof.tsx",

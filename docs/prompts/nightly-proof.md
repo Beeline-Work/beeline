@@ -34,13 +34,16 @@ corner. [Night zero](night-zero.json) preserves the earlier 40 passed of 59
 completed, all 11 incomplete IDs and their individual reasons; it is not an
 experiment arm for the revised cohort.
 
-Beeline schedule `e4ef62d4-6277-46cf-aa2c-fdc00912fdd7` is installed for Jellybean
-on squire in this corner: `0 4 * * *`, `America/New_York`. Its instructions and the
-saved `prompt-nightly-replay` procedure use the sealed exchange with fresh run
-directories and cumulative history. GitHub Actions scheduling and the secret-
-dependent transport were removed. The 403 secret permission is no longer needed.
-**Archive/landing cancels this corner's schedule: the commander must migrate it
-and preserve history in a surviving Room before landing.**
+The original corner schedule `e4ef62d4-6277-46cf-aa2c-fdc00912fdd7` was created
+for daily replay, then superseded by Room schedule
+`ea5594a0-42ec-49dd-8957-5582216ebedd` in #beeline. The corner duplicate was
+deleted. The approved cadence is now weekly: Sundays, `0 4 * * 0`,
+`America/New_York`; next weekly occurrence is 2026-10-25 04:00 EDT / 08:00 UTC.
+At this cadence update, the surviving schedule still needs its own #beeline
+turn to apply and verify the change; cross-place update returned 404. The
+recorded experiment above remains historical evidence, independent of cadence.
+The existing schedule prompt, sealed exchange, 6M-token/$3 caps and every
+per-run rule remain unchanged. Ruby owns procedure and digest wording updates.
 
 Results are indexed on [Prompt nightly results](https://github.com/Beeline-Work/beeline/issues/2710).
 The saved morning-card procedure reads its newest result comment and linked

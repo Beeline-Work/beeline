@@ -1,15 +1,21 @@
-# Nightly prompt optimization
+# Weekly prompt optimization
 
-Jellybean runs the Beeline schedule `e4ef62d4-6277-46cf-aa2c-fdc00912fdd7` on
-squire at **04:00 America/New_York** (`0 4 * * *`). The Beeline scheduler owns
-DST conversion. The schedule was created in corner
-`04c16cad-a28b-4477-8817-4a25d2be4125`, as Ruby directed. It uses the owner's
-OpenRouter key through vault `use_credential`; no Actions secret or exported key
-is needed. The GitHub nightly workflow was removed.
+The replay runs weekly on squire, Sundays at **04:00 America/New_York**
+(`0 4 * * 0`). The Beeline scheduler owns DST conversion. Its surviving Room
+schedule is `ea5594a0-42ec-49dd-8957-5582216ebedd` in #beeline
+(`bb91a1c7-7cad-4fde-aafc-94fccb651ac8`), so archiving this implementation corner
+will not cancel it. The old corner schedule
+`e4ef62d4-6277-46cf-aa2c-fdc00912fdd7` was deleted to avoid duplicate runs.
 
-**Landing archives this corner and cancels its schedule.** The commander must
-migrate the schedule to a surviving Room before landing. List existing schedules
-first to avoid duplicates. Do not claim the archived schedule remains active.
+The weekly cadence was approved by lunchboxfortwo and relayed through Ruby.
+The Room schedule's cadence must be updated from a turn in #beeline on helpers
+that still restrict schedule edits to their own place; a cross-place 404 does
+not mean the schedule is absent. Verify it with `wake(action:list)` there.
+The next weekly occurrence is Sunday 2026-10-25, 04:00 EDT / 08:00 UTC.
+
+The schedule uses the owner's OpenRouter key through vault `use_credential`;
+no Actions secret or exported key is needed. The GitHub replay workflow was removed.
+Keep the existing schedule prompt and every per-run rule unchanged.
 
 ## Run
 
@@ -67,9 +73,9 @@ Four concurrent requests share a six-million-token/$3 cap. Before each request,
 reserve UTF-8 input bytes plus maximum output as a conservative token bound and
 $0.10. Replace reservations with billed usage on response. A response costing more
 than its reservation can cross the dollar cap; the controller then stops. Never
-increase caps silently. Include incomplete costs in the nightly result.
+increase caps silently. Include incomplete costs in the weekly result.
 
-## One removal experiment
+## One removal experiment per weekly run
 
 Remove one complete literal paragraph from a render function in a temporary
 source copy. Failing eligible baseline cases and skipped browser cases protect
@@ -90,7 +96,7 @@ prompt change.
 ## Publish and retain
 
 Keep `result.json`, `summary.txt`, and cumulative `history.jsonl` under the session
-home. Post the result and history as artifacts in this corner and publish exactly
+home. Post the result and history as artifacts in the schedule’s Room and publish exactly
 one summary line per run on the repository issue **Prompt nightly results**.
 The line includes eligible pass rate, skipped count, median tokens/turn, total
 tokens/cost and experiment outcome. The saved 9am morning-card procedure reads

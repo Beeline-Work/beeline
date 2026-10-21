@@ -68,7 +68,7 @@ export function budget(tokenCap = DEFAULT_TOKEN_CAP, costCap = DEFAULT_COST_CAP)
     reserve(body) {
       // A UTF-8 byte per input token is conservative; include output/reasoning.
       const bound = Buffer.byteLength(JSON.stringify(body.messages)) + body.max_tokens;
-      if (tokens + reserved + bound > tokenCap || cost + reservedCost + 0.1 > costCap) throw new Error('Nightly replay budget exhausted');
+      if (tokens + reserved + bound > tokenCap || cost + reservedCost + 0.1 > costCap) throw new Error('Weekly replay budget exhausted');
       reserved += bound;
       reservedCost += 0.1;
       return () => { reserved -= bound; reservedCost -= 0.1; };
@@ -78,7 +78,7 @@ export function budget(tokenCap = DEFAULT_TOKEN_CAP, costCap = DEFAULT_COST_CAP)
           !Number.isFinite(usage?.cost) || usage.cost < 0) throw new Error('Provider returned no usable token/cost accounting');
       tokens += usage.total_tokens;
       cost += usage.cost;
-      if (tokens > tokenCap || cost > costCap) throw new Error('Nightly replay budget exceeded');
+      if (tokens > tokenCap || cost > costCap) throw new Error('Weekly replay budget exceeded');
     },
     get tokens() { return tokens; }, get cost() { return cost; },
   };
@@ -125,7 +125,7 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
 }
 
 
-/** Browser-session cases stay outside both arms of the nightly cohort. */
+/** Browser-session cases stay outside both arms of the weekly cohort. */
 export function needsSquire(testCase) {
   const browserTools = testCase.tools?.some((name) => name.startsWith('operate_'));
   return Boolean(browserTools && (JSON.stringify(testCase.pass).includes('operate_') ||
@@ -192,7 +192,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     .match(/model: env\.BEELINE_FREE_AGENT_MODEL \|\| '([^']+)'/)?.[1];
   if (!model) throw new Error('Cannot determine the production free-agent model');
   const allCases = loadCases();
-  const skipped = allCases.filter(needsSquire).map(({ id, section }) => ({ id, section, status: 'skipped:squire', reason: 'Requires a Squire browser session; excluded by the nightly cohort policy' }));
+  const skipped = allCases.filter(needsSquire).map(({ id, section }) => ({ id, section, status: 'skipped:squire', reason: 'Requires a Squire browser session; excluded by the weekly cohort policy' }));
   const cases = allCases.filter((testCase) => !needsSquire(testCase));
   const source = await loadSource(root);
   const problems = check(source, allCases);
@@ -223,7 +223,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
         result.experiment = { ...result.experiment, ...assessment, outcome: assessment.accepted ? 'propose removal' : 'rejected' };
         if (assessment.accepted) {
           writeFileSync(join(out, 'prompt-assembly.ts'), candidateText);
-          writeFileSync(join(out, 'proposal.md'), `Remove one prompt paragraph after nightly replay\n\n## Reproduced\nNot a defect report. Experiment ${block.id} on ${commit}, model ${model}.\n\n## Demonstrated\nReplayed all ${cases.length} cases on baseline and candidate using the existing first-pass/2-of-3 rule. Baseline ${result.baseline.filter((r) => r.pass).length}/${cases.length}; candidate ${result.candidate.filter((r) => r.pass).length}/${cases.length}. Median tokens per simulated turn: ${assessment.before} → ${assessment.after}. No previously passing case regressed. Total nightly tokens: ${ledger.tokens}; cost: $${ledger.cost.toFixed(6)}.\n\nNormal independent review and merge authority still apply. Run artifact contains per-case samples and accounting.\n`);
+          writeFileSync(join(out, 'proposal.md'), `Remove one prompt paragraph after weekly replay\n\n## Reproduced\nNot a defect report. Experiment ${block.id} on ${commit}, model ${model}.\n\n## Demonstrated\nReplayed all ${cases.length} cases on baseline and candidate using the existing first-pass/2-of-3 rule. Baseline ${result.baseline.filter((r) => r.pass).length}/${cases.length}; candidate ${result.candidate.filter((r) => r.pass).length}/${cases.length}. Median tokens per simulated turn: ${assessment.before} → ${assessment.after}. No previously passing case regressed. Total weekly replay tokens: ${ledger.tokens}; cost: $${ledger.cost.toFixed(6)}.\n\nNormal independent review and merge authority still apply. Run artifact contains per-case samples and accounting.\n`);
         }
       }
     } else result.experiment.outcome = 'skipped: all blocks protected by failing cases';
@@ -241,7 +241,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   const rate = result.status === 'complete'
     ? `${passed}/${cases.length} passed (${(100 * passed / cases.length).toFixed(1)}%)`
     : `${result.baseline.length}/${cases.length} cases completed, ${passed} passed; overall pass rate unavailable`;
-  const summary = `Prompt nightly ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
+  const summary = `Prompt weekly ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
   appendFileSync(history, `${JSON.stringify({ startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,

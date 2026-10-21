@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const controls = vi.hoisted(() => ({ enabled: false, legacyCalls: 0, monolithCalls: 0 }));
+const controls = vi.hoisted(() => ({ monolithCalls: 0 }));
 const fixture = {
   workspaces: [],
   viewer: { pubkey: 'a'.repeat(64), kind: 'human' as const, name: 'Owner' },
@@ -10,7 +10,6 @@ const fixture = {
 
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
-    monolithEnabled: controls.enabled,
     monolithUrl: 'https://server.example',
   }),
 }));
@@ -34,71 +33,23 @@ vi.mock('@/auth/monolith-session', () => {
     },
   };
 });
-vi.mock('@beeline/buzz-client', async (original) => {
-  const actual = await original<typeof import('@beeline/buzz-client')>();
-  return {
-    ...actual,
-    RoomViewClient: class {
-      workspaces() {
-        controls.legacyCalls += 1;
-        return Promise.resolve(fixture);
-      }
-      workspace() {
-        throw new Error('unused');
-      }
-      agent() {
-        throw new Error('unused');
-      }
-      chats() {
-        throw new Error('unused');
-      }
-      room() {
-        throw new Error('unused');
-      }
-      corners() {
-        throw new Error('unused');
-      }
-      history() {
-        throw new Error('unused');
-      }
-      invite() {
-        throw new Error('unused');
-      }
-      claimAgentPairing() {
-        throw new Error('unused');
-      }
-      abandonAgentPairing() {
-        throw new Error('unused');
-      }
-    },
-  };
-});
-
 import { RoomViewClient } from './room-view-client';
 
 describe('mobile transport cutover switch', () => {
   beforeEach(() => {
-    controls.enabled = false;
-    controls.legacyCalls = 0;
     controls.monolithCalls = 0;
   });
 
-  it.each([false, true])(
-    'returns the identical guarded screen DTO when monolith=%s',
-    async (enabled) => {
-      controls.enabled = enabled;
-      const client = new RoomViewClient({
-        baseUrl: 'https://relay.example',
-        identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
-      });
-      await expect(client.workspaces()).resolves.toEqual(fixture);
-      expect(controls.monolithCalls).toBe(enabled ? 1 : 0);
-      expect(controls.legacyCalls).toBe(enabled ? 0 : 1);
-    },
-  );
+  it('returns the guarded screen DTO from the monolith', async () => {
+    const client = new RoomViewClient({
+      baseUrl: 'https://relay.example',
+      identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+    });
+    await expect(client.workspaces()).resolves.toEqual(fixture);
+    expect(controls.monolithCalls).toBe(1);
+  });
 
   it('maps a timed-out phone read to a distinct timeout error, never a silent retry', async () => {
-    controls.enabled = true;
     const { monolithSession, MonolithRequestTimeoutError } = await import(
       '@/auth/monolith-session'
     );
@@ -116,7 +67,6 @@ describe('mobile transport cutover switch', () => {
   });
 
   it('passes the message search signal to the request so a changed query cancels it', async () => {
-    controls.enabled = true;
     const workspaceId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
     const { monolithSession } = await import('@/auth/monolith-session');
     let sent: AbortSignal | undefined;
@@ -145,7 +95,6 @@ describe('mobile transport cutover switch', () => {
   });
 
   it('fails a read whose body stalls after the headers at the request deadline', async () => {
-    controls.enabled = true;
     vi.useFakeTimers();
     try {
       const { monolithSession } = await import('@/auth/monolith-session');
@@ -165,7 +114,6 @@ describe('mobile transport cutover switch', () => {
   });
 
   it('requests older agent work with the server cursor instead of repeating the first page', async () => {
-    controls.enabled = true;
     const workspaceId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
     const agentId = 'b'.repeat(64);
     const cursor = JSON.stringify(['2026-09-24T00:00:00Z', 'https://github.com/acme/repo/pull/6']);
@@ -201,7 +149,6 @@ describe('mobile transport cutover switch', () => {
   });
 
   it('puts the archived-corners opt-in on the monolith request', async () => {
-    controls.enabled = true;
     const roomId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
     const { monolithSession } = await import('@/auth/monolith-session');
     vi.mocked(monolithSession.fetch).mockImplementation(async () =>

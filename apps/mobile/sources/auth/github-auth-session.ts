@@ -215,7 +215,7 @@ export function startGitHubSignInWebFlow(
   runtime: BuzzRuntimeConfig = getBuzzRuntimeConfig(),
   recoveryToken?: string,
 ): OidcBindStart {
-  const authBaseUrl = runtime.monolithEnabled ? runtime.monolithUrl : runtime.relayUrl;
+  const authBaseUrl = runtime.monolithUrl;
   const start = startGitHubBind(authBaseUrl, {
     redirectUri: githubSignInRedirectUri(),
     state,
@@ -303,7 +303,7 @@ export async function clearPendingGitHubSignInState(expectedState?: string): Pro
 }
 
 function authBaseUrl(runtime: BuzzRuntimeConfig): string {
-  return runtime.monolithEnabled ? runtime.monolithUrl : runtime.relayUrl;
+  return runtime.monolithUrl;
 }
 
 /** A request that never got an HTTP answer: the device, not the server, is the problem. */

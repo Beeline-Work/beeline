@@ -7333,8 +7333,6 @@ describe('monolith integration', () => {
       },
       sender: { login: 'octocat' },
     });
-    // A stale false from the retired Room switch no longer drops events.
-    await database.query(`UPDATE rooms SET github_events_enabled=false WHERE id=$1`, [ROOM]);
     await webhook('issues', 'room-issue-closed-disabled', {
       ...issuePayload,
       action: 'closed',

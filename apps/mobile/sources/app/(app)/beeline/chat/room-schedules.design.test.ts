@@ -11,7 +11,9 @@ const work = readFileSync(new URL('../../../../buzz/scheduled-work.ts', import.m
 
 describe('scheduled Agent work', () => {
   it('exposes manager-only scheduled-work controls from the monolith Room action sheet', () => {
-    expect(chat).toContain('getBuzzRuntimeConfig().monolithEnabled');
+    expect(chat).toMatch(
+      /\{canManageWorkspace && \(\s*<HullActionSheetRow\s*accessibilityLabel=\{`View \$\{ROOM_LABEL\} schedules/,
+    );
     expect(chat).toContain('testID="room-schedules-action"');
     expect(chat).toContain("pathname: '/beeline/settings/schedules'");
     expect(chat).toContain('label="Schedules and subscriptions"');

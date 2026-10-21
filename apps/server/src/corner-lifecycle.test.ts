@@ -2820,21 +2820,14 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
 
   it('Reproduction R6b: a crash after merge records one landing without another merge', async () => {
     const cornerId = await claimed();
-    // Recovery must work even when ordinary webhook reconciliation is disabled.
-    await db.query(`UPDATE rooms SET github_events_enabled=false WHERE id=$1`, [R]);
-    try {
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-      await recover();
-      await landing(cornerId);
-      await recover();
-      await db.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [R]);
-      await mergedWebhook(cornerId, 7, SHA);
-      await landing(cornerId);
-      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-      console.info('R6b demonstrated: GitHub-confirmed merge archived once; duplicate recovery and webhook added no card or merge.');
-    } finally {
-      await db.query(`UPDATE rooms SET github_events_enabled=true WHERE id=$1`, [R]);
-    }
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+    await recover();
+    await landing(cornerId);
+    await recover();
+    await mergedWebhook(cornerId, 7, SHA);
+    await landing(cornerId);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    console.info('R6b demonstrated: GitHub-confirmed merge archived once; duplicate recovery and webhook added no card or merge.');
   });
 
   it.each([new Error('GitHub pull request merge failed: HTTP 502'), new TypeError('fetch failed')])(

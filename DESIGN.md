@@ -266,7 +266,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 
 **Workspace plate.** Every Workspace mark is a 3×3 block/slot/cut/void plate in tones of one brass hue (`WORKSPACE_BRASS_HUE` ≈ 40°); it goes solid below `CYPHER_MIN_SIZE` (24). Owners may set a Workspace picture, seated concentric inside its bezel (`buzz/workspace-tile.ts`).
 
-**Pictures.** Photo overrides for people and agents stay off (`PHOTO_OVERRIDES_ENABLED`, `photoIdentityMarksEnabled`). The image exceptions are Workspace pictures, server-generated agent portraits (`/v1/agent-avatars/`), and connector logos.
+**Pictures.** Photo overrides for people and agents stay off: `IdentityMark` renders no person or agent relay photo, and `identity.photo-darkflight.test.ts` keeps picture actions off their settings. The image exceptions are Workspace pictures, server-generated agent portraits (`/v1/agent-avatars/`), and connector logos.
 
 **Names and vocabulary.** An agent's name comes from its registered `displayName` via `resolveAgentDisplayIdentity`; the soul shapes personality and art, never the name. "Room," never "Channel." `Members` names the surface (`MEMBERS_LABEL`); its sections are `People N` and `Agents N`. Room and corner names carry the `#` mark wherever they are exposed (`displayRoomIndexTitle`, `displayCornerTitle`), added at render only. Room and corner state is the drawn `StateCircle`, never a typed diamond.
 

@@ -89,7 +89,6 @@ const MONOLITH_RUNTIME = {
   relayUrl: 'https://usebeeline.app',
   pushGatewayUrl: 'https://usebeeline.app/push',
   monolithUrl: 'https://server.usebeeline.app',
-  monolithEnabled: true,
 };
 
 describe('GitHub sign-in without a network', () => {
@@ -226,7 +225,6 @@ describe('GitHub auth session redirects', () => {
         relayUrl: 'https://usebeeline.app',
         pushGatewayUrl: 'https://usebeeline.app/push',
         monolithUrl: 'https://server.usebeeline.app',
-        monolithEnabled: true,
       },
       RECOVERY_TOKEN,
     );
@@ -252,7 +250,6 @@ describe('GitHub auth session redirects', () => {
         relayUrl: 'https://usebeeline.app',
         pushGatewayUrl: 'https://usebeeline.app/push',
         monolithUrl: 'https://server.usebeeline.app',
-        monolithEnabled: true,
       },
       openAuthSession: async () => ({ type: 'dismiss' }),
       subscribeToUrls: () => ({ remove: () => undefined }),
@@ -277,7 +274,6 @@ describe('GitHub auth session redirects', () => {
         relayUrl: 'https://usebeeline.app',
         pushGatewayUrl: 'https://usebeeline.app/push',
         monolithUrl: 'https://server.usebeeline.app',
-        monolithEnabled: true,
       },
       openAuthSession: async () => ({ type: 'success', url: bindCallback() }),
       subscribeToUrls: () => ({ remove: () => undefined }),
@@ -297,7 +293,6 @@ describe('GitHub auth session redirects', () => {
         relayUrl: 'https://usebeeline.app',
         pushGatewayUrl: 'https://usebeeline.app/push',
         monolithUrl: 'https://server.usebeeline.app',
-        monolithEnabled: true,
       },
       openAuthSession: async () => ({
         type: 'success',
@@ -333,7 +328,6 @@ describe('GitHub auth session redirects', () => {
           relayUrl: 'https://usebeeline.app',
           pushGatewayUrl: 'https://usebeeline.app/push',
           monolithUrl: 'https://server.usebeeline.app',
-          monolithEnabled: true,
         },
         openAuthSession: async () => ({
           type: 'success',
@@ -480,7 +474,6 @@ describe('GitHub auth session redirects', () => {
           relayUrl: 'https://usebeeline.app',
           pushGatewayUrl: 'https://usebeeline.app/push',
           monolithUrl: 'https://server.usebeeline.app',
-          monolithEnabled: true,
         },
         openAuthSession: async () => ({ type: 'dismiss' }),
         subscribeToUrls: () => ({ remove: () => undefined }),
@@ -501,7 +494,6 @@ describe('GitHub auth session redirects', () => {
       relayUrl: 'https://usebeeline.app',
       pushGatewayUrl: 'https://usebeeline.app/push',
       monolithUrl: 'https://server.usebeeline.app',
-      monolithEnabled: true,
     };
     const failedCancel = vi.fn(async () => new Response(null, { status: 503 }));
 
@@ -584,17 +576,6 @@ describe('GitHub auth session redirects', () => {
     );
     expect(storage.has('buzzy.github-sign-in-recovery.v1')).toBe(false);
     expect(storage.has('buzzy.github-sign-in-state.v1')).toBe(false);
-  });
-
-  it('leaves the legacy authorization origin unchanged outside monolith mode', () => {
-    const start = startGitHubSignInWebFlow(STATE, {
-      relayUrl: 'https://usebeeline.app',
-      pushGatewayUrl: 'https://usebeeline.app/push',
-      monolithUrl: 'https://server.usebeeline.app',
-      monolithEnabled: false,
-    });
-
-    expect(new URL(start.authorizationUrl).origin).toBe('https://usebeeline.app');
   });
 
   it('uses the installed app scheme for GitHub App installation completion', () => {

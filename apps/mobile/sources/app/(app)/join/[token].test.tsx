@@ -158,7 +158,7 @@ describe('CommunityInviteJoin', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     controls.identity.mockResolvedValue(IDENTITY);
-    controls.runtimeConfig.mockReturnValue({ monolithEnabled: false });
+    controls.runtimeConfig.mockReturnValue({});
     controls.invite.mockResolvedValue({
       name: 'Builders',
       expiresAt: 2_000_000_000,

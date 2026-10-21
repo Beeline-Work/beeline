@@ -32,7 +32,7 @@ function seatShims(mobile: string): Record<string, string> {
     export const loadBuzzIdentity = async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) });`,
     '@/buzz/avatar-upload': 'export const pickAndUploadAvatar = async () => undefined;',
     '@/buzz/runtime-config':
-      'export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true });',
+      'export const getBuzzRuntimeConfig = () => ({});',
     '@/sync/transport': `export class BuzzRigTransport {
       async ensureClient() { return { surfaceSubscribe: async () => () => undefined }; }
     }`,

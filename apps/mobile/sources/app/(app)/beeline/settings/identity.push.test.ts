@@ -23,7 +23,6 @@ const permissionInfo = vi.hoisted(() => ({
     canAskAgain: true,
   })),
 }));
-const runtime = vi.hoisted(() => ({ monolithEnabled: false }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const notificationApi = vi.hoisted(() => ({
   getPresentedNotificationsAsync: vi.fn(async () => []),
@@ -101,7 +100,6 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
     publicKey: 'a'.repeat(64),
     secretKey: new Uint8Array(32).fill(1),
   })),
-  loadBuzzIdentityNsecForExport: vi.fn(async () => 'nsec1test'),
 }));
 vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => null),
@@ -112,7 +110,6 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
 vi.mock('@/buzz/person-name', () => ({
-  ensurePersonNameForWorkspace: vi.fn(async () => ({ name: 'Captain' })),
   loadPreferredPersonName: vi.fn(async () => 'Captain'),
   savePreferredPersonName: vi.fn(async () => undefined),
 }));
@@ -120,7 +117,6 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
     relayUrl: 'https://relay.test',
     pushGatewayUrl: 'https://push.test',
-    monolithEnabled: runtime.monolithEnabled,
   }),
 }));
 vi.mock('@/sync/appConfig', () => ({
@@ -297,11 +293,25 @@ async function renderScreen(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
+const IDENTITY_SETTINGS = {
+  identity: {
+    personId: 'a'.repeat(64),
+    face: null,
+    pushLevel: 'attention',
+    handle: null,
+    name: 'Captain',
+  },
+  workspaces: { workspaces: [] },
+};
+
 describe('identity settings push row honesty', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mobileSurfaceCache.clear();
-    runtime.monolithEnabled = false;
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readIdentitySettings') return IDENTITY_SETTINGS;
+      throw new Error(`unexpected operation ${name}`);
+    });
     pushModule.getBuzzPushEnabled.mockResolvedValue(true);
     pushModule.getBuzzPushRegistrationState.mockResolvedValue(null);
     permissionInfo.getPushPermissionInfo.mockResolvedValue({
@@ -313,6 +323,7 @@ describe('identity settings push row honesty', () => {
 
   it('reads the default level and saves a picker change through the phone operation', async () => {
     phoneOperation.mockImplementation(async (name: string, input: { pushLevel?: string }) => {
+      if (name === 'readIdentitySettings') return IDENTITY_SETTINGS;
       if (name === 'updateIdentityPushLevel')
         return {
           personId: 'a'.repeat(64),
@@ -396,7 +407,6 @@ describe('identity settings push row honesty', () => {
 describe('settings legal links', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    runtime.monolithEnabled = false;
     permissionInfo.getPushPermissionInfo.mockResolvedValue({
       status: 'granted',
       granted: true,

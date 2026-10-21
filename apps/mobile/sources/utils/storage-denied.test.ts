@@ -25,11 +25,11 @@ vi.mock('react-native-mmkv', () => ({
   },
 }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithEnabled: false, relayUrl: 'https://usebeeline.app' }),
+  getBuzzRuntimeConfig: () => ({ relayUrl: 'https://usebeeline.app' }),
 }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: {} }));
 
-import { loadRelayUrl, saveRelayUrl } from '@/auth/buzz-identity-storage';
+import { clearBuzzIdentity, loadPendingGitHubIdentity } from '@/auth/buzz-identity-storage';
 import { monolithSecureStorage } from '@/auth/monolith-secure-storage';
 import { loadUnmigratableRooms, saveUnmigratableRooms } from '@/buzz/unmigratable-rooms-cache';
 import { webRuntimeStorage } from './web-storage';
@@ -40,8 +40,8 @@ describe('denied browser storage', () => {
   });
 
   it('keeps every module on this page\'s memory instead of native storage', async () => {
-    await saveRelayUrl('https://relay.test');
-    expect(await loadRelayUrl()).toBe('https://relay.test');
+    await clearBuzzIdentity();
+    expect(await loadPendingGitHubIdentity()).toBeNull();
 
     const session = await monolithSecureStorage(false);
     await session.setItemAsync('session', 'token');

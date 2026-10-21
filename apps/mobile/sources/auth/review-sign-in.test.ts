@@ -13,7 +13,7 @@ vi.mock('expo-secure-store', () => ({
   }),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example', monolithEnabled: true }),
+  getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   clearBuzzIdentity: vi.fn(async () => {

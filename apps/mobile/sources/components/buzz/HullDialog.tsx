@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { typeRoles } from '@/buzz/groknight';
+import { layout, typeRoles } from '@/buzz/groknight';
 import { clearModalNavigationBarScrim } from '@/buzz/android-modal-navigation-bar';
 import { HULL_SHEET_INSET, HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 import { Button, type ButtonProps } from './Button';
@@ -611,7 +611,7 @@ const styles = StyleSheet.create((theme) => {
     },
     searchCell: {
       marginTop: 0,
-      minHeight: hull.layout.row,
+      minHeight: layout.row,
       justifyContent: 'center',
     },
     sheetSearchCell: { minHeight: HULL_SHEET_ROW_HEIGHT },
@@ -619,7 +619,6 @@ const styles = StyleSheet.create((theme) => {
       minHeight: 0,
       paddingHorizontal: hull.space.sm,
       paddingVertical: hull.space.sm,
-      borderRadius: 0,
       textAlignVertical: 'center',
     },
     sheetSearchCellInput: {

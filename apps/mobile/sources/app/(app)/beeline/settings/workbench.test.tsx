@@ -199,11 +199,11 @@ describe('Connectors server-owned settings screen', () => {
     expect(renderer.root.findByProps({ testID: 'connectors-search' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ testID: 'connectors-suggest-squire' })).toHaveLength(0);
   });
-  it('renders the search hint as a quiet boxed field and opens the existing search', async () => {
+  it('renders the search hint as a search cell and opens the existing search', async () => {
     const renderer = await render();
     const hint = renderer.root.findByType('HullDialogInput');
     expect(hint.props.testID).toBe('connectors-search');
-    expect(hint.props.variant).toBe('boxed');
+    expect(hint.props.variant).toBe('search');
     expect(hint.props.editable).toBe(false);
     expect(hint.props.placeholder).toBe('Search apps, keys, and websites');
     expect(hint.props.value).toBe('');

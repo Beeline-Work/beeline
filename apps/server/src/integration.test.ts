@@ -93,6 +93,8 @@ describe('monolith integration', () => {
   let objectService: ObjectService;
   let githubApp: {
     deleteBranch: ReturnType<typeof vi.fn>;
+    branchDeletionSafety: ReturnType<typeof vi.fn>;
+    openPullRequestsForBranch: ReturnType<typeof vi.fn>;
     mergePullRequest: ReturnType<typeof vi.fn>;
     installationToken: ReturnType<typeof vi.fn>;
     readCommitCheckRollup: ReturnType<typeof vi.fn>;
@@ -125,6 +127,8 @@ describe('monolith integration', () => {
     githubRollupState = 'pending';
     githubApp = {
       deleteBranch: vi.fn(async () => undefined),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false, openBasePullRequest: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       mergePullRequest: vi.fn(async () => undefined),
       installationToken: vi.fn(async () => ({
         token: 'github-room-token',

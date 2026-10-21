@@ -411,7 +411,7 @@ import {
   RoomReviewerActions,
   RoomReviewerSurfaceNotice,
 } from '@/components/buzz/RoomReviewerActions';
-import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
+import { EmptyLedgerState, cornerNeedsStarter, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import {
   CornerHeaderAgentText,
   HeaderIdentitySlot,
@@ -2479,6 +2479,14 @@ export function BuzzChatSurface({
     },
     [],
   );
+  const startCornerMessage = useCallback(() => {
+    const handle = firstRoomAgent?.handle?.replace(/^@/, '');
+    if (!handle || !firstRoomAgent) return focusComposer();
+    fillComposer(`@${handle} `, {
+      mention: { handle, pubkey: firstRoomAgent.pubkey },
+      focusOnRefusal: true,
+    });
+  }, [fillComposer, firstRoomAgent, focusComposer]);
   // The same minted pairing command the Room deck and the create wizard show,
   // in the same sheet: a Room with no agent has nobody to ask yet.
   const connectAgent = useCallback(async () => {
@@ -2658,6 +2666,21 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
+  const showEmptyLedger = isCorner
+    ? !viewerIsAgent && cornerNeedsStarter(transcriptMessages)
+    : transcriptMessages.length === 0;
+  const emptyLedger = showEmptyLedger ? (
+    <View style={styles.emptyState}>
+      <EmptyLedgerState
+        variant={emptyLedgerVariant}
+        name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
+        agentHandle={isCorner ? firstRoomAgent?.handle : undefined}
+        onPress={isCorner ? startCornerMessage : focusComposer}
+        starterPrompts={starterPrompts}
+        starterIntro={starterIntro}
+      />
+    </View>
+  ) : null;
   // Landing retries can outlive the render that scheduled them. Read the
   // current inverted order so arrivals during measurement cannot shift the
   // durable boundary away from the numeric index we retry.
@@ -6382,18 +6405,8 @@ export function BuzzChatSurface({
                       transcriptMessages.length === 0 && styles.messageListContentEmpty,
                     ]}
                   >
-                    {transcriptMessages.length === 0 ? (
-                      <View style={styles.emptyState}>
-                        <EmptyLedgerState
-                          variant={emptyLedgerVariant}
-                          name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
-                          objective={isCorner ? cornerObjectiveText : undefined}
-                          onPress={focusComposer}
-                          starterPrompts={starterPrompts}
-                          starterIntro={starterIntro}
-                        />
-                      </View>
-                    ) : (
+                    {emptyLedger}
+                    {transcriptMessages.length > 0 && (
                       <>
                         {transcriptHistoryLine}
                         {transcriptMessages.map((item) => (
@@ -6516,18 +6529,7 @@ export function BuzzChatSurface({
                   onScrollToIndexFailed={phoneScrollList.scrollToIndexFailed}
                   onEndReached={loadOlderTranscriptIfReaderAsked}
                   onEndReachedThreshold={0.5}
-                  ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                      <EmptyLedgerState
-                        variant={emptyLedgerVariant}
-                        name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
-                        objective={isCorner ? cornerObjectiveText : undefined}
-                        onPress={focusComposer}
-                        starterPrompts={starterPrompts}
-                        starterIntro={starterIntro}
-                      />
-                    </View>
-                  }
+                  ListEmptyComponent={emptyLedger}
                   // Inverted native list: the header is the newest end of the transcript.
                   ListHeaderComponent={
                     starPrompt.prompt || transcriptForwardLine ? (
@@ -6546,7 +6548,12 @@ export function BuzzChatSurface({
                     ) : null
                   }
                   // Inverted native list: the footer is the visual top.
-                  ListFooterComponent={transcriptHistoryLine}
+                  ListFooterComponent={
+                    <>
+                      {transcriptHistoryLine}
+                      {transcriptMessages.length > 0 && emptyLedger}
+                    </>
+                  }
                 />
               )}
               {!desktopTranscript && (

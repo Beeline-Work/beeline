@@ -3,6 +3,9 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', () => ({ router: { push: routerPush } }));
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
@@ -136,6 +139,17 @@ function renderShell(
 }
 
 describe('Workspace drawer', () => {
+  it('opens Join with the drawer closed', () => {
+    routerPush.mockClear();
+    const renderer = renderShell();
+    act(() => renderer.root.findByProps({ testID: 'workspace-avatar-trigger' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'community-rail-join' }).props.onPress());
+    expect(routerPush).toHaveBeenCalledWith({
+      pathname: '/beeline/community', params: { mode: 'join' },
+    });
+    expect(renderer.root.findAllByProps({ testID: 'community-drawer-overlay' })).toHaveLength(0);
+  });
+
   it('keeps the desktop Workspace avatar free of an attention overlay', () => {
     layout.desktop = true;
     try {

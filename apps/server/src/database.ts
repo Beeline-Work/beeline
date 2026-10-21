@@ -1815,6 +1815,7 @@ ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS creator_agent_id text REFE
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 ALTER TABLE workspace_skills ADD COLUMN IF NOT EXISTS ownership_initialized boolean NOT NULL DEFAULT false;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS workflow_slug text;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS human_command_message_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS title text;
 -- Owner-approved labels for the existing #beeline schedules and its corners.
 UPDATE agent_schedules SET title=labels.title FROM (VALUES

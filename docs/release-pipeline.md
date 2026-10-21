@@ -49,8 +49,7 @@ Recovery operators cannot override the server-supplied attribution.
 
 An explicitly human-commanded recurring release may use the same tool on each
 scheduled turn. Creating or updating the schedule in that human-rooted turn
-writes a server-owned authorization receipt bound to the saved prompt, cadence,
-run limit and workflow. The scheduler carries the original human command into
+stores the authorizing human command message id on the schedule. The scheduler carries the original human command into
 the release turn; the audit receipt cites that command. Agent-only edits clear
 the authorization. Schedules created before this support need a human-rooted
 update to record the command before they can dispatch releases. The original

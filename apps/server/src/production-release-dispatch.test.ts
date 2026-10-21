@@ -224,6 +224,11 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
         roomId: room, requestId: input.requestId, generationId: input.generationId,
         scheduleId: saved.scheduleId, prompt: 'Run a different release task.',
       }, agent);
+      const authorization = (await db.query<{ human_command_message_id: string | null }>(
+        `SELECT human_command_message_id FROM agent_schedules WHERE id=$1`, [saved.scheduleId],
+      )).rows[0]!;
+      expect(authorization.human_command_message_id).toBe(humanRoot && !edited ? 'human-command' : null);
+      expect((await db.query(`SELECT id FROM messages WHERE id=$1`, [saved.scheduleId])).rows).toHaveLength(0);
       await db.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 second' WHERE id=$1`, [saved.scheduleId]);
       expect(await scheduleLoop.runOnce()).toBe(1);
       const command = (await db.query<{ id: string; root_source_message_id: string }>(

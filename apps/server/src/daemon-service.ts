@@ -5202,24 +5202,23 @@ export class DaemonService {
   ): Promise<void> {
     // Only a server-validated human-rooted turn may authorize the saved task.
     // Nonhuman edits clear old authority, even if the task text is unchanged.
-    await db.query(`UPDATE messages SET card=card-'scheduleAuthorization' WHERE id=$1`, [scheduleId]);
-    if (typeof requestId !== 'string' || typeof generationId !== 'string') return;
-    const command = await authorizeCommandOutput(db, roomId, agentId, requestId, generationId);
+    let humanCommandMessageId: string | null = null;
+    if (typeof requestId === 'string' && typeof generationId === 'string') {
+      const command = await authorizeCommandOutput(db, roomId, agentId, requestId, generationId);
+      const human = (await db.query<{ id: string }>(
+        `SELECT root.id FROM messages root
+         JOIN identities person ON person.id=root.author_id AND person.kind='human' AND NOT person.hidden_from_roster
+         WHERE root.id=$1 AND root.deleted_at IS NULL`,
+        [command.root_source_message_id],
+      )).rows[0];
+      humanCommandMessageId = human?.id ?? null;
+    }
     await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text,durable_fact,card)
-       SELECT schedule.id::text,schedule.room_id,schedule.agent_id,
-         'Scheduled task authorized by human command: ' || root.id,'action',
-         jsonb_build_object('scheduleAuthorization',jsonb_build_object(
-           'humanCommandMessageId',root.id,'agentId',schedule.agent_id,'prompt',schedule.message,
-           'cadence',schedule.cadence,'maxRuns',schedule.max_runs,'workflowName',schedule.workflow_slug))
-       FROM agent_schedules schedule
-       JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
-       JOIN identities person ON person.id=root.author_id AND person.kind='human' AND NOT person.hidden_from_roster
-       WHERE schedule.id=$1
-       ON CONFLICT(id) DO UPDATE SET text=EXCLUDED.text,card=EXCLUDED.card`,
-      [scheduleId, command.root_source_message_id],
+      `UPDATE agent_schedules SET human_command_message_id=$2 WHERE id=$1`,
+      [scheduleId, humanCommandMessageId],
     );
   }
+
   /**
    * What this agent reacts to in this Room, set by the agent itself.
    *

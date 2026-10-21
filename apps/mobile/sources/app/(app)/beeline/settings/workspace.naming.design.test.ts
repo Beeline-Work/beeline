@@ -21,7 +21,7 @@ function styleBlock(text: string, name: string): string {
 describe('Workspace naming', () => {
   it('uses Workspace for the page', () => {
     expect(source).toContain(
-      '<PageHeader onBack={() => router.back()} prominent title={WORKSPACE_LABEL} />',
+      '<PageHeader onBack={() => router.back()} backAccessibilityLabel="Back to Settings" prominent title={WORKSPACE_LABEL} />',
     );
     expect(source).not.toContain('{WORKSPACE_LABEL} Settings');
   });

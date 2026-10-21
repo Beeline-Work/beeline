@@ -18,7 +18,12 @@ export async function handleReadClearPayload(
 ): Promise<boolean> {
   const reads = readClearReads(payload);
   if (!reads?.length) return false;
-  await dismissPresentedNotificationsForChannels(reads, api, platform);
+  // A reply from the notification marks its message read, so the server's
+  // read-clear push follows within seconds. It must not take down the
+  // "Replied" row that confirms the reply.
+  await dismissPresentedNotificationsForChannels(reads, api, platform, {
+    keepActionOutcomes: true,
+  });
   return true;
 }
 

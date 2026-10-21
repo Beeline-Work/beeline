@@ -144,4 +144,23 @@ describe('read-clear push on Android', () => {
     // Android's launcher badge follows the shade; there is no count to set.
     expect(api.setBadgeCountAsync).not.toHaveBeenCalled();
   });
+
+  // R1: a reply from the notification marks its message read, and the
+  // server's read-clear push took the "Replied" row down seconds later.
+  it('keeps the row that confirms a reply sent from the notification', async () => {
+    const replied = push('a1', roomA, roomA);
+    const confirmed = {
+      ...replied,
+      request: {
+        ...replied.request,
+        content: { data: { ...replied.request.content.data, actionOutcome: 'true' } },
+      },
+    };
+    const api = shade([confirmed, push('a2', roomA, roomA)]);
+    const body = JSON.stringify(readClearPushData([cursor(roomA, 'a2', ['a1'])]));
+
+    await handleReadClearPayload({ data: { body, dataString: body } }, api, 'android');
+
+    expect(api.dismissNotificationAsync.mock.calls).toEqual([['a2']]);
+  });
 });

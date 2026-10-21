@@ -74,7 +74,7 @@ function deps(
     newMessageId: () => 'f'.repeat(64),
     present: async (notification) => void presented.push(notification),
     handled: createHandledActionStore(memoryStorage()),
-    inFlight: new Set(),
+    inFlight: new Map(),
     presented,
     ...overrides,
   };
@@ -299,6 +299,31 @@ describe('answering a tapped action', () => {
     expect(results.filter(Boolean)).toEqual(['done']);
     expect(await handleNotificationAction(payload, d)).toBeNull();
     expect(d.decideGrant).toHaveBeenCalledTimes(1);
+  });
+
+  // R1: on a closed Android app the headless task and the response listener
+  // both receive the tap. The task returned at once, Android froze the
+  // process, and the reply posted while its notification never confirmed.
+  it('keeps the second delivery of a tap running until the outcome is shown', async () => {
+    let sent!: () => void;
+    const d = deps('android', {
+      sendReply: vi.fn(() => new Promise<unknown>((resolve) => (sent = () => resolve({})))),
+    });
+    const payload = response('reply', replyData, 'On it');
+    const listener = handleNotificationAction(payload, d);
+    let taskDone = false;
+    const task = handleNotificationAction(payload, d).then((result) => {
+      taskDone = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(d.sendReply).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(taskDone).toBe(false);
+
+    sent();
+    expect(await task).toBeNull();
+    expect(d.presented.map((notification) => notification.subtitle)).toEqual(['Replied']);
+    expect(await listener).toBe('done');
   });
 
   it('never replays a failed response on a later start', async () => {

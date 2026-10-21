@@ -220,6 +220,7 @@ jobs:
               - 'scripts/verify-workflow-paths.mjs'
               - 'scripts/release-preflight*'
               - 'scripts/unified-release*'
+              - 'scripts/dispatch-production-release.mjs'
               - 'scripts/ios-store-build*'
               - 'scripts/ios-build-evidence.py'
               - 'package.json'

@@ -1,3 +1,4 @@
+import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
@@ -1372,6 +1373,12 @@ export class DaemonService {
           verb: "has no commits yet - push a first commit and I'll pick it up.",
         });
         return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
+      }
+      case 'dispatchRoomWorkflow': {
+        if (!this.github) throw new Error('GitHub workflow service unavailable');
+        const release = input as Input<'dispatchRoomWorkflow'>;
+        return await productionReleaseDispatch(this.database, authenticatedAgentId, release,
+          inputs => this.github!.dispatchProductionRelease(release.roomId, inputs)) as Output<Name>;
       }
       case 'getRoomGitHubToken': {
         if (!this.roomGitHubToken) throw new Error('GitHub room token service unavailable');
@@ -8482,6 +8489,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getRoomRepositoryState: true,
   noteEmptyRoomRepository: true,
   getRoomGitHubToken: true,
+  dispatchRoomWorkflow: true,
   getRoomTargetBranch: true,
   getIdentitySuccession: true,
   getAgentConfiguration: true,

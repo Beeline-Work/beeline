@@ -936,6 +936,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   const workflow = parse(source);
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   const inputs = workflow.on.workflow_dispatch.inputs;
+  assert.equal(inputs.dispatched_by.required, true);
   assert.equal(inputs.release_sha.required, false);
   assert.equal(inputs.release_version.required, false);
   assert.equal(inputs.retry_attempt.default, '1');
@@ -944,7 +945,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(inputs.plan_only.default, false);
   assert.equal(inputs.run_release_proof.default, false);
   assert.equal(inputs.run_release_proof.type, 'boolean');
-  const consentOnly = ['release_sha', 'release_version', 'retry_attempt', 'selection', 'store_track', 'plan_only'];
+  const consentOnly = [ 'release_sha', 'release_version', 'retry_attempt', 'selection', 'store_track', 'plan_only'];
   for (const name of consentOnly) assert.match(inputs[name].description, /Recovery only|Opt-in only|routine releases keep/, `${name} description`);
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
@@ -1259,7 +1260,7 @@ test('a desktop-carrying retry fetches this release\'s installers, never the pre
 test('canonical routine release guidance is a single no-input dispatch', () => {
   const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
   const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
-  const command = 'gh-axi workflow run unified-release.yml --ref main';
+  const command = 'node scripts/dispatch-production-release.mjs';
   assert.match(guide, new RegExp(command.replaceAll('.', '\\.')));
   assert.match(agents, new RegExp(command.replaceAll('.', '\\.')));
   assert.match(guide, /Pass no inputs/);
@@ -1948,4 +1949,59 @@ test('both native builds apply the one resolved store version before EAS, with n
       assert.equal(JSON.parse(readFileSync(join(dir, 'package.json'))).version, '0.2.23');
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// Reproduction release-dispatch-serialization: production-free stand-in.
+test('release-dispatch-serialization: a second production release cannot cancel the running release', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  assert.equal(workflow.concurrency.group, 'unified-production-release');
+  assert.equal(workflow.concurrency['cancel-in-progress'], false);
+});
+
+test('release-dispatch-attribution: operator command refuses an unauthenticated turn', () => {
+  const script = fileURLToPath(new URL('./dispatch-production-release.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [script], {
+    encoding: 'utf8', env: { ...process.env, BEELINE_DAEMON_TOKEN: '' },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /requires an authenticated Beeline agent turn/);
+});
+
+test('release-dispatch-serialization: automatic retry ignores itself but refuses another queued release', async () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const script = workflow.jobs.retry.steps.find(step => step.name.startsWith('Redispatch')).with.script;
+  const execute = new (Object.getPrototypeOf(async function () {}).constructor)('github', 'context', 'core', script);
+  for (const status of ['queued', 'in_progress', 'waiting', 'completed']) {
+    const dispatches = [];
+    const notices = [];
+    const github = {
+      paginate: async () => [{ id: 1, status: 'in_progress' }, { id: 2, status }],
+      rest: { actions: { listWorkflowRuns() {}, createWorkflowDispatch: async args => dispatches.push(args) } },
+    };
+    await execute(github, { repo: { owner: 'Beeline-Work', repo: 'beeline' }, runId: 1 }, { notice: text => notices.push(text) });
+    assert.equal(dispatches.length, status === 'completed' ? 1 : 0);
+    if (status !== 'completed') assert.match(notices[0], /already .*; skipping automatic retry/);
+  }
+});
+
+test('release-dispatch-attribution: workflow refuses missing provenance and retries retain the original dispatch', async () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  assert.equal(workflow.on.workflow_dispatch.inputs.dispatched_by.required, true);
+  assert.match(workflow['run-name'], /inputs.dispatched_by/);
+  const attribution = workflow.jobs.initialize.steps.find(step => step.name === 'Verify release dispatch attribution');
+  const execute = new (Object.getPrototypeOf(async function () {}).constructor)('core', attribution.with.script);
+  const previous = process.env.DISPATCHED_BY;
+  const summary = { addHeading() { return this; }, addCodeBlock() { return this; }, async write() {} };
+  try {
+    process.env.DISPATCHED_BY = '{}';
+    await assert.rejects(execute({ summary }), /requires dispatch attribution: agentId/);
+    process.env.DISPATCHED_BY = JSON.stringify({ agentId: 'agent', handle: 'jellybean', place: 'room', humanCommandMessageId: 'human', auditMessageId: 'audit' });
+    await execute({ summary });
+    const retry = workflow.jobs.retry.steps.find(step => step.name.startsWith('Redispatch'));
+    assert.equal(retry.env.DISPATCHED_BY, '${{ inputs.dispatched_by }}');
+    assert.match(retry.with.script, /dispatched_by: process.env.DISPATCHED_BY/);
+  } finally {
+    if (previous === undefined) delete process.env.DISPATCHED_BY;
+    else process.env.DISPATCHED_BY = previous;
+  }
 });

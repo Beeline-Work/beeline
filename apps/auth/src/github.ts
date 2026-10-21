@@ -635,6 +635,26 @@ export class GitHubAppClient {
     return sha;
   }
 
+  async dispatchProductionWorkflow(accessToken: string, fullName: string, inputs: Record<string, string>): Promise<void> {
+    if (!inputs.dispatched_by) throw new Error('Production release requires an agent identity');
+    // A single match in any active state blocks dispatch; query errors fail closed.
+    for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
+      const result = await this.readRepositoryJson(accessToken, fullName,
+        `actions/workflows/unified-release.yml/runs?status=${status}&per_page=1`);
+      if (!Array.isArray(result.workflow_runs)) throw new Error('Invalid production release run listing');
+      if (result.workflow_runs.length) {
+        const run = result.workflow_runs[0] as { id?: unknown };
+        throw new Error(`Production release ${run.id} is already ${status}. Wait for it to finish or cancel it in GitHub Actions.`);
+      }
+    }
+    const response = await fetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/workflows/unified-release.yml/dispatches`,
+      { method: 'POST', headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
+        body: JSON.stringify({ ref: 'main', inputs }) },
+    );
+    if (!response.ok) throw new GitHubHttpError('GitHub production release dispatch', response.status);
+  }
+
   async dispatchWorkflow(
     accessToken: string,
     fullName: string,

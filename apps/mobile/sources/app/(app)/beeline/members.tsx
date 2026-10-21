@@ -3,6 +3,7 @@ import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
@@ -10,7 +11,6 @@ import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
-  ScrollView,
   Share,
   Switch,
   Text,
@@ -70,7 +70,6 @@ import {
 import { watchWorkspace } from '@/buzz/workspace-watch';
 import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import {
-  AGENT_MODEL_PICKER_VISIBLE_ROWS,
   effortConfigAxis,
   fastModeConfigAxis,
   filterAgentModelOptions,
@@ -1100,9 +1099,8 @@ export default function BuzzMembers({
         modelManagement={
           selectedAgent ? (
             <>
-              {' '}
               {ownsSelectedAgent && (
-                <View style={styles.modelSection}>
+                <View>
                   {(['model', 'effort'] as const).map((kind) => {
                     const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
                     const current = axisValue(selectedAgent, kind, axis);
@@ -1113,26 +1111,15 @@ export default function BuzzMembers({
                         ? filterAgentModelOptions(choices, modelSearchQuery)
                         : choices;
                     return (
-                      <View key={kind} style={styles.axisBlock}>
+                      <View key={kind}>
                         <SettingsRow
                           title={kind === 'model' ? 'Model' : 'Thinking level'}
-                          description={
-                            kind === 'model'
-                              ? current
-                                ? displayModel(current)
-                                : UNSET_VALUE
-                              : undefined
-                          }
-                          value={
-                            kind === 'effort'
-                              ? working === 'model-catalog'
-                                ? 'Refreshing…'
-                                : (current ?? UNSET_VALUE)
-                              : undefined
-                          }
+                          value={kind === 'model'
+                            ? current ? displayModel(current) : UNSET_VALUE
+                            : working === 'model-catalog' ? 'Refreshing…' : (current ?? UNSET_VALUE)}
                           disabled={busy || (kind === 'model' && !axis)}
                           onPress={() => void toggleModelAxis(kind, open, axis)}
-                          chevron={open ? 'down' : 'right'}
+                          chevron="right"
                           testID={`model-axis-${kind}`}
                         />
                         {(selectedAgent.modelUnavailable === kind ||
@@ -1145,38 +1132,38 @@ export default function BuzzMembers({
                             !
                           </Text>
                         )}
-                        {open && kind === 'model' && axis && (
-                          <HullDialogInput
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            editable={!busy}
-                            onChangeText={setModelSearchQuery}
-                            placeholder="Search models"
-                            returnKeyType="search"
-                            style={styles.modelSearchInput}
-                            testID="model-search-model"
-                            value={modelSearchQuery}
-                          />
-                        )}
-                        {open && (
-                          <ScrollView
-                            keyboardShouldPersistTaps="handled"
-                            nestedScrollEnabled
-                            style={styles.choiceList}
-                            testID={`model-options-${kind}`}
-                          >
-                            {visibleChoices.map((choice) => (
-                              <SettingsRow
-                                key={choice.id}
-                                disabled={busy}
-                                onPress={() => void setModelOption(kind, choice.id)}
-                                testID={`model-option-${kind}-${choice.id}`}
-                                title={kind === 'model' ? displayModel(choice.name ?? choice.id) : (choice.name ?? choice.id)}
-                                value={choice.id === current ? '✓' : undefined}
-                              />
-                            ))}
-                          </ScrollView>
-                        )}
+                        <HullActionSheetModal
+                          title={kind === 'model' ? 'Model' : 'Thinking level'}
+                          visible={open}
+                          onClose={() => setOpenModelAxis(null)}
+                          testID={`model-options-${kind}`}
+                          sticky={kind === 'model' ? (
+                            <HullDialogInput
+                              variant="sheetSearch"
+                              accessibilityLabel="Search models"
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              editable={!busy}
+                              onChangeText={setModelSearchQuery}
+                              placeholder="Search models"
+                              returnKeyType="search"
+                              testID="model-search-model"
+                              value={modelSearchQuery}
+                            />
+                          ) : undefined}
+                          footer={<HullActionSheetCancel onPress={() => setOpenModelAxis(null)} />}
+                        >
+                          {visibleChoices.map((choice) => (
+                            <HullActionSheetRow
+                              key={choice.id}
+                              disabled={busy}
+                              onPress={() => void setModelOption(kind, choice.id)}
+                              testID={`model-option-${kind}-${choice.id}`}
+                              label={kind === 'model' ? displayModel(choice.name ?? choice.id) : (choice.name ?? choice.id)}
+                              selected={choice.id === current}
+                            />
+                          ))}
+                        </HullActionSheetModal>
                         {modelAppliesNote === kind && (
                           <Text style={styles.profileSettingCopy} testID={`model-applies-${kind}`}>
                             Applies at the next session
@@ -1193,31 +1180,16 @@ export default function BuzzMembers({
                     );
                   })}
                   {modelAxes.fast && (
-                    <View style={styles.axisBlock} testID="fast-mode-setting">
-                      <Text style={styles.profileSettingLabel}>Fast mode</Text>
-                      <Text style={styles.profileSettingCopy}>
-                        Faster responses use more ChatGPT credits where available.
-                      </Text>
-                      {([false, true] as const).map((enabled) => (
-                        <TouchableOpacity
-                          key={String(enabled)}
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            disabled: busy,
-                            selected: selectedAgent.fastMode === enabled,
-                          }}
-                          disabled={busy}
-                          onPress={() => void setFastMode(enabled)}
-                          style={styles.choice}
-                          testID={`fast-mode-${enabled ? 'on' : 'off'}`}
-                        >
-                          <Text style={styles.choiceText}>{enabled ? 'On' : 'Off'}</Text>
-                          {selectedAgent.fastMode === enabled && (
-                            <Text style={styles.choiceText}>✓</Text>
-                          )}
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                    <SettingsRow
+                      title="Fast mode"
+                      description="Faster responses use more ChatGPT credits where available."
+                      testID="fast-mode-setting"
+                      toggle={{
+                        value: selectedAgent.fastMode === true,
+                        disabled: busy,
+                        onValueChange: (enabled) => void setFastMode(enabled),
+                      }}
+                    />
                   )}
                 </View>
               )}
@@ -1448,7 +1420,7 @@ export default function BuzzMembers({
             placeholder="Search members"
             placeholderTextColor={theme.buzz.textMuted}
             returnKeyType="search"
-            style={styles.searchInput}
+            variant="search"
             testID="members-search"
             value={memberQuery}
           />
@@ -1582,44 +1554,10 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     section: {},
-    searchInput: {
-      ...Typography.default(),
-      ...hull.type.body,
-      minHeight: 44,
-      paddingHorizontal: hull.space.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      color: hull.textPrimary,
-    },
     loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     chevron: { color: hull.textMuted },
-    choice: {
-      minHeight: 44,
-      minWidth: 0,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      borderRadius: hull.radius,
-    },
-    modelSearchInput: {
-      ...Typography.default(),
-      ...hull.type.body,
-      minHeight: 44,
-      paddingHorizontal: hull.space.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.border,
-      color: hull.textPrimary,
-    },
-    // A catalog can advertise dozens of models; the open list shows at most
-    // AGENT_MODEL_PICKER_VISIBLE_ROWS 44pt rows and scrolls inside that bound.
-    choiceList: { maxHeight: AGENT_MODEL_PICKER_VISIBLE_ROWS * 44 },
-    choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
-    choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
     profileSettingLabel: {
       ...Typography.default(),
       ...hull.type.bodyStrong,
@@ -1627,8 +1565,6 @@ const styles = StyleSheet.create((theme) => {
     },
     profileSettingCopy: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
     detailPanel: { padding: hull.space.md, gap: hull.space.md },
-    modelSection: { gap: hull.space.sm },
-    axisBlock: { borderWidth: StyleSheet.hairlineWidth, borderColor: hull.border },
     axisRow: {
       minHeight: 44,
       flexDirection: 'row',

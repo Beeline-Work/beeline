@@ -36,7 +36,6 @@ export function RoomListToolbar({
   counts?: { all: number; unread: number; pinned: number };
 }) {
   const localSearchRef = useRef<TextInput>(null);
-  const [focused, setFocused] = useState(false);
   const [localSearchOpen, setLocalSearchOpen] = useState(false);
   const searchOpen = controlledSearchOpen ?? localSearchOpen;
   const setSearchOpen = (open: boolean) => {
@@ -125,9 +124,7 @@ export function RoomListToolbar({
         accessibilityLabel="Search Rooms and direct messages"
         placeholder="Search Rooms and direct messages"
         placeholderTextColor={styles.label.color}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={[styles.search, focused && styles.searchFocused]}
+        variant="search"
         testID={desktop ? 'desktop-room-search' : 'room-search'}
       />
     </View>
@@ -196,14 +193,5 @@ const styles = StyleSheet.create((theme) => ({
     letterSpacing: 0,
     color: theme.buzz.textInverted,
     fontVariant: ['tabular-nums'],
-  },
-  searchFocused: { borderBottomColor: theme.buzz.accent },
-  search: {
-    ...theme.buzz.type.body,
-    color: theme.buzz.textPrimary,
-    padding: theme.buzz.space.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: theme.buzz.border,
-    minHeight: 44,
   },
 }));

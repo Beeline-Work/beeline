@@ -40,7 +40,7 @@ export default function WorkbenchScreen() {
       <View style={styles.centered}><SurfaceGlyphLoader testID="workbench-loader" /></View> :
       <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]} testID="workbench-scroll">
         <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
-          value="" editable={false} variant="boxed" placeholderTextColor={theme.buzz.textDisabled}
+          value="" editable={false} variant="search" placeholderTextColor={theme.buzz.textDisabled}
           testID="connectors-search" onPress={() => setSearchOpen(true)} />
         {!index.hasConnections ? <View>
           <Text style={styles.note}>No connections yet. Choose a service to get started.</Text>

@@ -34,6 +34,12 @@ vi.mock('@/constants/Typography', () => ({
 }));
 vi.mock('./OwnerGrantNeededCard', () => ({ OwnerGrantNeededCard: 'OwnerGrantNeededCard' }));
 
+vi.mock('./HullActionSheet', async () => {
+  const React = await import('react');
+  return { HullActionSheetRow: (props: any) => React.createElement('Row', props,
+    React.createElement('Text', {}, props.label), props.selected ? React.createElement('Text', {}, 'SELECTED') : null) };
+});
+
 import { RepoPicker } from './RepoPicker';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -78,6 +84,20 @@ function searchFor(renderer: ReactTestRenderer, query: string): void {
 }
 
 describe('RepoPicker', () => {
+  it('marks the current repository and delivers its full candidate on selection', () => {
+    const candidate = { key: 'repo', name: 'owner/widgets' };
+    const onSelect = vi.fn();
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(<RepoPicker candidates={[candidate]} currentKey="repo" onSelect={onSelect} />); });
+    const list = renderer.root.findByProps({ testID: 'repo-picker-list' });
+    const row = list.props.renderItem({ item: candidate, section: list.props.sections[0] });
+    expect(row.props.selected).toBe(true);
+    expect(row.props.label).toBe('widgets');
+    act(() => row.props.onPress());
+    expect(onSelect).toHaveBeenCalledWith(candidate);
+    act(() => renderer.unmount());
+  });
+
   it('puts the optional no-repository choice after search', () => {
     const onSelectNoRepository = vi.fn();
     let renderer!: ReactTestRenderer;
@@ -96,8 +116,8 @@ describe('RepoPicker', () => {
     expect((children[0] as any).props.accessibilityLabel).toBe(
       'Search repositories or paste a GitHub URL',
     );
-    expect((children[1] as any).props.testID).toBe('repo-picker-no-repository');
-    act(() => (children[1] as any).props.onPress());
+    expect((children[1] as any).findByProps({ testID: 'repo-picker-no-repository' })).toBeDefined();
+    act(() => renderer.root.findByProps({ testID: 'repo-picker-no-repository' }).props.onPress());
     expect(onSelectNoRepository).toHaveBeenCalledTimes(1);
     act(() => renderer.unmount());
   });
@@ -139,7 +159,7 @@ describe('RepoPicker', () => {
 
     const unlink = renderer.root.findByProps({ testID: 'room-repo-picker-unlink' });
     expect(unlink.props.accessibilityLabel).toBe('Unlink repo, currently beeline/mobile');
-    expect(unlink.props.accessibilityRole).toBe('button');
+    expect(unlink.props.destructive).toBe(true);
     act(() => unlink.props.onPress());
     expect(onUnlink).toHaveBeenCalledTimes(1);
     act(() => renderer.unmount());
@@ -198,7 +218,7 @@ describe('RepoPicker', () => {
     );
     expect(list.props.nestedScrollEnabled).toBe(true);
     expect(list.props.keyboardShouldPersistTaps).toBe('handled');
-    expect(list.props.style).toContainEqual({ maxHeight: 252 });
+    expect(list.props.style).toContainEqual({ maxHeight: 312 });
     act(() => renderer.unmount());
   });
 
@@ -260,13 +280,13 @@ describe('RepoPicker', () => {
       list.props.renderItem({
         item: list.props.sections[0].data[0],
         section: list.props.sections[0],
-      }).props.children[0].props.children,
+      }).props.label,
     ).toBe('beeline');
     expect(
       list.props.renderItem({
         item: list.props.sections[1].data[0],
         section: list.props.sections[1],
-      }).props.children[0].props.children,
+      }).props.label,
     ).toBe('veritaserum');
     act(() => renderer.unmount());
   });

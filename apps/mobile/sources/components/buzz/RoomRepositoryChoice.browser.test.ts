@@ -40,7 +40,7 @@ describe.skipIf(!existsSync(CHROME))('Room header Repository control in the brow
     expect(lines[7]).toBe(
       'H5: #thecollector Repository None Link Create trusty-squire thecollector Cancel Save',
     );
-    expect(lines[8]).toContain('trusty-squire ✓ Beeline-Work Connect another org');
+    expect(lines[8]).toContain('trusty-squire SELECTED Beeline-Work Connect another org');
     expect(result).toContain('saved: link trusty-squire/castellan | create 1 thecollector');
     expect(result).toContain('console errors: none');
   }, 90_000);

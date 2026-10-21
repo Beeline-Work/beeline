@@ -208,8 +208,7 @@ export class AgentScheduleLoop {
               scheduleId: current.id,
               object: { text: current.agent_name, id: current.agent_id },
               consequence: current.message,
-              // The explicit command below carries the saved human authority.
-              wakes: [],
+              wakes: [current.agent_id],
             });
           } else {
             // The agent is woken by the command created just below, never by a
@@ -230,13 +229,24 @@ export class AgentScheduleLoop {
               JSON.stringify(current.owner_id ? { ownerId: current.owner_id } : {}),
             ],
           );
-          await createAgentCommand(database, {
-            roomId: current.room_id,
-            agentId: current.agent_id,
-            sourceMessageId: messageId,
-            reason: 'schedule',
-            scheduledHumanCommandMessageId: current.human_command_message_id ?? undefined,
-          });
+          if (selfCreated) {
+            // systemLine already queued this occurrence; bind authority before
+            // the transaction commits and a helper can claim the command.
+            if (current.human_command_message_id) await database.query(
+              `UPDATE agent_commands SET root_source_message_id=$4
+               WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3
+                 AND reason='schedule' AND action='input' AND state='pending'`,
+              [current.room_id, current.agent_id, messageId, current.human_command_message_id],
+            );
+          } else {
+            await createAgentCommand(database, {
+              roomId: current.room_id,
+              agentId: current.agent_id,
+              sourceMessageId: messageId,
+              reason: 'schedule',
+              scheduledHumanCommandMessageId: current.human_command_message_id ?? undefined,
+            });
+          }
           await this.advance(database, current, now, true);
           return current.room_id;
         });

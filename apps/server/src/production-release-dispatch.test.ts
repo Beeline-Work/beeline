@@ -231,11 +231,13 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
       expect((await db.query(`SELECT id FROM messages WHERE id=$1`, [saved.scheduleId])).rows).toHaveLength(0);
       await db.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 second' WHERE id=$1`, [saved.scheduleId]);
       expect(await scheduleLoop.runOnce()).toBe(1);
-      const command = (await db.query<{ id: string; root_source_message_id: string }>(
+      const commands = (await db.query<{ id: string; root_source_message_id: string }>(
         `SELECT command.id,command.root_source_message_id FROM agent_commands command
          JOIN messages wake ON wake.id=command.source_message_id
          WHERE wake.card->'trigger'->>'scheduleId'=$1 AND command.reason='schedule'`, [saved.scheduleId],
-      )).rows[0]!;
+      )).rows;
+      expect(commands).toHaveLength(1);
+      const command = commands[0]!;
       if (humanRoot && !edited) expect(command.root_source_message_id).toBe('human-command');
       else expect(command.root_source_message_id).not.toBe('human-command');
       await db.query(`UPDATE agent_commands SET state='claimed',generation_id='scheduled-generation' WHERE id=$1`, [command.id]);

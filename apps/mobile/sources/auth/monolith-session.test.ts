@@ -43,6 +43,16 @@ const tokens = (generation: number) => ({
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
 
+  it.each(['github', 'google'] as const)('preserves anonymous attempt context through %s exchange', async (provider) => {
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => Response.json(tokens(1)));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    const context = {event:'provider_tapped' as const,installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android' as const,provider,version:'0.2.22',environment:'production' as const,timestamp:new Date().toISOString()};
+    if (provider === 'google') await session.exchangeGoogleTicket('ticket', context);
+    else await session.exchangeGitHubTicket('ticket', context);
+    expect(fetcher.mock.calls[0]?.[0]).toBe(`https://server.example/v1/auth/${provider}/exchange`);
+    expect(JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)).toEqual({oidcToken:'ticket',funnel:context});
+  });
+
   it('E23: explains preview account rejection without accepting a session', async () => {
     const fetcher = vi.fn(async () => Response.json({ error: 'google_sign_in_failed', reason: 'preview_account_not_allowed' }, { status: 401 }));
     const session = new MonolithSession('https://server.example', fetcher);

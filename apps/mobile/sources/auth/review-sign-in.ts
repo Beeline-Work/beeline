@@ -21,6 +21,7 @@ export async function signInWithReviewSecret(
   secret: string,
   session: MonolithSession = monolithSession,
 ): Promise<string> {
+  await import('./signin-funnel').then(module=>module.suppressSigninFunnel()).catch(()=>undefined);
   const alreadyAccepted = await session.reviewIdentityForSecret(secret);
   if (alreadyAccepted) return alreadyAccepted;
   await session.signOut();

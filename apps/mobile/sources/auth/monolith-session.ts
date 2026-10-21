@@ -1,3 +1,4 @@
+import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { OidcBindError } from '@beeline/buzz-client';
 import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monolith-secure-storage';
@@ -170,23 +171,24 @@ export class MonolithSession {
       : input;
   }
 
-  async exchangeGitHubTicket(ticket: string): Promise<string> {
-    return this.exchangeProviderTicket('github', ticket);
+  async exchangeGitHubTicket(ticket: string, funnel?: SigninFunnelEvent): Promise<string> {
+    return this.exchangeProviderTicket('github', ticket, funnel);
   }
 
-  async exchangeGoogleTicket(ticket: string): Promise<string> {
-    return this.exchangeProviderTicket('google', ticket);
+  async exchangeGoogleTicket(ticket: string, funnel?: SigninFunnelEvent): Promise<string> {
+    return this.exchangeProviderTicket('google', ticket, funnel);
   }
 
   private async exchangeProviderTicket(
     provider: 'github' | 'google',
     ticket: string,
+    funnel?: SigninFunnelEvent,
   ): Promise<string> {
     const revision = this.credentialRevision;
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/${provider}/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ oidcToken: ticket }),
+      body: JSON.stringify({ oidcToken: ticket, ...(funnel ? {funnel} : {}) }),
     });
     if (!response.ok) {
       if (provider === 'google') {
@@ -669,6 +671,7 @@ export class MonolithSession {
       // A new sign-in may repair an expired session for the same identity.
       // Token refresh alone must not start another registration/refresh loop.
       if (signedIn || previousId !== tokens.identityId) this.identityChanged();
+      if (signedIn) void import('./signin-funnel').then(module=>module.funnelSignedIn(tokens.accessToken)).catch(()=>undefined);
     });
   }
 }

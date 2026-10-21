@@ -1,3 +1,4 @@
+import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { repositoryOnboardingEnabled } from '@beeline/api-contract/phone';
 import { GOOGLE_PREVIEW_HEADER, googlePreviewVisible } from './google-preview.js';
 import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
@@ -41,6 +42,26 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     verifyNip98Header,
     completeAgentConnectApproval,
   } = context;
+  // Telemetry never changes the OAuth result. Only validated, state-bound flows
+  // reach callback observations; no codes, tokens or account details are passed.
+  const observe = async (input: Parameters<NonNullable<typeof options.onFunnelAuth>>[0]) => {
+    try {
+      await options.onFunnelAuth?.(input);
+    } catch {
+      // Sign-in must survive measurement failure.
+    }
+  };
+  const startObservation = async (query: Record<string, unknown>, state: string, provider: 'github' | 'google') => {
+    if (!options.onFunnelAuth || typeof query.funnel !== 'string' || query.funnel.length > 1024) return;
+    let context;
+    try { context = parseSigninFunnelEvent(JSON.parse(query.funnel)); } catch { return; }
+    if (!context || context.event !== 'provider_tapped' || context.provider !== provider) return;
+    await observe({ phase: 'start', flowHash: sha256(state), provider, context });
+  };
+  const callbackObservation = (state: string, provider: 'github' | 'google', outcome: 'success' | 'cancelled' | 'error') => observe({
+    phase: 'callback', flowHash: sha256(state), provider, outcome,
+    ...(outcome === 'error' ? { errorCode: 'provider_error' as const } : {}),
+  });
   app.get('/health', async () => ({ ok: true }));
 
   /** Public feature discovery. Missing GitHub config deliberately means dark. */
@@ -241,6 +262,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
     });
+    await startObservation(query,state,'google');
     noStore(reply);
     reply.header(
       'set-cookie',
@@ -354,6 +376,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       createdAt: issuedAt,
       expiresAt: new Date(issuedAt.getTime() + flowTtlMs),
     });
+    await startObservation(query,state,'github');
     noStore(reply);
     reply.header(
       'set-cookie',
@@ -411,6 +434,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       throw new ProtocolError(400, 'invalid_oauth_flow', 'GitHub flow tenant or provider mismatch');
     }
     if (typeof query.error === 'string') {
+      await callbackObservation(state,'github','cancelled');
       const completion = nativeCompletion(flow, {
         error: 'github_denied',
         message: 'GitHub authorization was canceled or denied',
@@ -423,11 +447,13 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
         message: 'GitHub did not finish authorizing the installation. Return and try again.' });
       if (completion) return deliverNativeCompletion(reply, completion);
     }
+    if(typeof query.code !== 'string') await callbackObservation(state,'github','error');
     const code = requiredQueryString(query.code, 'code');
     let identity: GitHubIdentity;
     try {
       identity = await options.github.oauth.exchangeCode(code, flow.redirectUri, flow.pkceVerifier || undefined);
     } catch {
+      await callbackObservation(state,'github','error');
       const completion = nativeCompletion(flow, {
         error: 'invalid_github_proof',
         message: 'GitHub authorization expired or could not be verified',
@@ -435,6 +461,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(401, 'invalid_github_proof', 'GitHub code exchange failed');
     }
+    await callbackObservation(state,'github','success');
     const eligible = repositoryOnboardingEnabled(identity.subject, process.env);
     if (flow.nonce.startsWith('onboarding_user:') && flow.nonce !== `onboarding_user:${identity.subject}`)
       throw new ProtocolError(403, 'onboarding_account_mismatch', 'Use the GitHub account that started this installation');
@@ -553,6 +580,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       throw new ProtocolError(400, 'invalid_oidc_flow', 'OIDC flow tenant or provider mismatch');
     }
     if (typeof query.error === 'string') {
+      await callbackObservation(state,'google','cancelled');
       const completion = nativeCompletion(flow, {
         error: 'oidc_denied',
         message: 'Google authorization was canceled or denied',
@@ -560,6 +588,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(401, 'oidc_denied', 'OIDC provider denied the authorization request');
     }
+    if(typeof query.code !== 'string') await callbackObservation(state,'google','error');
     const code = requiredQueryString(query.code, 'code');
 
     let identity;
@@ -567,6 +596,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       const idToken = await options.oidc.exchangeCode(code, flow.pkceVerifier, flow.redirectUri);
       identity = await options.oidc.verifyIdToken(idToken, flow.nonce);
     } catch {
+      await callbackObservation(state,'google','error');
       const completion = nativeCompletion(flow, {
         error: 'invalid_oidc_proof',
         message: 'Google authorization expired or could not be verified',
@@ -579,6 +609,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       );
     }
 
+    await callbackObservation(state,'google','success');
     return issueBindChallenge(
       tenant,
       flow, {

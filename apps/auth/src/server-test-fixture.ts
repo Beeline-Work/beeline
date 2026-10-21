@@ -1,3 +1,4 @@
+import type { FunnelAuthObservation } from '@beeline/api-contract/signin-funnel';
 import { createHash, createHmac } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -310,7 +311,7 @@ export const state: {
   logLines: [],
 };
 
-export function useAuthServerFixture(): void {
+export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthObservation)=>Promise<void>} = {}): void {
   beforeEach(async () => {
     provider = new DemoOidcProvider();
     await provider.start();
@@ -341,6 +342,7 @@ export function useAuthServerFixture(): void {
     state.agentConnectFinish = async () => ({ status: 'not_found' });
     state.logLines = [];
     app = buildAuthServer({
+      onFunnelAuth: options.onFunnelAuth,
       store,
       oidc: new OidcClient({
         issuer: provider.issuer,

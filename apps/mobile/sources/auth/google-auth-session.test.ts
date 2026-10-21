@@ -41,16 +41,18 @@ describe('Google sign-in continuation', () => {
   });
   it('opens a state-bound OAuth flow and completes through recovery when the browser stays open', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    const funnelContext = {event:'provider_tapped' as const,installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android' as const,provider:'google' as const,version:'0.2.22',environment:'production' as const,timestamp:new Date().toISOString()};
     const remove = vi.fn();
     const open = vi.fn(async (url: string, redirect: string) => {
       const start = new URL(url);
       expect(start.origin).toBe('https://server.example');
+      expect(JSON.parse(start.searchParams.get('funnel')!)).toEqual(funnelContext);
       expect(start.searchParams.get('app_state')).toBe(state);
       expect(start.searchParams.get('app_recovery_challenge')).toMatch(/^[a-f0-9]{64}$/);
       expect(redirect).toBe('beeline://beeline/google-callback');
       return { type: 'opened' };
     });
-    expect(await runGoogleSignIn({ state, recoveryToken, openAuthSession: open, subscribeToUrls: () => ({ remove }) })).toBe(recoveryToken);
+    expect(await runGoogleSignIn({ state, recoveryToken, funnelContext, openAuthSession: open, subscribeToUrls: () => ({ remove }) })).toBe(recoveryToken);
     expect(open).toHaveBeenCalledOnce();
     expect(remove).toHaveBeenCalledOnce();
   });

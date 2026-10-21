@@ -1,4 +1,9 @@
 import 'react-native-quick-base64';
+import { funnelOpened } from '@/auth/signin-funnel';
+import * as Linking from 'expo-linking';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { monolithSession } from '@/auth/monolith-session';
 import '../theme.css';
 import * as React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
@@ -282,6 +287,24 @@ export default function RootLayout() {
     });
     return () => { disposed = true; cancel(); stop(); };
   }, []);
+  React.useEffect(() => {
+    let active=true;
+    const opened=async(newOpen=false)=>{
+      const url=await Linking.getInitialURL().catch(()=>null);
+      if(url && /\/review(?:\/|\?)/.test(url))return;
+      const identityId=await monolithSession.identityId();
+      if(identityId===bytesToHex(sha256(utf8ToBytes('beeline:play-review-identity'))))return;
+      const signedIn=!!identityId;
+      if(active)await funnelOpened(signedIn,newOpen,signedIn?await monolithSession.authorization().catch(()=>undefined):undefined);
+    };
+    void opened().catch(()=>undefined);
+    let lastState=AppState.currentState;
+    const subscription=AppState.addEventListener('change',state=>{
+      const resumed=state==='active' && lastState!=='active';lastState=state;
+      if(resumed)void opened(true).catch(()=>undefined);
+    });
+    return()=>{active=false;subscription.remove();};
+  },[]);
   React.useEffect(startDesktopNotifications, []);
   React.useEffect(startIdentityLive, []);
   const isDesktop = useIsDesktop();

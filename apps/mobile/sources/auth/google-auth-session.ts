@@ -1,3 +1,4 @@
+import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -64,6 +65,7 @@ export async function resumeGoogleSignIn(callbackUrl: string | null): Promise<st
 export async function runGoogleSignIn(input: {
   state: string;
   recoveryToken: string;
+  funnelContext?: SigninFunnelEvent;
   linkIdentity?: string;
   openAuthSession(url: string, redirect: string): Promise<{ type: string; url?: string }>;
   subscribeToUrls(listener: (url: string) => void): { remove(): void } | Promise<{ remove(): void }>;
@@ -74,6 +76,7 @@ export async function runGoogleSignIn(input: {
   const redirect = googleSignInRedirectUri();
   const base = getBuzzRuntimeConfig().monolithUrl;
   const url = new URL('/auth/oidc/start', base);
+  if (input.funnelContext) url.searchParams.set('funnel', JSON.stringify(input.funnelContext));
   url.searchParams.set('app_redirect', redirect);
   url.searchParams.set('app_state', input.state);
   url.searchParams.set('app_recovery_challenge', bytesToHex(sha256(utf8ToBytes(input.recoveryToken))));

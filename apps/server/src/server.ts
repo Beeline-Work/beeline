@@ -1,3 +1,5 @@
+import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
+import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
 import { runnableOrigin, serveRunnableArtifact } from './runnable-artifact.js';
 import { readCompanyLogo } from './company-logos.js';
@@ -303,6 +305,7 @@ async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer>
   }
   return Buffer.concat(chunks);
 }
+const funnelRateLimit = new FunnelRateLimit();
 const clientErrorLimit = new IdentityRateLimit('client-error', 12);
 async function body(request: IncomingMessage, allowEmptyVoiceBody = false): Promise<Record<string, unknown>> {
   const raw = await bytes(request, MAX_JSON_BYTES);
@@ -1942,6 +1945,18 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     );
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/funnel/events') {
+    if (!funnelRateLimit.allow(clientKey(request))) { json(response,429,{error:'too_many_requests'}); return; }
+    let input: unknown;
+    try { input = JSON.parse((await bytes(request, 1024)).toString('utf8')); }
+    catch { json(response,400,{error:'invalid_funnel_event'}); return; }
+    const event = parseSigninFunnelEvent(input);
+    if (!event) { json(response,400,{error:'invalid_funnel_event'}); return; }
+    const viewerId = event.event === 'signed_in' || request.headers.authorization ? await phoneIdentity(request,options) : undefined;
+    if (event.event === 'signed_in' && !viewerId) { json(response,401,{error:'unauthorized'}); return; }
+    await recordSigninFunnelEvent(options.database,event,'client',viewerId ?? undefined);
+    response.writeHead(204); response.end(); return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/github/reconnect') {
     const viewerId = await phoneIdentity(request, options);
     if (!viewerId) {
@@ -1972,7 +1987,12 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
     try {
-      json(response, 200, await options.auth.exchangeGoogleOidc(input.oidcToken));
+      const tokens = await options.auth.exchangeGoogleOidc(input.oidcToken);
+      const funnel = parseSigninFunnelEvent(input.funnel);
+      if (funnel && funnel.event === 'provider_tapped' && funnel.provider === 'google') {
+        await recordSigninFunnelEvent(options.database, {...funnel, event: 'signed_in'}, 'server', tokens.identityId).catch(() => undefined);
+      }
+      json(response, 200, tokens);
     } catch (error) {
       if (!(error instanceof GoogleSignInError)) throw error;
       json(response, 401, { error: 'google_sign_in_failed', ...(error.reason ? { reason: error.reason } : {}) });
@@ -1982,7 +2002,12 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
-    json(response, 200, await options.auth.exchangeGitHubOidc(input.oidcToken));
+    const tokens=await options.auth.exchangeGitHubOidc(input.oidcToken);
+    const funnel=parseSigninFunnelEvent(input.funnel);
+    if(funnel && funnel.event==='provider_tapped' && funnel.provider==='github') {
+      await recordSigninFunnelEvent(options.database,{...funnel,event:'signed_in'},'server',tokens.identityId).catch(()=>undefined);
+    }
+    json(response,200,tokens);
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/auth/review/exchange') {

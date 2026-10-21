@@ -63,6 +63,11 @@
       "types": "./dist/error-reporting.d.ts",
       "import": "./dist/error-reporting.js",
       "default": "./dist/error-reporting.js"
+    },
+    "./signin-funnel": {
+      "types": "./dist/signin-funnel.d.ts",
+      "import": "./dist/signin-funnel.js",
+      "default": "./dist/signin-funnel.js"
     }
   },
   "scripts": {

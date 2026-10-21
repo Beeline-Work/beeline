@@ -231,7 +231,7 @@
     "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
     "components/buzz/LifecycleRow.tsx": ["LifecycleRow", "body"],
     "components/buzz/LifecycleCard.tsx": ["LifecycleCard", "LifecycleRecordCard", "GitHubEventCard", "DaemonFactCard"],
-    "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard"],
+    "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard", "RepositoryLifecycleRow", "copy"],
     "components/buzz/ProfileActions.tsx": ["ProfileActions"],
     "components/buzz/ProfileIdentity.tsx": [
       "PROFILE_IDENTITY_PICTURE_SIZE",

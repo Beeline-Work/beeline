@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import { lifecycleSummary } from '@/buzz/pr-lifecycle';
+import { lifecycleSummary, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
 import { LedgerDisclosure } from './LedgerDisclosure';
+import { ChevronGlyph, CHEVRON_ROW_SIZE } from './ChevronGlyph';
 
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
@@ -21,6 +22,8 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   onOpenUrl,
 }: NotificationLifecycleCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const { theme } = useUnistyles();
   const items = message.notificationLifecycleRun!.items.map((item) => ({
     ...item,
     cornerId:
@@ -28,6 +31,51 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
       (item.kind === 'pull-request' || item.kind === 'check' ? cornerId : undefined),
   }));
   const summary = lifecycleSummary(items);
+  const repositoryRun = items.every(isRepositoryLifecycleItem);
+  if (repositoryRun)
+    return (
+      <View style={styles.run} testID={testID ?? `notification-run-${message.id}`}>
+        {items.length > 1 ? (
+          <Pressable
+            style={styles.header}
+            accessibilityRole="button"
+            accessibilityLabel={summary}
+            accessibilityState={{ expanded }}
+            onPress={() => setExpanded((value) => !value)}
+            testID={`notification-run-expand-${message.id}`}
+          >
+            <ChevronGlyph
+              direction={expanded ? 'down' : 'right'}
+              size={CHEVRON_ROW_SIZE}
+              color={theme.buzz.textMuted}
+            />
+            <Text style={styles.summary}>{summary}</Text>
+          </Pressable>
+        ) : null}
+        {items.length === 1 || expanded ? (
+          <>
+            {(showAll || items.length <= 3 ? items : items.slice(0, 2)).map((item) => (
+              <RepositoryLifecycleRow
+                key={item.id}
+                item={item}
+                onOpenCorner={onOpenCorner}
+                onOpenUrl={onOpenUrl}
+              />
+            ))}
+            {!showAll && items.length > 3 ? (
+              <Pressable
+                style={styles.more}
+                accessibilityRole="button"
+                onPress={() => setShowAll(true)}
+                testID={`notification-run-more-${message.id}`}
+              >
+                <Text style={styles.moreText}>{items.length - 2} more</Text>
+              </Pressable>
+            ) : null}
+          </>
+        ) : null}
+      </View>
+    );
   return (
     <View testID={testID ?? `notification-run-${message.id}`}>
       <LedgerDisclosure
@@ -41,49 +89,149 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
       </LedgerDisclosure>
       {expanded ? (
         <View style={styles.list}>
-          {items.map((item) => (
-            <View key={item.id} style={styles.event} testID={`notification-run-cell-${item.id}`}>
-              <Text style={styles.line} numberOfLines={1} ellipsizeMode="tail">
-                {item.state.replace(/^(PR|Checks) /, '')} · {item.kindLine} · {item.title}
-              </Text>
-              {item.url ? (
-                <Pressable
-                  accessibilityRole="link"
-                  accessibilityLabel={`Open ${item.kindLine}`}
-                  onPress={() => onOpenUrl(item.url!)}
-                  testID={`notification-run-cell-url-${item.id}`}
-                  style={styles.linkTarget}
-                >
-                  <Text style={styles.link}>
-                    {item.kind === 'pull-request'
-                      ? 'PR →'
-                      : item.kind === 'issue'
-                        ? 'Issue →'
-                        : item.kind === 'check'
-                          ? 'Check →'
-                          : 'View →'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {item.cornerId ? (
-                <Pressable
-                  accessibilityRole="link"
-                  accessibilityLabel={`Open corner ${item.title}`}
-                  onPress={() => onOpenCorner(item.cornerId!)}
-                  testID={`notification-run-cell-corner-${item.id}`}
-                  style={styles.linkTarget}
-                >
-                  <Text style={styles.link}>Corner →</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ))}
+          {items.map((item) =>
+            isRepositoryLifecycleItem(item) ? (
+              <RepositoryLifecycleRow
+                key={item.id}
+                item={item}
+                onOpenCorner={onOpenCorner}
+                onOpenUrl={onOpenUrl}
+              />
+            ) : (
+              <View key={item.id} style={styles.event} testID={`notification-run-cell-${item.id}`}>
+                <Text style={styles.line} numberOfLines={1} ellipsizeMode="tail">
+                  {item.state.replace(/^(PR|Checks) /, '')} · {item.kindLine} · {item.title}
+                </Text>
+                {item.url ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel={`Open ${item.kindLine}`}
+                    onPress={() => onOpenUrl(item.url!)}
+                    testID={`notification-run-cell-url-${item.id}`}
+                    style={styles.linkTarget}
+                  >
+                    <Text style={styles.link}>
+                      {item.kind === 'pull-request'
+                        ? 'PR →'
+                        : item.kind === 'issue'
+                          ? 'Issue →'
+                          : item.kind === 'check'
+                            ? 'Check →'
+                            : 'View →'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {item.cornerId ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel={`Open corner ${item.title}`}
+                    onPress={() => onOpenCorner(item.cornerId!)}
+                    testID={`notification-run-cell-corner-${item.id}`}
+                    style={styles.linkTarget}
+                  >
+                    <Text style={styles.link}>Corner →</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ),
+          )}
         </View>
       ) : null}
     </View>
   );
 });
+type RepositoryItem = NotificationLifecycleRun['items'][number];
+export function isRepositoryLifecycleItem(item: RepositoryItem) {
+  return (
+    ['pull-request', 'issue', 'corner'].includes(item.kind) && !item.state.startsWith('Checks ')
+  );
+}
+
+/** GitHub and corner destinations are separate; the title keeps the remaining width. */
+export function RepositoryLifecycleRow({
+  item,
+  onOpenCorner,
+  onOpenUrl,
+}: {
+  item: RepositoryItem;
+  onOpenCorner(id: string): void;
+  onOpenUrl(url: string): void;
+}) {
+  const { theme } = useUnistyles();
+  const state = item.state.replace(/^PR /, '');
+  const verb = state.charAt(0).toUpperCase() + state.slice(1);
+  const number =
+    item.url?.match(/\/(?:pull|issues)\/(\d+)/)?.[1] ?? item.kindLine.match(/#(\d+)/)?.[1];
+  const copy = (
+    <Text style={styles.repositoryTitle} numberOfLines={2} ellipsizeMode="tail">
+      <Text style={styles.verb}>{verb} </Text>
+      {number && item.url ? <Text style={styles.number}>#{number} </Text> : null}
+      {item.kind === 'corner' ? `corner #${item.title}` : item.title}
+    </Text>
+  );
+  return (
+    <View style={styles.repositoryRow} testID={`notification-run-cell-${item.id}`}>
+      {item.url ? (
+        <Pressable
+          style={styles.copyTarget}
+          accessibilityRole="link"
+          accessibilityLabel={`Open ${item.kindLine}`}
+          onPress={() => onOpenUrl(item.url!)}
+          testID={`notification-run-cell-url-${item.id}`}
+        >
+          {copy}
+        </Pressable>
+      ) : (
+        <View style={styles.copyTarget}>{copy}</View>
+      )}
+      {item.cornerId ? (
+        <Pressable
+          style={styles.cornerTarget}
+          accessibilityRole="link"
+          accessibilityLabel={`Open corner ${item.title}`}
+          onPress={() => onOpenCorner(item.cornerId!)}
+          testID={`notification-run-cell-corner-${item.id}`}
+        >
+          <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 const styles = StyleSheet.create(({ buzz }) => ({
+  run: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
+  header: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: buzz.space.sm },
+  summary: { ...buzz.type.meta, color: buzz.textSecondary, flex: 1 },
+  repositoryRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: buzz.border,
+    gap: buzz.space.sm,
+  },
+  repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
+  verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
+  number: {
+    ...buzz.type.body,
+    fontFamily: buzz.proseMedium,
+    color: buzz.accent,
+    textDecorationLine: 'underline',
+  },
+  copyTarget: { minHeight: 44, minWidth: 44, flex: 1, paddingVertical: buzz.space.sm },
+  cornerTarget: {
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  more: {
+    minHeight: 44,
+    justifyContent: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: buzz.border,
+  },
+  moreText: { ...buzz.type.meta, color: buzz.ledgerQuiet },
   list: {
     marginLeft: buzz.space.lg,
     paddingLeft: buzz.space.sm,

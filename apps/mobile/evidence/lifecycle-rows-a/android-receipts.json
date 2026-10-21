@@ -1,0 +1,152 @@
+[
+  {
+    "frame": "android-bone-collapsed",
+    "texts": [
+      "bone",
+      "A \u00b7 lifecycle rows",
+      "obsidian",
+      "Next frame",
+      "\u2026old cards in @System will also open the right message.",
+      "\u203a 4 steps \u00b7 12s",
+      "2 PRs merged \u00b7 1 issue filed"
+    ]
+  },
+  {
+    "frame": "android-bone-expanded",
+    "texts": [
+      "bone",
+      "A \u00b7 lifecycle rows",
+      "obsidian",
+      "Next frame",
+      "\u2026old cards in @System will also open the right message.",
+      "\u203a 4 steps \u00b7 12s",
+      "2 PRs merged \u00b7 1 issue filed",
+      "Merged #2742 Keep agent lead and body text in the same font face",
+      "Filed #2744 Production release \u00b7 cancelled (run 39677669814)",
+      "Merged #2743 Clear a DM's unread dot when its newest reply is on screen"
+    ]
+  },
+  {
+    "target": "notification-run-cell-url-lead",
+    "bounds": "[42,763][902,927]"
+  },
+  {
+    "destination": "https://github.com/Beeline-Work/beeline/pull/2742"
+  },
+  {
+    "target": "notification-run-cell-corner-lead",
+    "bounds": "[923,763][1038,879]"
+  },
+  {
+    "destination": "corner-2742"
+  },
+  {
+    "target": "notification-run-cell-url-issue",
+    "bounds": "[42,928][1038,1092]"
+  },
+  {
+    "destination": "https://github.com/Beeline-Work/beeline/issues/2744"
+  },
+  {
+    "frame": "android-bone-single-long",
+    "texts": [
+      "bone",
+      "A \u00b7 single and long run",
+      "obsidian",
+      "Next frame",
+      "Merged #2738 Fix View request navigation on approval cards",
+      "Opened corner #dm-unread-clear",
+      "5 PRs merged",
+      "Merged #2740 Replace push message scans with a transactional device outbox",
+      "Merged #2739 Lock corner toggle",
+      "3 more"
+    ]
+  },
+  {
+    "frame": "android-bone-dm-presentation",
+    "texts": [
+      "bone",
+      "DM \u00b7 call-site presentation",
+      "obsidian",
+      "Next frame",
+      "Open a corner to clear the unread dot.",
+      "Corner opened \u00b7 dm-unread-clear",
+      "Open \u2192"
+    ]
+  },
+  {
+    "frame": "android-obsidian-collapsed",
+    "texts": [
+      "bone",
+      "A \u00b7 lifecycle rows",
+      "obsidian",
+      "Next frame",
+      "\u2026old cards in @System will also open the right message.",
+      "\u203a 4 steps \u00b7 12s",
+      "2 PRs merged \u00b7 1 issue filed"
+    ]
+  },
+  {
+    "frame": "android-obsidian-expanded",
+    "texts": [
+      "bone",
+      "A \u00b7 lifecycle rows",
+      "obsidian",
+      "Next frame",
+      "\u2026old cards in @System will also open the right message.",
+      "\u203a 4 steps \u00b7 12s",
+      "2 PRs merged \u00b7 1 issue filed",
+      "Merged #2742 Keep agent lead and body text in the same font face",
+      "Filed #2744 Production release \u00b7 cancelled (run 39677669814)",
+      "Merged #2743 Clear a DM's unread dot when its newest reply is on screen"
+    ]
+  },
+  {
+    "target": "notification-run-cell-url-lead",
+    "bounds": "[42,763][902,927]"
+  },
+  {
+    "destination": "https://github.com/Beeline-Work/beeline/pull/2742"
+  },
+  {
+    "target": "notification-run-cell-corner-lead",
+    "bounds": "[923,763][1038,879]"
+  },
+  {
+    "destination": "corner-2742"
+  },
+  {
+    "target": "notification-run-cell-url-issue",
+    "bounds": "[42,928][1038,1092]"
+  },
+  {
+    "destination": "https://github.com/Beeline-Work/beeline/issues/2744"
+  },
+  {
+    "frame": "android-obsidian-single-long",
+    "texts": [
+      "bone",
+      "A \u00b7 single and long run",
+      "obsidian",
+      "Next frame",
+      "Merged #2738 Fix View request navigation on approval cards",
+      "Opened corner #dm-unread-clear",
+      "5 PRs merged",
+      "Merged #2740 Replace push message scans with a transactional device outbox",
+      "Merged #2739 Lock corner toggle",
+      "3 more"
+    ]
+  },
+  {
+    "frame": "android-obsidian-dm-presentation",
+    "texts": [
+      "bone",
+      "DM \u00b7 call-site presentation",
+      "obsidian",
+      "Next frame",
+      "Open a corner to clear the unread dot.",
+      "Corner opened \u00b7 dm-unread-clear",
+      "Open \u2192"
+    ]
+  }
+]

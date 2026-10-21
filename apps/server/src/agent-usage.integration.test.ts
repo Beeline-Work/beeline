@@ -197,6 +197,9 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
     [frozenDay],
   );
   // A valid usage timestamp can contain the private operator budget's digits.
+  // It falls on the frozen UTC day the rows above were written for:
+  // a whole UTC day in seconds ends in 00, so 25 seconds past it ends in 25.
+  const stamp = Math.floor(frozenMs / 1000);
   const clock = vi.spyOn(Date, 'now').mockReturnValue(frozenMs);
   let paused;
   try {
@@ -207,7 +210,7 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   expect(paused?.free).toMatchObject({ used: 123000, paused: true });
   // Exact fields keep the operator budget private without matching digits in timestamps.
   expect(paused).toEqual({
-    updatedAt: 1792512525,
+    updatedAt: stamp,
     windows: [],
     free: {
       used: 123000,

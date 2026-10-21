@@ -1,0 +1,52 @@
+10-20 21:57:07.957   602  2299 I ActivityTaskManager: START u0 {dat=expo-notifications://notifications/... flg=0x18000000 cmp=app.usebeeline/expo.modules.notifications.service.NotificationForwarderActivity (has extras)} with LAUNCH_MULTIPLE from uid 10209 (realCallingUid=10181) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+10-20 21:57:07.972   602  2296 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 pkg=app.usebeeline cmp=app.usebeeline/.PushNotificationActivity (has extras)} with LAUNCH_MULTIPLE from uid 10209 (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+10-20 21:57:07.996   602  1895 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=app.usebeeline/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 10209 (BAL_ALLOW_VISIBLE_WINDOW) result code=3
+10-20 21:57:08.104  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-start","t":975358.459004}
+10-20 21:57:08.104  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-target","t":975358.484467,"detail":"unspecified"}
+10-20 21:57:08.259  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-cache","t":975513.491483,"detail":"received:empty"}
+10-20 21:57:08.392  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-entry-dispatch","t":975646.312334}
+10-20 21:57:08.402  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-entry-deduped","t":975656.650386}
+10-20 21:57:08.402  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-route-entry","t":975656.751751}
+10-20 21:57:08.403  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-stack-before","t":975657.193312,"detail":"index,review/[secret]"}
+10-20 21:57:08.450  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"layout-chrome","t":975705.114692}
+10-20 21:57:08.451  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"route-mount","t":975705.189867,"detail":"bee11e00-0000-4000-8000-000000000103"}
+10-20 21:57:08.510  6670  6784 W ReactNativeJS: [PUSH ROUTING] Navigating to Beeline message: bee11e00-0000-4000-8000-000000000103
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"session-effect","t":975776.542796,"detail":"bee11e00-0000-4000-8000-000000000103"}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"identity-start","t":975776.596083}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"identity-ready","t":975776.649137}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"relay-start","t":975776.74606}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"relay-ready","t":975776.789827}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"session-start","t":975776.886404,"detail":"bee11e00-0000-4000-8000-000000000103"}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"cache-read-start","t":975776.915156}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"cache-read-end","t":975777.070054,"detail":"hit"}
+10-20 21:57:08.522  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"cache-apply","t":975777.144946}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"occupancy-yield-start","t":975777.185574}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"occupancy-yield-end","t":975777.217367}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"auth-start","t":975777.243317}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"auth-ready","t":975777.294057}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-network-start","t":975777.724037}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-authorizing","t":975777.813548}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-dispatch","t":975777.844262}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"room-read-start","t":975778.031697}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"watch-ready","t":975778.070722}
+10-20 21:57:08.523  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":975778.108412}
+10-20 21:57:08.602  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":975856.870384}
+10-20 21:57:09.399  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-headers","t":976653.980569}
+10-20 21:57:09.399  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-body","t":976654.165322}
+10-20 21:57:09.400  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"prefetch-end","t":976654.344006}
+10-20 21:57:09.400  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"room-read-end","t":976654.422748}
+10-20 21:57:09.400  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"room-read-weight","t":976654.851598,"messages":0,"toolRows":0,"members":1,"corners":0,"bytes":829}
+10-20 21:57:09.400  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"fresh-apply","t":976655.011666}
+10-20 21:57:09.457  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":976711.990049}
+10-20 21:57:09.457  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"watch-install","t":976712.104958}
+10-20 21:57:09.503  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"subscribed","t":976757.734003,"detail":"bee11e00-0000-4000-8000-000000000103"}
+10-20 21:57:09.503  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"covering-read","t":976757.799139}
+10-20 21:57:09.517  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"room-read-start","t":976771.943537}
+10-20 21:57:09.517  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-authorizing","t":976772.060559}
+10-20 21:57:09.517  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-dispatch","t":976772.09651}
+10-20 21:57:09.633  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-headers","t":976887.893281}
+10-20 21:57:09.633  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"wire-body","t":976888.083104}
+10-20 21:57:09.634  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"room-read-end","t":976888.2348}
+10-20 21:57:09.634  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"room-read-weight","t":976888.291557,"messages":0,"toolRows":0,"members":1,"corners":0,"bytes":829}
+10-20 21:57:09.634  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"fresh-apply","t":976888.426313}
+10-20 21:57:09.661  6670  6784 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":976915.473571}

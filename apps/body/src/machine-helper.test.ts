@@ -1,5 +1,5 @@
 import { requestMachine } from './machine-control.js';
-import { execFileSync } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -20,11 +20,15 @@ import { AgentLifecycle, type AgentExitReason } from './helper-lifecycle.js';
 import { helperStatusLines, helperStatusPath } from './helper-status.js';
 import { quiesceHostedAgents, runMachineHelper } from './machine-helper.js';
 import {
+  daemonBirthPath,
+  writeDaemonPidRecord,
   identityFromKey,
   readRuntimeRecord,
   setAgentStopped,
   stageMonolithAgentRuntime,
 } from './runtime.js';
+import * as sentry from './sentry.js';
+import * as runtime from './runtime.js';
 import { ThinDaemonCore } from './thin-core.js';
 
 const roots: string[] = [];
@@ -81,6 +85,93 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<AgentExi
 }
 
 describe('one helper process hosts every agent on the machine', () => {
+
+  // Reproduction legacy-owner-handoff: real owner process and persisted helper status.
+  it.skipIf(process.platform !== 'linux').each(['graceful', 'ignores SIGTERM', 'reused PID', 'helper PID', 'cancelled'] as const)(
+    'takes over a legacy owner: %s', async (mode) => {
+      const { root, configPaths, env, signals } = await machine(1);
+      const configPath = configPaths[0]!;
+      const child = spawn(process.execPath, ['-e',
+        `process.on('SIGTERM', () => { ${mode === 'ignores SIGTERM' || mode === 'cancelled' ? '' : 'process.exit(0);'} });
+         setInterval(() => {}, 1000); process.send('ready');`],
+        { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      await new Promise<void>((done) => child.once('message', () => done()));
+      const pid = mode === 'helper PID' ? process.pid : child.pid!;
+      await writeDaemonPidRecord(configPath, pid);
+      if (mode === 'reused PID') await writeFile(daemonBirthPath(configPath), 'recycled-pid');
+      const capture = vi.spyOn(sentry, 'captureHelperError');
+      const kill = vi.spyOn(process, 'kill');
+      const fake = fakeRuntimes();
+      const running = runMachineHelper({ configPaths, env: { ...env,
+        HOME: root, XDG_CONFIG_HOME: resolve(root, 'config') }, signals,
+        runAgent: fake.runAgent, exitProcess: () => undefined });
+      try {
+        if (mode === 'ignores SIGTERM' || mode === 'cancelled') {
+          await vi.waitFor(async () => {
+            const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+            expect(Object.values(status.agents)).toEqual([expect.objectContaining({
+              state: 'starting', status: 'stopping previous runtime owner',
+            })]);
+          });
+          expect(fake.runAgent).not.toHaveBeenCalled();
+          if (mode === 'cancelled') {
+            signals.emit('SIGTERM');
+            expect((await running).reason).toBe('stopped');
+            expect(fake.runAgent).not.toHaveBeenCalled();
+            expect(kill.mock.calls.filter(([target, signal]) => target === pid && signal !== 0))
+              .toEqual([[pid, 'SIGTERM']]);
+            expect(capture).not.toHaveBeenCalled();
+            return;
+          }
+        }
+        await vi.waitFor(async () => {
+          const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+          expect(Object.values(status.agents)).toEqual([expect.objectContaining({ state: 'serving' })]);
+        }, { timeout: mode === 'ignores SIGTERM' ? 20_000 : 2_000 });
+        const delivered = kill.mock.calls.filter(([target, signal]) => target === pid && signal !== 0)
+          .map(([, signal]) => signal);
+        expect(delivered).toEqual(mode === 'graceful' ? ['SIGTERM'] :
+          mode === 'ignores SIGTERM' ? ['SIGTERM', 'SIGKILL'] : []);
+        if (mode === 'reused PID' || mode === 'helper PID') expect(child.exitCode).toBeNull();
+        else await vi.waitFor(() => expect(child.exitCode !== null || child.signalCode !== null).toBe(true));
+        expect(capture).not.toHaveBeenCalled();
+      } finally {
+        signals.emit('SIGTERM');
+        await running;
+        child.kill('SIGKILL');
+        if (child.exitCode === null && child.signalCode === null)
+          await new Promise<void>((done) => child.once('exit', () => done()));
+      }
+    }, 25_000,
+  );
+
+  it.each(['SIGTERM', 'SIGKILL'] as const)('rechecks ownership immediately before %s', async (signal) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { root, configPaths, env, signals } = await machine(1);
+    const pid = 123456789;
+    const owner = vi.spyOn(runtime, 'runtimeDaemonPid').mockResolvedValue(null);
+    owner.mockResolvedValueOnce(pid);
+    if (signal === 'SIGKILL') {
+      owner.mockResolvedValueOnce(pid).mockImplementationOnce(async () => {
+        vi.setSystemTime(Date.now() + 15_000);
+        return pid;
+      });
+    }
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
+    const capture = vi.spyOn(sentry, 'captureHelperError');
+    const fake = fakeRuntimes();
+    const running = runMachineHelper({ configPaths, env, signals, runAgent: fake.runAgent,
+      exitProcess: () => undefined });
+    try {
+      await vi.waitFor(async () => {
+        const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+        expect(Object.values(status.agents)).toEqual([expect.objectContaining({ state: 'serving' })]);
+      });
+      expect(kill.mock.calls.filter(([target]) => target === pid))
+        .toEqual(signal === 'SIGKILL' ? [[pid, 'SIGTERM']] : []);
+      expect(capture).not.toHaveBeenCalled();
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
 
   it('expires old deleted runtimes on helper start without a recurring timer', async () => {
     const { root, env, signals } = await machine(1);

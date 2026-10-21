@@ -221,7 +221,7 @@ describe('answer prefill', () => {
 });
 
 describe('first-message prefill through the answer rule', () => {
-  const first = { roomId: 'room-1', agents: [{ pubkey: SOL, handle: 'sol' }], viewerIsAgent: false };
+  const first = { roomId: 'room-1', agents: [{ pubkey: SOL, handle: 'sol' }], viewerIsAgent: false, humanCount: 1 };
   const candidateFor = (messages: ChatDisplayMessage[] = [], context = first) =>
     answerPrefillCandidate(messages, ME, handleFor, context);
 
@@ -236,6 +236,15 @@ describe('first-message prefill through the answer rule', () => {
     expect(candidateFor([agent('hello')], { ...first, agents: [...first.agents, { pubkey: OTHER, handle: 'other' }] }))
       .toBeUndefined();
     expect(candidateFor([], { ...first, agents: [] })).toBeUndefined();
+  });
+
+  it.each([0, 2, 3])('does not prefill with %s human members and one agent', (humanCount) => {
+    expect(candidateFor([agent('hello')], { ...first, humanCount })).toBeUndefined();
+  });
+
+  it('keeps the existing addressed-answer rule in a multi-human Room', () => {
+    expect(candidateFor([agent('answer', { mentionPubkeys: [ME] })], { ...first, humanCount: 2 })?.sourceMessageId)
+      .toBe('answer');
   });
 
   it('keeps an existing draft', () => {

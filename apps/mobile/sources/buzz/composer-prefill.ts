@@ -52,7 +52,7 @@ export function textTagsAgent(text: string, handle: string, pubkey: string): boo
  * The newest message in the Room, when it is an agent's answer to the viewer:
  * it tags the viewer, or its reply/request references a viewer message. Live turn
  * rows are transient and never count as the newest message. Before the viewer's
- * first message, a sole agent member is also offered, even before its hello.
+ * first message, one agent with one human is also offered, even before its hello.
  * Its stable Room-scoped key lets the same once-only/draft guards apply.
  */
 export function answerPrefillCandidate(
@@ -63,13 +63,14 @@ export function answerPrefillCandidate(
     readonly roomId: string;
     readonly agents: readonly { readonly pubkey: string; readonly handle?: string }[];
     readonly viewerIsAgent: boolean;
+    readonly humanCount: number;
   },
 ): AnswerPrefillCandidate | undefined {
   if (!viewerPubkey || firstMessage?.viewerIsAgent) return undefined;
   const soleAgent = firstMessage?.agents.length === 1 ? firstMessage.agents[0] : undefined;
   const firstHandle = soleAgent?.handle?.replace(/^@/, '');
   const initial =
-    firstMessage && soleAgent && firstHandle &&
+    firstMessage?.humanCount === 1 && soleAgent && firstHandle &&
     !messages.some((message) => message.pubkey === viewerPubkey)
       ? {
           handle: firstHandle,

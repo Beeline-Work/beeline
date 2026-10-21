@@ -2779,6 +2779,7 @@ export function BuzzChatSurface({
                 .filter((member) => member.identity.kind === 'agent')
                 .map((member) => member.identity) ?? [],
               viewerIsAgent,
+              humanCount: roomSurface?.members.filter((member) => member.identity.kind === 'human').length ?? 0,
             },
           ),
     [agentByPubkey, anchoredSegmentActive, decodedId, isDirectMessage, roomSurface?.members, userPubkey, viewerIsAgent, visibleMessages],

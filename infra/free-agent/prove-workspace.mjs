@@ -103,9 +103,11 @@ try {
   const machinesPort = await listen(machines);
   const portProbe = createServer(); const port = await listen(portProbe); await new Promise((accept) => portProbe.close(accept));
   const origin = `http://127.0.0.1:${port}`;
+  const authTenantsJson = JSON.stringify([{ host: `127.0.0.1:${port}`, community: 'pi-proof', roomCommunityIds: ['pi-proof'], origin }]);
   const server = await runServer(['apps/server/dist/index.js'], { ...processEnv, PORT: String(port), HOST: '127.0.0.1', PUBLIC_ORIGIN: origin,
     NODE_ENV: 'test',
-    BUZZY_AUTH_TENANTS_JSON: JSON.stringify([{ host: `127.0.0.1:${port}`, community: 'pi-proof', roomCommunityIds: ['pi-proof'], origin }]),
+    BEELINE_AUTH_TENANTS_JSON: authTenantsJson,
+    BUZZY_AUTH_TENANTS_JSON: authTenantsJson,
     BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.invalid', BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.invalid/authorize',
     BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.invalid/token', BEELINE_AUTH_OIDC_JWKS_URI: 'https://accounts.invalid/jwks', BEELINE_AUTH_OIDC_CLIENT_ID: 'proof-only',
     BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'local-seal-only',

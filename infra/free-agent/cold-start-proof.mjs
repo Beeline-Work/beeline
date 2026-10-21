@@ -117,6 +117,9 @@ try {
   }
   const [serverPort, machinesPort] = ports;
   const origin = `http://127.0.0.1:${serverPort}`;
+  const authTenantsJson = JSON.stringify([
+    { host: new URL(origin).host, community: 'proof', roomCommunityIds: ['proof'], origin },
+  ]);
   launch(['scripts/free-agent-docker-machines.mjs', String(machinesPort), prefix], {}, 'machines');
   launch(
     ['apps/server/dist/index.js'],
@@ -124,9 +127,8 @@ try {
       DATABASE_URL: databaseUrl,
       PORT: String(serverPort),
       PUBLIC_ORIGIN: origin,
-      BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
-        { host: new URL(origin).host, community: 'proof', roomCommunityIds: ['proof'], origin },
-      ]),
+      BEELINE_AUTH_TENANTS_JSON: authTenantsJson,
+      BUZZY_AUTH_TENANTS_JSON: authTenantsJson,
       BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
       BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
       BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',

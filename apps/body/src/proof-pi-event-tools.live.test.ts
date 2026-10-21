@@ -107,7 +107,7 @@ describe('a real pi Room agent subscribes itself to arrivals', () => {
         auth.createDaemonExchange(agentId, transaction),
       env: {
         NODE_ENV: 'test',
-        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
+        BEELINE_AUTH_TENANTS_JSON: JSON.stringify([
           {
             host: 'server.test',
             community: 'pi-event-proof',

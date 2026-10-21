@@ -452,7 +452,7 @@ describe('daemon API client against the local monolith', () => {
         auth.createDaemonExchange(agentId, transaction),
       env: {
         NODE_ENV: 'test',
-        BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
+        BEELINE_AUTH_TENANTS_JSON: JSON.stringify([
           {
             host: 'server.usebeeline.app',
             community: 'stable-identity-namespace',

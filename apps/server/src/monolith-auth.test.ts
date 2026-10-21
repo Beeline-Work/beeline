@@ -101,7 +101,7 @@ describe('mounted monolith auth', () => {
           NODE_ENV: 'test',
           BEELINE_GOOGLE_SIGN_IN: '1',
           BEELINE_GOOGLE_SIGN_IN_SUBJECTS: 'google-owner',
-          BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
+          BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
           BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
           BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
           BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',

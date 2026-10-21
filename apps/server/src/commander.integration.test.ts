@@ -137,6 +137,34 @@ it.each(['needs_decision: choose the product scope', 'needs-decision: choose the
   expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text, card: { ask: 'Which product scope should we use?', reportToId: HUMAN } }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
 });
+it('chain of command: a corner agent cannot tag a person above its commander', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const text = '@captain Approve the reviewer-link fetch here?';
+  await expect(daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text }, WORKER))
+    .rejects.toThrow('@captain is not your direct commander. Your commander is @ruby in Captain and Ruby.');
+  await expect(daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text: '@channel approve?' }, WORKER))
+    .rejects.toThrow('not your direct commander');
+  await expect(daemon.execute('postRoomMessage', { ...authority(turn), text }, WORKER))
+    .rejects.toThrow('not your direct commander');
+  expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
+  // The same ask goes up by report, and Ruby asks the Captain where the Captain gave the order.
+  await daemon.execute('report', { status: 'needs_decision', ...authority(turn), text: 'needs-decision: Approve the reviewer-link fetch?' }, WORKER);
+  const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
+  await claim(report);
+  await daemon.execute('report', { status: 'needs_decision', ...authority(report), text: 'needs-decision: Approve the reviewer-link fetch?' }, RUBY);
+  const tray = await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN);
+  expect(tray.items.map(item => [item.roomId, item.text])).toEqual([[DM, 'Approve the reviewer-link fetch?']]);
+  expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%@captain%'`, [opened.cornerId])).rowCount).toBe(0);
+});
+it('chain of command: a corner agent may tag the person who directed this turn', async () => {
+  const opened = await open();
+  await worker(opened.cornerId);
+  await phone.execute('sendRoomMessage', { roomId: opened.cornerId, messageId: randomBytes(32).toString('hex'), text: '@worker which endpoint did you pick?' }, HUMAN);
+  const asked = (await commands(opened.cornerId, WORKER)).find(c => c.reason !== 'order' && c.source.authorId === HUMAN)!;
+  await claim(asked);
+  const reply = await daemon.execute('postRoomMessage', { ...authority(asked), text: '@captain v2. Keep it?' }, WORKER);
+  expect((await db.query(`SELECT room_id FROM messages WHERE id=$1`, [reply.id])).rows[0]?.room_id).toBe(opened.cornerId);
+});
 it('R1 names both fields when report status and prefix disagree', async () => {
   await expect(daemon.execute('report', { ...authority(order), status: 'done',
     text: 'blocked: choose scope' }, RUBY)).rejects.toThrow('received status "done" and text prefix "blocked:"');
@@ -1194,9 +1222,7 @@ it('Reproduction R1: each post receipt lists only that post tags', async () => {
   expect((await post('@other this post is for you')).woken).toEqual(['other']);
   const second = await post('No tag in this next post.');
   expect(second.woken).toEqual([]);
-  const third = await post('@captain see this');
-  expect(third.woken).toEqual([]);
-  expect(third.notWoken.map(item => item.handle)).toEqual(['captain']);
+  await expect(post('@captain see this')).rejects.toThrow('Your commander is @ruby in Captain and Ruby');
   const quoted = await post('"@ruby, or any squire agent except Speedy."');
   expect(quoted.woken).toEqual([]);
   expect((await post('Correction: my quote of "@ruby" in that reply woke Ruby. That was my error. Ruby has no task here.')).woken).toEqual([]);

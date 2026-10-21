@@ -699,11 +699,11 @@ describe('corner message attribution', () => {
     await push.runOnce();
     expect(send).not.toHaveBeenCalled();
     await claim(retry!);
-    await result(retry!, '@human please decide whether this check can be removed?');
+    // Hoots opened this corner, so Hoots, not the human, is its commander.
+    await expect(result(retry!, '@human please decide whether this check can be removed?'))
+      .rejects.toThrow('@human is not your direct commander');
     await push.runOnce();
-    expect(send.mock.calls.map(([, message]) => message.text)).toEqual([
-      'Hoots: @human please decide whether this check can be removed?',
-    ]);
+    expect(send).not.toHaveBeenCalled();
     await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
   });
 

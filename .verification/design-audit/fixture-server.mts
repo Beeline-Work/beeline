@@ -109,7 +109,7 @@ const mountedAuth = await createMonolithAuth(database, `http://127.0.0.1:${PORT}
   createDaemonExchange: (agentId, transaction) => auth.createDaemonExchange(agentId, transaction),
   env: {
     NODE_ENV: 'test',
-    BUZZY_AUTH_TENANTS_JSON: JSON.stringify([
+    BEELINE_AUTH_TENANTS_JSON: JSON.stringify([
       {
         host: `127.0.0.1:${PORT}`,
         community: 'design-audit',

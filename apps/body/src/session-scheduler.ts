@@ -1,3 +1,4 @@
+import { readEnv } from './env.js';
 export interface SessionLifecycle {
   activate(): Promise<string>;
   suspend(): Promise<void>;
@@ -59,7 +60,7 @@ interface QueuedSessionRun {
 
 /**
  * Concurrent live ACP processes one Room (its own session plus corners) may hold.
- * Operators can override this with `BUZZY_BODY_MAX_SESSIONS_PER_ROOM`; invalid
+ * Operators can override this with `BEELINE_BODY_MAX_SESSIONS_PER_ROOM` (`BUZZY_BODY_MAX_SESSIONS_PER_ROOM` still works); invalid
  * values fall back here. Raising the ceiling does not change token spend, but
  * every live session is a resident ACP process (typically hundreds of MB), and
  * more simultaneous turns can reach the model provider's concurrency limit
@@ -69,7 +70,7 @@ export const DEFAULT_PER_ROOM_LIVE_SESSIONS = 10;
 
 /** Read the daemon's per-Room session ceiling without letting bad env crash startup. */
 export function resolvePerRoomLiveSessions(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.BUZZY_BODY_MAX_SESSIONS_PER_ROOM?.trim();
+  const raw = readEnv(env, 'BODY_MAX_SESSIONS_PER_ROOM')?.trim();
   if (!raw) return DEFAULT_PER_ROOM_LIVE_SESSIONS;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_PER_ROOM_LIVE_SESSIONS;
@@ -98,13 +99,13 @@ export const DEFAULT_SESSION_IDLE_MS = 30 * 60_000;
  * it — measured at roughly 500MB for a claude-agent-acp Room
  * (`npm run measure:turns -w @beeline/body -- ceiling`) — so the default is
  * small and LRU decides which ones stay. Operators who want a different
- * memory budget set `BUZZY_BODY_MAX_WARM_SESSIONS`.
+ * memory budget set `BEELINE_BODY_MAX_WARM_SESSIONS` (`BUZZY_BODY_MAX_WARM_SESSIONS` still works).
  */
 export const DEFAULT_MAX_WARM_SESSIONS = 4;
 
 /** Read the retained-session ceiling without letting bad env crash startup. */
 export function resolveMaxWarmSessions(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.BUZZY_BODY_MAX_WARM_SESSIONS?.trim();
+  const raw = readEnv(env, 'BODY_MAX_WARM_SESSIONS')?.trim();
   if (!raw) return DEFAULT_MAX_WARM_SESSIONS;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_MAX_WARM_SESSIONS;
@@ -112,7 +113,7 @@ export function resolveMaxWarmSessions(env: NodeJS.ProcessEnv = process.env): nu
 
 /** Read the retention window without letting bad env crash startup. */
 export function resolveSessionIdleMs(env: NodeJS.ProcessEnv = process.env): number {
-  const raw = env.BUZZY_BODY_SESSION_IDLE_MS?.trim();
+  const raw = readEnv(env, 'BODY_SESSION_IDLE_MS')?.trim();
   if (!raw) return DEFAULT_SESSION_IDLE_MS;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_SESSION_IDLE_MS;

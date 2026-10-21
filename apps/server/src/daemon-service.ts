@@ -6,7 +6,7 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -3936,6 +3936,8 @@ export class DaemonService {
           input.requestId,
           input.generationId,
         )));
+    if (command && input.presentation !== 'card')
+      await refuseTagPastCommander(this.database, input.roomId, agentId, input.text, command);
     // A tag an agent writes reaches the person it names, exactly as a
     // human-authored one does: the same reading of the text, the same push
     // fan-out, the same highlight. There is no per-turn numeric cap, and no
@@ -8151,6 +8153,8 @@ export class DaemonService {
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
+    await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
+      command.room_id === input.cornerId ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model)

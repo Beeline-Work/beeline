@@ -66,6 +66,27 @@ describe('the chat surface read-mark contract', () => {
     expect(chatSource).not.toContain('const handleMarkUnread = useCallback(');
   });
 
+  it('re-asks the read cursor when the newest row changes at the tail', () => {
+    // Reproduction TAIL-ARRIVAL-READ-DOT. An agent reply that lands (or
+    // finalises) while the reader already rests at the tail changes which row
+    // is newest, but the list runs no new viewability pass — the same stale
+    // report the unread control re-asks for. The control was given that
+    // re-ask; the server mark's only writer was not, so the Room list's dot
+    // outlived the read. The re-ask must carry the list's own evidence — a
+    // cold open's pin starts true and a first-unread landing is still to come —
+    // and must skip a provisional lane for the durable row beneath it.
+    const tailAsk = chatSource.slice(
+      chatSource.indexOf('The viewport pass above owns the read boundary'),
+      chatSource.indexOf('// Back from the code reader'),
+    );
+    expect(tailAsk).toContain('pinnedTailReadReport(chronological, {');
+    expect(tailAsk).toContain('pinnedToTail: scrollController.isPinnedToTail()');
+    expect(tailAsk).toContain('landing: scrollController.isLanding()');
+    expect(tailAsk).toContain('hasObservedVisibility: newMessageHasObservedVisibility');
+    expect(tailAsk).toContain('advanceReadCursor(chronological, report)');
+    expect(tailAsk).toContain('newestTranscriptMessageId');
+  });
+
   it('ranks the read cursor against chronological order, never the inverted list', () => {
     // `transcriptMessages` IS `invertedMessages` on the phone. The cursor
     // decides which visible row is newest by its index, so handing it that

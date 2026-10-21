@@ -205,6 +205,11 @@
       ],
     },
     "apps/server": {
+      // The cutover script imports built modules by their container paths.
+      "paths": {
+        "/app/apps/auth/dist/*": ["../auth/src/*"],
+        "/app/apps/server/dist/*": ["src/*"],
+      },
       // These are copied to an operator host and executed during database
       // cutover; they are intentionally not package.json commands.
       "entry": [

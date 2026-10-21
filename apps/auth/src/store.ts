@@ -1,4 +1,4 @@
-import type { QueryResultRow } from 'pg';
+import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
 /** How long a stored repository event remains fetchable by a late daemon. */
 export const GITHUB_REPO_EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -15,6 +15,40 @@ export interface SqlExecutor {
 export interface TransactionalDatabase extends SqlExecutor {
   transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T>;
   close(): Promise<void>;
+}
+
+export class PostgresDatabase implements TransactionalDatabase {
+  readonly #pool: Pool;
+
+  constructor(connectionString: string) {
+    this.#pool = new Pool({ connectionString, max: 10 });
+  }
+
+  async query<Row extends QueryResultRow>(
+    sql: string,
+    values: unknown[] = [],
+  ): Promise<SqlResult<Row>> {
+    return this.#pool.query<Row>(sql, values);
+  }
+
+  async transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
+    const client: PoolClient = await this.#pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.#pool.end();
+  }
 }
 
 const MIGRATIONS = [

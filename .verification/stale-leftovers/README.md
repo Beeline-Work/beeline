@@ -88,3 +88,25 @@ matched baseline/candidate check passed all 18 tests on both: baseline commit
 510ms. The detached baseline used unchanged server sources with the same local
 installed dependencies/shared build outputs. No performance code, thresholds,
 timeouts or tests were changed. Workflow syntax lint also passes.
+
+## Review correction: retain the auth PostgreSQL adapter
+
+Reproduction `R-AUTH-COPY-SCHEMA`: the actual operator command
+`node apps/server/scripts/copy-postgres-data.mjs --schema` fails at line 324
+with `TypeError: authModule.PostgresDatabase is not a constructor` when using
+the reviewed store module from `b31512ff2`. Restored the unchanged adapter from
+the retained auth library. Knip now maps the cutover script's absolute container
+imports to their source modules; no baseline exemption is needed.
+
+Demonstrated the same command against disposable PostgreSQL 16 with pgvector,
+with the built checkout mounted read-only at `/app` in `node:22` and
+`FLY_PG_URL=postgresql://postgres@127.0.0.1:5432/fly-db`. It exits 0 and prints
+`server and auth schema migrations complete`. A SQL query confirms auth tables
+including `beeline_oidc_flows`, `beeline_bind_tickets`, and
+`beeline_identity_links` exist. Replacing only the built store module with the
+reviewed version reproduces the original constructor failure at line 324.
+No production database was used; the disposable PostgreSQL container was removed.
+
+Affected validation: workspace build, root typecheck, zero introduced dead-code
+findings, and all eight mounted monolith auth tests pass.
+The full auth suite also passes: 14 files, 204 tests, zero failures.

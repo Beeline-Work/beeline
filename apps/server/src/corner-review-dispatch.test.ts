@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
@@ -318,6 +319,46 @@ describe('corner message attribution', () => {
       `Reproduction C3-1: wrong=1 re-wake of a reviewed head; right=0; observed=${reviewerWakes.length}`,
     );
     expect(reviewerWakes).toHaveLength(0);
+  });
+
+  it('Reproduction REVIEW-CYCLE-1: later background cycles repair a lost wake and report a finished review only once', async () => {
+    // Keep the database stand-in tied to the actual background-cycle wiring.
+    const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    expect(index.includes('reconciledCornerReviewers')).toBe(false);
+    expect(index).toContain("await backgroundJobs.run('corner-reviewers', () =>\n        reconcileConfiguredCornerReviewers(jobsDatabase));");
+    const cycle = () => reconcileConfiguredCornerReviewers(db);
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(61, '6'.repeat(40));
+    await cycle();
+    const [lost] = await commands(B, C);
+    await db.query('DELETE FROM agent_commands WHERE id=$1', [lost!.id]);
+    await cycle();
+    const [repaired] = await commands(B, C);
+    expect(repaired?.reason).toBe('corner_review_dispatch');
+    await claim(repaired!);
+    await result(repaired!, 'Review ended without a verdict.');
+    for (let i = 0; i < 4; i++) await cycle();
+    expect(await commands(B, C)).toHaveLength(0);
+    const reports = (await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('the review ended without a PASS'));
+    expect(reports).toHaveLength(1);
+    expect(reports[0]?.source.body).toMatch(/^blocked:/);
+    expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
+    console.info('Demonstrated REVIEW-CYCLE-1: later cycle restored review; completed review reported once across four repairs');
+  });
+
+  it.each(['pending', 'claimed'] as const)('Reproduction REVIEW-WORK-1: no repair wake or report while implementer is %s', async (state) => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(62, '5'.repeat(40));
+    const [lost] = await commands(B, C);
+    await db.query('DELETE FROM agent_commands WHERE id=$1', [lost!.id]);
+    const worker = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null,
+      privatePayload: { text: 'Fix in progress', authorId: H, fromRoomId: R, kind: 'order' }, reason: 'order' });
+    expect(worker).toBeDefined();
+    if (state === 'claimed') await claim((await commands(A, C))[0]!);
+    await reconcileConfiguredCornerReviewers(db);
+    expect(await commands(B, C)).toHaveLength(0);
+    expect((await commands(A, R)).filter(c => c.reason === 'report')).toHaveLength(0);
+    expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(0);
   });
 
   it('Reproduction REVIEW-READY-1: a green corner already in review recovers its missing reviewer wake', async () => {

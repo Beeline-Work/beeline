@@ -370,6 +370,10 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('merge_corner');
     expect(markdown).not.toMatch(/never merge|do not merge|only human approval/i);
   });
+  it('checks mandate against Intent and earlier decisions before a verdict', () => {
+    for (const text of ['## Check mandate', 'each user-visible behavior', 'quoted line in the brief', 'no match is outside the mandate', 'Search the Room', 'git log -S<symbol>', 'blocks PASS', 'needs-decision:', 'to its commander, quoting the old decision and the diff line', 'does not send a FAIL to the worker', 'never on taste'])
+      expect(markdown).toContain(text);
+  });
   it('uses an isolated checkout, preserves worker work and reviews design and security', () => {
     expect(markdown).toContain('never the worker');
     expect(markdown).toContain('git worktree remove --force');

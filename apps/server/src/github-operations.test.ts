@@ -94,6 +94,54 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it('R-GH-403-WEBHOOK: rate-limited live PR confirmation is deferred, then retried after reset', async () => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const client = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403,
+      headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } })));
+    app.readPullRequest.mockImplementation((token, repo, number) => client.readPullRequest(token, repo, number));
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 403, rateLimited: true });
+    const queued = (await database.query<{ lifecycle: { checks: string; checkRefreshRetry: { after: number; headSha: string } } }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
+    )).rows[0]!.lifecycle;
+    expect(queued).toMatchObject({ checks: 'pending', checkRefreshRetry: { headSha } });
+    expect(queued.checkRefreshRetry.after).toBeGreaterThanOrEqual(reset - 0.01);
+    expect(queued.checkRefreshRetry.after).toBeLessThan(reset + 0.1);
+    await operations.refreshQueuedChecks();
+    expect(app.readPullRequest).toHaveBeenCalledTimes(1);
+    app.readPullRequest.mockResolvedValue({ number: 1, headSha, url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
+    // Advance only this fixture's durable deadline, without a second webhook.
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await operations.refreshQueuedChecks();
+    expect(app.readPullRequest).toHaveBeenCalledTimes(2);
+    const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
+    )).rows[0]!.lifecycle;
+    expect(recovered.checks).toBe('passing');
+    expect(recovered.checkRefreshRetry).toBeUndefined();
+    expect(app.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it.each(['primary', 'secondary', 'plain'])('R-GH-403-DISCUSSION: corner PR discussion preserves %s classification', async kind => {
+    const { corners, app } = await checksFixture();
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const headers: Record<string, string> = kind === 'primary'
+      ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) }
+      : kind === 'secondary' ? { 'retry-after': '120' } : {};
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403, headers })));
+    const client = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, {
+      ...app, readPullRequestDiscussion: client.readPullRequestDiscussion.bind(client),
+    } as unknown as GitHubAppClient, 'secret');
+    await expect(operations.readCornerPullRequest(corners[0]!)).rejects.toMatchObject({
+      status: 403, rateLimited: kind !== 'plain',
+      retryAfter: kind === 'primary' ? new Date(reset * 1000).toUTCString() : kind === 'secondary' ? '120' : null,
+    });
+    expect(app.mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it.each(['primary', 'secondary'])('R-GH-403: %s rate limit queues, keeps the gate closed and recovers', async kind => {
     const { corners, headSha, app, payload } = await checksFixture();
     const reset = Math.floor(Date.now() / 1000) + 600;

@@ -45,7 +45,7 @@ it.each([['server', false], ['body', false], ['server', true], ['body', true]] a
 });
 
 
-it('R-GH-403: actual PR read rate limits send no Sentry event; plain 403 still sends one', async () => {
+it('R-GH-403: actual PR and discussion rate limits send no Sentry event; plain 403s still send', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -64,8 +64,10 @@ it('R-GH-403: actual PR read rate limits send no Sentry event; plain 403 still s
         {'retry-after':'120'}, {}
       ]) {
         globalThis.fetch = async () => new Response('{}',{status:403,headers});
-        try { await client.readPullRequest('fake','owner/widgets',1); }
-        catch (error) { captureServerError(error); }
+        for (const read of [() => client.readPullRequest('fake','owner/widgets',1),
+          () => client.readPullRequestDiscussion('fake','owner/widgets',1)]) {
+          try { await read(); } catch (error) { captureServerError(error); }
+        }
       }
       await flushServerErrors();`;
     const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
@@ -79,7 +81,9 @@ it('R-GH-403: actual PR read rate limits send no Sentry event; plain 403 still s
     expect(result, result.error).toMatchObject({ code: 0 });
     const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
       .filter(item => item.exception);
-    expect(events).toHaveLength(1);
-    expect(events[0].exception.values[0].value).toBe('GitHub PR checks failed: HTTP 403');
+    expect(events).toHaveLength(2);
+    expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
+      'GitHub PR checks failed: HTTP 403', 'GitHub pull request read failed: HTTP 403',
+    ]);
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 });

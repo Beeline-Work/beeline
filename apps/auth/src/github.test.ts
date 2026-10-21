@@ -1152,3 +1152,18 @@ it.each(['primary', 'secondary', 'plain', 'invalid', 'reset-with-budget'])(
     expect(fetchMock).toHaveBeenCalledTimes(3);
   },
 );
+
+
+it.each(['pulls/1/files', 'pulls/1/reviews', 'pulls/1/comments', 'issues/1/comments'])(
+  'R-GH-403-DISCUSSION: preserves headers before parsing a non-JSON error from %s', async path => {
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).includes(`/${path}?`)
+      ? new Response('rate limited', { status: 403,
+        headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } })
+      : new Response('[]')));
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    await expect(app.readPullRequestDiscussion('fake', 'owner/widgets', 1)).rejects.toMatchObject({
+      status: 403, rateLimited: true, retryAfter: new Date(reset * 1000).toUTCString(),
+    });
+  },
+);

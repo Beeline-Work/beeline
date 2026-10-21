@@ -130,13 +130,14 @@ async function jsonObject(response: Response, label: string): Promise<Record<str
 
 /** Some App endpoints (e.g. GET /app/installations) answer a bare JSON array, not an envelope. */
 async function jsonArray(response: Response, label: string): Promise<Record<string, unknown>[]> {
+  if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
   let body: unknown;
   try {
     body = await response.json();
   } catch {
     throw new Error(`${label} returned invalid JSON`);
   }
-  if (!response.ok || !Array.isArray(body)) {
+  if (!Array.isArray(body)) {
     throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
   }
   for (const entry of body) {

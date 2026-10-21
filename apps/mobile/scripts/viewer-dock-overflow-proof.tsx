@@ -22,7 +22,9 @@ createRoot(document.getElementById('root')!).render(<View style={{ height: '100v
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const find = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
 async function waitForReplyLayout() {
-  const deadline = performance.now() + 3000;
+  // This proves eventual layout, not reply latency. CI can advance Chrome's
+  // virtual timers ahead of ResizeObserver/rendering while other tests build.
+  const deadline = performance.now() + 8000;
   let lastLayout = '', stableSince = performance.now();
   while (performance.now() < deadline) {
     const scroll = find('viewer-conversation-scroll');
@@ -33,7 +35,7 @@ async function waitForReplyLayout() {
         performance.now() - stableSince >= 150) return;
     await wait(25);
   }
-  throw new Error('Reply did not arrive and scroll to the newest line within 3 seconds');
+  throw new Error(`Reply did not arrive and scroll to the newest line within 8 seconds; layout=${lastLayout}`);
 }
 async function prove() {
   await Promise.all(['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold', 'IBMPlexMono-Regular'].map(font => document.fonts.load(`16px ${font}`)));

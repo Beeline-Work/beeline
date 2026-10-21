@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { uploadSentrySourcemaps } from '../../scripts/upload-sentry-sourcemaps.mjs';
+import { queueSentrySourcemaps, uploadSentrySourcemaps } from '../../scripts/upload-sentry-sourcemaps.mjs';
 
 const directories: string[] = [];
 afterEach(() => {
@@ -46,4 +46,19 @@ it('refuses maps without their matching bundle rather than claiming a successful
   const run = vi.fn();
   expect(uploadSentrySourcemaps(directory, 'a'.repeat(40), { run, warn: vi.fn() })).toBe(false);
   expect(run).not.toHaveBeenCalled();
+});
+
+it('starts an unreferenced worker without waiting for network completion', () => {
+  vi.stubEnv('SENTRY_AUTH_TOKEN', 'test-only');
+  const child = { on: vi.fn(), unref: vi.fn() };
+  const launch = vi.fn(() => child);
+  queueSentrySourcemaps('/export', 'a'.repeat(40), { launch });
+  expect(launch.mock.calls[0]).toEqual([
+    process.execPath, expect.arrayContaining(['/export', 'a'.repeat(40)]),
+    { detached: true, stdio: ['ignore', 'inherit', 'inherit'] },
+  ]);
+  expect(child.unref).toHaveBeenCalledOnce();
+  const warn = vi.fn();
+  queueSentrySourcemaps('/export', 'a'.repeat(40), { launch: () => { throw new Error('spawn failed'); }, warn });
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('::warning::'));
 });

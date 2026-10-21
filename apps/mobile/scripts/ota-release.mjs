@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { readPinnedRuntimeVersion } from './native-fingerprint.mjs';
-import { uploadSentrySourcemaps } from './upload-sentry-sourcemaps.mjs';
+import { queueSentrySourcemaps } from './upload-sentry-sourcemaps.mjs';
 import {
   RELEASE_PLATFORMS,
   classifyFailure,
@@ -686,7 +686,7 @@ function publish(options) {
       },
     );
     if (!options.dryRun && !reuseExport) {
-      uploadSentrySourcemaps(join(exportRoot, target.platform), options.sha);
+      queueSentrySourcemaps(join(exportRoot, target.platform), options.sha);
     }
     return options.dryRun
       ? null

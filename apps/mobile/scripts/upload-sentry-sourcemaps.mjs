@@ -1,7 +1,8 @@
 import { createRequire } from 'node:module';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 
 const require = createRequire(import.meta.url);
 
@@ -30,7 +31,7 @@ export function uploadSentrySourcemaps(directory, release, { run = spawnSync, wa
     const result = run(process.execPath, [require.resolve('@sentry/cli/bin/sentry-cli'),
       'sourcemaps', 'upload', '--release', release, '--debug-id-reference', '--strict', ...artifacts], {
       env: { ...process.env, SENTRY_ORG: 'beeline-bt', SENTRY_PROJECT: 'beeline-mobile' },
-      stdio: 'inherit', timeout: 120_000,
+      stdio: 'ignore', timeout: 120_000,
     });
     if (result.status !== 0) throw new Error('sentry-cli upload failed');
     return true;
@@ -38,4 +39,25 @@ export function uploadSentrySourcemaps(directory, release, { run = spawnSync, wa
     warn(`::warning::Mobile Sentry source maps were not uploaded: ${error.message}`);
     return false;
   }
+}
+
+/** Do not wait for diagnostic network traffic on the publication path. */
+export function queueSentrySourcemaps(directory, release, { launch = spawn, warn = console.warn } = {}) {
+  if (!process.env.SENTRY_AUTH_TOKEN) {
+    warn('::warning::Mobile Sentry source maps were not uploaded: SENTRY_AUTH_TOKEN is unavailable');
+    return;
+  }
+  try {
+    const child = launch(process.execPath, [fileURLToPath(import.meta.url), directory, release], {
+      detached: true, stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    child.on('error', () => warn('::warning::Mobile Sentry source map worker could not start'));
+    child.unref();
+  } catch {
+    warn('::warning::Mobile Sentry source map worker could not start');
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  uploadSentrySourcemaps(process.argv[2], process.argv[3]);
 }

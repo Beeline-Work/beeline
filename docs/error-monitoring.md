@@ -184,15 +184,14 @@ release SHA, matching `EXPO_PUBLIC_BEELINE_RELEASE_SHA` in the app. Debug IDs
 distinguish Android, iOS, OTA and embedded bundles even at the same SHA. An OTA
 upload failure emits an Actions warning and does not prevent publication.
 
-The Expo Sentry plugin wraps the native Android Gradle and iOS Xcode bundle
-steps, uploading their composed maps with `SENTRY_RELEASE` set to the same full
-SHA. Native initialization and autolinking stay disabled. Xcode native debug
-symbol upload is disabled in CI because this integration captures JS errors
-only. The fingerprint policy excludes this build-only plugin; runtime pins
-stay unchanged.
+OTA uploads run in a detached best-effort worker; publication never waits for
+Sentry network traffic. Worker errors and missing credentials emit warnings.
+A runner ending before the worker finishes can lose that diagnostic upload.
+Native build configuration, fingerprints and runtime pins match main; embedded
+native bundle uploads remain follow-up work.
 
 CI setup: securely transfer the vault entry **Beeline release token (beeline-bt
 org:ci)** into repository Actions secret `SENTRY_AUTH_TOKEN`. The personal
 GitHub connection needs repository Actions secrets access. Do not print or
-copy the token through an agent prompt. Missing credentials warn for OTA and
-fail native uploads.
+copy the token through an agent prompt. Only the secret name is wired here; secure provisioning and a live
+symbolicated Android event remain pending.

@@ -237,19 +237,12 @@ vi.mock('expo-haptics', () => ({
   notificationAsync: vi.fn(),
   NotificationFeedbackType: { Success: 'success', Error: 'error' },
 }));
-vi.mock('@/buzz/room-list-row', () => ({
+vi.mock('@/buzz/room-list-row', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/buzz/room-list-row')>();
+  return {
   roomRowShowsCornerMark: (item: any, summary: any) => !item.directMessage && (summary?.cornerCount ?? 0) > 0,
   NO_ACTIVITY_PREVIEW: 'No activity',
-  roomListSections: vi.fn((items) => {
-    const rooms = items.filter((item: any) => !item.directMessage);
-    const directMessages = items.filter((item: any) => item.directMessage);
-    return [
-      ...(rooms.length ? [{ kind: 'rooms', title: 'Rooms', data: rooms }] : []),
-      ...(directMessages.length
-        ? [{ kind: 'messages', title: 'Direct messages', data: directMessages }]
-        : []),
-    ];
-  }),
+  roomListSections: actual.roomListSections,
   roomRowName: vi.fn((item) => ({
     name: item.directMessage?.peer.name ?? item.room.name,
     sigil: item.directMessage ? '@' : '#',
@@ -257,7 +250,8 @@ vi.mock('@/buzz/room-list-row', () => ({
   roomRowNeedsAttention: vi.fn(() => false),
   roomRowAttentionReason: vi.fn(() => null),
   roomRowPreview: vi.fn(() => ({ text: 'No activity' })),
-}));
+  };
+});
 vi.mock('@/buzz/room-view-presentation', () => ({
   workspaceRailItem: (workspace: { id: string; name: string }) => ({
     communityId: workspace.id,
@@ -347,10 +341,9 @@ async function settle() {
 async function expectEmptyRoomList() {
   await vi.waitFor(async () => {
     await settle();
-    expect(tree.root.findAllByType('Text').some(
-      (node: { props: { children?: unknown } }) =>
-        node.props.children === 'No rooms or direct messages yet.',
-    )).toBe(true);
+    expect(control('desktop-new-direct-message')).toBeDefined();
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-room-a' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-dm-a' })).toHaveLength(0);
   }, { timeout: 5_000 });
 }
 

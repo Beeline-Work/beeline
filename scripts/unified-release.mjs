@@ -303,6 +303,9 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
     selected = new Set(selection.split(',').map((value) => value.trim()).filter(Boolean));
     for (const component of selected) assertComponent(component);
   }
+  // Path changes alone never authorize a routine native build. Explicit
+  // component selection remains available for build-only recovery.
+  if (!explicit && storeTrack === 'none') selected.delete('mobile-native');
   if (runtimePin?.changed && !(storeTrack === 'none' && allowPinRestore)) selected.add('mobile-native');
   if (storeTrack !== 'none') selected.add('mobile-native');
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
@@ -319,7 +322,7 @@ export function selectReleaseComponentsFromPublishedInputs(
   for (const component of RELEASE_COMPONENTS) {
     const paths = pathsByComponent?.[component];
     if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
-    if (selectReleaseComponents(paths).includes(component)) selected.add(component);
+    if (selectReleaseComponents(paths, { storeTrack, runtimePin, allowPinRestore }).includes(component)) selected.add(component);
   }
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
 }

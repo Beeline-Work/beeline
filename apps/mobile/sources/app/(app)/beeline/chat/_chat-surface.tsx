@@ -363,6 +363,7 @@ import {
   messageBoundaryIds,
   newestTranscriptRowId,
 } from '@/buzz/room-new-message-boundary';
+import { pinnedTailReadReport } from '@/buzz/read-cursor-advance';
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
 import { BubblePressable } from '@/components/BubblePressable';
 import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
@@ -2835,6 +2836,7 @@ export function BuzzChatSurface({
   const {
     discVisible: newestJumpDiscShown,
     badgeCount: newMessageBadgeCount,
+    hasObservedVisibility: newMessageHasObservedVisibility,
     observeVisibleMessages,
     observeTailPinned,
   } = useNewMessageControl({
@@ -3039,6 +3041,34 @@ export function BuzzChatSurface({
     },
     [advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
   );
+  // The viewport pass above owns the read boundary, but it does not run when
+  // an arrival only changes which row is NEWEST while the list already rests
+  // at the tail — the same stale report `useNewMessageControl` re-asks for.
+  // Re-ask the read cursor there: a DM opened at, or held at, its tail must
+  // move the server mark too, or the Room list's unread dot outlives the read.
+  // `pinnedTailReadReport` refuses without the list's own evidence: a cold
+  // open's pin starts true and a first-unread landing is still to come, so a
+  // fetched tail must never be read over messages sitting below the fold. A
+  // reader in history, a landing in progress, or a provisional draft/live lane
+  // all write nothing.
+  useEffect(() => {
+    if (anchoredSegmentActive || !isFocused) return;
+    const chronological = chronologicalMessagesRef.current;
+    const report = pinnedTailReadReport(chronological, {
+      pinnedToTail: scrollController.isPinnedToTail(),
+      landing: scrollController.isLanding(),
+      hasObservedVisibility: newMessageHasObservedVisibility,
+    });
+    if (!report.length) return;
+    advanceReadCursor(chronological, report);
+  }, [
+    advanceReadCursor,
+    anchoredSegmentActive,
+    isFocused,
+    newMessageHasObservedVisibility,
+    newestTranscriptMessageId,
+    scrollController,
+  ]);
   // Back from the code reader: center the row the reader opened it from.
   const scrollToArtifactOrigin = useCallback(
     (index: number) => {

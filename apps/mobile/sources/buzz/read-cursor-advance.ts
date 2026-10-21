@@ -9,6 +9,13 @@ import type { ChatDisplayMessage } from './room-view-presentation';
  */
 export const READ_CURSOR_DEBOUNCE_MS = 400;
 
+/** A provisional row is painted from an unsettled turn, not stored mail. */
+function isProvisional(
+  message: Pick<ChatDisplayMessage, 'isAgentDraft' | 'isAgentLiveTurn' | 'isAgentActivity'>,
+): boolean {
+  return Boolean(message.isAgentDraft || message.isAgentLiveTurn || message.isAgentActivity);
+}
+
 /**
  * The durable message id the viewport says has been read.
  *
@@ -34,12 +41,68 @@ export function newestVisibleMessageId(
 ): string | null {
   let newestIndex = -1;
   for (const message of visible) {
-    if (message.isAgentDraft || message.isAgentLiveTurn || message.isAgentActivity) continue;
+    if (isProvisional(message)) continue;
     const index = chronological.findIndex((row) => row.id === message.id);
     if (index > newestIndex) newestIndex = index;
   }
   if (newestIndex < 0) return null;
   return messageBoundaryIds(chronological[newestIndex]!).at(-1) ?? null;
+}
+
+/**
+ * The newest durable row in the transcript, provisional turn rows skipped the
+ * same way `newestVisibleMessageId` skips them.
+ *
+ * The viewport's own report is the boundary's usual owner. This is what a
+ * surface reports when the newest row CHANGES under a reader already at the
+ * tail, where the list may run no new viewability pass: a provisional lane or
+ * draft must not be credited, but the durable reply it settles into must.
+ */
+export function newestCountableMessage(
+  chronological: readonly ChatDisplayMessage[],
+): ChatDisplayMessage | null {
+  for (let index = chronological.length - 1; index >= 0; index -= 1) {
+    const message = chronological[index]!;
+    if (isProvisional(message)) continue;
+    return message;
+  }
+  return null;
+}
+
+/**
+ * Evidence the list has actually shown the reader the newest end. A fetched
+ * Room view is not evidence: on a cold open the controller's pin starts true
+ * and a first-unread landing is still on its way, so an unguarded re-ask would
+ * read the fetched tail over messages sitting below the fold.
+ */
+export type PinnedTailReadEvidence = {
+  /** The reader rests at (or within the threshold of) the newest end. */
+  readonly pinnedToTail: boolean;
+  /** A row request (a first-unread or jump landing) still owns the list. */
+  readonly landing: boolean;
+  /** The list has reported what is on screen at least once. */
+  readonly hasObservedVisibility: boolean;
+};
+
+/**
+ * The report a surface sends when the newest row changes under a reader
+ * already resting at the tail: the newest durable row alone, or nothing when
+ * every trailing row is provisional or the evidence is missing.
+ *
+ * Kept as one function so the surface's pinned-tail re-ask and its behavioral
+ * regression make the same decision. The list's own viewability report remains
+ * the boundary's normal owner; this is only the re-ask the list does not owe
+ * when an arrival leaves the viewable set unchanged. It stays silent until the
+ * list has said what is on screen and no landing owns it, so a cold open never
+ * reads the fetched tail.
+ */
+export function pinnedTailReadReport(
+  chronological: readonly ChatDisplayMessage[],
+  evidence: PinnedTailReadEvidence,
+): readonly ChatDisplayMessage[] {
+  if (!evidence.hasObservedVisibility || evidence.landing || !evidence.pinnedToTail) return [];
+  const newest = newestCountableMessage(chronological);
+  return newest ? [newest] : [];
 }
 
 /**

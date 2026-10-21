@@ -475,11 +475,6 @@ jobs:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server-built
           path: checkpoint-server-built.json
           if-no-files-found: error
-      # The free starter agent image builds block/buzz, whose Cargo.lock
-      # version 4 the host's system cargo 1.75 cannot parse. Rustup then
-      # follows block/buzz's own rust-toolchain.toml.
-      - uses: dtolnay/rust-toolchain@stable
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
       - uses: ./.github/actions/server-leg
         id: promote
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
@@ -562,6 +557,53 @@ jobs:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server
           path: checkpoint-server.json
           if-no-files-found: error
+
+  # Starter image publishing is best effort and cannot delay server promotion
+  # or the release record. Both use this runner, so let the result finish first.
+  free_agent_image:
+    needs: [initialize, server, release_result]
+    if: >-
+      always() && !cancelled() && inputs.plan_only != true &&
+      needs.server.result == 'success' && needs.initialize.outputs.run_server == 'true'
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 18
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Helper staging builds pinned block/buzz with its Rust toolchain.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish the free starter agent base image
+        shell: bash
+        run: |
+          set -uo pipefail
+          image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
+          if BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
+            bash scripts/stage-free-agent-helper.sh \
+            && flyctl deploy . \
+            --local-only \
+            --config fly.beeline-free-agents.toml \
+            --dockerfile infra/free-agent/Dockerfile \
+            --app beeline-free-agents \
+            --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+            --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
+            --image-label "$image_label" --build-only --push --yes \
+            && flyctl auth docker \
+            && docker tag "registry.fly.io/beeline-free-agents:$image_label" registry.fly.io/beeline-free-agents:latest \
+            && docker push registry.fly.io/beeline-free-agents:latest; then
+            echo "Published registry.fly.io/beeline-free-agents:$image_label and :latest"
+          else
+            echo "::warning::Free starter agent image was not published; Machines keep the previous image"
+          fi
+        env:
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
 
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
@@ -1096,6 +1138,8 @@ jobs:
     needs: initialize
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      ((inputs.store_track != '' && inputs.store_track != 'none') ||
+       (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_android == 'true'
     # Local EAS build on a self-hosted Linux runner (Android SDK + JDK 17 live
     # there): Expo's cloud build needs credits the free plan ran out of. The
@@ -1208,6 +1252,8 @@ jobs:
     needs: initialize
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      ((inputs.store_track != '' && inputs.store_track != 'none') ||
+       (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_ios == 'true'
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90

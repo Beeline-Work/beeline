@@ -436,6 +436,33 @@ describe('connect_app', () => {
     console.info(`Reproduction squire-connect-1: connect -> owner consent -> agent URL/goal (${noApi ? 'browser' : 'API'}) -> no helper job -> vault credential -> ready`);
   });
 
+  it('Reproduction SENTRY-ACCESS: reconnect requests owner repair instead of returning the existing key', async () => {
+    await connectSquire();
+    await applyVaultList(database,
+      { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+        reference: 'vault:sentry-old', service: 'sentry', label: 'default',
+        fieldNames: ['api_key'], allowedHosts: ['sentry.io'],
+        createdAt: 1, stale: true, state: 'active',
+      }]);
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const input = { ...turn, service: 'sentry', reason: 'Read Beeline issues', squireAvailable: true };
+    expect(await daemon.execute('connect', input, HELPER))
+      .toMatchObject({ status: 'ready', connectionReference: 'vault:sentry-old' });
+    const reconnect = { ...input, reconnect: true };
+    const ask = await daemon.execute('connect', reconnect, HELPER);
+    expect(ask.status).toBe('needs_approval');
+    expect(ask).not.toHaveProperty('connectionReference');
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    const repair = await daemon.execute('connect', reconnect, HELPER);
+    expect(repair).toMatchObject({ status: 'needs_squire', transport: 'squire-api' });
+    expect(repair).not.toHaveProperty('connectionReference');
+    expect(repair.squire?.goal).toContain('Repair the existing');
+    expect(repair.squire?.goal).toContain('do not select an alternative credential');
+    expect(await daemon.execute('connect', { ...reconnect, squireAvailable: false }, HELPER))
+      .toMatchObject({ status: 'unavailable' });
+    console.info('Reproduction SENTRY-ACCESS stand-in: existing key -> reconnect -> owner consent -> same-route repair goal, with no old credential returned; live organization issue access still requires owner reauthorization.');
+  });
+
   it('connect reports unavailable without mounted Squire tools and queues no hidden job', async () => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([]).client);

@@ -7152,7 +7152,9 @@ export class DaemonService {
       : `https://www.google.com/search?${new URLSearchParams({ q: `${service} official website` })}`;
     const goal = outcome.transport === 'squire-browser'
       ? `Sign in to ${outcome.app} with the owner's saved account and save its login in the vault as service ${outcome.appKey}.`
-      : `Sign up or sign in to ${outcome.app} using the owner's account. Create an API key and capture it securely into the vault as service ${outcome.appKey}. Never reveal a secret in the response.`;
+      : input.reconnect
+        ? `Repair the existing ${outcome.app} connection using the owner's account. Reauthorize or replace its existing API credential in the vault as service ${outcome.appKey}; do not select an alternative credential or another person's account. Never reveal a secret in the response.`
+        : `Sign up or sign in to ${outcome.app} using the owner's account. Create an API key and capture it securely into the vault as service ${outcome.appKey}. Never reveal a secret in the response.`;
     return { ...result, status: 'needs_squire', squire: { url, goal },
       next: 'Use your own Squire operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step, then resume operate_drive on the same session. Keep saved-login approval in Squire. Once a credential for this service is in the vault, call connect again.'
         + (outcome.transport === 'squire-browser' ? ' If your Squire session is already signed in, for example through Google, call connect again with signedInUrl set to a page only a signed-in user can open.' : '') };

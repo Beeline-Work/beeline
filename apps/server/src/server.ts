@@ -673,7 +673,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   : 503);
       // GitHub's own outage or rate limit is a bad gateway, not this server
       // being unavailable; the message already names GitHub's status.
-      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429)) {
+      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
         status = 502;
       }
       // A failing Telegram delivery must not create another alert to itself.

@@ -1,3 +1,4 @@
+import { GitHubHttpError } from '@beeline/auth/github';
 import * as Sentry from '@sentry/node';
 import { privateErrorEvent } from '@beeline/api-contract/error-reporting';
 
@@ -21,6 +22,7 @@ if (process.env.SENTRY_DSN) {
 }
 
 export function captureServerError(error: unknown, tags: Record<string, string> = {}): void {
+  if (error instanceof GitHubHttpError && error.rateLimited) return;
   try { Sentry.captureException(error, { tags: { surface: 'server', ...tags } }); }
   catch { /* Reporting must never change the original failure path. */ }
 }

@@ -6,8 +6,10 @@ const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
 const legacyAgentsSource = readFileSync(path.join(__dirname, 'agents.tsx'), 'utf8');
 
 describe('Workspace Members entry point', () => {
-  it('opens Members from the workspace menu and keeps the tray independent', () => {
-    expect(source).toContain('<WorkspaceActionsMenu');
+  it('opens Members from its header glyph and keeps the tray independent', () => {
+    expect(source).toContain('<MembersAgentsGlyph');
+    expect(source).toContain('accessibilityLabel="Members"');
+    expect(source).not.toContain('<WorkspaceActionsMenu');
     expect(source).toContain("pathname: '/beeline/members'");
     expect(source).toContain('params: { communityId: activeCommunityId }');
     expect(source).toContain("pathname: '/beeline/tray'");

@@ -47,8 +47,16 @@ describe('runnable artifact host', () => {
       expect(response.headers.get('permissions-policy')).toContain('microphone=()');
       expect(response.headers.get('referrer-policy')).toBe('no-referrer');
       expect(await response.text()).toBe('<script>game()</script>');
+      const embedded = await fetch(
+        `${base}/play/11111111-1111-4111-8111-111111111111?expires=123&token=valid&embed=1`,
+      );
+      const shell = await embedded.text();
+      expect(shell).not.toContain('<script>game()</script>');
+      expect(shell).toContain(Buffer.from('<script>game()</script>').toString('base64'));
+      expect(shell).toContain('event.source !== parent');
+      expect(shell).toContain("event.data !== 'beeline-start-game'");
       expect((await fetch(`${base}/v1/phone/identity`)).status).toBe(404);
-      expect(calls).toBe(1);
+      expect(calls).toBe(2);
       expect(
         (await fetch(`${base}/play/11111111-1111-4111-8111-111111111111?token=bad`)).status,
       ).toBe(404);

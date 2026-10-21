@@ -1,20 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import { runnableArtifactUrl } from '@/buzz/artifact-link';
 import { useSandboxWebView, useSandboxWebViewStatus } from './sandbox-webview';
+import { Button } from './Button';
 
 /** Deliberately no message bridge or injected script, including in error states. */
 export function RunnableArtifact({ attachment }: { attachment: AttachmentReference }) {
   const [url, setUrl] = useState<string>();
   const [failed, setFailed] = useState(false);
+  const [navigationStopped, setNavigationStopped] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const loaded = useRef(false);
   const WebView = useSandboxWebView();
   const status = useSandboxWebViewStatus();
   useEffect(() => {
     let live = true;
     setUrl(undefined);
     setFailed(false);
+    setNavigationStopped(false);
+    loaded.current = false;
     void runnableArtifactUrl(attachment).then(
       (value) => {
         if (live) setUrl(value);
@@ -26,7 +32,19 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
     return () => {
       live = false;
     };
-  }, [attachment.url]);
+  }, [attachment.url, attempt]);
+  if (navigationStopped) {
+    return (
+      <View style={styles.placeholder} testID="runnable-artifact-navigation-stopped">
+        <Text style={styles.text}>This game tried to open another page and was closed</Text>
+        <Button
+          label="Reopen"
+          onPress={() => setAttempt((value) => value + 1)}
+          testID="runnable-artifact-reopen"
+        />
+      </View>
+    );
+  }
   if (failed || (Platform.OS !== 'web' && status === 'unavailable')) {
     return (
       <View style={styles.placeholder}>
@@ -41,16 +59,30 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
       </View>
     );
   }
-  if (Platform.OS === 'web')
+  if (Platform.OS === 'web') {
+    const embeddedUrl = new URL(url);
+    embeddedUrl.searchParams.set('embed', '1');
     return React.createElement('iframe', {
-      src: url,
+      src: embeddedUrl.href,
       sandbox: 'allow-scripts',
       referrerPolicy: 'no-referrer',
       allow: "camera 'none'; microphone 'none'; geolocation 'none'; fullscreen 'none'",
       title: attachment.title ?? attachment.name,
       style: { width: '100%', height: '100%', border: 0, flex: 1 },
       'data-testid': 'runnable-artifact',
+      onLoad: (event: { currentTarget: HTMLIFrameElement }) => {
+        if (!loaded.current) {
+          loaded.current = true;
+          event.currentTarget.contentWindow?.postMessage('beeline-start-game', '*');
+          return;
+        }
+        // Hide synchronously; React then removes the browsing context. This
+        // handler belongs to the trusted parent, outside the opaque frame.
+        event.currentTarget.style.visibility = 'hidden';
+        setNavigationStopped(true);
+      },
     });
+  }
   const NativeWebView = WebView!;
   return (
     <NativeWebView

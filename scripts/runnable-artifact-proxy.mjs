@@ -17,7 +17,8 @@ function readGame(url, host) {
       let size = 0;
       result.on('data', (chunk) => {
         size += chunk.length;
-        if (size > 25 * 1024 * 1024) request.destroy(new Error('Game too large'));
+        if (size > Math.ceil((25 * 1024 * 1024 * 4) / 3) + 64 * 1024)
+          request.destroy(new Error('Game too large'));
         else chunks.push(chunk);
       });
       result.on('error', reject);

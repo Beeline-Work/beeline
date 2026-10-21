@@ -33,6 +33,7 @@
       "WebView"
     ],
     "components/buzz/ArtifactMedia.tsx": ["ArtifactImage", "ArtifactText"],
+    "components/buzz/RunnableArtifact.tsx": ["RunnableArtifact", "WebView"],
     "components/buzz/ArtifactPdfView.tsx": [
       "ArtifactPdfFrame",
       "ArtifactPdfLoading",

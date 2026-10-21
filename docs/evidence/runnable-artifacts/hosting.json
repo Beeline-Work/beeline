@@ -9,5 +9,7 @@
   "deployedSourceCompared": true,
   "apiPathStatus": 404,
   "gamePathBeforeServerReleaseStatus": 503,
-  "productionServerChanged": false
+  "productionServerChanged": false,
+  "deployedCommit": "42a5a5682b120a483a584b5bbb7164b1fb7e85ed",
+  "latestEdgeChangesAwaitMerge": true
 }

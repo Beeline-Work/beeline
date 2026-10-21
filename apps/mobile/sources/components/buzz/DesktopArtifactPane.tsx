@@ -52,7 +52,7 @@ export function DesktopArtifactPane({
       <View style={styles.header}>
         <View style={styles.caption}>
           <Text numberOfLines={1} style={styles.title} testID="desktop-artifact-title">
-            {title}
+            {format === 'game' ? `Game · ${title}` : title}
           </Text>
           <Text numberOfLines={1} style={styles.kindLine} testID="desktop-artifact-kind-line">
             {kindLine}

@@ -7,11 +7,13 @@ createServer((req, res) =>
   serveRunnableArtifact(req, res, 'https://proof.invalid', {
     openRunnableArtifact: async (id) =>
       Buffer.from(
-        id.startsWith('3333')
-          ? '<h1>Navigation probe</h1><script>setTimeout(()=>location.href="https://example.org",1000)</script>'
-          : id.startsWith('2222')
-            ? loop
-            : game,
+        id.startsWith('4444')
+          ? '<h1>Immediate navigation probe</h1><script>console.log("NAVIGATION_ATTEMPT");location.href="https://example.org"</script>'
+          : id.startsWith('3333')
+            ? '<h1>Navigation probe</h1><script>setTimeout(()=>{console.log("NAVIGATION_ATTEMPT");location.href="https://example.org"},1000)</script>'
+            : id.startsWith('2222')
+              ? loop
+              : game,
       ),
   }),
 ).listen(18764, '127.0.0.1', () => console.log('fixture 18764'));

@@ -6,6 +6,31 @@ export const RUNNABLE_MIME = 'application/vnd.beeline.game+html';
 export const RUNNABLE_CSP =
   "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; base-uri 'none'; form-action 'none'; sandbox allow-scripts";
 
+/** Arm the parent's load guard before any authored code or handlers can run. */
+function embeddedDocument(bytes: Uint8Array): string {
+  const data = Buffer.from(bytes).toString('base64');
+  return `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><script>
+addEventListener('message', function start(event) {
+  if (event.source !== parent || event.data !== 'beeline-start-game') return;
+  removeEventListener('message', start);
+  const html = new TextDecoder().decode(Uint8Array.from(atob('${data}'), c => c.charCodeAt(0)));
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const scripts = Array.from(parsed.querySelectorAll('script'));
+  for (const attribute of parsed.documentElement.attributes) document.documentElement.setAttribute(attribute.name, attribute.value);
+  document.documentElement.replaceChildren(parsed.head, parsed.body);
+  for (const inert of scripts) {
+    if (!inert.isConnected) continue;
+    const script = document.createElement('script');
+    for (const attribute of inert.attributes) script.setAttribute(attribute.name, attribute.value);
+    script.textContent = inert.textContent;
+    inert.replaceWith(script);
+  }
+  document.dispatchEvent(new Event('DOMContentLoaded'));
+  dispatchEvent(new Event('load'));
+});
+</script>`;
+}
+
 /** Fail closed: game documents must never share a site with the application. */
 export function runnableOrigin(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const game = new URL(env.BEELINE_GAME_ORIGIN ?? 'https://beeline-games.fly.dev');
@@ -53,5 +78,11 @@ export async function serveRunnableArtifact(
     'x-content-type-options': 'nosniff',
     'cache-control': 'no-store',
   });
-  response.end(result ?? 'This game link is unavailable. Close and reopen the artifact.');
+  response.end(
+    result
+      ? url.searchParams.get('embed') === '1'
+        ? embeddedDocument(result)
+        : result
+      : 'This game link is unavailable. Close and reopen the artifact.',
+  );
 }

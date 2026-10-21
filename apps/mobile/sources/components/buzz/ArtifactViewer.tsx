@@ -90,7 +90,7 @@ export function ArtifactViewerScreen({
     <View style={styles.screen} testID="artifact-viewer">
       <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
         <Text numberOfLines={1} style={styles.headerTitle}>
-          {title}
+          {format === 'game' ? `Game · ${title}` : title}
         </Text>
         {format === 'code' && document ? (
           <Pressable

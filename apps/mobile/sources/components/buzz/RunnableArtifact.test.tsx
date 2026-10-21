@@ -1,3 +1,4 @@
+vi.mock('./Button', () => ({ Button: 'Button' }));
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
@@ -22,7 +23,12 @@ vi.mock('react-native-unistyles', () => ({
       fn({ buzz: { space: { md: 16 }, type: { body: {} }, textSecondary: 'text' } }),
   },
 }));
-vi.mock('@/buzz/artifact-link', () => ({ runnableArtifactUrl: async () => { state.requests++; return state.url; } }));
+vi.mock('@/buzz/artifact-link', () => ({
+  runnableArtifactUrl: async () => {
+    state.requests++;
+    return state.url;
+  },
+}));
 vi.mock('./sandbox-webview', () => ({
   useSandboxWebView: () => 'WebView',
   useSandboxWebViewStatus: () => 'ready',
@@ -86,9 +92,13 @@ describe('runnable viewer boundary', () => {
     state.os = 'android';
     state.requests = 0;
     let tree: any;
-    await act(async () => { tree = create(<RunnableArtifact attachment={attachment} />); });
+    await act(async () => {
+      tree = create(<RunnableArtifact attachment={attachment} />);
+    });
     const game = tree.root.findByType('WebView');
-    await act(async () => { tree.update(<RunnableArtifact attachment={{...attachment}} />); });
+    await act(async () => {
+      tree.update(<RunnableArtifact attachment={{ ...attachment }} />);
+    });
     expect(state.requests).toBe(1);
     expect(tree.root.findByType('WebView')).toBe(game);
     await act(async () => tree.unmount());
@@ -101,9 +111,24 @@ describe('runnable viewer boundary', () => {
     });
     const props = tree.root.findByType('iframe').props;
     expect(props.sandbox).toBe('allow-scripts');
-    expect(props.src).toBe(state.url);
+    expect(new URL(props.src).searchParams.get('embed')).toBe('1');
     expect(props.referrerPolicy).toBe('no-referrer');
     expect(props.allow).toContain("microphone 'none'");
+    const target = { style: { visibility: '' }, contentWindow: { postMessage: vi.fn() } };
+    await act(async () => props.onLoad({ currentTarget: target }));
+    expect(target.contentWindow.postMessage).toHaveBeenCalledWith('beeline-start-game', '*');
+    expect(tree.root.findAllByType('iframe')).toHaveLength(1);
+    await act(async () => props.onLoad({ currentTarget: target }));
+    expect(target.style.visibility).toBe('hidden');
+    expect(tree.root.findAllByType('iframe')).toHaveLength(0);
+    expect(tree.root.findByType('Text').props.children).toBe(
+      'This game tried to open another page and was closed',
+    );
+    await act(async () => tree.root.findByType('Button').props.onPress());
+    const reopened = tree.root.findByType('iframe');
+    await act(async () => reopened.props.onLoad({ currentTarget: target }));
+    expect(tree.root.findAllByType('iframe')).toHaveLength(1);
+    expect(target.contentWindow.postMessage).toHaveBeenCalledTimes(2);
     await act(async () => tree.unmount());
   });
 });

@@ -60,6 +60,7 @@
     "components/buzz/BeelineMarkSpinner.tsx": ["BeelineMarkSpinner", "MARK_CELL"],
     "components/buzz/Button.tsx": ["Button"],
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
+    "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],
     "components/buzz/CodeBlock.tsx": ["CodeBlock", "PEEK_LINE_COUNT", "body"],
     "components/buzz/CodeHighlighter.tsx": ["CodeHighlighter"],

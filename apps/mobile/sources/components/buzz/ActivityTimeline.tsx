@@ -22,7 +22,7 @@ import {
 } from './Ledger';
 import { MonoMarkdown } from './MonoMarkdown';
 import { StreamingProse } from './StreamingProse';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
+import { LedgerDisclosure } from './LedgerDisclosure';
 
 type ActivityTimelineProps = {
   active?: boolean;
@@ -173,29 +173,13 @@ function ToolRunGroupRow({
   const steps = run.count > 0 || run.notes === 0;
   return (
     <View>
-      <Pressable
-        accessibilityHint={expanded ? 'Hides the steps' : 'Shows the steps'}
-        accessibilityLabel={`${summary}, expandable`}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((value) => !value)}
-        style={styles.groupRow}
-        testID={`tool-run-group-${run.id}`}
-      >
-        <View style={styles.groupChevron}>
-          <ChevronGlyph
-            color={styles.groupChevronMark.color}
-            direction={expanded ? 'up' : 'down'}
-            size={CHEVRON_ROW_SIZE}
-          />
-        </View>
-        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.groupLabel}>
-          {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
-          {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
-          {run.notes ? `${steps ? ' · ' : ''}${run.notes} ${run.notes === 1 ? 'note' : 'notes'}` : null}
-          {duration ? ` · ${duration}` : null}
-        </Text>
-      </Pressable>
+      <LedgerDisclosure expanded={expanded} onPress={() => setExpanded(value => !value)}
+        accessibilityLabel={`${summary}, expandable`} accessibilityState={{ expanded }} rowTestID={`tool-run-group-${run.id}`}>
+        {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
+        {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
+        {run.notes ? `${steps ? ' · ' : ''}${run.notes} ${run.notes === 1 ? 'note' : 'notes'}` : null}
+        {duration ? ` · ${duration}` : null}
+      </LedgerDisclosure>
       {expanded
         ? run.lines.map((line) => (
             <ToolLedgerLineRow
@@ -389,27 +373,6 @@ const styles = StyleSheet.create((theme) => {
     // failure cross), the dimmest chrome for the success tick.
     callFailed: { color: groknight.accent },
     callPassed: { color: groknight.ledgerGhost },
-    groupRow: {
-      minHeight: 44,
-      minWidth: 0,
-      justifyContent: 'center',
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
-      paddingHorizontal: groknight.space.xs,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: groknight.space.sm,
-    },
-    // The 24 gutter the steps hang off stays; the mark inside it is drawn,
-    // so it needs no machine type role to sit on the label's line.
-    groupChevron: { width: 24, flexShrink: 0, justifyContent: 'center' },
-    groupChevronMark: { color: groknight.ledgerGhost },
-    groupLabel: {
-      ...groknight.type.machine,
-      flex: 1,
-      minWidth: 0,
-      color: groknight.ledgerQuiet,
-    },
     groupFailed: { color: groknight.accent },
   };
 });

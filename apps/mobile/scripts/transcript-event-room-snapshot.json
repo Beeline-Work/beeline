@@ -1,0 +1,161 @@
+{
+  "roomId": "bb91a1c7-7cad-4fde-aafc-94fccb651ac8",
+  "capturedAt": "2026-10-21T15:32:00Z",
+  "source": "Read-only production Room snapshot; two contiguous event runs separated by real chat.",
+  "runs": [
+    [
+      {
+        "id": "76c08267b80dae037530c6be9e3ebe33d582acb4198d79e878446b65149b2985",
+        "text": "@github-actions[bot] opened Unified production release: cancelled (run 39602689676)",
+        "presentation": "card",
+        "card_type": "github-event",
+        "card": {
+          "url": "https://github.com/Beeline-Work/beeline/issues/2722",
+          "type": "issue",
+          "actor": "github-actions[bot]",
+          "title": "Unified production release: cancelled (run 39602689676)",
+          "action": "opened"
+        },
+        "system_event": {
+          "verb": "opened",
+          "object": {
+            "url": "https://github.com/Beeline-Work/beeline/issues/2722",
+            "text": "Unified production release: cancelled (run 39602689676)"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@github-actions[bot]"
+          }
+        },
+        "timestamp": "1792588912"
+      },
+      {
+        "id": "59add2fac943533bf60b68a4e78550bd8cf6fb44a6a11e61b4f36f7994ce8203",
+        "text": "@beeline-app[bot] merged Show short schedule titles and mark one-time checks",
+        "presentation": "card",
+        "card_type": "daemon-fact",
+        "card": {
+          "name": "schedule-short-titles",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "e683ae2a-5b60-41c3-875a-cabf3c1313d5",
+          "objective": "Schedules list shows each schedule as a few-word description of what it does, without the cadence line.",
+          "pullRequest": {
+            "url": "https://github.com/Beeline-Work/beeline/pull/2721",
+            "title": "Show short schedule titles and mark one-time checks",
+            "number": 2721,
+            "targetBranch": "main",
+            "mergeCommitSha": "06d8ab82acd67a0590dac6b633b770310a5b41d8"
+          }
+        },
+        "system_event": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/Beeline-Work/beeline/pull/2721",
+            "text": "Show short schedule titles and mark one-time checks"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@beeline-app[bot]"
+          }
+        },
+        "timestamp": "1792590084"
+      }
+    ],
+    [
+      {
+        "id": "d4781f51c3cc298f66bddae7620f9329e8d27e80c96e4cabe82d21847d5d9938",
+        "text": "@beeline-app[bot] merged Measure store downloads and anonymous sign-in drop-off",
+        "presentation": "card",
+        "card_type": "daemon-fact",
+        "card": {
+          "name": "dashboard-downloads-stage",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "b53986ab-1f75-4540-9f31-f0b320ffb758",
+          "objective": "Add a Downloads stage before Signup in the admin dashboard funnel, using Play and App Store first-time installs, so signup drop-off is visible.",
+          "pullRequest": {
+            "url": "https://github.com/Beeline-Work/beeline/pull/2693",
+            "title": "Measure store downloads and anonymous sign-in drop-off",
+            "number": 2693,
+            "targetBranch": "main",
+            "mergeCommitSha": "f24516b67fbe2661330bb40161dab6a1857a8b5c"
+          }
+        },
+        "system_event": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/Beeline-Work/beeline/pull/2693",
+            "text": "Measure store downloads and anonymous sign-in drop-off"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@beeline-app[bot]"
+          }
+        },
+        "timestamp": "1792591609"
+      },
+      {
+        "id": "a45217423d5c4c06e7b093e6040afd28364d20577b0c83cdc6b1a7ce1098f5c8",
+        "text": "@ruby opened a corner room-viewer-crash",
+        "presentation": "card",
+        "card_type": "daemon-fact",
+        "card": {
+          "name": "room-viewer-crash",
+          "type": "corner-open",
+          "cornerId": "b6cfef29-86c1-45a4-a00a-9ef186bc6f1f",
+          "objective": "Fix the mobile crash where scheduled-work rendering reads identity from a missing viewer or member (Sentry BEELINE-MOBILE-D)."
+        },
+        "system_event": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "b6cfef29-86c1-45a4-a00a-9ef186bc6f1f",
+            "text": "room-viewer-crash"
+          },
+          "subject": {
+            "id": "c3dfbf8acbb4b6e9f11bd37119a5ce2f4f104257885d098d8e075c0b0c4c066b",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "timestamp": "1792591768"
+      },
+      {
+        "id": "879eb6422e4d2d9ec66cb4f9f9c7ee2ea1f089182d841b3a6c4491e043111697",
+        "text": "@beeline-app[bot] merged Upload OTA Hermes source maps without changing native inputs",
+        "presentation": "card",
+        "card_type": "daemon-fact",
+        "card": {
+          "name": "mobile-sentry-sourcemaps",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "1123e9ce-811e-4e7b-a57a-2f17f569ed95",
+          "objective": "Upload Hermes source maps to Sentry for every mobile OTA update and native build, so beeline-mobile stack traces show real files and lines.",
+          "pullRequest": {
+            "url": "https://github.com/Beeline-Work/beeline/pull/2694",
+            "title": "Upload OTA Hermes source maps without changing native inputs",
+            "number": 2694,
+            "targetBranch": "main",
+            "mergeCommitSha": "01e842fa52e87145dddd6b003ba9e761205f7ba4"
+          }
+        },
+        "system_event": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/Beeline-Work/beeline/pull/2694",
+            "text": "Upload OTA Hermes source maps without changing native inputs"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@beeline-app[bot]"
+          }
+        },
+        "timestamp": "1792591810"
+      }
+    ]
+  ]
+}

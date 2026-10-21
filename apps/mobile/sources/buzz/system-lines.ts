@@ -1,4 +1,4 @@
-import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
+import type { RoomViewMessage, SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
 
 /**
  * System lines on the phone: one grammar, one renderer, one row per message.
@@ -6,7 +6,7 @@ import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
  * The server phrases every system notification (`apps/server/src/system-line.ts`)
  * as `<subject> <verb>[ <object>][ · <consequence>]` and stores the structured
  * event beside the text. The phone renders the event (names in brass, the
- * object linked by its URL). Every event keeps its original transcript row.
+ * object linked by its URL). Passive lifecycle events can share a disclosure row; their message ids and posted facts remain intact.
  * A row from before the grammar has no event and renders its text verbatim.
  */
 export type SystemLineMessage = {
@@ -35,6 +35,8 @@ export type SystemLineMessage = {
     outcome?: 'landed' | 'abandoned';
     pullRequest?: { number?: number; title?: string; url: string };
   };
+  walletTx?: RoomViewMessage['walletTx'];
+  walletDelegation?: RoomViewMessage['walletDelegation'];
   authorIdentity?: { kind: 'human' | 'agent'; name: string; handle?: string };
 };
 

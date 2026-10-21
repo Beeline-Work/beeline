@@ -22,6 +22,7 @@ const theme = vi.hoisted(() => ({
     proseRegular: 'GrokRegular',
     proseSemibold: 'GrokSemibold',
     radius: 3,
+    layout: { row: 64 },
     // Mirrors `space` / `typeRoles` in buzz/groknight.ts; the roles are pinned
     // there by groknight.test.ts, so this fixture only has to carry shapes.
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
@@ -362,6 +363,26 @@ describe('Hull dialog family', () => {
     }),
     );
   });
+
+  it.each([['search', 64, 8], ['sheetSearch', 52, 24]] as const)(
+    'uses list cell geometry and a focus divider for %s', (variant, height, inset) => {
+      const renderer = render(<HullDialogInput variant={variant} testID="search-cell" value="" />);
+      const input = hostByTestID(renderer, 'search-cell', 'TextInput');
+      expect(Object.assign({}, ...input.props.style)).toMatchObject({ minHeight: 0, paddingHorizontal: inset, borderWidth: 0 });
+      const wrapper = () => {
+        let node = input.parent!;
+        while (node.type !== 'View') node = node.parent!;
+        return Object.assign({}, ...node.props.style);
+      };
+      expect(wrapper()).toMatchObject({
+        minHeight: height, marginTop: 0, borderBottomWidth: 1, borderBottomColor: hull.borderStrong,
+      });
+      act(() => input.props.onFocus({}));
+      expect(wrapper().borderBottomColor).toBe(hull.accent);
+      act(() => input.props.onBlur({}));
+      expect(wrapper().borderBottomColor).toBe(hull.borderStrong);
+    },
+  );
 
   it('renders the boxed search field in regular weight and placeholder colour', () => {
     const renderer = render(

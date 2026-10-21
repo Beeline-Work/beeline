@@ -334,7 +334,7 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
   return {
     HullActionSheetModal: (props: any) =>
       props.visible
-        ? ReactModule.createElement('HullActionSheetModal', props, props.children)
+        ? ReactModule.createElement('HullActionSheetModal', props, props.sticky, props.children, props.footer)
         : null,
     HullActionSheetRow: host('HullActionSheetRow'),
     HullActionSheetCancel: host('HullActionSheetCancel'),
@@ -393,7 +393,6 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
 import MembersScreen from './members';
 import { router } from 'expo-router';
 import { ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-import { AGENT_MODEL_PICKER_VISIBLE_ROWS } from '@/buzz/agent-model-picker';
 
 /**
  * The disclosure mark is a drawn shape, so it is not part of a row's copy any
@@ -1172,12 +1171,10 @@ describe('Members workspace management', () => {
     );
 
     await press(renderer, 'model-axis-model');
-    // However long the catalog, the open list scrolls inside five rows.
     const options = renderer.root.findByProps({ testID: 'model-options-model' });
-    expect(options.props.nestedScrollEnabled).toBe(true);
-    expect(options.props.style).toEqual(
-      expect.objectContaining({ maxHeight: AGENT_MODEL_PICKER_VISIBLE_ROWS * 44 }),
-    );
+    expect(options.props.visible).toBe(true);
+    expect(options.props.title).toBe('Model');
+    expect(options.props.footer).toBeDefined();
     await act(async () => {
       renderer.root.findByProps({ testID: 'model-search-model' }).props.onChangeText('opu');
     });
@@ -1188,6 +1185,7 @@ describe('Members workspace management', () => {
       model: 'opus',
       effort: null,
     });
+    expect(renderer.root.findByProps({ testID: 'model-options-model' }).props.visible).toBe(false);
     // After a model switch the row requests that model's live effort catalog.
     await press(renderer, 'model-axis-effort');
     await agentChanged();
@@ -1207,9 +1205,9 @@ describe('Members workspace management', () => {
     const renderer = await render();
     await openAgentManagement(renderer);
     expect(renderer.root.findByProps({ testID: 'fast-mode-setting' })).toBeDefined();
-    await press(renderer, 'fast-mode-on');
+    await act(async () => renderer.root.findByProps({ testID: 'fast-mode-setting' }).props.toggle.onValueChange(true));
     expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { fastMode: true });
-    await press(renderer, 'fast-mode-off');
+    await act(async () => renderer.root.findByProps({ testID: 'fast-mode-setting' }).props.toggle.onValueChange(false));
     expect(client.setAgentModelConfig).toHaveBeenCalledWith(WORKSPACE, AGENT, { fastMode: false });
     state.agent = {
       ...state.agent,
@@ -1269,7 +1267,7 @@ describe('Members workspace management', () => {
       0,
     );
     expect(
-      renderer.root.findByProps({ testID: 'model-axis-model' }).props.description,
+      renderer.root.findByProps({ testID: 'model-axis-model' }).props.value,
     ).toBe('glm-5.3-flash');
     expect(
       renderer.root.findByProps({ testID: 'model-axis-effort' }).props.value,

@@ -2,10 +2,9 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useMemo } from 'react';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ForwardTarget, ForwardTargetGroup } from '@/buzz/message-forward';
-import { Typography } from '@/constants/Typography';
 import {
   HULL_SHEET_INSET,
   HullActionSheetCancel,
@@ -67,7 +66,7 @@ export function ForwardMessagePickerSheet({
         placeholder="Search destinations"
         placeholderTextColor={theme.buzz.textMuted}
         returnKeyType="search"
-        style={styles.search}
+        variant="sheetSearch"
         testID="forward-room-search"
         value={query}
       />
@@ -127,17 +126,6 @@ export function ForwardMessagePickerSheet({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    search: {
-      ...Typography.default(),
-      ...groknight.type.meta,
-      minHeight: 44,
-      marginHorizontal: HULL_SHEET_INSET,
-      paddingHorizontal: 0,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: groknight.border,
-      color: groknight.textPrimary,
-      fontFamily: groknight.proseRegular,
-    },
     listViewport: { maxHeight: 360, flexGrow: 0 },
     list: { paddingBottom: 4 },
     loading: {

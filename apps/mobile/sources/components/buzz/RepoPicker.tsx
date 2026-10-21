@@ -181,7 +181,7 @@ export const RepoPicker = memo(function RepoPicker({
         }}
         placeholder="Search or paste owner/repo"
         placeholderTextColor={groknight.dim}
-        style={styles.search}
+        variant="search"
         value={query}
       />
       {onSelectNoRepository && (
@@ -394,14 +394,6 @@ export const RepoPicker = memo(function RepoPicker({
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
-    search: {
-      ...groknight.type.machine,
-      minHeight: 42,
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      color: groknight.textPrimary,
-      paddingHorizontal: 0,
-    },
     container: { flexShrink: 1, minHeight: 0 },
     containerFill: { flex: 1 },
     noRepositoryRow: {

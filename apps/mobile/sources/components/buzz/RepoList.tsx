@@ -1,7 +1,7 @@
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useMemo } from 'react';
-import { SectionList, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SectionList, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import {
@@ -58,7 +58,7 @@ export function RepoList({
         onChangeText={setQuery}
         placeholder="Search repos"
         placeholderTextColor={theme.buzz.textMuted}
-        style={styles.search}
+        variant="search"
         testID={`${testIDPrefix}-search`}
         value={query}
       />
@@ -106,17 +106,6 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flexShrink: 1, minHeight: 0 },
-    search: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textPrimary,
-      paddingHorizontal: 0,
-      paddingTop: 0,
-      paddingBottom: hull.space.sm,
-      marginBottom: hull.space.sm,
-      borderBottomWidth: 1,
-      borderBottomColor: hull.borderStrong,
-    },
     row: {
       minHeight: ROW_HEIGHT,
       flexDirection: 'row',

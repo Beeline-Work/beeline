@@ -41,7 +41,7 @@ function SearchContent({ scope, view, initialQuery = '', onNavigate }: {
       domain: company.domain, description: company.purpose, company, mark: company.logo }));
   return <View style={styles.content}>
     <HullDialogInput accessibilityLabel="Search connections" testID="connect-app-input" autoCapitalize="none" autoCorrect={false}
-      placeholder="Search apps, keys, and websites" value={query} onChangeText={setQuery} variant="boxed" />
+      placeholder="Search apps, keys, and websites" value={query} onChangeText={setQuery} variant="search" />
     <RoomListSectionHeader title={input ? 'Search results' : 'Suggested'} inset="content" spacing="flush" />
     {results.some(item => item.company?.appKey === 'instagram') ? <Text style={styles.note}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
     {results.map(item => <SettingsRow appBoard key={item.companyId ?? item.company?.providerId ?? item.appKey}

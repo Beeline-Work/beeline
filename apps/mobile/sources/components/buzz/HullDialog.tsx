@@ -15,6 +15,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { typeRoles } from '@/buzz/groknight';
 import { clearModalNavigationBarScrim } from '@/buzz/android-modal-navigation-bar';
+import { HULL_SHEET_INSET, HULL_SHEET_ROW_HEIGHT } from './hull-sheet-layout';
 import { Button, type ButtonProps } from './Button';
 import { HullSurface } from './MonoHull';
 
@@ -413,9 +414,9 @@ export const HullDialogInput = React.forwardRef<
   TextInput,
   TextInputProps & {
     ruleStyle?: StyleProp<ViewStyle>;
-    // `boxed` is the bordered search field: regular-weight placeholder,
-    // no dialog underline, house radius.
-    variant?: 'dialog' | 'boxed';
+    // Search cells share the page or sheet row geometry; dialog fields keep
+    // their original underline.
+    variant?: 'dialog' | 'boxed' | 'search' | 'sheetSearch';
     // Read-only tap target, e.g. Connectors search that opens the search sheet.
     onPress?: () => void;
   }
@@ -448,9 +449,12 @@ export const HullDialogInput = React.forwardRef<
     if (key in resolvedStyle) (outerStyle as Record<string, unknown>)[key] = resolvedStyle[key];
     delete innerStyle[key];
   }
+  const searchCell = variant === 'search' || variant === 'sheetSearch';
   const boxStyle = [
     styles.inputRule,
     variant === 'boxed' && styles.inputRuleBoxed,
+    searchCell && styles.searchCell,
+    variant === 'sheetSearch' && styles.sheetSearchCell,
     outerStyle,
     ruleStyle,
     focused && (variant === 'boxed' ? styles.inputFocusedBoxed : styles.inputFocused),
@@ -459,6 +463,8 @@ export const HullDialogInput = React.forwardRef<
     innerStyle,
     styles.input,
     variant === 'boxed' && styles.inputBoxed,
+    searchCell && styles.searchCellInput,
+    variant === 'sheetSearch' && styles.sheetSearchCellInput,
     props.multiline && styles.multilineInput,
   ];
   if (onPress) {
@@ -602,6 +608,22 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: hull.space.sm,
       minHeight: 44,
       justifyContent: 'center',
+    },
+    searchCell: {
+      marginTop: 0,
+      minHeight: hull.layout.row,
+      justifyContent: 'center',
+    },
+    sheetSearchCell: { minHeight: HULL_SHEET_ROW_HEIGHT },
+    searchCellInput: {
+      minHeight: 0,
+      paddingHorizontal: hull.space.sm,
+      paddingVertical: hull.space.sm,
+      borderRadius: 0,
+      textAlignVertical: 'center',
+    },
+    sheetSearchCellInput: {
+      paddingHorizontal: HULL_SHEET_INSET,
     },
     inputFocused: { borderBottomColor: hull.accent },
     inputFocusedBoxed: { borderColor: hull.accent },

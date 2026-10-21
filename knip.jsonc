@@ -38,6 +38,7 @@
         "scripts/serve-voice-ui-proof.ts",
         "scripts/serve-voice-room-review.ts",
         "scripts/helper-proof/prove-linux.mjs",
+        "scripts/prove-helper-migration-update.mjs",
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
       ],

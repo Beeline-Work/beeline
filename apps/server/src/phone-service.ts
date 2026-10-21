@@ -8900,8 +8900,30 @@ export class PhoneService {
       ? { ...message, voiceCall: { ...message.voiceCall, endReason: 'silence' as const } } : message);
   }
 
+  private async decorateApprovalSources(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    const ids = [...new Set(messages.flatMap(message => {
+      const card = message.grantRequest ?? message.squireApproval;
+      return card?.sourceMessageId ? [card.sourceMessageId] : [];
+    }))];
+    if (!ids.length) return messages;
+    const rows = await this.database.query<{ id: string; room_id: string }>(
+      `SELECT id,room_id FROM messages WHERE id=ANY($1::text[]) AND deleted_at IS NULL`, [ids],
+    );
+    const rooms = new Map(rows.rows.map(row => [row.id, row.room_id]));
+    return messages.map(message => {
+      const card = message.grantRequest ?? message.squireApproval;
+      const sourceRoomId = card?.sourceMessageId ? rooms.get(card.sourceMessageId) : undefined;
+      if (!sourceRoomId || sourceRoomId === card?.sourceRoomId) return message;
+      // Navigation still opens the destination through its normal membership check.
+      return message.grantRequest
+        ? { ...message, grantRequest: { ...message.grantRequest, sourceRoomId } }
+        : { ...message, squireApproval: { ...message.squireApproval!, sourceRoomId } };
+    });
+  }
+
   /** Resolve navigation labels from current corner state without rewriting historical System cards. */
   private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    messages = await this.decorateApprovalSources(messages);
     messages = await this.decorateVoiceCallReasons(roomId, messages);
     const cornerIds = [...new Set(messages.flatMap((message) => {
       const card = message.daemonFact;

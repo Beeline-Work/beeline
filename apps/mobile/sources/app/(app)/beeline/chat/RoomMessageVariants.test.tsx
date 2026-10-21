@@ -1,3 +1,4 @@
+import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -2701,6 +2702,37 @@ describe('Room message variant components', () => {
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
     act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-once' }).props.onPress());
     expect(onDecision).toHaveBeenCalledWith('squire-grant', 'once');
+  });
+
+  it('grant-src-1: View request loads the source row instead of missing', async () => {
+    const target = { id: 'source-message', text: 'Please run the checks', createdAt: 1,
+      presentation: 'message' as const, author: { pubkey: 'owner', kind: 'human' as const, name: 'Owner' } };
+    const historyAround = vi.fn(async (roomId: string, id: string) => {
+      expect(roomId).toBe('source-room');
+      expect(id).toBe(target.id);
+      return { roomId, messages: [target] };
+    });
+    let store!: ReturnType<typeof useRoomMessageStore>;
+    const card = message({ grantRequest: {
+      agent: { pubkey: 'agent', kind: 'agent', name: 'Bee' },
+      owner: { pubkey: 'owner', kind: 'human', name: 'Owner' },
+      requester: { pubkey: 'owner', kind: 'human', name: 'Owner' },
+      sourceRoomId: 'source-room', sourceMessageId: target.id,
+      grants: [{ grantId: 'jump-grant', kind: 'command', target: 'npm test', reason: 'Run checks',
+        status: 'pending', requestedBy: { pubkey: 'owner', kind: 'human', name: 'Owner' }, roomId: 'other-room', createdAt: 1, auto: false }],
+    } });
+    function Probe() {
+      store = useRoomMessageStore({ roomId: 'source-room', tailMessages: [],
+        roomClient: { historyAround, history: vi.fn() }, enabled: true, initialVisibleCount: 30 });
+      return <GrantRequestCard message={card} viewerIsAgent={false} viewerPubkey="owner"
+        viewerRole="member" actionId={null} onDecision={vi.fn()}
+        onOpenSource={(roomId, id) => { expect(roomId).toBe('source-room'); void store.jumpTo(id); }} />;
+    }
+    const renderer = render(<Probe />);
+    await act(async () => renderer.root.findByProps({ testID: 'grant-jump-grant-source' }).props.onPress());
+    expect(historyAround).toHaveBeenCalledWith('source-room', target.id);
+    expect(store.jump).toEqual({ messageId: target.id, status: 'ready' });
+    expect(store.rows.some(row => row.id === target.id)).toBe(true);
   });
 
   it('opens a relayed Squire approval in Squire and preserves the source request link', () => {

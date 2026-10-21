@@ -4682,6 +4682,18 @@ export class DaemonService {
       });
     return { id: activity.id, createdAt: seconds(activity.created_at) };
   }
+  // Root provenance can cross Rooms or name a private command instead of a message.
+  private async approvalSource(database = this.database): Promise<{ sourceRoomId?: string; sourceMessageId?: string }> {
+    const command = this.authorizedCommand;
+    if (!command) return {};
+    const source = (await database.query<{ id: string; room_id: string }>(
+      `SELECT id,room_id FROM messages WHERE id=ANY($1::text[]) AND deleted_at IS NULL
+       ORDER BY CASE WHEN id=$2 THEN 0 ELSE 1 END LIMIT 1`,
+      [[command.root_source_message_id, command.source_message_id].filter(Boolean), command.root_source_message_id],
+    )).rows[0];
+    return source ? { sourceRoomId: source.room_id, sourceMessageId: source.id } : {};
+  }
+
   /**
    * Squire owns the decision and its passkey page. Beeline only places that
    * page in the resource owner's @System DM so Telegram is not a
@@ -4705,7 +4717,7 @@ export class DaemonService {
     const roomId = await ensureSystemDirectMessageRoom(this.database, context.workspace_id, ownerId);
     const title = `Link purchase at ${input.merchant}`;
     const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
-    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const source = await this.approvalSource();
     const line = await systemLine(this.database, {
       id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
       roomId, authorId: SYSTEM_IDENTITY_ID,
@@ -4717,9 +4729,9 @@ export class DaemonService {
           ...(context.agent_handle ? { handle: context.agent_handle } : {}),
           ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },
         tool: 'Link', title, detail, approvalUrl, approvalId: requestId,
-        linkKind: 'approval', sourceRoomId: input.roomId,
+        linkKind: 'approval',
         expiresAt: Date.now() + 24 * 60 * 60_000,
-        ...(sourceMessageId ? { sourceMessageId } : {}),
+        ...source,
       },
     });
     if (line.inserted) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
@@ -4786,7 +4798,7 @@ export class DaemonService {
     const messageId = createHash('sha256')
       .update(`squire-approval:v1:${context.workspace_id}:${agentId}:${dedupeKey}`)
       .digest('hex');
-    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const source = await this.approvalSource(database);
     const agent = {
       pubkey: agentId,
       kind: 'agent' as const,
@@ -4816,9 +4828,8 @@ export class DaemonService {
         ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),
         expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60_000,
         linkKind: input.linkKind,
-        sourceRoomId: input.roomId,
         ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),
-        ...(sourceMessageId ? { sourceMessageId } : {}),
+        ...source,
       },
     });
     // A Registry OAuth turn whose Squire call produced this approval link has
@@ -6133,7 +6144,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    const sourceMessageId = this.authorizedCommand?.root_source_message_id;
+    const source = await this.approvalSource();
     const requesterRow = await this.grantRequester();
     const appOwner = target.startsWith('app:') && input.appId
       ? (await this.database.query<{ id: string; name: string; handle: string | null;
@@ -6260,8 +6271,7 @@ export class DaemonService {
           owner,
           requester,
           grants,
-          sourceRoomId: input.roomId,
-          ...(sourceMessageId ? { sourceMessageId } : {}),
+          ...source,
         });
         return { messageId: open.id, cardRoomId: dmRoomId };
       }
@@ -6278,8 +6288,7 @@ export class DaemonService {
           owner,
           requester,
           grants: [grantView],
-          sourceRoomId: input.roomId,
-          ...(sourceMessageId ? { sourceMessageId } : {}),
+          ...source,
         },
       });
       // A manager sees the Room card only if they are a member of this Room.
@@ -6306,8 +6315,7 @@ export class DaemonService {
             ...grantCardPhrase(requester, agent, [grantView]),
             presentation: 'card',
             cardType: 'grant-request',
-            card: { agent, owner, requester, grants: [grantView], sourceRoomId: input.roomId,
-              ...(sourceMessageId ? { sourceMessageId } : {}) },
+            card: { agent, owner, requester, grants: [grantView], ...source },
           });
         }
       }

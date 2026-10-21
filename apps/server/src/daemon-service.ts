@@ -1,3 +1,4 @@
+import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
@@ -565,7 +566,15 @@ export class DaemonService {
       // reviewer takes the transactional path below, where the verdict and the
       // handoff commit together or not at all.
       !cornerReviewer &&
-      !privateCommand
+      !privateCommand &&
+      // A same-turn post needs the transactional path: insert the ordinary
+      // reply, then demote repeated prose before any reader can observe it.
+      !(await this.database.query(
+        `SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2 AND request_id=$3
+           AND presentation='message' AND deleted_at IS NULL
+           AND legacy_event->>'turnGenerationId'=$4 LIMIT 1`,
+        [scopedRoom, authenticatedAgentId, candidate.requestId, candidate.generationId],
+      )).rowCount
     ) {
       const output = await this.postRoomMessage(
         input as Input<'postRoomMessage'>,
@@ -3910,7 +3919,27 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
-    const steps = replySteps(input.steps);
+    let steps = replySteps(input.steps);
+    // Explicit same-address posts can already have
+    // committed this answer. Keep the terminal row for receipts, replay and
+    // tool activity, but remove repeated prose from the conversation surface.
+    const earlier = input.requestId && input.presentation !== 'card'
+      ? (await this.database.query<{ text: string }>(
+          `SELECT text FROM messages
+           WHERE room_id=$1 AND author_id=$2 AND request_id=$3
+             AND presentation='message' AND deleted_at IS NULL
+             AND legacy_event->>'turnGenerationId'=$4
+           ORDER BY created_at DESC,id DESC LIMIT 64`,
+          [input.roomId, agentId, input.requestId, input.generationId],
+        )).rows
+      : [];
+    const matches = earlier.map(row => turnMessageRepetition(input.text, row.text));
+    const same = matches.includes('same');
+    const similar = matches.includes('similar') && (input.steps?.length ?? 0) < MAX_REPLY_STEPS;
+    const repeated = same || similar;
+    if (!same && similar) steps = replySteps([
+      ...(input.steps ?? []), { kind: 'note', title: 'Turn summary', text: input.text },
+    ]);
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -4254,6 +4283,17 @@ export class DaemonService {
       if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);
+    }
+    if (repeated && this.commandTransaction && saved.presentation === 'message' && !saved.attachments.length) {
+      // This is still inside the authorized command transaction. System/card
+      // producers keep their existing insert path and are never demoted here.
+      const demoted = (await this.database.query<{ presentation: 'activity'; version: number }>(
+        `UPDATE messages SET presentation='activity'
+         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND presentation='message'
+         RETURNING presentation,version`,
+        [saved.id, input.roomId, agentId],
+      )).rows[0];
+      if (demoted) saved = { ...saved, ...demoted };
     }
     const emittedAt = Date.now();
     this.live.publish({
@@ -8176,11 +8216,13 @@ export class DaemonService {
       command.room_id === input.cornerId ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model)
-         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3)
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event)
+         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
+           CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
+           jsonb_build_object('turnGenerationId',$7::text)
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
          RETURNING id,created_at`,
-        [id(), input.cornerId, agentId, text],
+        [id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId],
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);

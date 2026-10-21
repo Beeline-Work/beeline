@@ -1,3 +1,5 @@
+import { HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -14,7 +16,6 @@ const MODES: { mode: RepoMode; label: string }[] = [
   { mode: 'create', label: 'Create' },
 ];
 
-const OWNER_ROW_HEIGHT = 44;
 const OWNER_MENU_MAX_ROWS = 4;
 
 function repoFullName(candidate: RepoCandidate): string | null {
@@ -261,47 +262,32 @@ export function RepositoryChoice({
       <ScrollView
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
-        style={{ maxHeight: OWNER_ROW_HEIGHT * OWNER_MENU_MAX_ROWS }}
+        style={{ maxHeight: HULL_SHEET_ROW_HEIGHT * OWNER_MENU_MAX_ROWS }}
       >
         {activeInstallations.map((installation) => (
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityState={{
-              selected: installation.installationId === selectedInstallation?.installationId,
-            }}
+          <HullActionSheetRow
             key={installation.installationId}
+            label={installation.accountLogin}
+            selected={installation.installationId === selectedInstallation?.installationId}
+            disabled={busy}
             onPress={() => {
               onSelectInstallation(installation.installationId);
               setOwnerMenuOpen(false);
             }}
-            style={[
-              styles.ownerMenuRow,
-              installation.installationId === selectedInstallation?.installationId &&
-                styles.ownerMenuSelected,
-            ]}
             testID={`${p}-owner-${installation.installationId}`}
-          >
-            <Text numberOfLines={1} style={styles.rowLabel}>
-              {installation.accountLogin}
-            </Text>
-            {installation.installationId === selectedInstallation?.installationId && (
-              <Text style={styles.selectedMark}>✓</Text>
-            )}
-          </TouchableOpacity>
+          />
         ))}
       </ScrollView>
       {onConnect && (
-        <TouchableOpacity
-          accessibilityRole="button"
+        <HullActionSheetRow
+          label="Connect another org"
+          disabled={busy}
           onPress={() => {
             setOwnerMenuOpen(false);
             onConnect();
           }}
-          style={[styles.ownerMenuRow, styles.ownerMenuConnect]}
           testID={`${p}-owner-connect`}
-        >
-          <Text style={styles.connectText}>Connect another org</Text>
-        </TouchableOpacity>
+        />
       )}
     </View>
   );
@@ -388,9 +374,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       marginTop: hull.space.sm,
     },
-    rowLabel: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flex: 1 },
     chevron: { color: hull.textMuted },
-    selectedMark: { ...hull.type.body, color: hull.buttonPrimaryFill },
     // One quiet boxed row: the collapsed Repository choice, GitHub Connect, loading.
     boxRow: {
       minHeight: 46,
@@ -502,16 +486,6 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: hull.radius,
       backgroundColor: hull.bgRaised,
     },
-    ownerMenuRow: {
-      minHeight: OWNER_ROW_HEIGHT,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.sm,
-    },
-    ownerMenuSelected: { backgroundColor: hull.bgHighlight },
-    ownerMenuConnect: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hull.border },
-    connectText: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
     error: {
       ...Typography.default(),
       ...hull.type.meta,

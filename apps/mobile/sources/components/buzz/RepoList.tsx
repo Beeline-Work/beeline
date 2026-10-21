@@ -1,7 +1,9 @@
+import { HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useMemo } from 'react';
-import { SectionList, Text, TouchableOpacity, View } from 'react-native';
+import { SectionList, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import {
@@ -12,9 +14,8 @@ import {
 } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
 
-const ROW_HEIGHT = 40;
 // Six rows, then the list scrolls.
-const LIST_MAX_HEIGHT = ROW_HEIGHT * 6;
+const LIST_MAX_HEIGHT = HULL_SHEET_ROW_HEIGHT * 6;
 
 type Props = {
   candidates: RepoCandidate[];
@@ -58,7 +59,7 @@ export function RepoList({
         onChangeText={setQuery}
         placeholder="Search repos"
         placeholderTextColor={theme.buzz.textMuted}
-        variant="search"
+        variant="sheetSearch"
         testID={`${testIDPrefix}-search`}
         value={query}
       />
@@ -71,19 +72,13 @@ export function RepoList({
         }
         nestedScrollEnabled
         renderItem={({ item, section }) => (
-          <TouchableOpacity
+          <HullActionSheetRow
             accessibilityLabel={item.name}
-            accessibilityRole="button"
-            accessibilityState={{ selected: item.key === currentKey }}
+            label={repoShortName(item, section.owner)}
+            selected={item.key === currentKey}
             onPress={() => onSelect(item)}
-            style={styles.row}
             testID={`${testIDPrefix}-candidate-${item.key}`}
-          >
-            <Text numberOfLines={1} style={styles.name}>
-              {repoShortName(item, section.owner)}
-            </Text>
-            {item.key === currentKey && <Text style={styles.check}>✓</Text>}
-          </TouchableOpacity>
+          />
         )}
         renderSectionHeader={({ section }) =>
           section.owner ? (
@@ -106,15 +101,6 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flexShrink: 1, minHeight: 0 },
-    row: {
-      minHeight: ROW_HEIGHT,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: hull.space.sm,
-    },
-    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary, flex: 1 },
-    check: { ...hull.type.body, color: hull.buttonPrimaryFill },
     empty: {
       ...Typography.default(),
       ...hull.type.meta,

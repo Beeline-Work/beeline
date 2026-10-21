@@ -1,10 +1,10 @@
+import { HullActionSheetRow } from './HullActionSheet';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
-import { Button } from './Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { memo, useMemo, useState } from 'react';
-import { SectionList, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SectionList, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { GitHubRepositoryLinkagePlan, RepoCandidate } from '@/buzz/room-repo-picker';
@@ -61,9 +61,9 @@ export type RepoPickerProps = {
  * The candidate list is height-bounded and internally scrollable so an
  * account with 100+ repositories never renders past the fold: every host
  * (room-create panel, corner-open banner, Room-actions sheet) constrains it
- * to about six 42px rows.
+ * to about six sheet rows.
  */
-export const REPO_CANDIDATE_ROW_MIN_HEIGHT = 42;
+export const REPO_CANDIDATE_ROW_MIN_HEIGHT = 52;
 export const REPO_CANDIDATE_VISIBLE_ROWS = 6;
 export const REPO_CANDIDATE_LIST_MAX_HEIGHT =
   REPO_CANDIDATE_ROW_MIN_HEIGHT * REPO_CANDIDATE_VISIBLE_ROWS;
@@ -149,20 +149,15 @@ export const RepoPicker = memo(function RepoPicker({
   );
 
   const candidateRow = (candidate: RepoCandidate, owner: string | null) => (
-    <TouchableOpacity
+    <HullActionSheetRow
       accessibilityLabel={candidate.name}
-      accessibilityRole="button"
       disabled={busy}
       key={candidate.key}
+      label={repoShortName(candidate, owner)}
+      selected={candidate.key === currentKey}
       onPress={() => onSelect(candidate)}
-      style={[styles.candidateRow, { minHeight: REPO_CANDIDATE_ROW_MIN_HEIGHT }]}
       testID={`${testIDPrefix}-candidate-${candidate.key}`}
-    >
-      <Text numberOfLines={1} style={styles.candidateName}>
-        {repoShortName(candidate, owner)}
-      </Text>
-      {candidate.key === currentKey && <Text style={styles.candidateCheck}>✓</Text>}
-    </TouchableOpacity>
+    />
   );
 
   return (
@@ -181,22 +176,18 @@ export const RepoPicker = memo(function RepoPicker({
         }}
         placeholder="Search or paste owner/repo"
         placeholderTextColor={groknight.dim}
-        variant="search"
+        variant="sheetSearch"
         value={query}
       />
       {onSelectNoRepository && (
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={onSelectNoRepository}
-          style={[
-            styles.noRepositoryRow,
-            { marginHorizontal: -noRepositoryInset, paddingHorizontal: noRepositoryInset },
-          ]}
-          testID={`${testIDPrefix}-no-repository`}
-        >
-          <Text style={styles.noRepositoryLabel}>No repository</Text>
-          {!currentKey && <Text style={styles.candidateCheck}>✓</Text>}
-        </TouchableOpacity>
+        <View style={{ marginHorizontal: -noRepositoryInset }}>
+          <HullActionSheetRow
+            label="No repository"
+            selected={!currentKey}
+            onPress={onSelectNoRepository}
+            testID={`${testIDPrefix}-no-repository`}
+          />
+        </View>
       )}
       {ownerGrant && <OwnerGrantNeededCard {...ownerGrant} />}
       <SectionList
@@ -244,30 +235,23 @@ export const RepoPicker = memo(function RepoPicker({
         testID={`${testIDPrefix}-list`}
       />
       {pastedFullName && !exactCandidate && (
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={() => {
-            const plan = githubRepositoryLinkagePlan(pastedFullName, candidates, installations, {
-              uncoveredOwners,
-            });
-            if (plan.kind === 'available') onSelect(plan.candidate);
-            else setPendingLinkage(plan);
-          }}
-          style={styles.connectCard}
-          testID={`${testIDPrefix}-connect-card`}
-        >
-          <Text style={styles.connectTitle}>{pastedFullName}</Text>
-          {missing && (
-            <Text style={styles.connectReason} testID={`${testIDPrefix}-missing-reason`}>
-              {missing.message}
-            </Text>
-          )}
-          <Text style={styles.connectAction}>
-            {ownerInstallation?.status === 'active'
+        <View>
+          {missing && <Text style={styles.connectReason} testID={`${testIDPrefix}-missing-reason`}>{missing.message}</Text>}
+          <HullActionSheetRow
+            label={pastedFullName}
+            description={ownerInstallation?.status === 'active'
               ? 'Add this repo to the Beeline installation →'
               : `Connect ${pastedOwner} →`}
-          </Text>
-        </TouchableOpacity>
+            onPress={() => {
+              const plan = githubRepositoryLinkagePlan(pastedFullName, candidates, installations, {
+                uncoveredOwners,
+              });
+              if (plan.kind === 'available') onSelect(plan.candidate);
+              else setPendingLinkage(plan);
+            }}
+            testID={`${testIDPrefix}-connect-card`}
+          />
+        </View>
       )}
       {pendingLinkage && (
         <View style={styles.instructionCard} testID={`${testIDPrefix}-link-instruction`}>
@@ -286,8 +270,8 @@ export const RepoPicker = memo(function RepoPicker({
       )}
       {onCreateRepository && activeInstallations.length > 0 && (
         <View>
-          <TouchableOpacity
-            accessibilityRole="button"
+          <HullActionSheetRow
+            label="＋ Create repository"
             disabled={busy}
             onPress={() => {
               if (onStartCreateRepository) {
@@ -299,25 +283,19 @@ export const RepoPicker = memo(function RepoPicker({
                 (current) => current ?? activeInstallations[0]!.installationId,
               );
             }}
-            style={styles.actionRow}
             testID={`${testIDPrefix}-create-repo`}
-          >
-            <Text style={styles.actionText}>＋ Create repository</Text>
-          </TouchableOpacity>
+          />
           {creating && !onStartCreateRepository && (
             <View style={styles.createForm}>
-              <View style={styles.accountChoices}>
+              <View>
                 {activeInstallations.map((installation) => (
-                  <TouchableOpacity
+                  <HullActionSheetRow
                     key={installation.installationId}
+                    label={installation.accountLogin}
+                    selected={createInstallationId === installation.installationId}
+                    disabled={busy}
                     onPress={() => setCreateInstallationId(installation.installationId)}
-                    style={styles.accountChoice}
-                  >
-                    <Text style={styles.accountChoiceText}>
-                      {createInstallationId === installation.installationId ? '●' : '○'}{' '}
-                      {installation.accountLogin}
-                    </Text>
-                  </TouchableOpacity>
+                  />
                 ))}
               </View>
               <View style={styles.createRow}>
@@ -330,11 +308,11 @@ export const RepoPicker = memo(function RepoPicker({
                   style={styles.createInput}
                   value={newName}
                 />
-                <TouchableOpacity
-                  disabled={
-                    busy || !createInstallationId || !/^[A-Za-z0-9._-]{1,100}$/.test(newName)
-                  }
-                  onPress={() => {
+                <HullDialogActions actions={[{
+                  label: 'CREATE',
+                  variant: 'primary',
+                  disabled: busy || !createInstallationId || !/^[A-Za-z0-9._-]{1,100}$/.test(newName),
+                  onPress: () => {
                     if (!createInstallationId) return;
                     const clearRepository = repositoryDraft.capture();
                     void Promise.resolve(onCreateRepository(createInstallationId, newName))
@@ -343,39 +321,30 @@ export const RepoPicker = memo(function RepoPicker({
                         setCreating(false);
                       })
                       .catch(() => undefined);
-                  }}
-                  style={styles.createButton}
-                >
-                  <Text style={styles.createButtonText}>CREATE</Text>
-                </TouchableOpacity>
+                  },
+                }]} />
               </View>
             </View>
           )}
         </View>
       )}
       {onAddAccount && (
-        <TouchableOpacity
-          accessibilityRole="button"
+        <HullActionSheetRow
+          label="＋ Add repositories, accounts, or organizations"
           disabled={busy}
           onPress={() => setPendingLinkage({ kind: 'install', owner: '', fullName: '' })}
-          style={styles.actionRow}
           testID={`${testIDPrefix}-add-account`}
-        >
-          <Text style={styles.actionText}>＋ Add repositories, accounts, or organizations</Text>
-        </TouchableOpacity>
+        />
       )}
       {onUnlink && unlinkRepositoryName ? (
-        <TouchableOpacity
+        <HullActionSheetRow
+          label="Unlink repo"
           accessibilityLabel={`Unlink repo, currently ${unlinkRepositoryName}`}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: busy }}
           disabled={busy}
+          destructive
           onPress={onUnlink}
-          style={styles.actionRow}
           testID={`${testIDPrefix}-unlink`}
-        >
-          <Text style={[styles.actionText, styles.destructiveActionText]}>Unlink repo</Text>
-        </TouchableOpacity>
+        />
       ) : null}
       {notice && !error && (
         <Text accessibilityLiveRegion="polite" style={styles.notice}>
@@ -396,22 +365,9 @@ const styles = StyleSheet.create((theme) => {
   return {
     container: { flexShrink: 1, minHeight: 0 },
     containerFill: { flex: 1 },
-    noRepositoryRow: {
-      minHeight: 54,
-      flexDirection: 'row',
-      alignItems: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: groknight.border,
-    },
-    noRepositoryLabel: {
-      ...Typography.default(),
-      ...groknight.type.body,
-      color: groknight.textPrimary,
-      flex: 1,
-    },
     candidateScroll: {
       // Height-bounded so a 100+ repo account scrolls instead of rendering past
-      // the fold; six 42px rows, see REPO_CANDIDATE_LIST_MAX_HEIGHT.
+      // the fold; six sheet rows, see REPO_CANDIDATE_LIST_MAX_HEIGHT.
       flexGrow: 0,
     },
     placeholderRow: {
@@ -435,44 +391,9 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: groknight.space.xs,
     },
     groupMeta: { ...groknight.type.meta, color: groknight.textMuted },
-    candidateRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 8,
-      paddingVertical: groknight.space.sm,
-    },
-    candidateName: {
-      ...groknight.type.machine,
-      flex: 1,
-      minWidth: 0,
-      color: groknight.textPrimary,
-    },
-    candidateCheck: { ...groknight.type.body, color: groknight.accent },
     empty: { ...groknight.type.machine, color: groknight.textMuted, paddingVertical: groknight.space.sm },
-    actionRow: {
-      minHeight: 44,
-      justifyContent: 'center',
-      borderTopWidth: 1,
-      borderTopColor: groknight.border,
-    },
-    actionText: { ...groknight.type.machine, color: groknight.textPrimary },
-    destructiveActionText: { color: groknight.dialogDanger },
-    connectCard: {
-      borderWidth: 1,
-      borderColor: groknight.border,
-      padding: groknight.space.md,
-      gap: groknight.space.xs,
-      marginVertical: 8,
-    },
-    connectTitle: { ...groknight.type.machine, color: groknight.textPrimary },
     // The secondary-caption role, not another raw size (DESIGN.md → Type).
     connectReason: { ...groknight.type.meta, color: groknight.textMuted },
-    connectAction: {
-      ...groknight.type.machine,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.accent,
-    },
     instructionCard: {
       borderWidth: 1,
       borderColor: groknight.accent,
@@ -489,9 +410,6 @@ const styles = StyleSheet.create((theme) => {
       gap: groknight.space.sm,
     },
     createForm: { gap: 8, paddingBottom: groknight.space.md },
-    accountChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: groknight.space.sm },
-    accountChoice: { paddingVertical: 4 },
-    accountChoiceText: { ...groknight.type.machine, color: groknight.textMuted },
     createRow: { flexDirection: 'row', gap: 8 },
     createInput: {
       ...groknight.type.machine,
@@ -502,8 +420,6 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: 1,
       borderBottomColor: groknight.border,
     },
-    createButton: { minHeight: 40, justifyContent: 'center', paddingHorizontal: groknight.space.sm },
-    createButtonText: { ...groknight.type.sectionHead, fontFamily: groknight.monoRegular, color: groknight.textPrimary },
     error: {
       ...groknight.type.machine,
       color: groknight.danger,

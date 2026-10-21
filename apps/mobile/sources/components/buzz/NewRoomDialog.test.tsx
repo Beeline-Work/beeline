@@ -38,6 +38,7 @@ vi.mock('./HullActionSheet', async () => {
   const React = await import('react');
   return {
     HULL_SHEET_INSET: 22,
+    HullActionSheetRow: (props: any) => React.createElement('Row', props, React.createElement('Text', {}, props.label), props.selected ? React.createElement('Text', {}, 'SELECTED') : null),
     HullActionSheetModal: (props: any) =>
       React.createElement('HullActionSheetModal', props, props.children, props.footer),
   };
@@ -277,7 +278,7 @@ describe('New Room sheet', () => {
     expect(host('create-room-owner-menu')).toBeUndefined();
     press('create-room-repo-owner');
     expect(host('create-room-owner-menu')).toBeDefined();
-    expect(host('create-room-owner-78')?.props.accessibilityState.selected).toBe(true);
+    expect(host('create-room-owner-78')?.props.selected).toBe(true);
     expect(host('create-room-owner-connect')).toBeDefined();
     press('create-room-owner-79');
     expect(host('create-room-owner-menu')).toBeUndefined();

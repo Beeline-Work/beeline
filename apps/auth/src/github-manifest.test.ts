@@ -153,15 +153,15 @@ describe('GitHub App manifest flow', () => {
     });
     const lines = block.trim().split('\n');
     expect(lines.map((line) => line.split('=')[0])).toEqual([
-      'BEELINE_GITHUB_CLIENT_ID',
-      'BEELINE_GITHUB_CLIENT_SECRET',
-      'BEELINE_GITHUB_APP_ID',
-      'BEELINE_GITHUB_APP_SLUG',
-      'BEELINE_GITHUB_APP_PRIVATE_KEY',
-      'BEELINE_GITHUB_WEBHOOK_SECRET',
+      'GITHUB_CLIENT_ID',
+      'GITHUB_CLIENT_SECRET',
+      'GITHUB_APP_ID',
+      'GITHUB_APP_SLUG',
+      'GITHUB_APP_PRIVATE_KEY',
+      'GITHUB_WEBHOOK_SECRET',
     ]);
     // github.ts unescapes literal \n sequences; the block must carry exactly those.
-    expect(lines[4]).toBe(`BEELINE_GITHUB_APP_PRIVATE_KEY=${PEM.replaceAll('\n', '\\n')}`);
+    expect(lines[4]).toBe(`GITHUB_APP_PRIVATE_KEY=${PEM.replaceAll('\n', '\\n')}`);
   });
 });
 

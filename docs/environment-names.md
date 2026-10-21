@@ -8,7 +8,7 @@ LLM file values still replace ambient values of the same spelling.
 
 | Area              | Names after `BEELINE_`                                                                                                         |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Auth              | `AUTH_TENANTS_JSON`, `AUTH_SETUP_TOKEN`, `AUTH_HOST`                                                                           |
+| Auth              | `AUTH_TENANTS_JSON`, `AUTH_SETUP_TOKEN`                                                                           |
 | Helper sandbox    | `BODY_SANDBOX`, `BODY_SANDBOX_MASK`                                                                                            |
 | Agent environment | `BODY_AGENT_ENV_PASSTHROUGH`, `BODY_AGENT_ENV_INHERIT`                                                                         |
 | Session capacity  | `BODY_MAX_SESSIONS`, `BODY_MAX_SESSIONS_FLOOR`, `BODY_MAX_SESSIONS_PER_ROOM`, `BODY_MAX_WARM_SESSIONS`, `BODY_SESSION_IDLE_MS` |

@@ -26,20 +26,43 @@ BEGIN
         AND EXISTS(SELECT 1 FROM service_review_rollout rollout WHERE rollout.id=1
           AND effective_at<=now())
     ), content AS (
-      SELECT m.id,m.room_id,m.text,m.activity FROM messages m
+      SELECT m.id,m.room_id,m.text,
+        coalesce(m.activity,'{}'::jsonb) || jsonb_build_object('createdAt',m.created_at,'rowKind','message') activity FROM messages m
       JOIN target_rooms r ON r.id=m.room_id WHERE m.deleted_at IS NULL
+        AND EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=review_workspace
+          AND v.agent_id=review_agent AND v.run_id=review_run
+          AND (v.read_from IS NULL OR (m.created_at>v.read_from AND m.created_at<=v.read_through)))
       UNION ALL
       SELECT concat('turn:',t.room_id,':',t.request_id,':',t.agent_id),t.room_id,
-        coalesce(t.failure_reason,''),jsonb_build_object('status',t.status,'startedAt',t.started_at,'agentId',t.agent_id)
+        coalesce(t.failure_reason,''),jsonb_build_object('status',t.status,'startedAt',t.started_at,'agentId',t.agent_id,'rowKind','turn')
       FROM agent_turns t JOIN target_rooms r ON r.id=t.room_id
+      WHERE EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=review_workspace
+        AND v.agent_id=review_agent AND v.run_id=review_run
+        AND (v.read_from IS NULL OR (t.started_at>v.read_from AND t.started_at<=v.read_through)))
     ) SELECT content.id,content.room_id,content.text,content.activity FROM content WHERE content.id>after_id ORDER BY content.id LIMIT 200;
 END $$;
 `;
 
 /** Reserve opted-in workspaces once the policy is effective. */
-export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string): Promise<string[]> {
+export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string, daily = false): Promise<string[]> {
   return database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
+    if (daily) {
+      const result = await db.query<{ workspace_id: string }>(`
+        INSERT INTO service_review_visits(workspace_id,agent_id,run_id,read_from,read_through)
+        SELECT w.id,$1,$2,
+          coalesce((SELECT max(v.read_through) FROM service_review_visits v
+            WHERE v.workspace_id=w.id AND v.completed_at IS NOT NULL),now()-interval '24 hours'),now()
+        FROM workspaces w WHERE w.allow_fix_sweep=true
+          AND EXISTS(SELECT 1 FROM service_review_rollout WHERE id=1 AND effective_at<=now())
+          AND EXISTS(SELECT 1 FROM messages m JOIN rooms r ON r.id=m.room_id
+            JOIN identities i ON i.id=m.author_id
+            WHERE r.workspace_id=w.id AND i.kind='human' AND m.presentation='message'
+              AND m.deleted_at IS NULL AND m.created_at>now()-interval '24 hours')
+          AND NOT EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=w.id AND v.run_id=$2)
+        RETURNING workspace_id`,[agentId,runId]);
+      return result.rows.map(row => row.workspace_id);
+    }
     const result = await db.query<{ workspace_id: string }>(`
       WITH rollout AS (
         SELECT 1 FROM service_review_rollout
@@ -65,4 +88,35 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
 export async function readServiceReviewPage(database: SqlDatabase, agentId: string, runId: string, workspaceId: string, after = '') {
   return database.query<{ id: string; room_id: string; text: string; activity: unknown }>(
     'SELECT * FROM service_review_page($1,$2,$3,$4)', [agentId,runId,workspaceId,after]);
+}
+
+/** Validate the claimed coverage against the same privacy-filtered pages the agent reads. */
+export async function completeServiceReview(database: SqlDatabase, agentId: string, runId: string, value: unknown): Promise<void> {
+  if (!Array.isArray(value)) throw new Error('workspace receipts must be an array');
+  const targets = await database.query<{workspace_id: string}>('SELECT * FROM service_review_targets($1,$2)',[agentId,runId]);
+  if (value.length !== targets.rows.length) throw new Error('a receipt is required for every active workspace');
+  for (const target of targets.rows) {
+    const receipts = value.filter(row => row?.workspace === target.workspace_id);
+    if (receipts.length !== 1) throw new Error('each workspace needs exactly one receipt');
+    const receipt = receipts[0];
+    let rowsRead = 0;
+    let after = '';
+    const times: string[] = [];
+    for (;;) {
+      const page = await readServiceReviewPage(database,agentId,runId,target.workspace_id,after);
+      if (!page.rows.length) break;
+      rowsRead += page.rows.length;
+      for (const row of page.rows) {
+        const activity = row.activity as { rowKind?: string; createdAt?: string };
+        if (activity?.rowKind === 'message' && activity.createdAt) times.push(new Date(activity.createdAt).toISOString());
+      }
+      after = page.rows.at(-1)!.id;
+    }
+    times.sort();
+    if (!rowsRead || receipt.rowsRead !== rowsRead || receipt.firstMessageTime !== (times[0] ?? null)
+      || receipt.lastMessageTime !== (times.at(-1) ?? null) || typeof receipt.findings !== 'string')
+      throw new Error('workspace receipt must match all rows and first/last message times');
+    await database.query(`UPDATE service_review_visits SET receipt=$4::jsonb,completed_at=now()
+      WHERE workspace_id=$1 AND agent_id=$2 AND run_id=$3`,[target.workspace_id,agentId,runId,JSON.stringify(receipt)]);
+  }
 }

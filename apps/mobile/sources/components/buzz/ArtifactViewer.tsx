@@ -19,6 +19,7 @@ import * as Clipboard from 'expo-clipboard';
 import { copyPicture, sharePicture } from '@/buzz/picture-actions';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
+import { RunnableArtifact } from './RunnableArtifact';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
@@ -89,7 +90,7 @@ export function ArtifactViewerScreen({
     <View style={styles.screen} testID="artifact-viewer">
       <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
         <Text numberOfLines={1} style={styles.headerTitle}>
-          {title}
+          {format === 'game' ? `Game · ${title}` : title}
         </Text>
         {format === 'code' && document ? (
           <Pressable
@@ -205,6 +206,8 @@ export function ArtifactViewerScreen({
           </>
         ) : format === 'text' ? (
           <ArtifactText attachment={attachment!} crop={false} testID="artifact-viewer-text" />
+        ) : format === 'game' ? (
+          <RunnableArtifact attachment={attachment!} />
         ) : format === 'pdf' && Platform.OS !== 'ios' ? (
           <ArtifactPdfView attachment={attachment!} mode="viewer" testID="artifact-viewer-pdf" />
         ) : (

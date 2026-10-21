@@ -1,4 +1,5 @@
 import { VoiceBudgetExceeded } from './voice-budget.js';
+import { runnableOrigin, serveRunnableArtifact } from './runnable-artifact.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
 import { receiveSentryWake } from './sentry-wake.js';
@@ -372,6 +373,7 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
+  const gameOrigin = runnableOrigin();
   // LiveHub invokes every socket listener synchronously with the same event.
   // Gather those viewers before the microtask starts one authorized row read.
   // Weak keys release the batch when the notification leaves the bus.
@@ -569,6 +571,13 @@ export function createBeelineServer(options: ServerOptions): Server {
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
+    if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
+      void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
+        if (!response.headersSent) response.writeHead(503, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+        response.end('Game unavailable');
+      });
+      return;
+    }
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     if (method === 'GET' && /^\/v1\/phone\/rooms\/[^/]+$/.test(url.pathname))
@@ -668,7 +677,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   : 503);
       // GitHub's own outage or rate limit is a bad gateway, not this server
       // being unavailable; the message already names GitHub's status.
-      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429)) {
+      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
         status = 502;
       }
       // A failing Telegram delivery must not create another alert to itself.
@@ -705,6 +714,10 @@ export function createBeelineServer(options: ServerOptions): Server {
     });
   }) as Server['close'];
   server.on('upgrade', (request, socket, head) => {
+    if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
+      socket.destroy();
+      return;
+    }
     void (async () => {
       const url = exactPath(request.url);
       const computer = /^\/s\/([A-Za-z0-9_-]{43})\/(?:ws|stream)$/.exec(url.pathname);
@@ -2203,6 +2216,15 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
     const last = url.pathname.slice('/v1/media/'.length);
+    const playMatch = last.match(/^([0-9a-f-]{36})\/play$/);
+    if (playMatch) {
+      if (!identityId) { json(response, 401, { error: 'identity_required' }); return; }
+      const origin = runnableOrigin();
+      if (!origin || !options.objectService) { json(response, 503, { error: 'game_host_unavailable' }); return; }
+      const link = await options.objectService.runnableLink(playMatch[1]!, origin);
+      json(response, link ? 200 : 404, link ?? { error: 'game_not_found' });
+      return;
+    }
     // `open in browser`: redeem the capability token minted by `/link` (a
     // browser has no bearer token for the canonical media route) into a
     // ten-minute signed storage GET. The token — an HMAC over the object id

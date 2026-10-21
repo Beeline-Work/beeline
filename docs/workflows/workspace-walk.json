@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "name": "workspace-walk",
+  "description": "Read every active opted-in workspace with receipts",
+  "summary": "At 6am, read new messages in every active eligible workspace and save counts and redacted findings.",
+  "roles": [
+    "triager"
+  ],
+  "start": "kickoff",
+  "deadlineSeconds": 14400,
+  "handoffs": {
+    "kickoff": {
+      "does": "Reserve every eligible workspace with human activity in the last 24 hours.",
+      "role": "triager",
+      "requires": [],
+      "on": {
+        "started": "browse",
+        "timeout": "failed"
+      },
+      "timeoutSeconds": 600
+    },
+    "browse": {
+      "does": "Read every reserved page and record a receipt for every workspace.",
+      "role": "triager",
+      "requires": [
+        "receipts",
+        "findings"
+      ],
+      "on": {
+        "reviewed": "done",
+        "timeout": "failed"
+      },
+      "timeoutSeconds": 10800
+    },
+    "done": {
+      "does": "The workspace walk has complete receipts.",
+      "kind": "terminal",
+      "status": "done"
+    },
+    "failed": {
+      "does": "The workspace walk is incomplete and cannot be used as a completed walk.",
+      "kind": "terminal",
+      "status": "failed"
+    }
+  }
+}

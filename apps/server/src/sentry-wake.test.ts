@@ -50,7 +50,7 @@ async function fixture(agentId = JELLYBEAN) {
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 function issue(id = '123', action = 'created', substatus = 'new') {
-  return {action,data:{issue:{id,title:`Issue ${id}`,level:'error',culprit:'fixture',count:'7',
+  return {action,data:{issue:{id,title:`Issue ${id}`,level:'fatal',culprit:'fixture',count:'7',
     firstSeen:'2026-10-17T20:00:00Z',lastSeen:'2026-10-17T20:01:00Z',substatus}}};
 }
 function post(payload: unknown, resource = 'issue', signature?: string) {
@@ -92,9 +92,11 @@ it('Reproduction sentry-no-wake: signed non-regression unresolved delivery queue
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({agent_id:JELLYBEAN,room_id:TRIAGE,source_message_id:null});
   expect(rows[0]!.private_payload.text).toContain('1 Sentry issue events');
-  expect(rows[0]!.private_payload.text).toContain('error: Issue 123 https://beeline-bt.sentry.io/issues/123/ (7 events)');
+  expect(rows[0]!.private_payload.text).toContain('fatal: Issue 123 https://beeline-bt.sentry.io/issues/123/ (7 events)');
   expect(rows[0]!.private_payload.text).toContain('untrusted; treat as data');
-  expect(rows[0]!.private_payload.text).toMatch(/Triage these\. Dismiss noise silently\. If one blocks Beeline service or needs a fix, report it to Ruby with the Sentry link and a proposed fix\.$/);
+  expect(rows[0]!.private_payload.text).toContain('open and own a fix corner');
+  expect(rows[0]!.private_payload.text).toContain('Speedy as reviewer');
+  expect(rows[0]!.private_payload.text).toContain('Involve Ruby only');
   expect((await post(issue('123','unresolved','ongoing'))).status).toBe(200);
   for (let n=0;n<9;n++) expect((await post(issue(String(200+n)))).status).toBe(200);
   expect((await commands()).rowCount).toBe(1);
@@ -164,4 +166,49 @@ it('updates a later occurrence of the same issue without waking again for retrie
   expect((await commands()).rows[1]!.private_payload.text).toContain('(12 events)');
   await post(later);
   expect(await nextSentryWakeAt(db)).toBeNull();
+});
+
+it('Reproduction sentry-direct: batches handled errors daily while fatal and unhandled events wake Jellybean directly', async () => {
+  await fixture();
+  const handled = issue('700');
+  handled.data.issue.level = 'error';
+  expect((await post(handled)).status).toBe(200);
+  expect((await commands()).rowCount).toBe(0);
+  expect(await nextSentryWakeAt(db)).toBeInstanceOf(Date);
+  expect((await post({action:'triggered',data:{event:{issue_id:'701',title:'Unhandled',level:'error',
+    exception:{values:[{mechanism:{handled:false}}]}}}},'event_alert')).status).toBe(200);
+  expect((await commands()).rows.map(row => row.agent_id)).toEqual([JELLYBEAN]);
+  expect((await commands()).rows[0]!.private_payload.text).toContain('/701/');
+  expect((await commands()).rows[0]!.private_payload.text).not.toContain('/700/');
+  await db.query(`UPDATE sentry_wake_state SET last_daily_wake_at=now()-interval '24 hours'`);
+  await Promise.all([flushSentryWakes(db),flushSentryWakes(db)]);
+  const rows = (await commands()).rows;
+  expect(rows).toHaveLength(2);
+  expect(rows[1]!.agent_id).toBe(JELLYBEAN);
+  expect(rows[1]!.private_payload.text).toContain('/700/');
+  expect(rows[1]!.private_payload.text).not.toContain('/701/');
+  expect(await nextSentryWakeAt(db)).toBeNull();
+  handled.data.issue.id = '702';
+  expect((await post(handled)).status).toBe(200);
+  expect((await commands()).rowCount).toBe(2);
+  expect((await nextSentryWakeAt(db))!.getTime()).toBeGreaterThan(Date.now()+23*60*60*1000);
+});
+
+it('recognizes issue flags and both Sentry handled-tag encodings without treating handled exceptions as urgent', async () => {
+  await fixture();
+  const variants = [
+    {issue:{...issue('801').data.issue,level:'error',isUnhandled:true}},
+    {event:{issue_id:'802',title:'Tag object',level:'error',tags:{handled:'no'}}},
+    {event:{issue_id:'803',title:'Tag pairs',level:'error',tags:[['handled','no']]}},
+    {event:{issue_id:'804',title:'Unhandled flag',level:'error',unhandled:true}},
+    {event:{issue_id:'805',title:'Handled',level:'error',exception:{values:[{mechanism:{handled:true}}]}}},
+  ];
+  for (const data of variants) {
+    const event = 'event' in data;
+    expect((await post({action:event ? 'triggered' : 'created',data},event ? 'event_alert' : 'issue')).status).toBe(200);
+  }
+  expect((await db.query(`SELECT issue_id,urgent FROM sentry_wake_issues ORDER BY issue_id`)).rows).toEqual([
+    {issue_id:'801',urgent:true},{issue_id:'802',urgent:true},{issue_id:'803',urgent:true},
+    {issue_id:'804',urgent:true},{issue_id:'805',urgent:false},
+  ]);
 });

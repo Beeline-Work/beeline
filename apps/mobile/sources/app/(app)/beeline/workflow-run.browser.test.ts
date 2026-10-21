@@ -211,7 +211,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
     expect(page).toMatchObject({
       overview: false,
       earlier: false,
-      summary: 'Report merged fixes, rank new feedback, ask a person, and open fix corners.',
+      summary: 'Rank human pain and repeated feedback with the morning walk, then check released fixes the next day.',
     });
     expect(page.text).not.toContain('#14');
     expect(page).toMatchObject({

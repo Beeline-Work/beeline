@@ -43,6 +43,9 @@ export function validateArtifact(mime: string, bytes: Buffer, title: string): vo
   if (bytes.length > ARTIFACT_MAXIMUM_BYTES) {
     throw new Error(`artifact exceeds the ${ARTIFACT_MAXIMUM_BYTES}-byte limit`);
   }
+  // Explicit opt-in only. The server's isolated game response owns execution
+  // policy; ordinary HTML and SVG keep their inert validation and previews.
+  if (mime === 'application/vnd.beeline.game+html') return;
   if (mime === 'text/html' || mime === 'image/svg+xml') {
     assertSelfContainedDocument(bytes, mime);
     return;

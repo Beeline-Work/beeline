@@ -6,6 +6,8 @@ import { migrate, migrateData } from './database.js';
 import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
 import {
   FEEDBACK_TRIAGE_CONTRACT,
+  WORKSPACE_WALK_CONTRACT,
+  backfillFeedbackSignalWalk,
   FEEDBACK_TRIAGE_SCHEDULE_PROMPT,
   FEEDBACK_TRIAGE_STEPS,
   backfillFeedbackTriageWorkflow,
@@ -13,7 +15,8 @@ import {
 import { getInstitutionalContext } from './institutional-memory-shadow.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
-import { handoff, startWorkflow } from './workflow-runs.js';
+import { readServiceReviewPage } from './service-review.js';
+import { handoff, startWorkflow, saveWorkflow } from './workflow-runs.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
 const OTHER_WORKSPACE = '10000000-0000-4000-8000-000000000302';
@@ -122,11 +125,63 @@ function cornerTurn(messageId: string): CommandRow {
 }
 
 describe('feedback-triage workflow', () => {
+  it('demonstrates an uncapped daily walk and rejects missing or empty receipts before completion', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await backfillFeedbackSignalWalk(database);
+    const cadenceRows = await database.query<{ workflow_slug: string; cadence: unknown }>(
+      `SELECT workflow_slug,cadence FROM agent_schedules WHERE room_id=$1`,[TRIAGE_CORNER]);
+    expect(cadenceRows.rows.some(row => row.workflow_slug === 'workspace-walk'
+      && JSON.stringify(row.cadence).includes('0 6 * * *'))).toBe(true);
+    for (let n=1;n<=7;n++) {
+      const workspace = `40000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+      const room = `50000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Synthetic workspace')`,[workspace]);
+      await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Synthetic room')`,[room,workspace]);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+        VALUES($1,$2,$3,'Synthetic request','message')`,[`walk-${n}`,room,CREATOR]);
+    }
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('walk-start',$1,$2,'Start walk')`,[TRIAGE_CORNER,CREATOR]);
+    const turn = cornerTurn('walk-start');
+    await expect(saveWorkflow(database,turn,{contract:WORKSPACE_WALK_CONTRACT})).resolves.toMatchObject({slug:'workspace-walk'});
+    await expect(saveWorkflow(database,turn,{contract:FEEDBACK_TRIAGE_CONTRACT})).resolves.toMatchObject({slug:'feedback-triage'});
+    const { runId } = await startWorkflow(database,turn,{name:'workspace-walk',roleBindings:{triager:TRIAGER}});
+    await handoff(database,turn,{runId,outcome:'started',contents:{}});
+    const targets = await database.query<{workspace_id:string}>('SELECT * FROM service_review_targets($1,$2)',[TRIAGER,runId]);
+    expect(targets.rows.length).toBeGreaterThanOrEqual(7);
+    await expect(handoff(database,turn,{runId,outcome:'reviewed',attempt:1,contents:{receipts:[],findings:[]}}))
+      .rejects.toThrow('receipt is required');
+    const receipts = [];
+    for (const target of targets.rows) {
+      let after = '';
+      let rowsRead = 0;
+      const times: string[] = [];
+      for (;;) {
+        const page = await readServiceReviewPage(database,TRIAGER,runId,target.workspace_id,after);
+        if (!page.rows.length) break;
+        rowsRead += page.rows.length;
+        for (const row of page.rows) {
+          const activity = row.activity as {rowKind:string;createdAt:string};
+          if (activity.rowKind === 'message') times.push(new Date(activity.createdAt).toISOString());
+        }
+        after = page.rows.at(-1)!.id;
+      }
+      times.sort();
+      receipts.push({workspace:target.workspace_id,rowsRead,firstMessageTime:times[0]??null,lastMessageTime:times.at(-1)??null,findings:'none'});
+    }
+    await expect(handoff(database,turn,{runId,outcome:'reviewed',attempt:1,
+      contents:{receipts:receipts.map(row=>({...row,rowsRead:0})),findings:[]}})).rejects.toThrow('receipt must match');
+    await expect(handoff(database,turn,{runId,outcome:'reviewed',attempt:1,contents:{receipts,findings:[]}}))
+      .resolves.toMatchObject({state:'done',status:'done'});
+    const completed = await database.query('SELECT * FROM service_review_visits WHERE run_id=$1 AND completed_at IS NOT NULL',[runId]);
+    expect(completed.rows).toHaveLength(targets.rows.length);
+    console.log(`Demonstrated daily-workspace-walk: ${targets.rows.length} active workspaces fully read; incomplete receipts refused`);
+  });
+
   it('does no seed or description writes on the second migration startup', async () => {
     // Model an upgrade: fixtures predate the newly introduced markers.
     await database.query(`DELETE FROM workflow_backfills`);
     await migrateData(database);
-    expect(await skills()).toHaveLength(2);
+    expect(await skills()).toHaveLength(4);
     const before = (await database.query(`SELECT * FROM workspace_skill_versions ORDER BY skill_id,version`)).rows;
     await database.query(`
       CREATE FUNCTION forbid_backfill_write() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -172,8 +227,9 @@ describe('feedback-triage workflow', () => {
     const after = await schedules();
     expect(after.find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     for (const row of after) {
-      const was = before.find((schedule) => schedule.id === row.id)!;
-      expect(row.cadence).toEqual({ ...DAILY, timeZone: 'America/New_York' });
+      const was = before.find((schedule) => schedule.id === row.id);
+      if (!was) continue;
+      expect(row.cadence).toEqual({ ...DAILY, expression:'0 10 * * *', timeZone: 'America/New_York' });
       expect(row.next_run_at.getTime()).toBeGreaterThan(Date.now());
     }
     const versions = (await database.query<{ version: number; markdown: string }>(
@@ -230,11 +286,13 @@ describe('feedback-triage workflow', () => {
     expect(JSON.parse(docs('feedback-triage.json'))).toEqual(FEEDBACK_TRIAGE_CONTRACT);
     expect(docs('feedback-triage-steps.md')).toBe(FEEDBACK_TRIAGE_STEPS);
     expect(readWorkflowContract(FEEDBACK_TRIAGE_CONTRACT)).toEqual(FEEDBACK_TRIAGE_CONTRACT);
+    expect(JSON.parse(docs('workspace-walk.json'))).toEqual(WORKSPACE_WALK_CONTRACT);
+    expect(validateSavedWorkflow(WORKSPACE_WALK_CONTRACT)).toBeNull();
     // The built-in contract meets the same save rules a person's workflow does.
     expect(validateSavedWorkflow(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
   });
 
-  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, at 2 PM America/New_York', async () => {
+  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, at 10 AM America/New_York', async () => {
     const before = await schedules();
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(6);
     expect(await skills()).toEqual([
@@ -244,14 +302,15 @@ describe('feedback-triage workflow', () => {
     expect(await skills(OTHER_WORKSPACE)).toHaveLength(2);
     const after = await schedules();
     for (const row of after) {
-      const was = before.find((schedule) => schedule.id === row.id)!;
+      const was = before.find((schedule) => schedule.id === row.id);
+      if (!was) continue;
       if (row.id === UNRELATED_SCHEDULE) {
         expect(row.cadence).toEqual(was.cadence);
         expect(row.next_run_at).toEqual(was.next_run_at);
       } else {
-        expect(row.cadence).toEqual({ ...DAILY, timeZone: 'America/New_York' });
+        expect(row.cadence).toEqual({ ...DAILY, expression:'0 10 * * *', timeZone: 'America/New_York' });
         const hour = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: 'America/New_York' }).format(row.next_run_at);
-        expect(hour).toBe('14');
+        expect(hour).toBe('10');
       }
     }
     expect(after.find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
@@ -261,13 +320,13 @@ describe('feedback-triage workflow', () => {
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(0);
   });
 
-  it('moves an already-New-York seeded schedule from 10 AM to 2 PM', async () => {
+  it('moves an already-New-York seeded schedule from 2 PM to 10 AM', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb WHERE id=$1`,
-      [TRIAGE_SCHEDULE,JSON.stringify({kind:'cron',expression:'0 10 * * *',timeZone:'America/New_York'})]);
+      [TRIAGE_SCHEDULE,JSON.stringify({kind:'cron',expression:'0 14 * * *',timeZone:'America/New_York'})]);
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(1);
     expect((await schedules()).find((row) => row.id===TRIAGE_SCHEDULE)!.cadence)
-      .toEqual({kind:'cron',expression:'0 14 * * *',timeZone:'America/New_York'});
+      .toEqual({kind:'cron',expression:'0 10 * * *',timeZone:'America/New_York'});
   });
 
   it('lets the scheduled agent find, read and start it right after install, with no setting', async () => {
@@ -318,14 +377,14 @@ describe('feedback-triage workflow', () => {
           unnotifiedPullRequests: [1968, 1970],
         },
       }),
-    ).resolves.toEqual({ runId, state: 'pull', attempt: 1 });
+    ).resolves.toEqual({ runId, state: 'verify', attempt: 1 });
     // The same turn moves the next step only by naming its attempt.
     await expect(
       handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] } }),
-    ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'pull', seq: 1 });
+    ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'verify', seq: 1 });
     await expect(
-      handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] }, attempt: 1 }),
-    ).resolves.toEqual({ runId, state: 'adapters', attempt: 2 });
+      handoff(database, turn, { runId, outcome: 'checked', contents: { signalChecks: [] }, attempt: 1 }),
+    ).resolves.toEqual({ runId, state: 'pull', attempt: 2 });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

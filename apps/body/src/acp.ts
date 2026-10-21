@@ -22,6 +22,7 @@ import { delimiter, dirname, isAbsolute } from 'node:path';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { explainAgentProgramFailure } from './agent-command.js';
 import { piStartupEnvironment } from './pi-startup.js';
+import { PiSessionInstructions } from './pi-session-instructions.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
 import {
@@ -812,6 +813,7 @@ export class AcpClient extends EventEmitter {
    *  instead of just the bare exit code, in the daemon's log. */
   private stderrTail = '';
   private agentEnv: Record<string, string>;
+  private readonly piSessionInstructions = new PiSessionInstructions();
   private harnessCommand: string;
   private agentCommand: string;
   private agentLabel: string;
@@ -1229,6 +1231,8 @@ export class AcpClient extends EventEmitter {
     >;
     const sessionId = raw.sessionId as string | undefined;
     if (!sessionId) throw new Error('session/new missing sessionId');
+    if (/(^|[/\\])pi-acp(\.[a-z]+)?$/i.test(this.agentLabel) && opts.systemPrompt)
+      this.piSessionInstructions.remember(sessionId, opts.systemPrompt);
     await this.applySessionMode(sessionId, raw, opts.mode);
     return { sessionId, raw };
   }
@@ -1354,6 +1358,19 @@ export class AcpClient extends EventEmitter {
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
     onBackgroundToolCompletion?: (call: ToolCallEntry) => void,
   ): Promise<PromptResult> {
+    if (typeof text === 'string') text = await this.piSessionInstructions.prepare(sessionId, text, this.agentEnv);
+    else {
+      const blocks = [...text];
+      const index = blocks.findIndex(block => block.type === 'text');
+      const block = blocks[index];
+      if (block?.type === 'text') blocks[index] = { ...block,
+        text: await this.piSessionInstructions.prepare(sessionId, block.text, this.agentEnv) };
+      else {
+        const prefix = await this.piSessionInstructions.prepare(sessionId, '', this.agentEnv);
+        if (prefix) blocks.unshift({ type: 'text', text: prefix });
+      }
+      text = blocks;
+    }
     this.lastPromptByteCount =
       typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : undefined;
     const updates: SessionUpdate[] = [];
@@ -1478,6 +1495,7 @@ export class AcpClient extends EventEmitter {
         toolCalls,
       };
     } finally {
+      if (!completed) this.piSessionInstructions.failed(sessionId);
       if (hardTimer) clearTimeout(hardTimer);
       watcher?.close();
       for (const [id, pending] of this.pending) {

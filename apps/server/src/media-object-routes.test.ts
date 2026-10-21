@@ -1,4 +1,5 @@
 import { AddressInfo } from 'node:net';
+import { get as httpGet } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
@@ -75,6 +76,28 @@ describe('media object routes', () => {
     expect(response.headers.get('location')).toBe('https://s3/get');
     expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(objects.readMediaObject).toHaveBeenCalledWith(UUID);
+  });
+
+  it('mints game links only for the phone and keeps the game host out of API routing', async () => {
+    const runnableLink = vi.fn(async () => ({url:`https://beeline-games.fly.dev/play/${UUID}?token=opaque`,expiresIn:600}));
+    const openRunnableArtifact = vi.fn(async () => Buffer.from('<canvas></canvas><script>game()</script>'));
+    const origin = await start({objectService:objectService({runnableLink,openRunnableArtifact})});
+    expect((await fetch(`${origin}/v1/media/${UUID}/play`)).status).toBe(401);
+    const minted = await fetch(`${origin}/v1/media/${UUID}/play`,{headers:{authorization:PHONE_TOKEN}});
+    expect(minted.status).toBe(200);
+    expect(runnableLink).toHaveBeenCalledWith(UUID,'https://beeline-games.fly.dev');
+    const gameRequest = (path:string) => new Promise<{status:number|undefined;policy:string|undefined;body:string}>((resolve,reject)=>{
+      httpGet(origin+path,{headers:{host:'beeline-games.fly.dev'}},response=>{
+        let body='';response.setEncoding('utf8');response.on('data',chunk=>{body+=chunk});
+        response.on('end',()=>resolve({status:response.statusCode,policy:response.headers['content-security-policy'],body}));
+      }).on('error',reject);
+    });
+    const game = await gameRequest(`/play/${UUID}?expires=123&token=opaque`);
+    expect(game.status).toBe(200);
+    expect(game.policy).toContain('sandbox allow-scripts');
+    expect(game.body).toContain('<canvas>');
+    expect(openRunnableArtifact).toHaveBeenCalledWith(UUID,123,'opaque');
+    expect((await gameRequest('/v1/phone/identity')).status).toBe(404);
   });
 
   it('answers 410 with the ttl fact for swept objects', async () => {

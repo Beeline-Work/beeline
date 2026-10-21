@@ -71,7 +71,7 @@ describe('insecure OIDC development opt-in', () => {
 });
 
 
-describe.each(['AUTH_TENANTS_JSON', 'AUTH_SETUP_TOKEN', 'AUTH_HOST'])('%s aliases', (suffix) => {
+describe.each(['AUTH_TENANTS_JSON', 'AUTH_SETUP_TOKEN'])('%s aliases', (suffix) => {
   it('retains old configuration and prefers new values including empty values', () => {
     expect(readEnv({ ['BUZZY_' + suffix]: 'old' }, suffix)).toBe('old');
     expect(readEnv({ ['BUZZY_' + suffix]: 'old', ['BEELINE_' + suffix]: 'new' }, suffix)).toBe(

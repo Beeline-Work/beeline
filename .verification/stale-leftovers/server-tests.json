@@ -1,0 +1,1379 @@
+{
+  "files": 195,
+  "filesPassed": 193,
+  "filesSkipped": 2,
+  "testsPassed": 3274,
+  "testsSkipped": 12,
+  "testsFailed": 0,
+  "method": "Completed suites retained across bounded-worker runs; 244 integration cases in 16 fresh-process batches; six parallel-run files rerun in isolation; final latency comparison against baseline 06bf3a7c8998b8cb9841891152d0b2e15ef1a48a. No thresholds or tests changed.",
+  "baselineCornerReadMs": 499,
+  "candidateCornerReadMs": 510,
+  "initialParallelFailures": "Six timing assertions and one beforeAll timeout across six files. First single-worker corner-read rerun also missed 650ms at 737ms; baseline and final candidate comparison then passed.",
+  "results": {
+    "src/account-deletion.test.ts": {
+      "status": "✓",
+      "tests": 10,
+      "passed": 10,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-access.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-avatar.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-class-retirement.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-command.integration.test.ts": {
+      "status": "✓",
+      "tests": 91,
+      "passed": 90,
+      "skipped": 1,
+      "failed": 0
+    },
+    "src/agent-command.scaling.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-grant-inspect.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-health.test.ts": {
+      "status": "✓",
+      "tests": 17,
+      "passed": 17,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-lifecycle-command.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-member-metadata.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-removal.test.ts": {
+      "status": "✓",
+      "tests": 8,
+      "passed": 8,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-schedules.test.ts": {
+      "status": "✓",
+      "tests": 14,
+      "passed": 14,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-sign-in.test.ts": {
+      "status": "✓",
+      "tests": 24,
+      "passed": 24,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-subscriptions.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-usage.integration.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/agent-voice.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/apns-push.test.ts": {
+      "status": "✓",
+      "tests": 20,
+      "passed": 20,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/app-connections.integration.test.ts": {
+      "status": "✓",
+      "tests": 83,
+      "passed": 83,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/auth.test.ts": {
+      "status": "✓",
+      "tests": 18,
+      "passed": 18,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/authorization-lifetime.test.ts": {
+      "status": "✓",
+      "tests": 17,
+      "passed": 12,
+      "skipped": 5,
+      "failed": 0
+    },
+    "src/background-shutdown.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/background.test.ts": {
+      "status": "✓",
+      "tests": 42,
+      "passed": 42,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/can-read-rooms.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/cdp-client.chains.test.ts": {
+      "status": "✓",
+      "tests": 21,
+      "passed": 21,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/cdp-client.keyparse.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/cdp-client.test.ts": {
+      "status": "✓",
+      "tests": 10,
+      "passed": 10,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/channel-mention.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/chat-corner-counts.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/choice-expiry.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/client-error-observation.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/commander-order-target.integration.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/commander-recovery.integration.test.ts": {
+      "status": "✓",
+      "tests": 26,
+      "passed": 26,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/commander-wakes.integration.test.ts": {
+      "status": "✓",
+      "tests": 14,
+      "passed": 14,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/commander.integration.test.ts": {
+      "status": "✓",
+      "tests": 106,
+      "passed": 106,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/compact-room-view.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/company-logos.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/composio-apps.test.ts": {
+      "status": "✓",
+      "tests": 56,
+      "passed": 56,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/computer-session.test.ts": {
+      "status": "✓",
+      "tests": 22,
+      "passed": 22,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/connection-presence.test.ts": {
+      "status": "✓",
+      "tests": 23,
+      "passed": 23,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/connector-intent-index.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-access-database.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-attention.integration.test.ts": {
+      "status": "✓",
+      "tests": 50,
+      "passed": 50,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-brief-refusals.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-brief-reproduction.test.ts": {
+      "status": "✓",
+      "tests": 16,
+      "passed": 16,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-follow.test.ts": {
+      "status": "✓",
+      "tests": 8,
+      "passed": 8,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-lifecycle.test.ts": {
+      "status": "✓",
+      "tests": 232,
+      "passed": 232,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-open-from-corner.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-open-implementer.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-open-watch.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-owed.test.ts": {
+      "status": "✓",
+      "tests": 18,
+      "passed": 18,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-person-state.production.test.ts": {
+      "status": "↓",
+      "tests": 1,
+      "passed": 0,
+      "skipped": 1,
+      "failed": 0
+    },
+    "src/corner-person-state.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-refusals.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-review-dispatch.test.ts": {
+      "status": "✓",
+      "tests": 28,
+      "passed": 28,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-reviewer-list.test.ts": {
+      "status": "✓",
+      "tests": 22,
+      "passed": 22,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-rollback.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-state.test.ts": {
+      "status": "✓",
+      "tests": 20,
+      "passed": 20,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-waiting-reason.test.ts": {
+      "status": "✓",
+      "tests": 14,
+      "passed": 14,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-wake.test.ts": {
+      "status": "✓",
+      "tests": 19,
+      "passed": 19,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/corner-watch.test.ts": {
+      "status": "✓",
+      "tests": 15,
+      "passed": 15,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/daemon-live.test.ts": {
+      "status": "✓",
+      "tests": 15,
+      "passed": 15,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/daemon-service.access.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/daemon-service.completion-latency.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/data-cleanup.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/database-budget.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/database.test.ts": {
+      "status": "✓",
+      "tests": 48,
+      "passed": 48,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/dm-attachment.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/durable-avatar.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/event-cascade.test.ts": {
+      "status": "✓",
+      "tests": 8,
+      "passed": 8,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/feedback-triage-workflow.test.ts": {
+      "status": "✓",
+      "tests": 12,
+      "passed": 12,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/feedback-workflow-refusals.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/feedback.test.ts": {
+      "status": "✓",
+      "tests": 25,
+      "passed": 25,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/firebase-push.test.ts": {
+      "status": "✓",
+      "tests": 26,
+      "passed": 26,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/fly-machines.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/free-agent-model-proxy.test.ts": {
+      "status": "✓",
+      "tests": 45,
+      "passed": 45,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/free-agent-warning.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/free-agents.test.ts": {
+      "status": "✓",
+      "tests": 26,
+      "passed": 26,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/github-operations.test.ts": {
+      "status": "✓",
+      "tests": 82,
+      "passed": 82,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/github-star-prompt.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/grant-policy-upgrade.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/health-query-age.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/held-review-wake.integration.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/helper-version-gate.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/identity-live.e2e.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-context-hybrid.test.ts": {
+      "status": "✓",
+      "tests": 10,
+      "passed": 10,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-corner-authority.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-curator.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-history.test.ts": {
+      "status": "✓",
+      "tests": 17,
+      "passed": 17,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-corner-requester.integration.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-embeddings.test.ts": {
+      "status": "✓",
+      "tests": 36,
+      "passed": 36,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-evaluation.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-lifecycle.test.ts": {
+      "status": "✓",
+      "tests": 13,
+      "passed": 13,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-search-recall.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-shadow.test.ts": {
+      "status": "✓",
+      "tests": 14,
+      "passed": 14,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-memory-turn-stats.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-objectives.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-rollout.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-skill-anchors.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/institutional-skills.test.ts": {
+      "status": "✓",
+      "tests": 25,
+      "passed": 25,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/integration.test.ts": {
+      "status": "✓",
+      "tests": 244,
+      "passed": 244,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/invite-join-deadline.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/json-response.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/legacy-daemon-migration.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/legacy-storage.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/link-agent-wallet.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/live-replay.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/live.presence-dedupe.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/machine-offline.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/markdown-to-speech.test.ts": {
+      "status": "✓",
+      "tests": 28,
+      "passed": 28,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/mcp-registry.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/media-object-routes.test.ts": {
+      "status": "✓",
+      "tests": 11,
+      "passed": 11,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/merge-archival.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 3,
+      "skipped": 3,
+      "failed": 0
+    },
+    "src/message-mentions.test.ts": {
+      "status": "✓",
+      "tests": 11,
+      "passed": 11,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/migration-retry.test.ts": {
+      "status": "✓",
+      "tests": 10,
+      "passed": 9,
+      "skipped": 1,
+      "failed": 0
+    },
+    "src/migrations/corner-names.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/model-catalog-notice.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/monolith-auth.test.ts": {
+      "status": "✓",
+      "tests": 8,
+      "passed": 8,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/monolith-paint-budgets.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/needs-you-expiry.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/needs-you.test.ts": {
+      "status": "✓",
+      "tests": 34,
+      "passed": 34,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/object-projection.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/object-service.test.ts": {
+      "status": "✓",
+      "tests": 21,
+      "passed": 21,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/object-storage.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/object-sweep.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/onboarding-rollout.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/one-system-thread.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/operator-dashboard.test.ts": {
+      "status": "✓",
+      "tests": 15,
+      "passed": 15,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/permission-cards.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-operation-names.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-read-limit.test.ts": {
+      "status": "✓",
+      "tests": 11,
+      "passed": 11,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.agent-connect.test.ts": {
+      "status": "✓",
+      "tests": 27,
+      "passed": 27,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.agent-profile.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.archived-corners.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.corner-projection.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.message-search.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.model-change-wake.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-service.read-room-latency.test.ts": {
+      "status": "✓",
+      "tests": 18,
+      "passed": 18,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/phone-viewing.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/postgres-live.test.ts": {
+      "status": "✓",
+      "tests": 34,
+      "passed": 34,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/pr-checks-status.test.ts": {
+      "status": "✓",
+      "tests": 33,
+      "passed": 33,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/procedure-tool-vocabulary.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/production-corpus-hot-reads.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/production-corpus-width.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/production-latency.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/provider-webhooks.integration.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/public-join-link.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/push-dm-mute.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/push-follow.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/push-sensitivity.test.ts": {
+      "status": "✓",
+      "tests": 21,
+      "passed": 21,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/query-profile.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/read-cursor.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/recent-identity-times.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/registry-mcp-oauth.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/registry-mcp.integration.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/release-notify.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/reply-steps.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/repository-onboarding.test.ts": {
+      "status": "✓",
+      "tests": 8,
+      "passed": 8,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/review-access.test.ts": {
+      "status": "✓",
+      "tests": 12,
+      "passed": 12,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/reviewer-approval-surface.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/sentry-refusals.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/sentry-telegram.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/sentry-wake.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/sentry.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/server-cors.regression-1.test.ts": {
+      "status": "✓",
+      "tests": 6,
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/server.test.ts": {
+      "status": "✓",
+      "tests": 82,
+      "passed": 82,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/solo-agent-routing.test.ts": {
+      "status": "✓",
+      "tests": 12,
+      "passed": 12,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/speech-transcription.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/startup.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/system-dm-sites.test.ts": {
+      "status": "✓",
+      "tests": 1,
+      "passed": 1,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/system-line.contract.test.ts": {
+      "status": "✓",
+      "tests": 3,
+      "passed": 3,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/system-line.producers.test.ts": {
+      "status": "✓",
+      "tests": 11,
+      "passed": 11,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/system-line.test.ts": {
+      "status": "✓",
+      "tests": 17,
+      "passed": 17,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/system-messages-lock.test.ts": {
+      "status": "✓",
+      "tests": 74,
+      "passed": 74,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/tray-approval-ask.test.ts": {
+      "status": "✓",
+      "tests": 10,
+      "passed": 10,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/turn-silence-notice.test.ts": {
+      "status": "✓",
+      "tests": 29,
+      "passed": 29,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/voice-budget.test.ts": {
+      "status": "✓",
+      "tests": 9,
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/voice-providers.test.ts": {
+      "status": "✓",
+      "tests": 32,
+      "passed": 32,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/voice-request-assembler.test.ts": {
+      "status": "✓",
+      "tests": 5,
+      "passed": 5,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/voice-room-runtime.test.ts": {
+      "status": "✓",
+      "tests": 115,
+      "passed": 115,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/voice-service.integration.test.ts": {
+      "status": "✓",
+      "tests": 23,
+      "passed": 23,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/voice-target.test.ts": {
+      "status": "✓",
+      "tests": 17,
+      "passed": 17,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/wake-inbox.integration.test.ts": {
+      "status": "✓",
+      "tests": 18,
+      "passed": 18,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/wallet-venues.test.ts": {
+      "status": "✓",
+      "tests": 2,
+      "passed": 2,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/wallet-webhooks.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/wallet.integration.test.ts": {
+      "status": "✓",
+      "tests": 34,
+      "passed": 34,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/wallet.live.test.ts": {
+      "status": "↓",
+      "tests": 1,
+      "passed": 0,
+      "skipped": 1,
+      "failed": 0
+    },
+    "src/web-push.test.ts": {
+      "status": "✓",
+      "tests": 22,
+      "passed": 22,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/welcome-retirement.test.ts": {
+      "status": "✓",
+      "tests": 7,
+      "passed": 7,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workbench-companies.test.ts": {
+      "status": "✓",
+      "tests": 20,
+      "passed": 20,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workbench.integration.test.ts": {
+      "status": "✓",
+      "tests": 41,
+      "passed": 41,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workflow-admin.test.ts": {
+      "status": "✓",
+      "tests": 4,
+      "passed": 4,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workflow-permissions.integration.test.ts": {
+      "status": "✓",
+      "tests": 17,
+      "passed": 17,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workflow-run-views.test.ts": {
+      "status": "✓",
+      "tests": 31,
+      "passed": 31,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workflow-runs.test.ts": {
+      "status": "✓",
+      "tests": 162,
+      "passed": 162,
+      "skipped": 0,
+      "failed": 0
+    },
+    "src/workflow-schedules.test.ts": {
+      "status": "✓",
+      "tests": 21,
+      "passed": 21,
+      "skipped": 0,
+      "failed": 0
+    }
+  }
+}

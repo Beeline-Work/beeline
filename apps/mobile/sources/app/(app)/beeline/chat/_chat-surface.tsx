@@ -411,7 +411,7 @@ import {
   RoomReviewerActions,
   RoomReviewerSurfaceNotice,
 } from '@/components/buzz/RoomReviewerActions';
-import { EmptyLedgerState, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
+import { EmptyLedgerState, cornerNeedsStarter, type EmptyLedgerVariant } from '@/components/buzz/EmptyLedgerState';
 import {
   CornerHeaderAgentText,
   HeaderIdentitySlot,
@@ -2481,6 +2481,14 @@ export function BuzzChatSurface({
     },
     [],
   );
+  const startCornerMessage = useCallback(() => {
+    const handle = firstRoomAgent?.handle?.replace(/^@/, '');
+    if (!handle || !firstRoomAgent) return focusComposer();
+    fillComposer(`@${handle} `, {
+      mention: { handle, pubkey: firstRoomAgent.pubkey },
+      focusOnRefusal: true,
+    });
+  }, [fillComposer, firstRoomAgent, focusComposer]);
   // The same minted pairing command the Room deck and the create wizard show,
   // in the same sheet: a Room with no agent has nobody to ask yet.
   const connectAgent = useCallback(async () => {
@@ -2660,6 +2668,21 @@ export function BuzzChatSurface({
   const desktopTranscript = desktopExperience;
   const invertedMessages = useMemo(() => [...visibleMessages].reverse(), [visibleMessages]);
   const transcriptMessages = desktopTranscript ? visibleMessages : invertedMessages;
+  const showEmptyLedger = isCorner
+    ? !viewerIsAgent && cornerNeedsStarter(transcriptMessages)
+    : transcriptMessages.length === 0;
+  const emptyLedger = showEmptyLedger ? (
+    <View style={styles.emptyState}>
+      <EmptyLedgerState
+        variant={emptyLedgerVariant}
+        name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
+        agentHandle={isCorner ? firstRoomAgent?.handle : undefined}
+        onPress={isCorner ? startCornerMessage : focusComposer}
+        starterPrompts={starterPrompts}
+        starterIntro={starterIntro}
+      />
+    </View>
+  ) : null;
   // Landing retries can outlive the render that scheduled them. Read the
   // current inverted order so arrivals during measurement cannot shift the
   // durable boundary away from the numeric index we retry.
@@ -2738,7 +2761,8 @@ export function BuzzChatSurface({
   chronologicalMessagesRef.current = visibleMessages;
   // The composer offers an agent's handle as visible, deletable text: on a
   // quote-reply, and when the newest message is that agent's answer to the
-  // viewer. Each answer is offered once (`buzz/composer-prefill.ts`).
+  // viewer, or before a first message to a sole agent member. Each candidate
+  // is offered once (`buzz/composer-prefill.ts`).
   const composerPrefillRef = useRef<ComposerPrefill | null>(null);
   const offeredPrefillsRef = useRef(new Set<string>());
   const answerPrefill = useMemo(
@@ -2751,8 +2775,16 @@ export function BuzzChatSurface({
             (message) =>
               message.authorIdentity?.handle ??
               (message.pubkey ? agentByPubkey.get(message.pubkey)?.handle : undefined),
+            isDirectMessage ? undefined : {
+              roomId: decodedId,
+              agents: roomSurface?.members
+                .filter((member) => member.identity.kind === 'agent')
+                .map((member) => member.identity) ?? [],
+              viewerIsAgent,
+              humanCount: roomSurface?.members.filter((member) => member.identity.kind === 'human').length ?? 0,
+            },
           ),
-    [agentByPubkey, anchoredSegmentActive, userPubkey, viewerIsAgent, visibleMessages],
+    [agentByPubkey, anchoredSegmentActive, decodedId, isDirectMessage, roomSurface?.members, userPubkey, viewerIsAgent, visibleMessages],
   );
   const answerPrefillRef = useRef(answerPrefill);
   answerPrefillRef.current = answerPrefill;
@@ -6384,18 +6416,8 @@ export function BuzzChatSurface({
                       transcriptMessages.length === 0 && styles.messageListContentEmpty,
                     ]}
                   >
-                    {transcriptMessages.length === 0 ? (
-                      <View style={styles.emptyState}>
-                        <EmptyLedgerState
-                          variant={emptyLedgerVariant}
-                          name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
-                          objective={isCorner ? cornerObjectiveText : undefined}
-                          onPress={focusComposer}
-                          starterPrompts={starterPrompts}
-                          starterIntro={starterIntro}
-                        />
-                      </View>
-                    ) : (
+                    {emptyLedger}
+                    {transcriptMessages.length > 0 && (
                       <>
                         {transcriptHistoryLine}
                         {transcriptMessages.map((item) => (
@@ -6518,18 +6540,7 @@ export function BuzzChatSurface({
                   onScrollToIndexFailed={phoneScrollList.scrollToIndexFailed}
                   onEndReached={loadOlderTranscriptIfReaderAsked}
                   onEndReachedThreshold={0.5}
-                  ListEmptyComponent={
-                    <View style={styles.emptyState}>
-                      <EmptyLedgerState
-                        variant={emptyLedgerVariant}
-                        name={isDirectMessage ? displayRoomName : isCorner ? undefined : roomName}
-                        objective={isCorner ? cornerObjectiveText : undefined}
-                        onPress={focusComposer}
-                        starterPrompts={starterPrompts}
-                        starterIntro={starterIntro}
-                      />
-                    </View>
-                  }
+                  ListEmptyComponent={emptyLedger}
                   // Inverted native list: the header is the newest end of the transcript.
                   ListHeaderComponent={
                     starPrompt.prompt || transcriptForwardLine ? (
@@ -6548,7 +6559,12 @@ export function BuzzChatSurface({
                     ) : null
                   }
                   // Inverted native list: the footer is the visual top.
-                  ListFooterComponent={transcriptHistoryLine}
+                  ListFooterComponent={
+                    <>
+                      {transcriptHistoryLine}
+                      {transcriptMessages.length > 0 && emptyLedger}
+                    </>
+                  }
                 />
               )}
               {!desktopTranscript && (

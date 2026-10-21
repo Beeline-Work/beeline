@@ -1,0 +1,6 @@
+# Background trampoline, process alive. Same ActivityRecord{210816272} MainActivity t10.
+10-21 00:11:44.802   694   880 I ActivityTaskManager: START u0 {flg=0x10000000 xflg=0x5 cmp=app.usebeeline/.PushNotificationActivity (has extras)} with LAUNCH_MULTIPLE from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+10-21 00:11:44.836   694   880 I ActivityTaskManager: START u0 {flg=0x10000000 xflg=0x4 cmp=app.usebeeline/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 10216 (sr=212208793) (BAL_ALLOW_VISIBLE_WINDOW) result code=3
+10-21 00:11:44.905  6330  6786 W ReactNativeJS: [PUSH ROUTING] Full notification response:
+10-21 00:11:44.907  6330  6786 W ReactNativeJS: [PUSH ROUTING] notification.request.content.data:
+10-21 00:11:45.642  6330  6786 W ReactNativeJS: [PUSH ROUTING] Navigating to Beeline message: 377b2b7e-a224-4eda-95de-2f4f0b25a74d

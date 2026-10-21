@@ -1,0 +1,7 @@
+# ActivityTaskManager START after this tap: 0 matches. Same ActivityRecord{4338b7d} MainActivity t8 pid 4234.
+10-20 23:35:09.956  4234  4276 W ReactNativeJS: [ROOM_OPEN] {"phase":"push-route-entry","t":429358.827119}
+10-20 23:35:09.956  4234  4276 W ReactNativeJS: [PUSH ROUTING] Full notification response:
+10-20 23:35:09.958  4234  4276 W ReactNativeJS: [PUSH ROUTING] notification.request.content.data:
+10-20 23:35:10.006  4234  4276 W ReactNativeJS: [PUSH ROUTING] Navigating to Beeline message: bee11e00-0000-4000-8000-000000000103
+10-20 23:35:10.207  4234  4276 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":429609.847774}
+10-20 23:35:10.290  4234  4276 W ReactNativeJS: [ROOM_OPEN] {"phase":"newest-frame","t":429692.491022}

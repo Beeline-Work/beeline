@@ -74,6 +74,9 @@ export type AgentScheduleResult = {
   readonly nextRunAt: number;
 };
 export type AgentScheduleEntry = {
+  /** Location included by workspace-wide self-only wake reads. */
+  readonly roomId?: string;
+  readonly roomName?: string;
   readonly workflowName?: string;
   readonly scheduleId: string;
   /** The agent the schedule mentions on every run. */

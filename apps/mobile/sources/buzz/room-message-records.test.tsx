@@ -9,11 +9,12 @@ import {
   roomTurns,
   stampRoomMessageRows,
   useRoomMessageRecords,
+  useRoomTurnRecords,
   writeRoomMessage,
   writeRoomBookmark,
   writeRoomTurn,
 } from './room-message-records';
-import { recordPerson } from './identity-records';
+import { IdentitySelection, recordPerson, useIdentityRecords } from './identity-records';
 import { currentSurfaceStamp, nextSurfaceStamp } from './surface-clock';
 import { resetClientState } from '@/sync/client-reset';
 
@@ -79,6 +80,38 @@ function mount(roomId: string, rows: readonly RoomViewMessage[]) {
 }
 
 describe('room message records', () => {
+  it('settles a Room with a renamed author when message notifications refresh its turn selection', () => {
+    const original = row('renamed-author', 'message');
+    const stamp = currentSurfaceStamp();
+    stampRoomMessageRows([original], stamp);
+    recordPerson(SCOPE, { ...original.author, name: 'Renamed' }, nextSurfaceStamp());
+    let renders = 0;
+    let selected: Groups = [];
+    let renderer!: ReturnType<typeof create>;
+    function RenamedRoom() {
+      const turns = useRoomTurnRecords(SCOPE, 'room-rename-loop');
+      const identityVersion = useIdentityRecords();
+      // useRoomSurfaceSession selects identities again whenever its turn records change.
+      const rows = React.useMemo(() => [new IdentitySelection(SCOPE, stamp).message(original)],
+        [turns, identityVersion]);
+      selected = useRoomMessageRecords(SCOPE, 'room-rename-loop', [rows]);
+      renders++;
+      return null;
+    }
+    act(() => {
+      renderer = create(<RenamedRoom />);
+    });
+    expect(renders).toBeLessThan(10);
+    expect(selected[0]?.[0]?.author.name).toBe('Renamed');
+    act(() => writeRoomMessage(SCOPE, 'room-rename-loop', { ...selected[0]![0]!, version: 2, text: 'Edited' }));
+    expect(selected[0]?.[0]?.text).toBe('Edited');
+    expect(selected[0]?.[0]?.author.name).toBe('Renamed');
+    act(() => recordPerson(SCOPE, { ...original.author, name: 'Renamed again' }, nextSurfaceStamp()));
+    expect(selected[0]?.[0]?.author.name).toBe('Renamed again');
+    expect(selected[0]?.[0]?.text).toBe('Edited');
+    act(() => renderer.unmount());
+  });
+
   it('shows a live change in every view that holds the message', () => {
     const transcript = mount('room-a', [row('m1', 'before'), row('m2', 'other')]);
     const inspector = mount('room-a', [row('m1', 'before')]);

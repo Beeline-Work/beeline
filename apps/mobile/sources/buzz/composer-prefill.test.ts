@@ -219,3 +219,52 @@ describe('answer prefill', () => {
     ).toEqual({ kind: 'keep' });
   });
 });
+
+describe('first-message prefill through the answer rule', () => {
+  const first = { roomId: 'room-1', agents: [{ pubkey: SOL, handle: 'sol' }], viewerIsAgent: false, humanCount: 1 };
+  const candidateFor = (messages: ChatDisplayMessage[] = [], context = first) =>
+    answerPrefillCandidate(messages, ME, handleFor, context);
+
+  it.each([{ messages: [] }, { messages: [agent('hello')] }])('offers the sole member before the viewer has spoken: %j', ({ messages }) => {
+    const candidate = candidateFor(messages);
+    expect(candidate).toEqual({ handle: 'sol', pubkey: SOL, sourceMessageId: `first-message:room-1:${SOL}` });
+    expect(planAnswerPrefill({ draft: '', prefill: null, candidate, offered: new Set() }))
+      .toMatchObject({ kind: 'fill', text: '@sol ' });
+  });
+
+  it('does not guess between two agents, even when only one has said hello', () => {
+    expect(candidateFor([agent('hello')], { ...first, agents: [...first.agents, { pubkey: OTHER, handle: 'other' }] }))
+      .toBeUndefined();
+    expect(candidateFor([], { ...first, agents: [] })).toBeUndefined();
+  });
+
+  it.each([0, 2, 3])('does not prefill with %s human members and one agent', (humanCount) => {
+    expect(candidateFor([agent('hello')], { ...first, humanCount })).toBeUndefined();
+  });
+
+  it('keeps the existing addressed-answer rule in a multi-human Room', () => {
+    expect(candidateFor([agent('answer', { mentionPubkeys: [ME] })], { ...first, humanCount: 2 })?.sourceMessageId)
+      .toBe('answer');
+  });
+
+  it('keeps an existing draft', () => {
+    expect(planAnswerPrefill({ draft: 'Keep my thought', prefill: null, candidate: candidateFor(), offered: new Set() }))
+      .toEqual({ kind: 'keep' });
+  });
+
+  it('offers nothing to an agent viewer', () => {
+    expect(candidateFor([agent('hello')], { ...first, viewerIsAgent: true })).toBeUndefined();
+  });
+
+  it('does not reinsert a deleted first-message tag when the hello arrives', () => {
+    const candidate = candidateFor([agent('hello')]);
+    expect(planAnswerPrefill({ draft: '', prefill: null, candidate,
+      offered: new Set([`first-message:room-1:${SOL}`]) })).toEqual({ kind: 'keep' });
+  });
+
+  it('leaves the existing answer rule in charge after the viewer speaks', () => {
+    expect(candidateFor([human('h1', ME), agent('hello')])).toBeUndefined();
+    expect(candidateFor([human('h1', ME), agent('answer', { requestId: 'h1' })])?.sourceMessageId)
+      .toBe('answer');
+  });
+});

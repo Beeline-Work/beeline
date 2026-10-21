@@ -58,7 +58,7 @@ describe('Room guidance', () => {
       'call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus optional opening context)',
     );
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
-    expect(room).toContain('If a shell command is refused, say so plainly');
+    expect(room).toContain('If a shell command is refused, try another authorized route');
     expect(room).toContain(
       'read code with CodeGraph when available, then repository_io(action:search/read)',
     );
@@ -142,8 +142,8 @@ describe('Room guidance', () => {
         detail: 'bwrap is not on PATH; run `sudo apt-get install -y bubblewrap` and restart.',
       },
     });
-    expect(blocked).toContain('Shell commands are NOT available in this session');
-    expect(blocked).toContain('say that plainly instead of retrying');
+    expect(blocked).toContain('This session has no native shell tool');
+    expect(blocked).toContain('try the other available routes before reporting a capability gap');
     expect(blocked).toContain('sudo apt-get install -y bubblewrap');
     // A DM runs the same harness under the same sandbox, so it carries the fact too.
     expect(dmPrompt({ shell: { available: true } })).toContain(
@@ -162,10 +162,10 @@ describe('Room guidance', () => {
   it('claims nothing either way when the harness was not measured', () => {
     for (const prompt of [roomPrompt(), dmPrompt()]) {
       expect(prompt).not.toContain('Shell commands are available in this session');
-      expect(prompt).not.toContain('Shell commands are NOT available in this session');
+      expect(prompt).not.toContain('This session has no native shell tool');
     }
     // The standing conditional guidance still carries that case.
-    expect(roomPrompt()).toContain('If a shell command is refused, say so plainly');
+    expect(roomPrompt()).toContain('If a shell command is refused, try another authorized route');
   });
 
   it('states the blocked reason as its own bounded sentence', () => {
@@ -176,7 +176,7 @@ describe('Room guidance', () => {
       },
     });
     expect(blocked).toContain(
-      'say that plainly instead of retrying. Tell the person: A shell cannot run here because',
+      'try the other available routes before reporting a capability gap. Tell the person: A shell cannot run here because',
     );
   });
 

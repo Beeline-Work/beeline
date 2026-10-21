@@ -1,3 +1,4 @@
+import { scheduleFallbackTitle } from './schedule-title.js';
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
@@ -536,6 +537,8 @@ interface RoomScheduleRow {
   room_id: string;
   agent_id: string;
   creator_id: string;
+  title: string | null;
+  max_runs: number | null;
   cadence: RoomScheduleView['cadence'];
   message: string;
   next_run_at: Date;
@@ -977,6 +980,8 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
     roomId: row.room_id,
     agentId: row.agent_id,
     creatorId: row.creator_id,
+    title: row.title ?? scheduleFallbackTitle(row.workflow_slug),
+    ...(row.max_runs != null ? { maxRuns: row.max_runs } : {}),
     cadence: row.cadence,
     message: row.message,
     nextRunAt: unix(row.next_run_at),
@@ -5036,7 +5041,7 @@ export class PhoneService {
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
-              schedule.created_at,schedule.workflow_slug,schedule.run_count,
+              schedule.created_at,schedule.workflow_slug,schedule.run_count,schedule.title,schedule.max_runs,
               surface.parent_id surface_parent_id,surface.name surface_name
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id

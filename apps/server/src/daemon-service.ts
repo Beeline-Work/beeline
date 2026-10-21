@@ -1,4 +1,5 @@
 import { turnMessageRepetition } from './turn-repetition.js';
+import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -5129,6 +5130,7 @@ export class DaemonService {
     if (typeof input.prompt !== 'string' || !input.prompt.trim()) {
       throw new Error('schedule prompt is required');
     }
+    const title = validateScheduleTitle(input.title);
     validateScheduleCadence(input.cadence);
     if (
       input.maxRuns !== undefined &&
@@ -5168,8 +5170,8 @@ export class DaemonService {
         : undefined;
     await db.query(
       `INSERT INTO agent_schedules(
-         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_slug,owner_id
-       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8,$9,$10)`,
+         id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at,workflow_slug,owner_id,title
+       ) VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,$7,$8,$9,$10,$11)`,
       [
         scheduleId,
         room.rows[0].workspace_id,
@@ -5181,6 +5183,7 @@ export class DaemonService {
         nextRunAt,
         workflowName ?? null,
         ownerId ?? null,
+        title ?? scheduleFallbackTitle(workflowName),
       ],
     );
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
@@ -5327,6 +5330,7 @@ export class DaemonService {
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
       id: string;
+      title: string | null;
       workflow_slug: string | null;
       agent_id: string;
       agent_handle: string | null;
@@ -5338,7 +5342,7 @@ export class DaemonService {
       run_count: number;
       next_run_at: Date;
     }>(
-      `SELECT schedule.workflow_slug,schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
+      `SELECT schedule.title,schedule.workflow_slug,schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
          schedule.room_id,room.name room_name,
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
@@ -5359,6 +5363,7 @@ export class DaemonService {
         const activeRunIds = [...new Set([...workflowRunIds, ...scheduleRunIds])];
         return {
           ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
+          title: row.title ?? scheduleFallbackTitle(row.workflow_slug),
           scheduleId: row.id,
           ...(input.selfOnly ? { roomId: row.room_id, roomName: row.room_name } : {}),
           agentId: row.agent_id,
@@ -5401,11 +5406,13 @@ export class DaemonService {
     if (!transaction)
       return this.database.transaction((db) => this.updateAgentSchedule(input, agentId, db));
     const db = transaction;
+    const title = validateScheduleTitle(input.title);
     if (
       input.prompt === undefined &&
       input.cadence === undefined &&
       input.maxRuns === undefined &&
-      input.workflowName === undefined
+      input.workflowName === undefined &&
+      input.title === undefined
     )
       throw new Error('give a prompt, cadence, or maxRuns to change');
     if (input.prompt !== undefined && (typeof input.prompt !== 'string' || !input.prompt.trim()))
@@ -5439,7 +5446,7 @@ export class DaemonService {
     const updated = await db.query<{ next_run_at: Date }>(
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
-         next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8
+         next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8,title=COALESCE($10,title)
        WHERE id=$1 AND room_id=$2 AND creator_id=agent_id AND workflow_run IS NULL
          AND (NOT $9::boolean OR agent_id=$8)
        RETURNING next_run_at`,
@@ -5453,6 +5460,7 @@ export class DaemonService {
         workflowName ?? null,
         agentId,
         input.selfOnly === true,
+        title ?? null,
       ],
     );
     const row = updated.rows[0];

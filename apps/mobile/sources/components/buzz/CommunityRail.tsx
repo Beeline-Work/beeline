@@ -413,12 +413,13 @@ export function BuzzCommunityShell({
   viewerFace,
 }: BuzzCommunityShellProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const drawerX = useSharedValue(-DRAWER_WIDTH);
+  const drawerWidth = styles.drawer.width;
+  const drawerX = useSharedValue(-drawerWidth);
   const scrimOpacity = useSharedValue(0);
   const reducedMotion = useReducedMotion();
 
   const openDrawer = useCallback(() => {
-    drawerX.value = -DRAWER_WIDTH;
+    drawerX.value = -drawerWidth;
     scrimOpacity.value = 0;
     setDrawerOpen(true);
     drawerX.value = withTiming(0, {
@@ -430,7 +431,7 @@ export function BuzzCommunityShell({
       duration: 120,
       reduceMotion: ReduceMotion.System,
     });
-  }, [drawerX, scrimOpacity]);
+  }, [drawerWidth, drawerX, scrimOpacity]);
 
   const closeDrawer = useCallback(() => {
     scrimOpacity.value = withTiming(0, {
@@ -438,7 +439,7 @@ export function BuzzCommunityShell({
       reduceMotion: ReduceMotion.System,
     });
     drawerX.value = withTiming(
-      -DRAWER_WIDTH,
+      -drawerWidth,
       {
         duration: reducedMotion ? 0 : 135,
         easing: Easing.out(Easing.poly(5)),
@@ -448,7 +449,7 @@ export function BuzzCommunityShell({
         if (finished) runOnJS(setDrawerOpen)(false);
       },
     );
-  }, [drawerX, reducedMotion, scrimOpacity]);
+  }, [drawerWidth, drawerX, reducedMotion, scrimOpacity]);
 
   const selectAndClose = useCallback(
     (communityId: string | null) => {
@@ -509,8 +510,9 @@ export function BuzzCommunityShell({
   );
 }
 
-const styles = StyleSheet.create((theme) => {
+const styles = StyleSheet.create((theme, runtime) => {
   const groknight = theme.buzz;
+  const drawerWidth = DRAWER_WIDTH * Math.max(1, runtime?.fontScale ?? 1);
   return {
     shell: {
       flex: 1,
@@ -523,7 +525,7 @@ const styles = StyleSheet.create((theme) => {
     },
     rail: {
       flex: 1,
-      width: DRAWER_WIDTH,
+      width: drawerWidth,
       alignItems: 'center',
       backgroundColor: groknight.bgTerminal,
       borderRightWidth: StyleSheet.hairlineWidth,
@@ -544,7 +546,7 @@ const styles = StyleSheet.create((theme) => {
     },
     columnScrollContent: { alignItems: 'center' },
     railButtonSlot: {
-      width: DRAWER_WIDTH,
+      width: drawerWidth,
       height: 58,
       alignItems: 'center',
       justifyContent: 'center',
@@ -644,7 +646,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.border,
     },
     railCommand: {
-      width: DRAWER_WIDTH,
+      width: drawerWidth,
       minHeight: 48,
       paddingVertical: 4,
       alignItems: 'center',
@@ -686,11 +688,11 @@ const styles = StyleSheet.create((theme) => {
       top: 0,
       bottom: 0,
       left: 0,
-      width: DRAWER_WIDTH,
+      width: drawerWidth,
     },
     scrim: {
       ...StyleSheet.absoluteFillObject,
-      left: DRAWER_WIDTH,
+      left: drawerWidth,
       backgroundColor: groknight.bgTerminal,
     },
     drawerTrigger: {

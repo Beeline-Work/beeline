@@ -1,4 +1,4 @@
-import { reserveServiceReviewWorkspaces } from './service-review.js';
+import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
@@ -947,10 +947,10 @@ async function enterState(
     : undefined;
   const exhausted = Boolean(nextResolution && 'exhausted' in nextResolution);
   const nextAgentId = nextResolution && !exhausted ? (nextResolution as { agentId: string }).agentId : null;
-  if (contract.name === FEEDBACK_TRIAGE_SLUG && toState === 'browse') {
+  if ((contract.name === FEEDBACK_TRIAGE_SLUG || contract.name === 'workspace-walk') && toState === 'browse') {
     if (!nextAgentId || nextAgentId !== roleBindings.triager)
       throw new Error('Service review must use the scheduled triager');
-    await reserveServiceReviewWorkspaces(db,nextAgentId,runId);
+    await reserveServiceReviewWorkspaces(db,nextAgentId,runId,contract.name === 'workspace-walk');
   }
   const attempt = run.seq + 1;
   const cardId = randomBytes(32).toString('hex');
@@ -1450,6 +1450,9 @@ export async function handoff(
       const blocked = isHandoffState(state) && !Object.hasOwn(on, WORKFLOW_BLOCKED_OUTCOME)
         ? ', or blocked with contents.reason' : '';
       throw new Error(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
+    }
+    if (scope.contract.name === 'workspace-walk' && stateName === 'browse' && input.outcome === 'reviewed') {
+      await completeServiceReview(db,command.agent_id,input.runId,(input.contents as Record<string, unknown>).receipts);
     }
     await bindWorkflowStepOutput(db, command, input.runId);
     const actor = await loadIdentityRow(db, command.agent_id);

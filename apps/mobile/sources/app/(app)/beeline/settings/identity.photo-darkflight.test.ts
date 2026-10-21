@@ -272,9 +272,9 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-function identitySettings(handle: string | null) {
+function identitySettings(handle: string | null, providers: Array<{ provider: 'github' | 'google'; login?: string }> = []) {
   return {
-    identity: { personId: 'a'.repeat(64), face: null, pushLevel: 'attention', handle, name: 'Captain' },
+    identity: { personId: 'a'.repeat(64), face: null, pushLevel: 'attention', handle, name: 'Captain', providers },
     workspaces: { workspaces: [] },
   };
 }
@@ -342,7 +342,7 @@ describe('photo-override darkflight on the settings surfaces', () => {
 
   it('shows one GitHub-provisioned identity and no secondary handle controls', async () => {
     phoneOperation.mockImplementation(async (name: string) => {
-      if (name === 'readIdentitySettings') return identitySettings('octocat');
+      if (name === 'readIdentitySettings') return identitySettings('octocat', [{ provider: 'github', login: 'octocat' }]);
       throw new Error(`unexpected operation ${name}`);
     });
     const renderer = await renderScreen();
@@ -365,4 +365,15 @@ describe('photo-override darkflight on the settings surfaces', () => {
     act(() => renderer.root.findByProps({ testID: 'identity-managed-handle' }).props.onPress());
     expect(openExternalUrl).toHaveBeenCalledWith('https://github.com/octocat');
   });
+  it('does not open a GitHub profile for a Google-only account with an editable handle', async () => {
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readIdentitySettings') return identitySettings('octocat', [{ provider: 'google', login: 'octocat@gmail.com' }]);
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const renderer = await renderScreen();
+    await vi.waitFor(() => { expect(renderedText(renderer)).toContain('octocat'); });
+    expect(renderer.root.findByProps({ testID: 'identity-managed-handle' }).props.onPress).toBeUndefined();
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
 });

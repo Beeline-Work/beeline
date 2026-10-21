@@ -5279,7 +5279,8 @@ export class DaemonService {
     return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
   }
   /**
-   * The schedules an agent in this Room may manage: every schedule that
+   * Self-only wake reads span the current Workspace. Legacy Room tools list
+   * the schedules an agent in this Room may manage: every schedule that
    * mentions it, and every schedule any agent created for itself here. A
    * schedule a person created for another agent stays that person's.
    */
@@ -5289,6 +5290,8 @@ export class DaemonService {
       workflow_slug: string | null;
       agent_id: string;
       agent_handle: string | null;
+      room_id: string;
+      room_name: string;
       cadence: import('@beeline/api-contract/phone').RoomScheduleCadence;
       message: string;
       max_runs: number | null;
@@ -5296,9 +5299,12 @@ export class DaemonService {
       next_run_at: Date;
     }>(
       `SELECT schedule.workflow_slug,schedule.id,schedule.agent_id,agent.handle agent_handle,schedule.cadence,
+         schedule.room_id,room.name room_name,
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
-       WHERE schedule.room_id=$1 AND schedule.workflow_run IS NULL
+       JOIN rooms room ON room.id=schedule.room_id
+       WHERE (schedule.room_id=$1 OR ($3::boolean AND schedule.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$1)))
+         AND schedule.workflow_run IS NULL
          AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
@@ -5307,13 +5313,14 @@ export class DaemonService {
     const schedules = await Promise.all(
       rows.rows.map(async (row) => {
         const workflowRunIds = row.workflow_slug
-          ? await activeWorkflowRunIds(this.database, input.roomId, row.workflow_slug, agentId)
+          ? await activeWorkflowRunIds(this.database, row.room_id, row.workflow_slug, agentId)
           : [];
-        const scheduleRunIds = await activeRunIdsForSchedule(this.database, input.roomId, row.id);
+        const scheduleRunIds = await activeRunIdsForSchedule(this.database, row.room_id, row.id);
         const activeRunIds = [...new Set([...workflowRunIds, ...scheduleRunIds])];
         return {
           ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
           scheduleId: row.id,
+          ...(input.selfOnly ? { roomId: row.room_id, roomName: row.room_name } : {}),
           agentId: row.agent_id,
           ...(row.agent_handle ? { agentHandle: row.agent_handle } : {}),
           prompt: row.message,
@@ -5330,7 +5337,9 @@ export class DaemonService {
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
-       WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
+       WHERE id=$1
+         AND (room_id=$2 OR ($4::boolean AND workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)))
+         AND workflow_run IS NULL
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
       [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -5369,8 +5378,10 @@ export class DaemonService {
       throw new Error('maxRuns must be a positive integer');
     }
     const existing = (
-      await db.query<{ message: string; workflow_slug: string | null }>(
-        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
+      await db.query<{ message: string; workflow_slug: string | null; room_id: string }>(
+        `SELECT message,workflow_slug,room_id FROM agent_schedules WHERE id=$1
+           AND (room_id=$2 OR ($4::boolean AND workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)))
+           AND workflow_run IS NULL
            AND (NOT $4::boolean OR agent_id=$3)`,
         [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
       )
@@ -5379,7 +5390,7 @@ export class DaemonService {
     const workflowName =
       (await scheduleWorkflowName(
         db,
-        input.roomId,
+        existing.room_id,
         input.prompt ?? existing.message,
         input.workflowName,
       )) ?? existing.workflow_slug;
@@ -5394,7 +5405,7 @@ export class DaemonService {
        RETURNING next_run_at`,
       [
         input.scheduleId,
-        input.roomId,
+        existing.room_id,
         input.prompt?.trim() ?? null,
         input.cadence === undefined ? null : JSON.stringify(input.cadence),
         input.maxRuns ?? null,

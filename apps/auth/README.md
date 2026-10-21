@@ -1,8 +1,7 @@
 # `@beeline/auth`
 
-This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding service. GitHub
-is the shipped sign-in; the Google OIDC routes remain available but are hidden
-from the app. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
+This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding library. GitHub and Google are the supported sign-in providers. Google remains behind
+a server rollout flag and subject allowlist until device acceptance is complete. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
 transaction. It does not issue transport credentials, grant roles or membership,
 or accept a Nostr secret key.
 
@@ -41,7 +40,7 @@ or accept a Nostr secret key.
 
 ## Managed display handles
 
-The auth sidecar preserves identity labels without publishing a public name resolver:
+The mounted auth library preserves identity labels without publishing a public name resolver:
 
 - A verified GitHub bind stores the current GitHub login as the handle and
   returns the GitHub display name to the client. There is no naming step in the
@@ -59,9 +58,8 @@ token that can authorize `/events`, `/query`, WebSockets, or Room state.
 
 ## Deployment shape
 
-Run this as a small sidecar on the existing Beeline network with the existing
-PostgreSQL service. Production serves auth routes from the Beeline server.
-The standalone entry retains compatibility configuration for existing tenants.
+The Beeline server mounts this library through `apps/server/src/monolith-auth.ts`
+and uses its PostgreSQL database. There is no standalone listener or container.
 
 GitHub follows the same bind-ticket transaction through `/auth/github/start`
 and `/auth/github/callback`. After binding, `/auth/github/install/start` opens
@@ -78,16 +76,26 @@ metadata read; events `star`, `issues`, `pull_request`, `push`, `check_run`, `ch
 `status`). Administration and
 organization permissions are intentionally excluded. Secrets and environments are requested for new
 Apps but are optional for existing Apps; their absence does not cause configuration drift or block existing features. The auth
-sidecar mints exact-repository, one-hour installation tokens for Room-member
+library mints exact-repository, one-hour installation tokens for Room-member
 daemons after re-checking current signed membership and the Room's admin-authored
 repository binding. Daemons never receive the App private key. Body installs a
 corner-local Git credential helper and `gh` wrapper that refresh this scoped
 token for every invocation; ambient host credentials remain masked.
 
-GitHub ships dark until **all six** `BEELINE_GITHUB_*` values below are present.
+GitHub is configured by the monolith when `GITHUB_CLIENT_ID`,
+`GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_SLUG` and
+`GITHUB_APP_PRIVATE_KEY` are present. `GITHUB_WEBHOOK_SECRET` authenticates
+webhook deliveries.
 `GET /auth/capabilities` then reports `github: true`; without them it reports
-`github: false`, GitHub routes stay unavailable, and the existing Google OIDC
-sign-in remains the visible, unchanged mobile path.
+`github: false`, GitHub routes stay unavailable, and auth capabilities remain disabled for GitHub.
+
+The `BEELINE_AUTH_OIDC_*` settings take precedence over their legacy
+`BUZZY_AUTH_OIDC_*` equivalents. Legacy names remain a temporary fallback until
+the new names are deployed and Google sign-in is verified; remove the old Fly
+values and fallback only after that verification.
+
+`BEELINE_AUTH_ALLOW_INSECURE_OIDC` likewise falls back to
+`BUZZY_AUTH_ALLOW_INSECURE_OIDC` and is always ignored in production.
 
 Required configuration:
 
@@ -98,18 +106,18 @@ Required configuration:
   aliases. `roomCommunityIds` is the non-empty allowlist of server-stamped tenant UUIDs from
   `channels.community_id` whose Rooms this auth tenant serves. Do not use the client-authored
   `community` tag from a Room create event for this list.
-- `BUZZY_AUTH_OIDC_ISSUER`
-- `BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
-- `BUZZY_AUTH_OIDC_TOKEN_ENDPOINT`
-- `BUZZY_AUTH_OIDC_JWKS_URI`
-- `BUZZY_AUTH_OIDC_CLIENT_ID`
-- `BUZZY_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
-- `BEELINE_GITHUB_CLIENT_ID`
-- `BEELINE_GITHUB_CLIENT_SECRET`
-- `BEELINE_GITHUB_APP_ID`
-- `BEELINE_GITHUB_APP_SLUG`
-- `BEELINE_GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
-- `BEELINE_GITHUB_WEBHOOK_SECRET`
+- `BEELINE_AUTH_OIDC_ISSUER`
+- `BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
+- `BEELINE_AUTH_OIDC_TOKEN_ENDPOINT`
+- `BEELINE_AUTH_OIDC_JWKS_URI`
+- `BEELINE_AUTH_OIDC_CLIENT_ID`
+- `BEELINE_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `GITHUB_APP_ID`
+- `GITHUB_APP_SLUG`
+- `GITHUB_APP_PRIVATE_KEY` (PEM; `\\n`-escaped environment values are accepted)
+- `GITHUB_WEBHOOK_SECRET`
 - `BEELINE_AUTH_SETUP_TOKEN` (optional) — shared secret that gates the GitHub App
   manifest setup page (`/auth/github/app-setup`) and the on-demand drift
   endpoint (`/auth/github/app-drift`). When unset both surfaces refuse; they
@@ -122,7 +130,7 @@ hand-assemble checkboxes on github.com. A hand-created app once shipped with
 `"events": []`: webhook URL and secret were right, but GitHub delivered
 nothing and the repository-activity feed was silently dead.
 
-1. Set `BEELINE_AUTH_SETUP_TOKEN` on the auth service and open
+1. Set `BEELINE_AUTH_SETUP_TOKEN` on the Beeline server and open
    `https://<tenant>/auth/github/app-setup?token=<BEELINE_AUTH_SETUP_TOKEN>`.
 2. Submit the form. It POSTs a prebuilt manifest to GitHub's
    `github.com/settings/apps/new` with everything preconfigured: the webhook
@@ -132,8 +140,8 @@ nothing and the repository-activity feed was silently dead.
    GitHub generates the webhook secret during creation.
 3. GitHub redirects back to the same page with a one-time code; the service
    exchanges it via `POST /app-manifests/{code}/conversions` and renders a
-   copy-paste `BEELINE_GITHUB_*` environment block. The block is shown once
-   and never logged — copy it into the auth env and restart.
+   copy-paste `GITHUB_*` environment block. The block is shown once
+   and never logged — stage it in the Beeline server environment for the next release.
 4. Install the App on your account or organization from the link on the page.
 
 The startup drift check compares the live App (`GET /app`) against the same
@@ -199,7 +207,7 @@ Monolith production uses `https://server.usebeeline.app/auth/github/callback`.
 domains must not be restored to production tenant configuration.
 
 HTTP OIDC endpoints are accepted only for local emulators when
-`BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
+`BEELINE_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
 
 ## Local device emulator
 
@@ -210,6 +218,32 @@ both ports with `adb reverse` for browser-based auth fixture tests.
 This mode deliberately
 uses a non-`__Host-` browser cookie because the loopback fixture is HTTP; the
 production default remains `Secure` and `__Host-` prefixed.
+
+## Google sign-in rollout
+
+Google is off by default. `BEELINE_GOOGLE_SIGN_IN=1` enables the service,
+but `/auth/capabilities` reveals the button only with a matching
+`x-beeline-google-preview` header. Configure a random, URL-safe
+`BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN` of at least 32 characters. A tester opens
+`https://web.usebeeline.app/?google_preview=<token>` or
+`beeline://beeline/onboarding?google_preview=<token>` once. The client removes
+the token from navigation, stores it on that device, and sends it only to the
+capabilities endpoint. Do not log or publish a live preview link.
+
+`BEELINE_GOOGLE_SIGN_IN_SUBJECTS` remains a comma-separated Google subject
+allow list checked before ticket consumption and account creation. Preview
+enrollment never bypasses it. `BEELINE_GOOGLE_SIGN_IN_EVERYONE=1` reveals Google
+without enrollment and removes the subject restriction, but still requires
+the master switch. Keep everyone-on unset until the owner approves general
+availability after production Android, iOS, GitHub regression and org-admin
+acceptance. Production staging/deploy remains a separate authorized step.
+
+The browser requests `openid email profile`; only verified email supplies the
+initial handle. The OAuth client, nonce, PKCE, issuer, audience and one-use
+ticket remain server verified. `/auth/oidc/completion` recovers dropped
+redirects through the state-bound recovery secret on native, web and desktop.
+Profiles are initialized once and are preserved on subsequent sign-ins.
+Accounts are never linked by email.
 
 Environment naming: `BEELINE_AUTH_TENANTS_JSON`, `BEELINE_AUTH_SETUP_TOKEN`, and
 `BEELINE_AUTH_HOST` prefer the Beeline spelling; the matching `BUZZY_` names still work.

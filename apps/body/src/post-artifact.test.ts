@@ -52,6 +52,15 @@ describe('beeline-agent post_artifact', () => {
     ]);
   });
 
+  it('posts a single-file game only through explicit runnable MIME opt-in', async () => {
+    const { deps: d, uploads, queued } = deps();
+    const html = '<canvas></canvas><script>game()</script>';
+    await expect(postArtifact({title:'Game',mime:'text/html',html},d)).rejects.toThrow(/script/);
+    await postArtifact({title:'Game',mime:'application/vnd.beeline.game+html',html},d);
+    expect(uploads).toHaveLength(1);
+    expect(queued[0]).toMatchObject({mimeType:'application/vnd.beeline.game+html'});
+  });
+
   it('decodes base64 bytes for a PDF artifact', async () => {
     const { deps: d, uploads, queued } = deps();
     const pdf = Buffer.from('%PDF-1.7 minimal');

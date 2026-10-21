@@ -15,6 +15,7 @@
  *  validated; PDF is signature-checked; the rest are size-only. */
 export const ARTIFACT_MIME_TYPES = [
   'text/html',
+  'application/vnd.beeline.game+html',
   'image/svg+xml',
   'application/pdf',
   'text/markdown',
@@ -46,6 +47,7 @@ export type ArtifactMimeType = (typeof ARTIFACT_MIME_TYPES)[number];
  */
 export const ARTIFACT_EXTENSIONS_BY_MIME = {
   'text/html': ['.html', '.htm'],
+  'application/vnd.beeline.game+html': [],
   'image/svg+xml': ['.svg'],
   'application/pdf': ['.pdf'],
   'text/markdown': ['.md'],

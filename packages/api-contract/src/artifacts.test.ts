@@ -13,6 +13,7 @@ describe('artifact contract constants', () => {
     expect(ARTIFACT_MAXIMUM_BYTES).toBe(25 * 1024 * 1024);
     expect([...ARTIFACT_MIME_TYPES]).toEqual([
       'text/html',
+      'application/vnd.beeline.game+html',
       'image/svg+xml',
       'application/pdf',
       'text/markdown',

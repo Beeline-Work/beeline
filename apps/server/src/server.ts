@@ -1,6 +1,7 @@
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
+import { runnableOrigin, serveRunnableArtifact } from './runnable-artifact.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
 import { receiveSentryWake } from './sentry-wake.js';
@@ -30,7 +31,7 @@ import {
   compactRoomView,
   wantsCompactView,
 } from './compact-room-view.js';
-import { bearer, type TokenAuth } from './auth.js';
+import { bearer, GoogleSignInError, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_AUTHORITY_MESSAGE,
@@ -233,7 +234,7 @@ function applyWebAppCors(
 
   response.writeHead(204, {
     'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'authorization, content-type, x-file-name, x-beeline-view, x-speech-language, x-speech-prompt',
+    'access-control-allow-headers': 'authorization, content-type, x-file-name, x-beeline-view, x-speech-language, x-speech-prompt, x-beeline-google-preview',
     'access-control-max-age': '600',
     'cache-control': 'private, no-store',
   });
@@ -246,8 +247,11 @@ function isWebAppCorsPath(pathname: string): boolean {
   return (
     pathname === '/healthz' ||
     pathname.startsWith('/v1/') ||
+    pathname === '/auth/capabilities' ||
     pathname === '/auth/github/completion' ||
-    pathname === '/auth/github/completion/cancel'
+    pathname === '/auth/github/completion/cancel' ||
+    pathname === '/auth/oidc/completion' ||
+    pathname === '/auth/oidc/completion/cancel'
   );
 }
 
@@ -372,6 +376,7 @@ function bearerSecretMatches(secret: string, request: IncomingMessage): boolean 
 }
 
 export function createBeelineServer(options: ServerOptions): Server {
+  const gameOrigin = runnableOrigin();
   // LiveHub invokes every socket listener synchronously with the same event.
   // Gather those viewers before the microtask starts one authorized row read.
   // Weak keys release the batch when the notification leaves the bus.
@@ -569,6 +574,13 @@ export function createBeelineServer(options: ServerOptions): Server {
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
   const server = createServer((request, response) => {
+    if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
+      void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
+        if (!response.headersSent) response.writeHead(503, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+        response.end('Game unavailable');
+      });
+      return;
+    }
     const url = exactPath(request.url);
     const method = request.method ?? 'GET';
     if (method === 'GET' && /^\/v1\/phone\/rooms\/[^/]+$/.test(url.pathname))
@@ -645,7 +657,8 @@ export function createBeelineServer(options: ServerOptions): Server {
               message.includes('too large') ||
               message.includes('size is outside')
             ? 400
-            : message.includes('already linked') ||
+            : message === 'github_account_mismatch' ||
+                message.includes('already linked') ||
                 message.includes('already claimed') ||
                 message.includes('conflict') ||
                 message.includes('checks are failing')
@@ -667,7 +680,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   : 503);
       // GitHub's own outage or rate limit is a bad gateway, not this server
       // being unavailable; the message already names GitHub's status.
-      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429)) {
+      if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429 || error.rateLimited)) {
         status = 502;
       }
       // A failing Telegram delivery must not create another alert to itself.
@@ -704,6 +717,10 @@ export function createBeelineServer(options: ServerOptions): Server {
     });
   }) as Server['close'];
   server.on('upgrade', (request, socket, head) => {
+    if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
+      socket.destroy();
+      return;
+    }
     void (async () => {
       const url = exactPath(request.url);
       const computer = /^\/s\/([A-Za-z0-9_-]{43})\/(?:ws|stream)$/.exec(url.pathname);
@@ -1956,12 +1973,38 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     }
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/auth/google/link') {
+    const viewerId = await phoneIdentity(request, options);
+    if (!viewerId) { json(response, 401, { error: 'unauthorized' }); return; }
+    const input = await body(request);
+    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
+    await options.auth.linkGoogleOidc(viewerId, input.oidcToken);
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/auth/google/exchange') {
+    const input = await body(request);
+    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
+    try {
+      const tokens = await options.auth.exchangeGoogleOidc(input.oidcToken);
+      const funnel = parseSigninFunnelEvent(input.funnel);
+      if (funnel && funnel.event === 'provider_tapped' && funnel.provider === 'google') {
+        await recordSigninFunnelEvent(options.database, {...funnel, event: 'signed_in'}, 'server', tokens.identityId).catch(() => undefined);
+      }
+      json(response, 200, tokens);
+    } catch (error) {
+      if (!(error instanceof GoogleSignInError)) throw error;
+      json(response, 401, { error: 'google_sign_in_failed', ...(error.reason ? { reason: error.reason } : {}) });
+    }
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/github/exchange') {
     const input = await body(request);
     if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
     const tokens=await options.auth.exchangeGitHubOidc(input.oidcToken);
     const funnel=parseSigninFunnelEvent(input.funnel);
-    if(funnel && funnel.event==='provider_tapped') {
+    if(funnel && funnel.event==='provider_tapped' && funnel.provider==='github') {
       await recordSigninFunnelEvent(options.database,{...funnel,event:'signed_in'},'server',tokens.identityId).catch(()=>undefined);
     }
     json(response,200,tokens);
@@ -2198,6 +2241,15 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
   if (method === 'GET' && url.pathname.startsWith('/v1/media/')) {
     const last = url.pathname.slice('/v1/media/'.length);
+    const playMatch = last.match(/^([0-9a-f-]{36})\/play$/);
+    if (playMatch) {
+      if (!identityId) { json(response, 401, { error: 'identity_required' }); return; }
+      const origin = runnableOrigin();
+      if (!origin || !options.objectService) { json(response, 503, { error: 'game_host_unavailable' }); return; }
+      const link = await options.objectService.runnableLink(playMatch[1]!, origin);
+      json(response, link ? 200 : 404, link ?? { error: 'game_not_found' });
+      return;
+    }
     // `open in browser`: redeem the capability token minted by `/link` (a
     // browser has no bearer token for the canonical media route) into a
     // ten-minute signed storage GET. The token — an HMAC over the object id

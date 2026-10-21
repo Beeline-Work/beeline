@@ -183,11 +183,11 @@ rejected before being sent. Web and Tauri use the same controller.
 OAuth start URLs carry only that strict context. The auth service records the
 state-bound start and verified callback outcome via a server hook; it sends no
 OAuth code, token, subject, cookie or login to the funnel. Server observations
-replace matching client reports. Successful GitHub session exchange records
+replace matching client reports. Successful GitHub and Google session exchanges record
 signed-in authoritatively; the authenticated client event supplies the same
-install/attempt for all providers. Existing OIDC browser opening is instrumented
-for Google, ready for its separately gated UI; this change does not enable Google
-sign-in. A new Google exchange must retain the shared session-accept path.
+install/attempt for all providers. Google browser opening forwards the same
+anonymous context through OIDC start and session exchange, including callback
+recovery. Its existing preview and account-linking gates remain in force.
 
 Authenticated events mark an install internal if its identity is hidden, fixture
 only, the fixed Play reviewer, or one of the explicitly confirmed operator

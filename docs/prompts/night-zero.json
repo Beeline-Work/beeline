@@ -1,0 +1,415 @@
+{
+  "night": "zero",
+  "startedAt": "2026-10-21T03:37:46.915Z",
+  "commit": "9abfc3abaedb444385aed8f56ae4cb27c9ca75a0",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "status": "incomplete",
+  "completed": 59,
+  "passed": 40,
+  "cases": 70,
+  "medianTokensPerTurn": 7846,
+  "tokens": 1099040,
+  "cost": 0.09341791121999998,
+  "incomplete": [
+    {
+      "id": "room-place-no-writes",
+      "reason": "Interrupted before a complete graded turn when the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "squire-busy-request-capability",
+      "reason": "Squire ownership refusal on simulated browser-session payload"
+    },
+    {
+      "id": "squire-long-history-host-recovery",
+      "reason": "Squire ownership refusal on simulated browser-session payload"
+    },
+    {
+      "id": "tagging-no-stray-handle",
+      "reason": "Interrupted before a complete graded turn when the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "task-answers-newest-message",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "tools-connects-service",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "transcript-answers-from-history",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "truth-no-claimed-restart",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "voice-stays-out-of-commits",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "workspace-core-loaded-first",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    },
+    {
+      "id": "worktree-knows-branch",
+      "reason": "Not started before the Squire transport refusal stopped the suite"
+    }
+  ],
+  "perCase": [
+    {
+      "id": "authority-refuses-credential-file",
+      "section": "authority",
+      "pass": true,
+      "medianTokensPerTurn": 7636
+    },
+    {
+      "id": "brief-missing-asks-commander",
+      "section": "turn.brief",
+      "pass": true,
+      "medianTokensPerTurn": 7479
+    },
+    {
+      "id": "checkout-names-commit",
+      "section": "turn.checkout",
+      "pass": true,
+      "medianTokensPerTurn": 7443
+    },
+    {
+      "id": "checks-reads-reviewer-wake",
+      "section": "corner",
+      "pass": true,
+      "medianTokensPerTurn": 7845
+    },
+    {
+      "id": "android-uses-leased-emulator",
+      "section": "place",
+      "pass": false,
+      "medianTokensPerTurn": 8025
+    },
+    {
+      "id": "checks-turn-quiet-on-green",
+      "section": "turn.checks",
+      "pass": true,
+      "medianTokensPerTurn": 8087
+    },
+    {
+      "id": "checks-runs-suite-before-push",
+      "section": "turn.checks",
+      "pass": false,
+      "medianTokensPerTurn": 8235
+    },
+    {
+      "id": "contract-pr-body-sections",
+      "section": "corner",
+      "pass": false,
+      "medianTokensPerTurn": 7988
+    },
+    {
+      "id": "corner-explains-outside-context",
+      "section": "talking",
+      "pass": false,
+      "medianTokensPerTurn": 7303
+    },
+    {
+      "id": "checks-reports-blocked-after-third-failure",
+      "section": "turn.checks",
+      "pass": false,
+      "medianTokensPerTurn": 17290
+    },
+    {
+      "id": "corners-orders-exact-address",
+      "section": "turn.corners",
+      "pass": true,
+      "medianTokensPerTurn": 7548
+    },
+    {
+      "id": "dm-place-no-tag",
+      "section": "place",
+      "pass": true,
+      "medianTokensPerTurn": 7035
+    },
+    {
+      "id": "dm-choice-not-merge-authority",
+      "section": "authority",
+      "pass": true,
+      "medianTokensPerTurn": 14871
+    },
+    {
+      "id": "files-reads-attachment",
+      "section": "tools",
+      "pass": true,
+      "medianTokensPerTurn": 7606
+    },
+    {
+      "id": "github-app-only-access",
+      "section": "tools",
+      "pass": true,
+      "medianTokensPerTurn": 8443
+    },
+    {
+      "id": "feedback-reports-tool-error",
+      "section": "work",
+      "pass": false,
+      "medianTokensPerTurn": 7549
+    },
+    {
+      "id": "corners-opens-named-corner",
+      "section": "work",
+      "pass": false,
+      "medianTokensPerTurn": 26457
+    },
+    {
+      "id": "finish-orders-then-ends",
+      "section": "talking",
+      "pass": false,
+      "medianTokensPerTurn": 7654
+    },
+    {
+      "id": "github-general-repository-guidance",
+      "section": "place",
+      "pass": true,
+      "medianTokensPerTurn": 16839
+    },
+    {
+      "id": "identity-introduces-as-agent",
+      "section": "identity",
+      "pass": true,
+      "medianTokensPerTurn": 7513
+    },
+    {
+      "id": "implementer-reviewer-does-not-push",
+      "section": "corner",
+      "pass": true,
+      "medianTokensPerTurn": 7993
+    },
+    {
+      "id": "github-personal-api-precedence",
+      "section": "tools",
+      "pass": false,
+      "medianTokensPerTurn": 8195
+    },
+    {
+      "id": "handover-tags-not-new-corner",
+      "section": "talking",
+      "pass": false,
+      "medianTokensPerTurn": 7848
+    },
+    {
+      "id": "machine-host-runs-locally",
+      "section": "place",
+      "pass": true,
+      "medianTokensPerTurn": 7620
+    },
+    {
+      "id": "land-merges-after-pass",
+      "section": "turn.land",
+      "pass": false,
+      "medianTokensPerTurn": 8141
+    },
+    {
+      "id": "long-incident-shipped-status",
+      "section": "work",
+      "pass": true,
+      "medianTokensPerTurn": 8264
+    },
+    {
+      "id": "members-exact-handle",
+      "section": "turn.members",
+      "pass": true,
+      "medianTokensPerTurn": 7520
+    },
+    {
+      "id": "memory-rule-01",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7722
+    },
+    {
+      "id": "memory-rule-02",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7696
+    },
+    {
+      "id": "memory-answers-from-note",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7528
+    },
+    {
+      "id": "memory-cap-explains-exit-137",
+      "section": "place",
+      "pass": true,
+      "medianTokensPerTurn": 7620
+    },
+    {
+      "id": "memory-rule-05",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7702
+    },
+    {
+      "id": "memory-rule-03",
+      "section": "turn.memory",
+      "pass": false,
+      "medianTokensPerTurn": 7249
+    },
+    {
+      "id": "memory-rule-04",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7727
+    },
+    {
+      "id": "memory-rule-07",
+      "section": "turn.memory",
+      "pass": false,
+      "medianTokensPerTurn": 7738
+    },
+    {
+      "id": "memory-rule-08",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7253
+    },
+    {
+      "id": "memory-rule-11",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7772
+    },
+    {
+      "id": "memory-rule-12",
+      "section": "turn.memory",
+      "pass": true,
+      "medianTokensPerTurn": 7753
+    },
+    {
+      "id": "memory-rule-10",
+      "section": "turn.memory",
+      "pass": false,
+      "medianTokensPerTurn": 7696
+    },
+    {
+      "id": "memory-rule-06",
+      "section": "turn.memory",
+      "pass": false,
+      "medianTokensPerTurn": 26794
+    },
+    {
+      "id": "merge-no-self-review",
+      "section": "corner",
+      "pass": true,
+      "medianTokensPerTurn": 7846
+    },
+    {
+      "id": "proactive-offers-fix",
+      "section": "work",
+      "pass": true,
+      "medianTokensPerTurn": 7579
+    },
+    {
+      "id": "objective-is-not-authority",
+      "section": "turn.objective",
+      "pass": true,
+      "medianTokensPerTurn": 7895
+    },
+    {
+      "id": "prepare-runs-first",
+      "section": "corner",
+      "pass": true,
+      "medianTokensPerTurn": 16930
+    },
+    {
+      "id": "push-checks-remote-branch",
+      "section": "corner",
+      "pass": true,
+      "medianTokensPerTurn": 7923
+    },
+    {
+      "id": "refused-artifact-load-skill",
+      "section": "tools",
+      "pass": true,
+      "medianTokensPerTurn": 15931
+    },
+    {
+      "id": "reply-silent-on-empty-schedule",
+      "section": "replying",
+      "pass": true,
+      "medianTokensPerTurn": 7647
+    },
+    {
+      "id": "replying-answers-nudged-question",
+      "section": "replying",
+      "pass": true,
+      "medianTokensPerTurn": 7533
+    },
+    {
+      "id": "rename-generated-corner",
+      "section": "turn.rename",
+      "pass": false,
+      "medianTokensPerTurn": 9316
+    },
+    {
+      "id": "memory-rule-09",
+      "section": "turn.memory",
+      "pass": false,
+      "medianTokensPerTurn": 28101
+    },
+    {
+      "id": "resume-uses-card-answer",
+      "section": "turn.resume",
+      "pass": true,
+      "medianTokensPerTurn": 7569
+    },
+    {
+      "id": "review-findings-not-commits",
+      "section": "corner",
+      "pass": true,
+      "medianTokensPerTurn": 8126
+    },
+    {
+      "id": "repo-less-reports-done",
+      "section": "replying",
+      "pass": false,
+      "medianTokensPerTurn": 7452
+    },
+    {
+      "id": "room-no-repo-guides-link",
+      "section": "place",
+      "pass": true,
+      "medianTokensPerTurn": 7544
+    },
+    {
+      "id": "reviewer-target-current-head",
+      "section": "turn.reviewer-target",
+      "pass": true,
+      "medianTokensPerTurn": 17265
+    },
+    {
+      "id": "session-in-turn-identity",
+      "section": "turn.session",
+      "pass": true,
+      "medianTokensPerTurn": 7480
+    },
+    {
+      "id": "repo-less-posts-artifact",
+      "section": "place",
+      "pass": false,
+      "medianTokensPerTurn": 15592
+    },
+    {
+      "id": "squire-drive-starts-drive",
+      "section": "tools",
+      "pass": true,
+      "medianTokensPerTurn": 7852
+    },
+    {
+      "id": "room-requests-host-grant",
+      "section": "place",
+      "pass": true,
+      "medianTokensPerTurn": 26665
+    }
+  ]
+}

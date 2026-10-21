@@ -30,6 +30,13 @@ function seatShims(mobile: string): Record<string, string> {
     export const loadBuzzIdentity = async () => ({ publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) });
     export const clearBuzzIdentity = async () => undefined;`,
     '@/auth/github-auth-session': `export const clearPendingGitHubSignInState = async () => undefined;`,
+    '@/auth/github-installation-host': `export const runHostGitHubInstallationSession = async () => {
+      throw new Error('OAuth must not run in the identity picture geometry proof');
+    };`,
+    '@/auth/google-auth-session': `export const pendingGoogleLinkIdentity = async () => null;
+    export const resumeGoogleSignIn = async () => null;
+    export const runGoogleSignIn = async () => { throw new Error('OAuth must not run in the identity picture geometry proof'); };
+    export const completeGoogleAccountLink = async () => { throw new Error('OAuth must not run in the identity picture geometry proof'); };`,
     '@/auth/monolith-session': `export const monolithSession = { signOut: async () => undefined };`,
     '@/buzz/community-storage': `export const loadActiveCommunityId = async () => null;
     export const watchActiveCommunityId = (_pubkey, listener) => {

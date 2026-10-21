@@ -122,6 +122,21 @@ export async function runLeasedEmulator(args: string[], env: NodeJS.ProcessEnv =
     throw new Error('emulator requires -avd <name>');
   if (args.includes('-port') || args.includes('-datadir'))
     throw new Error('Beeline allocates emulator port and data directory');
+  // A base AVD can be half made: its `<name>.ini` exists but the `.avd`
+  // directory or its config.ini is missing (an interrupted `avdmanager
+  // create`, or a deleted directory). Check before leasing so this clean
+  // failure leaves no lease marker or instance directory behind, and report
+  // it as a plain message instead of a captured helper error.
+  const avdIni = resolve(baseAvdHome, `${avdName}.ini`);
+  const avdConfig = resolve(baseAvdHome, `${avdName}.avd`, 'config.ini');
+  const missing = !existsSync(avdIni) ? avdIni : !existsSync(avdConfig) ? avdConfig : undefined;
+  if (missing) {
+    console.error(
+      `Base AVD "${avdName}" is incomplete: ${missing} is missing. ` +
+      'Recreate it with `avdmanager create avd`, or pick one from `emulator -list-avds`.',
+    );
+    return 1;
+  }
   const lease = await leaseEmulator(leaseRoot, privateRoot);
   try {
     if (env.ANDROID_EMULATOR_HOME)

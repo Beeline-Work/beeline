@@ -97,6 +97,41 @@ async function seed() {
 }
 
 describe('private operator dashboard', () => {
+  it('keeps the Google exchange authoritative for anonymous Signup after integrating Google sign-in', async () => {
+    const identity = 'e'.repeat(64);
+    const event = {
+      event: 'provider_tapped' as const, installId: randomUUID(), attemptId: randomUUID(),
+      platform: 'android' as const, provider: 'google' as const, version: '0.2.22',
+      environment: 'production' as const, timestamp: new Date().toISOString(),
+    };
+    await recordSigninFunnelEvent(db, event, 'server');
+    const exchange = createBeelineServer({
+      database: db,
+      auth: { exchangeGoogleOidc: async () => {
+        await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Google customer')`, [identity]);
+        return {identityId: identity};
+      } } as TokenAuth,
+      phone: {} as PhoneService, daemon: {} as DaemonService, live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    await new Promise<void>(resolve => exchange.listen(0, '127.0.0.1', resolve));
+    try {
+      const response = await fetch(`http://127.0.0.1:${(exchange.address() as AddressInfo).port}/v1/auth/google/exchange`, {
+        method: 'POST', headers: {'content-type': 'application/json'},
+        body: JSON.stringify({oidcToken: 'test-proof', funnel: event}),
+      });
+      expect(response.status).toBe(200);
+      const rows = (await db.query(`SELECT event,source,provider FROM signin_funnel_events WHERE event<>'provider_tapped' ORDER BY event`)).rows;
+      expect(rows).toEqual([
+        {event:'signed_in',source:'server',provider:'google'},
+        {event:'signup',source:'server',provider:'google'},
+      ]);
+      expect(JSON.stringify(rows)).not.toContain(identity);
+      expect(JSON.stringify(rows)).not.toContain('test-proof');
+    } finally {
+      await new Promise<void>(resolve => exchange.close(() => resolve()));
+    }
+  });
   it('R-signup-installs: shows install-based Signup drop-off through HTTP without counting returning accounts', async () => {
     const customer = 'c'.repeat(64),
       returning = 'd'.repeat(64);

@@ -159,7 +159,10 @@
         "scripts/composer-waveform-web-proof.tsx",
         "scripts/voice-multi-tips-native-proof.tsx",
         "scripts/multi-human-silence-native-proof.tsx",
+        "scripts/runnable-native-proof.tsx",
         "scripts/call-error-android-proof.tsx",
+        // Selected as Expo's main entry for the isolated Hermes cancellation proof.
+        "scripts/livekit-abort-native-proof.tsx",
         "scripts/voice-delivery-android-proof.tsx",
         "scripts/voice-multi-tips-web-proof.tsx",
         "scripts/composer-recorder-proof.tsx",
@@ -205,6 +208,11 @@
       ],
     },
     "apps/server": {
+      // The cutover script imports built modules by their container paths.
+      "paths": {
+        "/app/apps/auth/dist/*": ["../auth/src/*"],
+        "/app/apps/server/dist/*": ["src/*"],
+      },
       // These are copied to an operator host and executed during database
       // cutover; they are intentionally not package.json commands.
       "entry": [

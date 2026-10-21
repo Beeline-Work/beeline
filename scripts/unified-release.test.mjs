@@ -902,7 +902,12 @@ test('release notification timeout is a bounded warning', async () => {
     secret: 'secret',
     timeoutMs: 10,
     fetchImpl: (_url, { signal }) => new Promise((resolve, reject) => {
-      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      // A real pending request keeps Node alive; AbortSignal.timeout alone does not.
+      const pendingRequest = setInterval(() => {}, 1000);
+      signal.addEventListener('abort', () => {
+        clearInterval(pendingRequest);
+        reject(signal.reason);
+      }, { once: true });
     }),
   });
   assert.equal(RELEASE_NOTIFY_TIMEOUT_MS, 10_000);
@@ -1494,7 +1499,7 @@ test('the emulator release proof gates OTA promotion', () => {
   // The runner's system node is older than metro-config's use of
   // Array.prototype.toReversed, so the proof job must pin the same node
   // version the native build bundles on.
-  const proofNode = steps.find((step) => step.uses === 'actions/setup-node@v4');
+  const proofNode = steps.find((step) => step.uses === 'actions/setup-node@v4' && step.with?.['node-version']);
   assert.equal(String(proofNode.with['node-version']), '22');
   // The shared rig emulator must survive the OTA-only APK build's teardown.
   assert.equal(apk.env.BEELINE_ANDROID_KEEP_DEVICE, '1');
@@ -1753,7 +1758,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   assert.equal(ios.needs, 'initialize');
   assert.deepEqual(ios['runs-on'], ['self-hosted', 'macOS', 'X64', 'ios-builder']);
   assert.equal(ios['timeout-minutes'], 90);
-  assert.equal(ios.steps.some((step) => step.uses === 'actions/setup-node@v4'), false);
+  assert.equal(ios.steps.find((step) => step.uses === 'actions/setup-node@v4').with['node-version-file'], '.nvmrc');
 
   const androidSteps = android.steps;
   const androidBuild = androidSteps.find((step) => step.name === 'Build immutable Android store binary locally');
@@ -1792,7 +1797,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.ok(ios.steps.indexOf(isolateKeychain) < ios.steps.indexOf(iosBuild));
     for (const step of [iosCredentials, iosBuild, iosSubmit]) {
       assert.match(step.run, /# Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export\./);
-      assert.match(step.run, /export PATH=\/usr\/local\/opt\/node@20\/bin:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin:\/usr\/local\/bin/);
+      assert.ok(step.run.includes('PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"'));
     }
     assert.match(iosCredentials.run, /EXPO_APPLE_TEAM_ID=89KT3SWYAF/);
     assert.match(iosCredentials.run, /EXPO_NO_CAPABILITY_SYNC=1/);
@@ -1852,14 +1857,16 @@ test('ios-review-node: App Review establishes the runner Node PATH before submis
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   const ios = workflow.jobs.mobile_native_ios;
   const review = ios.steps.find((step) => step.name === 'Send production iOS version to App Review');
-  const nodePath = '/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin';
+  const nodePath = '/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin';
   assert.equal(review.if, "inputs.store_track == 'production'");
   assert.equal(review['working-directory'], undefined);
   assert.equal(ios.defaults?.run?.['working-directory'], undefined);
-  assert.match(review.run, new RegExp(`export PATH=${nodePath.replaceAll('/', '\\/')}\\n[\\s\\S]*node scripts/ios-store-build\\.mjs submit`));
+  assert.ok(review.run.includes('PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"'));
+  assert.match(review.run, /export PATH\n[\s\S]*node scripts\/ios-store-build\.mjs submit/);
 
   // Stand in for the Mac's Node binary without calling Apple or changing the host.
   const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-euc', `
+    command() { if [[ "$1" = -v && "$2" = node ]]; then printf '/usr/bin/node'; else builtin command "$@"; fi; }
     node() {
       if [[ "$PATH" != '${nodePath}' ]]; then
         echo 'node: command not found' >&2
@@ -1868,7 +1875,7 @@ test('ios-review-node: App Review establishes the runner Node PATH before submis
       printf '%s\\n' "$@"
     }
     ${review.run}
-  `], { env: { PATH: '/missing-runner-node', RUNNER_TEMP: '/tmp/ios-review-node' }, encoding: 'utf8' });
+  `], { env: { PATH: '/usr/bin:/bin', RUNNER_TEMP: '/tmp/ios-review-node' }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'scripts/ios-store-build.mjs\nsubmit\n/tmp/ios-review-node/ios-build.json\n');
 });

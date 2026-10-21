@@ -1,3 +1,4 @@
+import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { createECDH } from 'node:crypto';
 import { getPublicKey } from '@beeline/nostr';
@@ -244,6 +245,27 @@ describe('free starter agents', () => {
     expect((await phone.readRoom(roomId, FRIEND))?.messages.some(message => message.onboarding)).toBe(false);
     expect((await daemon.execute('getAgentConfiguration', context as never, agent.agent_id)).soul?.instructions).not.toContain('beeline:onboarding');
     expect(await daemon.execute('getRoomRepositoryState', context as never, agent.agent_id)).not.toHaveProperty('repositoryOnboarding');
+  });
+
+  it.each(['0', '1'])('E1: Google onboarding posts a real handle and gates repository cards (%s)', async flag => {
+    const auth = new TokenAuth(db, async () => { throw new Error('GitHub is not needed'); },
+      () => new Date(), async () => ({ subject: 'google-new-owner', name: 'Alex Chen', email: 'alex.chen@gmail.com', audience: 'google-client' }));
+    const google = await auth.exchangeGoogleOidc('verified-fixture-ticket');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', flag);
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', google.identityId);
+    const workspace = await phone.execute('createWorkspace', { name: 'Google onboarding' }, google.identityId);
+    const beebee = await freeAgentOf(workspace.id);
+    const hello = (await db.query<{ text: string }>(
+      'SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL',
+      [workspace.roomId, beebee.agent_id],
+    )).rows;
+    expect(hello).toHaveLength(1);
+    expect(hello[0]!.text).toContain("@alex.chen Hi, I'm Beebee");
+    expect(hello[0]!.text).not.toContain(google.identityId);
+    const room = await phone.readRoom(workspace.roomId!, google.identityId);
+    expect(room?.room.name).toBe('general');
+    expect(room?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(flag === '1');
+    expect((await db.query('SELECT github_subject FROM identities WHERE id=$1', [google.identityId])).rows[0]?.github_subject).toBeNull();
   });
 
   it('posts the exact hello and notifies the owner without a model turn or Machine boot', async () => {

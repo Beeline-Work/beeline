@@ -46,3 +46,25 @@ it('does not render a cached card when server eligibility is OFF', async () => {
     expect(renderer.toJSON()).toBeNull();
   } finally { mocks.enabled = true; }
 });
+
+it('E4/E9: offers Connect GitHub to the Google owner and names that owner for a regular member', async () => {
+  mocks.enabled = true;
+  let renderer: any;
+  const missing: Card = { ...card, repository:undefined, installationId:undefined, state:'install_missing', githubLinked:false, ownerHandle:'alex.chen' };
+  await act(async () => { renderer=create(<RepositoryOnboardingCard card={missing} viewerId={H} />); });
+  expect(renderer.root.findByType('TranscriptCard').props.actions[0].label).toBe('Connect GitHub');
+  await act(async () => { renderer.update(<RepositoryOnboardingCard card={{...missing,canLink:false}} viewerId={H} />); });
+  const props=renderer.root.findByType('TranscriptCard').props;
+  expect(props.actions).toEqual([]);
+  expect(props.body).toBe('Ask @alex.chen to link a repository for this Room');
+});
+it('E7: a failed cold return explains the other account and keeps Connect GitHub available', async () => {
+  mocks.enabled = true;
+  let renderer: any;
+  await act(async () => { renderer=create(<RepositoryOnboardingCard
+    card={{...card,installationId:undefined,githubLinked:false,state:'install_missing'}} viewerId={H}
+    connectionError="github_account_already_linked" />); });
+  const props=renderer.root.findByType('TranscriptCard').props;
+  expect(props.footerNote).toContain('Sign out and continue with GitHub');
+  expect(props.actions.map((action:any) => action.label)).toEqual(['Connect GitHub']);
+});

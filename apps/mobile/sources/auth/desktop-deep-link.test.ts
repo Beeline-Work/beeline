@@ -1,3 +1,4 @@
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: { setItem: vi.fn(async () => undefined) } }));
 import { describe, expect, it, vi } from 'vitest';
 import { deliverDesktopDeepLink, desktopDeepLinkDestination } from './desktop-deep-link';
 
@@ -39,6 +40,15 @@ describe('desktop native deep-link delivery', () => {
     const replace = vi.fn();
     expect(deliverDesktopDeepLink(`beeline://beeline/browser-share?id=${id}&access=discarded`, { replace } as never)).toBe(true);
     expect(replace).toHaveBeenCalledWith({ pathname: '/beeline/browser-share', params: { id } });
+  });
+
+  it('enrolls a desktop preview without passing the token to the router', () => {
+    const replace = vi.fn();
+    expect(deliverDesktopDeepLink(`beeline://beeline/onboarding?google_preview=${'p'.repeat(43)}`, { replace } as never)).toBe(true);
+    expect(replace).toHaveBeenCalledWith('/beeline/onboarding');
+    expect(desktopDeepLinkDestination('beeline://beeline/google-callback?completed=1&state=test')).toEqual({
+      kind: 'google-callback', href: '/beeline/google-callback?completed=1&state=test',
+    });
   });
 
   it('still opens malformed review links so the route can explain the error', () => {

@@ -28,11 +28,38 @@ export class GitHubHttpError extends Error {
     readonly retryAfter?: string | null,
   ) {
     super(`${label} failed: HTTP ${status}`);
+    if (this.rateLimited) {
+      this.message = `GitHub rate limit; checks readable again at ${new Date(Date.now() + githubRetryDelay(this, 0)).toISOString()}`;
+    }
+  }
+
+  get rateLimited(): boolean {
+    return (this.status === 403 || this.status === 429) && retryAfterTime(this.retryAfter) !== undefined;
   }
 }
 
+function retryAfterTime(value: string | null | undefined): number | undefined {
+  if (!value?.trim()) return undefined;
+  const seconds = Number(value);
+  const time = Number.isFinite(seconds) ? Date.now() + seconds * 1000 : Date.parse(value);
+  return Number.isFinite(time) && time >= 0 && time <= 8.64e15 &&
+    (!Number.isFinite(seconds) || seconds >= 0) ? time : undefined;
+}
+
+function responseRetryAfter(response: Response): string | null {
+  const retry = response.headers.get('retry-after');
+  if (retryAfterTime(retry) !== undefined) return retry;
+  const reset = response.headers.get('x-ratelimit-reset');
+  const epoch = Number(reset);
+  if (response.headers.get('x-ratelimit-remaining') === '0' && reset?.trim() &&
+      Number.isFinite(epoch) && epoch >= 0 && epoch * 1000 <= 8.64e15) {
+    return new Date(epoch * 1000).toUTCString();
+  }
+  return null;
+}
+
 export function transientGitHubError(error: unknown): boolean {
-  if (error instanceof GitHubHttpError) return error.status === 429 || (error.status >= 500 && error.status < 600);
+  if (error instanceof GitHubHttpError) return error.rateLimited || error.status === 429 || (error.status >= 500 && error.status < 600);
   if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) return true;
   const code = (error as { code?: string; cause?: { code?: string } } | null);
   return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(code?.code ?? code?.cause?.code ?? '');
@@ -85,11 +112,11 @@ async function jsonResponseObject(
   try {
     body = await response.json();
   } catch {
-    if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
+    if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
+    if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
     throw new Error(`${label} returned invalid JSON`);
   }
   return body as Record<string, unknown>;
@@ -97,20 +124,21 @@ async function jsonResponseObject(
 
 async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
   const body = await jsonResponseObject(response, label);
-  if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
+  if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
   return body;
 }
 
 /** Some App endpoints (e.g. GET /app/installations) answer a bare JSON array, not an envelope. */
 async function jsonArray(response: Response, label: string): Promise<Record<string, unknown>[]> {
+  if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
   let body: unknown;
   try {
     body = await response.json();
   } catch {
     throw new Error(`${label} returned invalid JSON`);
   }
-  if (!response.ok || !Array.isArray(body)) {
-    throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
+  if (!Array.isArray(body)) {
+    throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
   }
   for (const entry of body) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -726,7 +754,7 @@ export class GitHubAppClient {
       headers: githubHeaders(accessToken),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) throw new GitHubHttpError('GitHub branch pull requests', response.status);
+    if (!response.ok) throw new GitHubHttpError('GitHub branch pull requests', response.status, responseRetryAfter(response));
     const body: unknown = await response.json();
     if (!Array.isArray(body)) throw new Error('GitHub branch pull requests are invalid');
     return body.flatMap((entry): number[] => {
@@ -858,7 +886,7 @@ export class GitHubAppClient {
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/jobs/${jobId}/logs`,
       { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
     );
-    if (!response.ok) throw new GitHubHttpError('GitHub job log', response.status);
+    if (!response.ok) throw new GitHubHttpError('GitHub job log', response.status, responseRetryAfter(response));
     return response.text();
   }
 
@@ -874,7 +902,7 @@ export class GitHubAppClient {
         signal: AbortSignal.timeout(15_000),
       },
     );
-    if (!response.ok) throw new GitHubHttpError('GitHub PR checks', response.status);
+    if (!response.ok) throw new GitHubHttpError('GitHub PR checks', response.status, responseRetryAfter(response));
     return (await response.json()) as Record<string, unknown>;
   }
 
@@ -883,7 +911,7 @@ export class GitHubAppClient {
     const response = await fetch(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}`, {
       headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) throw new GitHubHttpError('GitHub repository', response.status);
+    if (!response.ok) throw new GitHubHttpError('GitHub repository', response.status, responseRetryAfter(response));
     const repository = await response.json() as { default_branch?: unknown };
     if (typeof repository.default_branch !== 'string') throw new Error('GitHub default branch is missing');
     let details: Record<string, unknown>;
@@ -1254,6 +1282,15 @@ export class GitHubAppClient {
 
   async listUserInstallationIds(accessToken: string): Promise<number[]> {
     return (await this.userInstallationIds(accessToken)).installationIds;
+  }
+
+  /** A linked installation may change owners only with an explicit admin grant. */
+  async organizationAdmin(accessToken: string, organization: string): Promise<boolean> {
+    const response = await fetch(`${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
+      { headers: githubHeaders(accessToken) });
+    if (!response.ok) return false;
+    const body = await response.json() as Record<string, unknown>;
+    return body.state === 'active' && body.role === 'admin';
   }
 
   /**

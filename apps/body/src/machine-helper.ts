@@ -61,7 +61,9 @@ import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
 const AGENT_RESTART_BASE_MS = 5_000;
 const AGENT_RESTART_MAX_MS = 60_000;
-/** How long an agent waits for a previous process (an old per-agent daemon) to let go of it. */
+/** How long an old per-agent daemon gets to drain before forced takeover. */
+const PREVIOUS_OWNER_STOP_MS = 15_000;
+const PREVIOUS_OWNER_KILL_MS = 2_000;
 
 interface AgentSlot {
   readonly configPath: string;
@@ -466,11 +468,38 @@ async function serveMachineHelper(
       slot.attemptRevision = slot.revision;
       setState(slot, 'starting', slot.status);
       try {
-        const previous = await runtimeDaemonPid(slot.configPath);
-        if (previous && previous !== process.pid)
-          throw new Error(
-            `previous runtime owner ${previous} still alive; native topology migration incomplete`,
-          );
+        let previous = await runtimeDaemonPid(slot.configPath);
+        if (previous && previous !== process.pid) {
+          setState(slot, 'starting', 'stopping previous runtime owner');
+          const signalOwner = async (signal: NodeJS.Signals) => {
+            // Re-read identity immediately before each signal; records and PIDs can change.
+            previous = await runtimeDaemonPid(slot.configPath);
+            if (!previous || previous === process.pid || slot.controller.signal.aborted) return;
+            try { process.kill(previous, signal); }
+            catch {
+              // Judge the handoff by verified liveness after the stop deadlines.
+            }
+          };
+          const waitForOwner = async (timeout: number) => {
+            const deadline = Date.now() + timeout;
+            while (!slot.controller.signal.aborted) {
+              previous = await runtimeDaemonPid(slot.configPath);
+              if (!previous || previous === process.pid || Date.now() >= deadline) return;
+              await sleep(Math.min(100, deadline - Date.now()), slot.controller.signal);
+            }
+          };
+          await signalOwner('SIGTERM');
+          await waitForOwner(PREVIOUS_OWNER_STOP_MS);
+          if (slot.controller.signal.aborted) break;
+          if (previous && previous !== process.pid) {
+            await signalOwner('SIGKILL');
+            await waitForOwner(PREVIOUS_OWNER_KILL_MS);
+          }
+          if (slot.controller.signal.aborted) break;
+          if (previous && previous !== process.pid)
+            throw new Error(`previous runtime owner ${previous} still alive after SIGKILL`);
+          setState(slot, 'starting', 'starting runtime');
+        }
         if (await stat(resolve(supervisorRoot, 'beeline/storage-owners', `ended-agent-${slot.agentId}.json`)).catch(() => undefined)) {
           await pruneEndedOwnerStorage(supervisorRoot);
           slot.enabled = false;

@@ -19,7 +19,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 vi.mock('@/components/buzz/RoomGlyph', () => ({ RoomGlyph: () => null }));
 
-import { EmptyLedgerState } from './EmptyLedgerState';
+import { EmptyLedgerState, cornerNeedsStarter } from './EmptyLedgerState';
 import { roomStarterIntro, roomStarterPrompts } from '@/buzz/starter-prompts';
 
 beforeAll(() => {
@@ -32,9 +32,9 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 function textOf(node: any): string {
-  return node.children
-    .map((child: any) => (typeof child === 'string' ? child : textOf(child)))
-    .join('');
+  const children = React.Children.toArray(node.props.children);
+  return children.map((child: any) => typeof child === 'string' ? child :
+    child?.props ? textOf(child) : '').join('');
 }
 
 describe('the empty #general', () => {
@@ -69,5 +69,30 @@ describe('the empty #general', () => {
       'Connect an agent so this Room has someone to ask',
       'Invite someone to Northstar Lab',
     ]);
+  });
+});
+
+describe('empty corner starter', () => {
+  it.each(['beebee', '@beebee', undefined])('shows the tag instruction for %s and invokes its tap', async (agentHandle) => {
+    const onPress = vi.fn();
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = create(<EmptyLedgerState variant="corner" agentHandle={agentHandle} onPress={onPress} />);
+    });
+    const button = tree.root.findByType('TouchableOpacity');
+    expect(button.props.accessibilityLabel).toBe(
+      `${agentHandle ? 'Tag @beebee to start' : 'Tag an agent to start'}. Agents here reply only when tagged.`,
+    );
+    await act(async () => button.props.onPress());
+    expect(onPress).toHaveBeenCalledOnce();
+    await act(async () => tree.unmount());
+  });
+
+  it('keeps the starter for opening and handoff rows, but stops after a conversation message', () => {
+    const opening = [{ systemEvent: { kind: 'corner-opened' } }, { systemEvent: { kind: 'workflow-handoff' } }];
+    expect(cornerNeedsStarter([])).toBe(true);
+    expect(cornerNeedsStarter(opening)).toBe(true);
+    expect(cornerNeedsStarter([...opening, {}])).toBe(false);
+    expect(cornerNeedsStarter([{ systemEvent: { kind: 'corner-closed' } }])).toBe(false);
   });
 });

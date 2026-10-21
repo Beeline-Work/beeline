@@ -116,6 +116,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - name: Record dispatch clock
         id: clock
         uses: actions/github-script@v7
@@ -409,6 +414,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - name: Log in to GHCR for the pinned server base image
         uses: docker/login-action@v3
         with:
@@ -566,6 +576,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - uses: actions/setup-node@v4
         with:
           node-version: '20.19'
@@ -635,6 +650,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       # The Mac bundles exist in this run only when helper_macos built them, so
       # they alone gate their own downloads and the merge inputs — daemon-leg's
       # emptiness check then still names missing Mac inputs instead of failing
@@ -760,6 +780,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       # The proof builds its own sideload APK when the native build was
       # carried, and that build runs Metro. Without this the job inherits the
       # runner's system node, which is older than metro-config's use of
@@ -869,6 +894,11 @@ jobs:
           # A pending build must compile the original release tree.
           ref: ${{ needs.initialize.outputs.stage_mobile_ota == 'pending' && needs.initialize.outputs.release_sha || github.sha }}
           fetch-depth: 0
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - uses: ./.github/actions/mobile-ota-leg
         if: needs.initialize.outputs.stage_mobile_ota == 'pending'
         with:
@@ -1062,6 +1092,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -1163,6 +1198,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - name: Isolate the iOS signing keychain
         run: |
           set -euo pipefail
@@ -1178,7 +1218,8 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
-          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
           for name in EXPO_TOKEN EXPO_ASC_KEY_ID EXPO_ASC_ISSUER_ID EXPO_ASC_API_KEY_P8; do
             test -n "${!name}" || { echo "$name is required for an iOS store release" >&2; exit 1; }
           done
@@ -1199,7 +1240,8 @@ jobs:
         env:
           NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
         run: |
-          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
           node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
       - name: Build immutable iOS store binary locally
         working-directory: apps/mobile
@@ -1214,7 +1256,8 @@ jobs:
           # child environment, and eas itself runs `npx -y eas-cli-local-build-plugin@<v>`; with that
           # variable inherited the nested npx resolves eas-cli instead and fails with
           # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
-          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
           npm ci
           npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
@@ -1233,7 +1276,8 @@ jobs:
           # child environment, and eas itself runs `npx -y eas-cli-local-build-plugin@<v>`; with that
           # variable inherited the nested npx resolves eas-cli instead and fails with
           # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
-          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
           # Verify the actual IPA targets this App Store app and a new build
           # number before accepting Apple's transport receipt.
           node ../../scripts/ios-store-build.mjs prepare "$RUNNER_TEMP/ios-build.json"
@@ -1254,7 +1298,8 @@ jobs:
         if: inputs.store_track == 'production'
         run: |
           set -euo pipefail
-          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
+          export PATH
           node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
@@ -1300,6 +1345,11 @@ jobs:
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
           fetch-depth: 0
+      - name: Install repository Node before release commands
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
       - uses: actions/download-artifact@v4
         with:
           name: unified-release-plan-${{ needs.initialize.outputs.release_id }}

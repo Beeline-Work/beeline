@@ -1,0 +1,5 @@
+# Cold start after am force-stop. Process gone, then trampoline. DevLauncher is expected on this debug APK.
+10-21 00:12:32.620   694  2378 I ActivityTaskManager: START u0 {flg=0x10000000 xflg=0x5 cmp=app.usebeeline/.PushNotificationActivity (has extras)} with LAUNCH_MULTIPLE from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+10-21 00:12:33.591   694  2378 I ActivityTaskManager: START u0 {flg=0x10008000 xflg=0x4 cmp=app.usebeeline/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 10216 (sr=57775710) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+10-21 00:12:33.655   694  1863 I ActivityTaskManager: START u0 {flg=0x10018000 xflg=0x4 cmp=app.usebeeline/expo.modules.devlauncher.launcher.DevLauncherActivity} with LAUNCH_SINGLE_TASK from uid 10216 (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+10-21 00:12:34.564   694   741 I ActivityTaskManager: Displayed app.usebeeline/expo.modules.devlauncher.launcher.DevLauncherActivity for user 0: +1s946ms

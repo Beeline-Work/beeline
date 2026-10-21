@@ -218,6 +218,8 @@ jobs:
               - '.github/actions/**'
               - '.github/actionlint.yaml'
               - 'scripts/verify-workflow-paths.mjs'
+              - 'scripts/release-preflight*'
+              - 'scripts/unified-release*'
               - 'scripts/ios-store-build*'
               - 'scripts/ios-build-evidence.py'
               - 'package.json'
@@ -364,6 +366,8 @@ jobs:
       # buzz-client resolves @beeline/nostr and @beeline/api-contract from
       # built dist, the same as every app that imports those packages.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract
+      - name: Test feedback grouping and ranking
+        run: npm run test:feedback-signals
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
 
@@ -963,20 +967,24 @@ jobs:
         run: node --test scripts/desktop-signing.test.mjs
       - name: Test iOS upload identity and Apple processing verification
         run: node --test scripts/ios-store-build.test.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install mobile dependencies for release regressions
+        # The OTA recovery regression loads Expo config from the mobile app.
+        run: npm ci --prefix apps/mobile
+      - name: Test release preflight, failure intake and governor regressions
+        run: node --test scripts/release-preflight.test.mjs scripts/unified-release.test.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
       # every pull request (a test can be deleted without touching a workflow);
       # here it is where a workflow author gets the message.
       - name: Check no workflow names a deleted test
         run: npm run lint:workflow-paths
 
-  # Two containers are deployed from this repository's root build context: the
-  # auth image and, since the monolith cutover, apps/server/Dockerfile, which
-  # `flyctl deploy` builds at release time. A Dockerfile breaks on inputs no
-  # unit test observes — a COPY of a workspace that moved, a lockfile the
-  # runtime stage can no longer install — and the release is the wrong place to
-  # find that out, so both build here on the pull request that changes their
-  # inputs. The check context keeps its historical name because branch
-  # protection references it; it now covers both images.
+  # Build the deployed monolith image. Keep the historical check context
+  # because branch protection references it.
   auth-image:
     name: Build auth container
     needs: changes
@@ -998,10 +1006,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Neither image is pushed: this proves the build, and the release legs
-      # remain the only producers of a deployed image.
-      - name: Build auth image
-        run: docker build -f apps/auth/Dockerfile .
+      # This image is not pushed; releases produce deployed images.
       - name: Build monolith server image
         run: docker build -f apps/server/Dockerfile .
 

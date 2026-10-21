@@ -1,5 +1,7 @@
 import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
+import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
+import { clearPendingGoogleSignIn, resumeGoogleSignIn, runGoogleSignIn } from '@/auth/google-auth-session';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -90,9 +92,11 @@ interface PendingBind {
   managedIdentity?: ManagedIdentity;
 }
 
-async function exchangeFunnelTicket(ticket:string){
+async function exchangeFunnelTicket(ticket:string, provider: 'github' | 'google' = 'github'){
   const context=await pendingFunnelAttempt().catch(()=>undefined);
-  return context?monolithSession.exchangeGitHubTicket(ticket,context):monolithSession.exchangeGitHubTicket(ticket);
+  return provider === 'google'
+    ? monolithSession.exchangeGoogleTicket(ticket, context)
+    : monolithSession.exchangeGitHubTicket(ticket, context);
 }
 
 function randomState(): string {
@@ -127,8 +131,21 @@ export default function BuzzOnboarding() {
   const [status, setStatus] = useState<OnboardingStatus>('checking_device');
   const [notice, setNotice] = useState<OnboardingNotice | null>(canSignIn ? null : WEB_NOTICE);
   const [loadingAction, setLoadingAction] = useState<
-    'github' | 'bind' | 'recover' | 'name' | null
+    'google' | 'github' | 'bind' | 'recover' | 'name' | null
   >(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  useEffect(() => {
+    const runtime = getBuzzRuntimeConfig();
+    let alive = true;
+    const refresh = () => {
+      void readAuthCapabilities(runtime.monolithUrl)
+        .then(capabilities => { if (alive) setGoogleEnabled(capabilities.google === true); })
+        .catch(() => undefined);
+    };
+    const unwatch = watchGooglePreview(refresh);
+    refresh();
+    return () => { alive = false; unwatch(); };
+  }, []);
   const [nameFocused, setNameFocused] = useState(false);
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
@@ -166,6 +183,7 @@ export default function BuzzOnboarding() {
       face: null,
       name: hosted?.name ?? '',
       handle: hosted?.handle,
+      provider: hosted?.providers?.some((link) => link.provider === 'google') ? 'google' : 'github',
     });
   };
 
@@ -339,6 +357,14 @@ export default function BuzzOnboarding() {
       // arrived: it must neither spend the one-use ticket a second time nor
       // race the press into the app past the ceremony it is about to publish.
       if (isSignInInFlight()) return;
+      const googleTicket = await resumeGoogleSignIn(initialUrl);
+      if (googleTicket) {
+        void funnelCallback('success');
+        const identityId = await exchangeFunnelTicket(googleTicket, 'google');
+        await clearPendingGoogleSignIn();
+        if (alive) await enterAfterMonolithSignIn(identityId);
+        return;
+      }
       const savedIdentityId = await monolithSession.identityId();
       const challenge =
         (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl), undefined, {
@@ -387,6 +413,44 @@ export default function BuzzOnboarding() {
       alive = false;
     };
   }, [canSignIn]);
+
+  const handleGoogleSignIn = async () => {
+    if (!canSignIn || !googleEnabled || loading) return;
+    setLoadingAction('google');
+    setStatus('opening_browser');
+    clearOnboardingNotice();
+    setNotice(null);
+    markSignInInFlight(true);
+    try {
+      const funnelContext = await beginFunnelAttempt('google').catch(() => undefined);
+      const ticket = await runGoogleSignIn({
+        funnelContext,
+        state: randomState(),
+        recoveryToken: randomState(),
+        openAuthSession: (url, redirect) =>
+          openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect)),
+        subscribeToUrls: subscribeToAuthUrls,
+      });
+      void funnelCallback('success');
+      const identityId = await exchangeFunnelTicket(ticket, 'google');
+      await clearPendingGoogleSignIn();
+      await enterAfterMonolithSignIn(identityId);
+    } catch (error) {
+      const cancelled = error instanceof OidcBindError && ['browser_canceled', 'oidc_denied'].includes(error.code);
+      void funnelCallback(cancelled ? 'cancelled' : 'error', cancelled ? undefined : 'unknown');
+      const next = noticeForAuthError(
+        error instanceof OidcBindError
+          ? error
+          : new OidcBindError('exchange_failed', 'Google sign-in could not finish. Try again.'),
+      );
+      setStatus(next.status);
+      setNotice(next);
+      publishOnboardingNotice(next);
+    } finally {
+      markSignInInFlight(false);
+      setLoadingAction(null);
+    }
+  };
 
   const handleSignIn = async () => {
     if (!canSignIn) return;
@@ -531,7 +595,12 @@ export default function BuzzOnboarding() {
           currentFace={faceStep.face}
           handle={faceStep.handle}
           name={faceStep.name}
-          onConfirm={async ({ face }) => {
+          editableIdentity
+          provider={faceStep.provider}
+          onConfirm={async ({ face, name, handle }) => {
+            if (name !== undefined) await monolithPhoneOperation('updatePersonProfile', { name });
+            if (handle !== undefined)
+              await monolithPhoneOperation('claimManagedHandle', { handle });
             await monolithPhoneOperation('updateIdentityFace', { faceId: face });
           }}
           onEntered={() => {
@@ -648,19 +717,31 @@ export default function BuzzOnboarding() {
             disabled={loading}
           />
         ) : canSignIn ? (
-          <View>
-          {repositoryOnboarding ? <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text> : null}
-          <Button
-            label={signInLabel}
-            labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
-            testID="onboarding-github-sign-in"
-            loading={
-              loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'
-            }
-            onPress={() => void handleSignIn()}
-            disabled={loading || status === 'checking_device' || status === 'binding'}
-          />
-          </View>
+          <>
+            {!googleEnabled && repositoryOnboarding ? <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text> : null}
+            <View>
+              <Button
+                label={signInLabel}
+                labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
+                variant={googleEnabled ? 'secondary' : undefined}
+                testID="onboarding-github-sign-in"
+                loading={loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'}
+                onPress={() => void handleSignIn()}
+                disabled={loading || status === 'checking_device' || status === 'binding'}
+              />
+              {googleEnabled ? <Text style={styles.recommended}>Recommended</Text> : null}
+            </View>
+            {googleEnabled ? (
+              <Button
+                label="Continue with Google"
+                variant="secondary"
+                testID="onboarding-google-sign-in"
+                loading={loadingAction === 'google'}
+                disabled={loading || status === 'checking_device' || status === 'binding'}
+                onPress={() => void handleGoogleSignIn()}
+              />
+            ) : null}
+          </>
         ) : null}
       </View>
     </View>
@@ -670,6 +751,16 @@ export default function BuzzOnboarding() {
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
+    recommended: {
+      ...theme.buzz.type.sectionHead,
+      color: theme.buzz.bgBase,
+      backgroundColor: theme.buzz.accent,
+      position: 'absolute',
+      top: -theme.buzz.space.sm,
+      right: theme.buzz.space.sm,
+      paddingHorizontal: theme.buzz.space.xs,
+      borderRadius: theme.buzz.radius,
+    },
     container: {
       flex: 1,
       paddingHorizontal: 24,

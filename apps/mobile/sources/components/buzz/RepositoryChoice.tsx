@@ -167,7 +167,7 @@ export function RepositoryChoice({
       testID={`${p}-github-connect`}
     >
       <Text style={styles.boxKey}>GitHub</Text>
-      <Text style={styles.connectValue}>Connect</Text>
+      <Text style={styles.connectValue}>Connect GitHub</Text>
       <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
     </TouchableOpacity>
   );

@@ -12,7 +12,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 /** Keep progress and recoverable errors in Beeline after GitHub's consent page. */
 function EnhancedGitHubInstallation() {
   useLatencyRouteFrame('/beeline/github-installation');
-  const { installed } = useLocalSearchParams<{ installed?: string }>();
+  const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
   const [returnPath, setReturnPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -23,7 +23,11 @@ function EnhancedGitHubInstallation() {
       try {
         const path = await githubInstallationReturnPath();
         if (!path) throw new Error('This installation was not started on this device. Return to your Room and install Beeline again.');
-        await completeGitHubInstallationRoute(installed);
+        if (installed === '0' && connectionError) {
+          if (alive) setReturnPath(`${path}${path.includes('?') ? '&' : '?'}githubConnectionError=${encodeURIComponent(connectionError)}`);
+          return;
+        }
+        await completeGitHubInstallationRoute(installed, connectionError);
         await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
         if (alive) setReturnPath(path);
       } catch (reason) {
@@ -31,7 +35,7 @@ function EnhancedGitHubInstallation() {
       }
     })();
     return () => { alive = false; };
-  }, [installed, attempt]);
+  }, [installed, connectionError, attempt]);
   if (returnPath) return <Redirect href={returnPath as Href} />;
   return <View style={styles.page} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
@@ -48,7 +52,7 @@ const styles = StyleSheet.create(theme => ({
 
 function LegacyGitHubInstallation() {
   useLatencyRouteFrame('/beeline/github-installation');
-  const { installed } = useLocalSearchParams<{ installed?: string }>();
+  const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
   const [returnPath, setReturnPath] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,12 +60,12 @@ function LegacyGitHubInstallation() {
     void (async () => {
       const path = await githubInstallationReturnPath().catch(() => null);
       if (path) await completeGitHubInstallationRoute(installed).catch(() => undefined);
-      if (alive) setReturnPath(path ?? '/beeline/channels');
+      if (alive) setReturnPath(path && installed === '0' && connectionError ? `${path}${path.includes('?') ? '&' : '?'}githubConnectionError=${encodeURIComponent(connectionError)}` : path ?? '/beeline/channels');
     })();
     return () => {
       alive = false;
     };
-  }, [installed]);
+  }, [installed, connectionError]);
 
   return returnPath ? <Redirect href={returnPath as Href} /> : null;
 }

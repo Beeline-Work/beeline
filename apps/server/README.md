@@ -37,7 +37,7 @@ GitHub account/install/repository operations are enabled when `GITHUB_CLIENT_ID`
 
 Direct iOS delivery uses APNs token authentication. Set `APNS_KEY_P8_BASE64` to the base64-encoded Apple `.p8` key and `APNS_KEY_ID` to its key ID. `APNS_TEAM_ID` defaults to `89KT3SWYAF`, `APNS_BUNDLE_ID` defaults to `app.usebeeline.mobile`, and `APNS_ENVIRONMENT` accepts `production` (the default) or `sandbox`. If `APNS_KEY_P8_BASE64` is absent, iOS delivery remains disabled while Android Firebase delivery continues. Never commit the APNs key.
 
-The mounted auth routes also require `PUBLIC_ORIGIN`, `BEELINE_AUTH_TENANTS_JSON`, and the six `BUZZY_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
+The mounted auth routes also require `PUBLIC_ORIGIN`, `BEELINE_AUTH_TENANTS_JSON`, and the six `BEELINE_AUTH_OIDC_*` values documented in `apps/auth/README.md`. The tenants JSON must contain an entry whose host and origin match `PUBLIC_ORIGIN`; production uses `server.usebeeline.app`.
 
 Dictation uses a server-only `GROQ_API_KEY`. With it, phones post each piece
 of a dictation's recorded audio to `/v1/phone/transcriptions` as the piece

@@ -7,16 +7,18 @@ import {
 } from '@beeline/auth/environment';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { verifyPhoneGitHubTicket } from '@beeline/auth/phone-github-ticket';
+import { createHash } from 'node:crypto';
 import { buildAuthServer } from '@beeline/auth/server';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
-import type { VerifyGitHubOidc } from './auth.js';
+import type { VerifyGitHubOidc, VerifyGoogleOidc } from './auth.js';
 import type { SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
-import type { TokenAuth } from './auth.js';
+import { GoogleSignInError, type TokenAuth } from './auth.js';
 
 export interface MonolithAuthMount {
   handle(request: IncomingMessage, response: ServerResponse): void;
   verifyGitHubTicket: VerifyGitHubOidc;
+  verifyGoogleTicket: VerifyGoogleOidc;
   sealedGitHubUserToken(subject: string): Promise<string | undefined>;
   close(): Promise<void>;
 }
@@ -32,7 +34,7 @@ export async function createMonolithAuth(
     | undefined,
   options: {
     createDaemonExchange: TokenAuth['createDaemonExchange'];
-    completeRepositoryInstallation?: (state: string, installationId?: number) => Promise<string>;
+    completeRepositoryInstallation?: (state: string, installationId?: number, code?: string, callbackUri?: string) => Promise<string>;
     env?: NodeJS.ProcessEnv;
     webAppOrigins?: readonly string[];
   },
@@ -51,12 +53,23 @@ export async function createMonolithAuth(
   // needs the same query/transaction contract and must not own or close the pool.
   // Its migrations run once in migrate-cli before any Machine is updated.
   const store = new AuthStore(database as unknown as TransactionalDatabase);
+  const googleSubjects = new Set(
+    (env.BEELINE_GOOGLE_SIGN_IN_SUBJECTS ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  const googleSignInEveryone = env.BEELINE_GOOGLE_SIGN_IN_EVERYONE === '1';
+  const googleSignInEnabled = env.BEELINE_GOOGLE_SIGN_IN === '1';
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
     onFunnelAuth: (input) => observeFunnelAuth(database, input),
     completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
+    googleSignInEnabled,
+    googleSignInEveryone,
+    googleSignInPreviewToken: env.BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN,
     ...(github ? { github } : {}),
     tenants,
     secureCookies: env.NODE_ENV === 'production',
@@ -81,6 +94,31 @@ export async function createMonolithAuth(
         return;
       }
       app.routing(request, response);
+    },
+    verifyGoogleTicket: async (ticket) => {
+      if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error('invalid Google ticket');
+      const hash = createHash('sha256').update(ticket).digest('hex');
+      const proof = await store.findTicket(hash);
+      if (!googleSignInEnabled || !proof) {
+        throw new Error('Google sign-in is not enabled for this account');
+      }
+      if (!googleSignInEveryone && !googleSubjects.has(proof.subject)) {
+        throw new GoogleSignInError('This Google account is not on the preview test list.', 'preview_account_not_allowed');
+      }
+      const result = await store.consumeTicketForPhone(
+        hash,
+        tenant.community,
+        new Date(),
+        'https://accounts.google.com',
+      );
+      if (result.status !== 'exchanged') throw new Error('Google identity exchange failed');
+      return {
+        subject: result.ticket.subject,
+        email: result.ticket.providerLogin ?? undefined,
+        name: result.ticket.providerDisplayName?.trim() || 'Beeline user',
+        audience: result.ticket.audience,
+        ...(result.ticket.providerAvatar ? { avatar: result.ticket.providerAvatar } : {}),
+      };
     },
     verifyGitHubTicket: async (ticket) => {
       const result = await verifyPhoneGitHubTicket(store, tenant.community, ticket);

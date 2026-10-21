@@ -4,6 +4,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const login = process.env.ONBOARDING_GITHUB_LOGIN;
+const google = process.env.ONBOARDING_PROVIDER === 'google';
+if (google && (!process.env.ONBOARDING_GOOGLE_EMAIL || ['lunchboxfortwo@gmail.com','lunchbox@trustysquire.ai'].includes(process.env.ONBOARDING_GOOGLE_EMAIL.toLowerCase())))
+  throw new Error('Google walkthrough requires a dedicated ONBOARDING_GOOGLE_EMAIL test account.');
 const device = process.env.ONBOARDING_ANDROID_DEVICE;
 const switchId = process.env.ONBOARDING_SWITCH_REPOSITORY_ID;
 const switchName = process.env.ONBOARDING_SWITCH_REPOSITORY_NAME;
@@ -40,7 +43,7 @@ for (let run = 1; run <= 3; run++) {
   const command = spawn('maestro', ['--device', device, 'test', '--test-output-dir', folder,
     '-e', `ONBOARDING_GITHUB_LOGIN=${login}`, '-e', `ONBOARDING_SWITCH_REPOSITORY_ID=${switchId}`,
     '-e', `ONBOARDING_SWITCH_REPOSITORY_NAME=${switchName}`, '-e', `ONBOARDING_INVITE_URL=${process.env.ONBOARDING_INVITE_URL ?? ''}`,
-    'apps/mobile/e2e/repository-onboarding.yaml'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    ...(google ? ['-e', `ONBOARDING_GOOGLE_EMAIL=${process.env.ONBOARDING_GOOGLE_EMAIL}`, 'apps/mobile/e2e/google-repository-onboarding.yaml'] : ['apps/mobile/e2e/repository-onboarding.yaml'])], { stdio: ['ignore', 'pipe', 'pipe'] });
   for (const stream of [command.stdout, command.stderr]) stream.on('data', chunk => { logs.push(chunk.toString()); process.stdout.write(chunk); });
   let status;
   try {

@@ -306,6 +306,10 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
         }
         text = text.slice(0, end);
       }
+      // Clean only the opening text before the runtime's first speech chunk.
+      // The response is already collected here; no extra stream read or wait is needed.
+      text = text.replace(/^\s*[^.!?。！？:\n\r[\]]{1,120}?\s+\(@[^\s()]+\)\s+\[#beeline\/item\/[^\s\]]+\]:\s*/u, '')
+        .replace(/^\s*(?:\[#beeline\/item\/[^\s\]]+\]\s*:?\s*)+/u, '');
       return { text: text.trim(), order, ...(search && !order ? { search } : {}) };
     } finally { deadline.close(); }
   }

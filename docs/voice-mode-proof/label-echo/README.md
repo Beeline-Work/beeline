@@ -1,0 +1,80 @@
+# Voice transcript label echo
+
+## Reproduced
+
+Reproduction VOICE-LABEL-1: ask Ruby for a small gift, supply her previous
+ceramic-planter answer as assistant context, then ask what to look for.
+The live `openai/gpt-6-luna` request with reasoning disabled copied
+`Ruby (@ruby) [#beeline/item/previous]:` into its answer when the previous
+assistant row carried that label (generation `gen-1792690063-6wPtGq06sduvwnMVkOhK`).
+Repeating the same prompt with plain assistant history produced a clean answer
+(generation `gen-1792690083-cjwOBAJK2DBuMEwSCEeT`). Requests used sealed vault
+injection; no provider secret was read or saved.
+
+The isolated call stand-in uses disposable PGlite, production VoiceService,
+runtime and provider adapters, injected STT finals/SSE/PCM, and actual local
+LiveKit RTC. The provider returns the copied prefix on every answer.
+Baseline source is `3a2693f59`. Synthesis receives
+`Ruby (Ruby) [#beeline/item/previous]: A small ceramic planter.` and the
+posted answer still contains the original prefix. The speech renderer resolves
+the handle but leaves the unwanted label audible. See [baseline.json](baseline.json).
+
+## Demonstrated
+
+Repeat the same utterance and provider output after the fix: synthesis and the
+posted transcript contain `A small ceramic planter.`. The RTC partner receives
+voiced frames. Assistant history contains plain text; other speakers retain
+their labels and references. See [fixed.json](fixed.json).
+
+The runtime regression `VOICE-LABEL-1` repeats two turns with a labeled prefix
+and a bare item prefix, splits the prefix across provider tokens, and checks
+synthesis, transcript writes and published audio. The provider regressions also
+check multiple bare prefixes, multiword names, ordinary prose and a later quoted
+label that must remain unchanged. The context regression checks assistant text
+and unchanged user/other-agent references.
+
+The provider already collects its response before the runtime begins synthesis.
+Cleaning its leading text at that existing boundary requires no extra stream
+read, timer, provider call or speech buffer, and handles a prefix split across
+SSE deltas. Token callbacks remain timing observations, never speech.
+
+## Timing
+
+On the same prompt (`Ruby, what should I look for?`), four warm-ups precede ten
+measured turns per build. The median from recognized end-of-turn to first voiced
+server audio was **24.37 ms before and 24.70 ms after**. All samples are retained
+in the evidence JSON. The observed difference is 0.33 ms; these samples do not
+prove zero latency increase. Providers and STT are controlled stand-ins, so this
+does not measure live model generation, physical microphone or speaker latency.
+
+## Repeat
+
+Use `scripts/prove-voice-delivery.ts` with local LiveKit at port 17890 and its
+documented development credentials. In an ignored copy of that script, replace
+the conversational fixture `Ready.` with
+`Ruby (@ruby) [#beeline/item/previous]: A small ceramic planter.`.
+For baseline, materialize the three original voice context/provider/runtime files
+from `3a2693f59` under temporary filenames, point the baseline runtime's context
+import at the baseline context, and use the script's existing
+`VOICE_DELIVERY_BASELINE` / `VOICE_CONTEXT_BASELINE` switches.
+
+For each build, POST `/say` with
+`{"text":"Ruby, what should I look for?","human":"partner","speechMs":100}`.
+Read `/result` after each reply, retaining the latest latency signal after the
+warm-ups. Inspect `synthesis`, `transcript`, `brainHistories` and
+`frameCounts.received`. Restart the disposable fixture between builds and remove
+temporary source files afterward. No production Room, helper or database is used.
+
+## Web acceptance limitation
+
+Squire reached `web.usebeeline.app` in an existing signed-in session and opened
+Members. The session subsequently returned to onboarding. Connector status and
+vault metadata confirmed the reviewer bypass, but sealed browser-fill rejected
+the saved link with `unsupported_credential_type`; drive could not advance it.
+A live browser handoff card was posted for sign-in. The requested reviewer-bypass
+browser voice test remains outstanding. This branch is not deployed, and this
+proof does not claim production browser acceptance.
+
+Workspace preparation, root typecheck and the context/provider/runtime suites
+passed (186 tests). The added prefix edge cases and two-turn regression passed
+in a final focused run (7 tests). No self-review or merge approval is claimed.

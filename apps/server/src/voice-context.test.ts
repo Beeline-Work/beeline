@@ -15,10 +15,13 @@ it('VOICE-CONTEXT-1: includes every speaker, new room posts, attachment and card
     const first = await readVoiceContext(db, room, 'source', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
     expect(first).toEqual([{ role: 'user', content: expect.stringContaining('Goosey (@goose)') }]);
     expect(first[0]!.content).toContain('Goosey saw the whole call');
+    expect(first[0]!.content).toContain('[#beeline/item/first]:');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('assistant',$1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','A small ceramic planter.')`, [room]);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments,presentation,card_type,card) VALUES('new',$1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',$2,$3,'card','document',$4)`,
       [room, 'x'.repeat(3000), JSON.stringify([{ name: 'notes.txt', url: '/v1/media/notes' }]), JSON.stringify({ title: 'Call plan', url: 'https://example.com/plan' })]);
     const next = await readVoiceContext(db, room, 'source', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-    expect(next).toHaveLength(2);
+    expect(next).toHaveLength(3);
+    expect(next.find(item => item.role === 'assistant')).toEqual({ role: 'assistant', content: 'A small ceramic planter.' });
     const posted = next.find(item => item.content.includes('Alex (@alex)'))!;
     expect(posted.content).toContain('notes.txt: /v1/media/notes');
     expect(posted.content).toContain('Call plan: https://example.com/plan');

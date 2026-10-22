@@ -24,5 +24,5 @@ export async function readVoiceContext(db: SqlDatabase, roomId: string, sourceId
      WHERE m.room_id=$1 AND m.id<>$2 AND m.presentation IN ('message','card') AND m.deleted_at IS NULL
      ORDER BY m.created_at DESC,m.id DESC LIMIT 16`, [roomId, sourceId]);
   return rows.rows.reverse().map(row => ({ role: row.author_id === agentId ? 'assistant' as const : 'user' as const,
-    content: voiceContextText(row) }));
+    content: row.author_id === agentId ? row.text : voiceContextText(row) }));
 }

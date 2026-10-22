@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS sentry_wake_issues (
  PRIMARY KEY(issue_id,event_type)
 );
 ALTER TABLE sentry_wake_state ADD COLUMN IF NOT EXISTS last_daily_wake_at timestamptz NOT NULL DEFAULT now();
+ALTER TABLE sentry_wake_issues ADD COLUMN IF NOT EXISTS last_digested_at timestamptz;
+ALTER TABLE sentry_wake_issues ADD COLUMN IF NOT EXISTS last_digested_level text;
 ALTER TABLE sentry_wake_issues ADD COLUMN IF NOT EXISTS urgent boolean NOT NULL DEFAULT false;
 UPDATE sentry_wake_issues SET urgent=true WHERE level='fatal' AND NOT urgent;
 CREATE INDEX IF NOT EXISTS sentry_wake_pending ON sentry_wake_issues(last_seen) WHERE pending;
@@ -76,24 +78,32 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
   await db.transaction(async tx => {
     // The singleton lock also orders ingestion against a batch being committed.
     await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE`);
+    const level = text(issue.level ?? event.level, 20) || 'error';
+    const previous = (await tx.query<{ level: string; recent: boolean }>(`SELECT
+      last_digested_level AS level,last_digested_at>now()-interval '6 hours' AS recent
+      FROM sentry_wake_issues WHERE issue_id=$1 AND last_digested_at IS NOT NULL
+      ORDER BY last_digested_at DESC LIMIT 1`, [issueId])).rows[0];
+    const regression = eventType === 'issue.regression' ||
+      (eventType === 'issue.unresolved' && issue.substatus === 'regressed');
+    const pending = !previous?.recent || previous.level !== level || regression;
     await tx.query(`INSERT INTO sentry_wake_issues
-      (issue_id,event_type,title,level,culprit,permalink,first_seen,last_seen,event_count,delivery_hash,urgent)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      (issue_id,event_type,title,level,culprit,permalink,first_seen,last_seen,event_count,delivery_hash,urgent,pending)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT(issue_id,event_type) DO UPDATE SET
         title=EXCLUDED.title,level=EXCLUDED.level,culprit=EXCLUDED.culprit,urgent=EXCLUDED.urgent,
         first_seen=LEAST(sentry_wake_issues.first_seen,EXCLUDED.first_seen),
         last_seen=EXCLUDED.last_seen,event_count=GREATEST(sentry_wake_issues.event_count,EXCLUDED.event_count),
-        delivery_hash=EXCLUDED.delivery_hash,pending=true
+        delivery_hash=EXCLUDED.delivery_hash,pending=sentry_wake_issues.pending OR EXCLUDED.pending
       WHERE sentry_wake_issues.delivery_hash<>EXCLUDED.delivery_hash
         AND sentry_wake_issues.last_seen<=EXCLUDED.last_seen`,
-    [issueId,eventType,title,text(issue.level ?? event.level, 20) || 'error',redactDiagnostic(text(issue.culprit ?? event.culprit)),
+    [issueId,eventType,title,level,redactDiagnostic(text(issue.culprit ?? event.culprit)),
       `https://beeline-bt.sentry.io/issues/${issueId}/`, timestamp(issue.firstSeen ?? event.datetime, now),
       timestamp(issue.lastSeen ?? event.datetime, now),count,createHash('sha256').update(raw).digest('hex'),
       issue.level === 'fatal' || event.level === 'fatal' || issue.isUnhandled === true ||
       event.unhandled === true || object(event.tags).handled === 'no' ||
       (Array.isArray(event.tags) && event.tags.some(tag => Array.isArray(tag) && tag[0] === 'handled' && tag[1] === 'no')) ||
       (Array.isArray(object(event.exception).values) && (object(event.exception).values as unknown[]).some(
-        value => object(object(value).mechanism).handled === false))]);
+        value => object(object(value).mechanism).handled === false)),pending]);
     await tx.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
       JSON.stringify({ table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' })]);
   });
@@ -118,10 +128,10 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
     const command = await createAgentCommand(tx, {
       roomId: TRIAGE, agentId, sourceMessageId: null, reason: 'subscribed_event',
       privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: TRIAGE,
-        text: `${quoteOutsideData('Sentry digest', digest)}\n\nInvestigate these Sentry issues. Dismiss noise silently. When a code fix is warranted, open and own a fix corner with yourself as implementer and Speedy as reviewer, linking the Sentry issue id and URL in its brief. Follow existing corner authority and merge rules. Involve Ruby only by reporting blocked: or needs-decision: with the exact blocker or refusal. Do not hand routine fixes back to Ruby.` },
+        text: `${quoteOutsideData('Sentry digest', digest)}\n\nInvestigate these Sentry issues. Post one short visible summary line in this triage corner for every digest, naming each Sentry short ID (look it up from the linked issue if needed) and its action: dismissed, existing corner, or new corner. When a code fix is warranted, open and own a fix corner with yourself as implementer and Speedy as reviewer, linking the Sentry issue id and URL in its brief. Follow existing corner authority and merge rules. When a fix corner you opened from a digest reports blocked: or needs-decision:, handle the report here as its commander: try other vault keys, tools, or a narrower scope; decide, re-order the fix corner, or close it with evidence. Do not forward the report to your own Room session. Only when a human must act (sign-in, payment, approval, or a product decision), post the exact blocker in the issues-triage corner (a914716f-cd6c-4663-b42a-6e1044dc2bb9) and tag the Workspace owner @lunchboxfortwo.` },
     });
     if (!command) return;
-    await tx.query(`UPDATE sentry_wake_issues SET pending=false WHERE pending`);
+    await tx.query(`UPDATE sentry_wake_issues SET pending=false,last_digested_at=clock_timestamp(),last_digested_level=level WHERE pending`);
     await tx.query(`UPDATE sentry_wake_state SET last_wake_at=clock_timestamp() WHERE singleton`);
   });
 }

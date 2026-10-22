@@ -17,13 +17,16 @@ describe('Shared section add control', () => {
     expect(roster).toContain('<RoomListSectionHeader');
     expect(roster).toContain('actionAccessibilityLabel="Add members"');
   });
-  it("keeps a compact + with a 44pt tap area and main's heading height", () => {
+  it("uses a full phone target and preserves the desktop tap line", () => {
     const target = header.match(/sectionHeaderAction:\s*\{[\s\S]*?\n\s*\},/);
     expect(target).toBeTruthy();
     // The box is one label line tall; the slop, not the box, makes it 44.
-    expect(target![0]).toContain('height: LABEL_LINE');
+    expect(target![0]).toContain('height: 44');
+    expect(target![0]).toContain('width: 44');
+    expect(header).toContain('compactAction: { width: ACTION_GLYPH, height: LABEL_LINE }');
+    expect(header).toContain('const ACTION_GLYPH = 22');
     expect(target![0]).not.toMatch(/min(Height|Width): 44/);
-    expect(header).toContain('hitSlop={ACTION_HIT_SLOP}');
+    expect(header).toContain('hitSlop={tapLineHeight ? ACTION_HIT_SLOP : undefined}');
     expect(header).toContain('top: (44 - LABEL_LINE) / 2');
     expect(header).toContain('left: (44 - ACTION_GLYPH) / 2');
     expect(header).toMatch(/name="add"\s+size={ACTION_GLYPH}/);

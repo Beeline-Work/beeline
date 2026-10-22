@@ -1,3 +1,4 @@
+import { InlineRow } from './IndexRow';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
@@ -101,12 +102,12 @@ export function RoomListToolbar({
   );
   return (
     <View>
-      <View
+      <InlineRow
         style={[styles.toolbar, !desktop && styles.mobileToolbar, desktop && styles.desktopToolbar]}
       >
         {filters}
         {actions}
-      </View>
+      </InlineRow>
       {searchOpen && search}
     </View>
   );
@@ -120,7 +121,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },
-  mobileToolbar: { paddingLeft: theme.buzz.space.md },
+  mobileToolbar: { paddingHorizontal: theme.buzz.space.md },
   filters: { flexDirection: 'row', gap: theme.buzz.space.sm, alignItems: 'center' },
   desktopToolbar: { paddingLeft: theme.buzz.space.md },
   desktopFilters: {

@@ -388,11 +388,11 @@ describe('private operator dashboard', () => {
     const allBody = JSON.parse(allText);
     expect(allBody.platforms).toEqual(['ios', 'android', 'web', 'macos', 'windows', 'linux']);
     expect(allBody.usage.people[0].count).toBe(12);
-    expect(allBody.usage.people[2].count).toBe(12);
-    expect(allBody.usage.people[2]).toMatchObject({
+    expect(allBody.usage.people.find((s: any) => s.stage === 'paired').count).toBe(12);
+    expect(allBody.usage.people.find((s: any) => s.stage === 'paired')).toMatchObject({
       timeToStepState: 'measured',
     });
-    expect(allBody.usage.people[2].medianTimeToStepMs).toBeGreaterThanOrEqual(0);
+    expect(allBody.usage.people.find((s: any) => s.stage === 'paired').medianTimeToStepMs).toBeGreaterThanOrEqual(0);
     expect(allBody.usage.agents[2].count).toBe(12);
     const explicitAll = await (await get('?platforms=ios,android,web,macos,windows,linux')).json();
     expect(explicitAll.usage.people).toEqual(allBody.usage.people);
@@ -500,9 +500,9 @@ describe('private operator dashboard', () => {
     await db.query(`UPDATE daemon_tokens SET created_at=now()-interval '1 hour'`);
     const result = await (await get()).json();
     expect(result.usage.people[1].timeToStepState).toBe('measured');
-    expect(result.usage.people[2].timeToStepState).toBe('measured');
+    expect(result.usage.people.find((s: any) => s.stage === 'paired').timeToStepState).toBe('measured');
     expect(Math.abs(result.usage.people[1].medianTimeToStepMs - 3_600_000)).toBeLessThan(1000);
-    expect(Math.abs(result.usage.people[2].medianTimeToStepMs - 3_600_000)).toBeLessThan(1000);
+    expect(Math.abs(result.usage.people.find((s: any) => s.stage === 'paired').medianTimeToStepMs - 3_600_000)).toBeLessThan(1000);
   });
 
   it('keeps funnel counts when the optional timing read fails', async () => {
@@ -514,7 +514,7 @@ describe('private operator dashboard', () => {
     }) as typeof db.query);
     const result = await (await get()).json();
     expect(result.usage.state).toBe('measured');
-    expect(result.usage.people[2]).toMatchObject({
+    expect(result.usage.people.find((s: any) => s.stage === 'paired')).toMatchObject({
       count: 12,
       timeToStepState: 'unmeasured',
       medianTimeToStepMs: null,
@@ -673,4 +673,50 @@ describe('private operator dashboard', () => {
     });
     expect(rejected.status).toBe(400);
   });
+});
+
+it('counts addressed free-agent conversations and confirmed links within the selected production cohort', async () => {
+  await seed();
+  const human = (n: number) => `a${n.toString(16).padStart(63, '0')}`;
+  const agent = (n: number) => `b${n.toString(16).padStart(63, '0')}`;
+  for (const n of [1, 2, 3, 7]) await db.query(
+    `INSERT INTO free_agents(agent_id,owner_id,workspace_id,sealed_keys) VALUES($1,$2,$3,'unused')`,
+    [agent(n), human(n), workspace],
+  );
+  async function conversation(id: string, owner: number, target: number, reply = true, state = 'complete', presentation = 'message') {
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'private',$4)`,
+      [id, room, human(owner), presentation]);
+    if (reply) await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'private reply')`,
+      [`${id}-reply`, room, agent(target)]);
+    await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+      root_command_id,root_source_message_id,agent_depth,state,result_message_id)
+      VALUES($1,$2,$3,$1,$1,'input','human_tag',$1,$1,0,$4,$5)`,
+      [id, room, agent(target), state, reply ? `${id}-reply` : null]);
+  }
+  await conversation('complete', 1, 1);
+  await conversation('duplicate', 1, 1);
+  await conversation('pending', 2, 2, false, 'pending');
+  await conversation('working-reply', 2, 2, true, 'claimed');
+  await conversation('someone-elses-agent', 3, 1);
+  await conversation('owned-helper-not-free', 4, 4);
+  await conversation('system-card', 3, 3, true, 'complete', 'card');
+  await conversation('android', 7, 7);
+  await db.query(`INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$3),($2,$3)`,
+    [human(1), human(7), workspace]);
+  const fixture = 'bee11e00-0000-4000-8000-000000000105';
+  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Fixture')`, [fixture]);
+  await db.query(`INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2),($3,$2)`,
+    [human(1), fixture, human(3)]);
+  const steps = async (filter = '') => (await (await get(filter)).json()).usage.people;
+  const counts = (steps: any[]) => Object.fromEntries(steps.map(s => [s.stage, s.count]));
+  expect(counts(await steps())).toMatchObject({ free_agent_messaged: 3, free_agent_replied: 2, repository_linked: 2 });
+  expect(counts(await steps('?platforms=ios'))).toMatchObject({ free_agent_messaged: 2, free_agent_replied: 1, repository_linked: 1 });
+  expect(counts(await steps('?platforms=android'))).toMatchObject({ free_agent_messaged: 1, free_agent_replied: 1, repository_linked: 1 });
+  await db.query(`UPDATE identities SET hidden_from_roster=true WHERE id=$1`, [human(1)]);
+  expect(counts(await steps())).toMatchObject({ free_agent_messaged: 2, free_agent_replied: 1, repository_linked: 1 });
+  const linked = (await steps()).find((s: any) => s.stage === 'repository_linked');
+  expect(linked.label).toMatch(/^Linked a repository \(since \d{4}-\d{2}-\d{2}\)$/);
+  expect(linked.timeToStepState).toBe('unmeasured');
+  await db.query(`UPDATE messages SET deleted_at=now() WHERE id='android-reply'`);
+  expect(counts(await steps())).toMatchObject({ free_agent_replied: 0 });
 });

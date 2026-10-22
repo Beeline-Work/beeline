@@ -19,7 +19,7 @@ vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
 
 import { CORNER_BRANCH_POINTS, CornerBranchGlyph } from './CornerBranchGlyph';
 import { CORNER_EXTENT } from './CornerGlyph';
-import { CornerOpenedMarker } from './CornerOpenedMarker';
+import { CornerOpenedMarker, CornerOpenedMarkers } from './CornerOpenedMarker';
 import brand from '@/buzz/brand.json';
 
 const originalConsoleError = console.error;
@@ -108,5 +108,52 @@ describe('CornerBranchGlyph', () => {
     // The rightmost point is the arrow's tip, level with the arm's middle.
     const tip = xs.indexOf(Math.max(...xs));
     expect(ys[tip]).toBe(16);
+  });
+});
+
+describe('anchored corner runs', () => {
+  it.each([1, 2, 4])('uses the repository disclosure for %i markers', (count) => {
+    const onOpenCorner = vi.fn();
+    const message = {
+      id: 'source',
+      cornerMarkers: Array.from({ length: count }, (_, index) => ({
+        id: `event-${index}`,
+        daemonFact: {
+          type: 'corner-open',
+          cornerId: `corner-${index}`,
+          name: `name-${index}`,
+          objective: '',
+        },
+      })),
+    } as unknown as import('@/buzz/room-view-presentation').ChatDisplayMessage;
+    const renderer = render(<CornerOpenedMarkers message={message} onOpenCorner={onOpenCorner} />);
+    const host = (id: string) =>
+      renderer.root.findAll(
+        (node: any) => typeof node.type === 'string' && node.props.testID === id,
+      )[0];
+    if (count === 1) {
+      expect(host('notification-run-expand-source')).toBeUndefined();
+      expect(textOf(renderer)).toBe('Opened corner #name-0');
+    } else {
+      expect(textOf(renderer)).toBe(`${count} corners opened`);
+      expect(host('corner-opened-marker-corner-0')).toBeUndefined();
+      act(() => host('notification-run-expand-source').props.onPress());
+      expect(host('notification-run-expand-source').props.accessibilityState.expanded).toBe(true);
+      act(() =>
+        renderer.update(
+          <CornerOpenedMarkers message={{ ...message }} onOpenCorner={onOpenCorner} />,
+        ),
+      );
+      expect(host('corner-opened-marker-corner-0')).toBeTruthy();
+      if (count === 4) {
+        expect(host('corner-opened-marker-corner-2')).toBeUndefined();
+        expect(textOf(renderer)).toContain('2 more');
+        act(() => host('notification-run-more-source').props.onPress());
+        expect(host('corner-opened-marker-corner-3')).toBeTruthy();
+      }
+    }
+    act(() => host(`corner-opened-marker-corner-${count - 1}`).props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith(`corner-${count - 1}`);
+    act(() => renderer.unmount());
   });
 });

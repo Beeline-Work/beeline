@@ -20,6 +20,7 @@ describe('observed corner states', () => {
     ['worker running', { turnRunning: true }, 'working'],
     ['worker queued', { workerQueued: true }, 'working'],
     ['reviewer running or queued', { reviewerActive: true }, 'review'],
+    ['queued for merge', { lifecycle: { ...pushed, checks: 'passing', mergeQueue: { headSha: pushed.pr.headSha } } }, 'review'],
     ['checks running', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }, 'review'],
     [
       'pushed head before checks report',

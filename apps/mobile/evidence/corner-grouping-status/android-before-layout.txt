@@ -1,0 +1,2 @@
+10-22 12:41:21.819  5843  5898 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"working","height":41.90472412109375,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%","backgroundColor":"#F3EEE4"},"coverage":{"paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:41:21.995  5843  5898 I ReactNativeJS: 'STATUS_PROOF_COMPOSER', '{"x":0,"y":777.5238037109375,"width":411.4285583496094,"height":84.952392578125,"canvas":"#F3EEE4"}'

@@ -37,7 +37,7 @@ const theme = vi.hoisted(() => ({
       hero: { fontSize: 22 },
       body: { fontSize: 16 },
       meta: { fontSize: 13 },
-      sectionHead: { fontSize: 10 },
+      sectionHead: { fontSize: 10 }, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 },
     },
     space: { xs: 4, sm: 8, md: 16, lg: 24 },
     layout: { row: 64, sectionGap: 24 },
@@ -326,8 +326,8 @@ describe('RoomRosterSheet', () => {
     expect(add.props.accessibilityLabel).toBe('Add members');
     {
       const box = add.props.style({ pressed: false })[0];
-      expect(box.height + add.props.hitSlop.top + add.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
-      expect(box.width + add.props.hitSlop.left + add.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.width).toBeGreaterThanOrEqual(44);
     }
     act(() => add.props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);

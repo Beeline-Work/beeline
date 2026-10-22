@@ -40,8 +40,7 @@ import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
 import { ComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { CornerOpenedMarker } from '@/components/buzz/CornerOpenedMarker';
-import { lifecycleCornerTitle } from '@/buzz/pr-lifecycle';
+import { CornerOpenedMarkers } from '@/components/buzz/CornerOpenedMarker';
 import { CornerBriefLink } from '@/components/buzz/CornerObjectiveLine';
 import { openCornerBriefViewer } from '@/components/buzz/corner-brief-viewer';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -494,10 +493,6 @@ function CornerCockpit({
       const immediatelyPrecedingMessage = index > 0 ? messages[index - 1] : undefined;
       const kind = inspectorMessageKind(item);
       if (kind === 'hidden') return null;
-      const marker = (message: ChatDisplayMessage) => (
-        <CornerOpenedMarker key={message.id} title={lifecycleCornerTitle(message.daemonFact!)}
-          onOpen={() => onOpenCorner(message.daemonFact!.cornerId)} />
-      );
       const node =
         item.notificationLifecycleRun ? (
           <NotificationLifecycleCard
@@ -544,7 +539,12 @@ function CornerCockpit({
           />
         );
       const captioned = withLedgerDayCaption(
-        item.cornerMarkers?.length ? <View>{node}{item.cornerMarkers.map(marker)}</View> : node,
+        item.cornerMarkers?.length ? (
+          <View>
+            {node}
+            <CornerOpenedMarkers message={item} onOpenCorner={onOpenCorner} />
+          </View>
+        ) : node,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
       ) as React.ReactElement | null;
       if (focusMessageId && messageMatchesFocus(item, focusMessageId)) {

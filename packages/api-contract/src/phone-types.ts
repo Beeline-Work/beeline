@@ -51,6 +51,7 @@ export type KnownMessageReference = {
 };
 
 export type CornerLifecycleView = {
+  readonly mergeQueue?: { readonly headSha: string; readonly combinedSha?: string };
   readonly lifecycle: 'working' | 'in-review' | 'unknown' | 'done';
   readonly branch?: string;
   readonly checks: 'pending' | 'passing' | 'failing' | 'unknown';

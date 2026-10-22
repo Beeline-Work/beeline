@@ -248,3 +248,21 @@ performed; the live supervisor continues to launch the updated run-once.
 systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/install -m 0755 "$ci_tree/scripts/squire-ci/run-once.sh" /usr/local/lib/beeline-ci/run-once.sh
 systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/install -m 0755 "$ci_tree/scripts/squire-ci/supervisor.mjs" /usr/local/lib/beeline-ci/supervisor.mjs
 ```
+
+
+### Authorized supervisor restart after recovery push
+
+After recovery head `8ae03898c` was pushed, Ruby explicitly directed a
+supervisor restart. The installed run-once and supervisor scripts were
+already updated as recorded above. Executed:
+
+```sh
+systemd-run --user --wait --pipe /usr/bin/systemctl --user restart beeline-ci-supervisor
+systemd-run --user --wait --pipe /usr/bin/systemctl --user is-active beeline-ci-supervisor
+```
+
+The restart completed and the supervisor reported active. The subsequent
+delivery instruction authorized committing and pushing this remaining host
+command record. No further implementation changes are included. Any check
+failure on overflow capacity requires removal of the overflow host setup
+and a failed report, as directed by Ruby.

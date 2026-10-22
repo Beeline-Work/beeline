@@ -8,6 +8,8 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { composerBottomPadding } from '../sources/buzz/composer-keyboard';
 import { UnistylesRuntime, useUnistyles } from 'react-native-unistyles';
 import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '../sources/components/buzz/TurnProgressLine';
+import { CornerOpenedMarkers } from '../sources/components/buzz/CornerOpenedMarker';
+import type { ChatDisplayMessage } from '../sources/buzz/room-view-presentation';
 import { RoomUnreadControls } from '../sources/components/buzz/RoomUnreadControls';
 import { roomBottomChromeStyles } from '../sources/buzz/room-bottom-chrome';
 import { selectComposerAckPresentation } from '../sources/buzz/room-indicators';
@@ -30,6 +32,8 @@ function StatusBandScene() {
   const [topInset, setTopInset] = useState(0);
   const [jumps, setJumps] = useState(0);
   const [state, setState] = useState('working');
+  const [markerCount, setMarkerCount] = useState(3);
+  const message = { id: 'source', cornerMarkers: Array.from({ length: markerCount }, (_, i) => ({ id: `event-${i}`, daemonFact: { type: 'corner-open', cornerId: `corner-${i}`, name: ['corner-lines', 'room-header', 'tray-choices'][i], objective: '' } })) } as unknown as ChatDisplayMessage;
   const [queued, setQueued] = useState(false);
   const [value, setValue] = useState('');
   const [focused, setFocused] = useState(false);
@@ -56,6 +60,11 @@ function StatusBandScene() {
       <Pressable onPress={() => UnistylesRuntime.setTheme(UnistylesRuntime.themeName === 'bone' ? 'obsidian' : 'bone')}><Text style={{ ...hull.type.machine, color: hull.accent }}>Switch theme</Text></Pressable>
       <Pressable onPress={() => setQueued(true)}><Text style={{ ...hull.type.machine, color: hull.accent }}>Queue second message{queued ? ' · queued' : ''}</Text></Pressable>
     </View>
+    <View style={{ paddingHorizontal: 16 }}>
+      <Pressable onPress={() => setMarkerCount(markerCount === 1 ? 3 : 1)}><Text style={{ ...hull.type.machine, color: hull.accent }}>Toggle marker count</Text></Pressable>
+      <Text style={{ ...hull.type.body, color: hull.textPrimary }}>Open corners for these changes.</Text>
+      <CornerOpenedMarkers message={message} onOpenCorner={(id) => console.log("CORNER_PROOF_OPEN", id)} />
+    </View>
     <View style={{ flex: 1 }}>
       <FlatList inverted data={Array.from({ length: 160 }, (_, i) => i)} keyExtractor={String}
         contentContainerStyle={{ paddingTop: 36 }}
@@ -64,7 +73,7 @@ function StatusBandScene() {
         onJumpToNewest={() => setJumps(count => count + 1)} />
     </View>
     <View style={chrome.stack}>
-      <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTopInset}>
+      <TurnBandSlot thinking={Boolean(ack)} testID="hanging-turn-chrome" onTopInset={(height) => { setTopInset(height); console.log("STATUS_PROOF_SLOT", JSON.stringify({state, height, base: chrome.hangingTurnChrome, coverage: chrome.turnChromeCoverage})); }}>
         {ack ? <TurnProgressLine label={ack.label} startedAt={ack.startedAt} /> : null}
         {state === 'settled' ? <TurnSettledLine line="Ruby finished · 42s" /> : null}
       </TurnBandSlot>

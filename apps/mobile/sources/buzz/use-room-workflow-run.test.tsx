@@ -1,12 +1,12 @@
-import { readFileSync } from 'node:fs';
 import React from 'react';
 // @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 const read = vi.hoisted(() => vi.fn(async () => ({ workflows: [] })));
-vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }));
+vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => { wire.focus = effect; React.useEffect(effect, [effect]); } }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: read }));
-const wire = vi.hoisted(() => ({ listener: undefined as any, fail: false }));
+const wire = vi.hoisted(() => ({ listener: undefined as any, foreground: undefined as any, focus: undefined as any, fail: false }));
+vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: (_: string, callback: unknown) => { wire.foreground = callback; return { remove: vi.fn() }; } } }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { if (wire.fail) throw new Error('socket refused'); wire.listener = listener; return () => undefined; } }) }));
 afterEach(() => { read.mockReset(); read.mockResolvedValue({ workflows: [] }); });
 import { liveRoomRuns, pickRoomWorkflowRun, useRoomWorkflowRun, useRoomWorkflowRuns } from './use-room-workflow-run';
@@ -85,23 +85,46 @@ it('a corner and its run page share one workflow read, and prose never repeats i
   } finally { await act(async () => tree.unmount()); }
 });
 
-it('R12k: exposes an inline error and Retry recovers the workflow read', async () => {
+it('CR1: workflow failure recovers quietly on an event after bounded backoff', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.useFakeTimers();
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   read.mockRejectedValue(new Error('offline'));
   let current: any;
-  function Corner() { current = useRoomWorkflowRun('corner-errors'); return <span>{current.error}</span>; }
+  function Corner() { current = useRoomWorkflowRun('corner-errors'); return null; }
   let tree: any;
+  const push = () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors' } });
   try {
     await act(async () => { tree = create(<Corner />); });
     expect(current.error).toBe('offline');
-    read.mockRejectedValue(new Error('second failure'));
-    await act(async () => current.retry());
-    expect(current.error).toBe('offline');
+    await act(async () => { for (let n = 0; n < 20; n++) push(); });
+    expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => { vi.advanceTimersByTime(1000); push(); });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(warning).toHaveBeenCalledTimes(1);
     read.mockResolvedValue({ workflows: [] });
-    await act(async () => current.retry());
-    expect(current.error).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    // Elapsed time alone never polls.
+    expect(read).toHaveBeenCalledTimes(2);
+    await act(async () => { wire.foreground('background'); wire.foreground('active'); });
     expect(read).toHaveBeenCalledTimes(3);
-  } finally { await act(async () => tree.unmount()); }
+    expect(current.error).toBeNull();
+    // A later streak still logs only once for this corner in the session.
+    read.mockRejectedValue(new Error('offline again'));
+    await act(async () => push());
+    expect(warning).toHaveBeenCalledTimes(1);
+    read.mockResolvedValue({ workflows: [] });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-errors', message: { presentation: 'message' } } });
+    });
+    expect(read).toHaveBeenCalledTimes(5);
+    expect(current.error).toBeNull();
+  } finally {
+    await act(async () => tree.unmount());
+    warning.mockRestore();
+    vi.useRealTimers();
+  }
 });
 
 it('lists the corner\'s other live saved-workflow runs beside the one it names, any workflow', async () => {
@@ -121,13 +144,6 @@ it('lists the corner\'s other live saved-workflow runs beside the one it names, 
     expect(current.workflow.runId).toBe('b');
     expect(current.otherLiveRuns.map((run: any) => run.runId)).toEqual(['a']);
   } finally { await act(async () => tree.unmount()); }
-});
-
-it('R12k: the chat surface carries the error and Retry inline without a modal', () => {
-  const source = readFileSync(new URL('../app/(app)/beeline/chat/_chat-surface.tsx', import.meta.url), 'utf8');
-  expect(source).not.toContain("Modal.alert('Workflow unavailable'");
-  expect(source).toContain('workflowError={workflowError}');
-  expect(source).toContain('onRetryWorkflow={retryWorkflow}');
 });
 
 it('re-reads a parent Room\'s runs when a corner handoff changes that corner\'s row', async () => {
@@ -180,5 +196,54 @@ it('leaves no corner listener behind when the Room lane fails to register', asyn
   } finally {
     wire.fail = false;
     await act(async () => tree.unmount());
+  }
+});
+
+it('CR1: a failed refresh preserves the last workflow and reopening recovers', async () => {
+  const run = { runId: 'retained', roomId: 'retained-corner', status: 'live', updatedAt: 1 };
+  read.mockResolvedValue({ workflows: [run] } as any);
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  let current: any;
+  function Corner() { current = useRoomWorkflowRun('retained-corner'); return null; }
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<Corner />); });
+    read.mockRejectedValue(new Error('offline'));
+    await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'retained-corner' } }));
+    expect(current.workflow).toEqual(run);
+    expect(warning).toHaveBeenCalledTimes(1);
+    await act(async () => tree.unmount());
+    read.mockResolvedValue({ workflows: [run] } as any);
+    await act(async () => { tree = create(<Corner />); });
+    expect(current.error).toBeNull();
+    expect(current.workflow).toEqual(run);
+    expect(read).toHaveBeenCalledTimes(3);
+  } finally {
+    await act(async () => tree.unmount());
+    warning.mockRestore();
+  }
+});
+
+it('CR1: returning to a corner still mounted in navigation recovers quietly', async () => {
+  vi.useFakeTimers();
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  read.mockRejectedValue(new Error('offline'));
+  let current: any;
+  function Corner() { current = useRoomWorkflowRun('focused-corner'); return null; }
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<Corner />); });
+    await act(async () => wire.focus());
+    expect(read).toHaveBeenCalledTimes(1);
+    read.mockResolvedValue({ workflows: [] });
+    await act(async () => { vi.advanceTimersByTime(1000); wire.focus(); });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(current.error).toBeNull();
+    await act(async () => wire.focus());
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => tree.unmount());
+    warning.mockRestore();
+    vi.useRealTimers();
   }
 });

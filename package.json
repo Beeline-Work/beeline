@@ -32,6 +32,7 @@
     "feedback:group": "node scripts/feedback-signals.mjs",
     "test:feedback-signals": "node --test scripts/feedback-signals.test.mjs",
     "prove:message-links": "npm run build -w @beeline/server && node --import tsx scripts/prove-message-links.mjs",
+    "prove:operator-system-dm": "npm run build && node --import tsx scripts/prove-operator-system-dm.mjs",
     "prove:no-self-review": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-no-self-review.mjs",
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:onboarding": "node scripts/onboarding-walkthrough.mjs",

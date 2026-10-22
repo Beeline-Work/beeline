@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('react-native', () => ({ AppState: {} }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 vi.mock('@/buzz/workbench-source', () => ({ getWorkbenchSource: vi.fn() }));
 

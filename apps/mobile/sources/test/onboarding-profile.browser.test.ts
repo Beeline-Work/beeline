@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { beelineThemes } from '@/buzz/groknight';
 import { CHROME, runBrowserProof, webProofShims } from './browserProof';
 
 describe.skipIf(!existsSync(CHROME))('onboarding identity and controls', () => {
@@ -40,6 +41,7 @@ describe.skipIf(!existsSync(CHROME))('onboarding identity and controls', () => {
             gridLeft:bounds(grid).left,nameLeft:bounds(name).left,gridRight:bounds(grid).right,nameRight:bounds(name).right,
             hint:!!document.querySelector('[data-testid="onboarding-you-source"]'),
             disabled:getComputedStyle(button).opacity,fill:getComputedStyle(button).backgroundColor,border:getComputedStyle(button).borderTopColor,
+            label:getComputedStyle(button.firstElementChild).color,
             provider:getComputedStyle(provider).backgroundColor});
         },200)},600);`);
       const base=webProofShims(mobile);
@@ -57,7 +59,11 @@ describe.skipIf(!existsSync(CHROME))('onboarding identity and controls', () => {
       const proof=JSON.parse(result.result);console.log(JSON.stringify(proof));
       expect(proof.fits).toBe(true);expect(proof.welcomeFits).toBe(true);
       expect(proof.gridLeft).toBeCloseTo(proof.nameLeft,0);expect(proof.gridRight).toBeCloseTo(proof.nameRight,0);
-      expect(proof.hint).toBe(false);expect(proof.disabled).toBe('0.4');expect(proof.fill).toBe(proof.border);
+      expect(proof.hint).toBe(false);expect(proof.disabled).toBe('1');expect(proof.fill).toBe(proof.border);
+      const palette = beelineThemes[theme as 'bone' | 'obsidian'];
+      const rgb = (hex: string) => `rgb(${[1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16)).join(', ')})`;
+      expect(proof.fill).toBe(rgb(palette.bgPressed));
+      expect(proof.label).toBe(rgb(palette.textDisabled));
       expect(proof.provider).toBe('rgb(255, 255, 255)');
     } finally {await rm(directory,{recursive:true,force:true});}
   }, 120_000);

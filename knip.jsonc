@@ -29,6 +29,7 @@
         "scripts/discovery-{launch,mcp,grade}.mjs",
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
+        "scripts/prove-agent-usage-refresh.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/check-acp-adapters.mjs",
@@ -134,6 +135,9 @@
         "scripts/desktop-ui-fixes-proof.tsx",
         "scripts/room-card-spacing-proof.tsx",
         "scripts/render-room-list-proof.mjs",
+        // esbuild and Gradle load the header alignment proof entries by path.
+        "scripts/render-header-alignment-proof.mjs",
+        "scripts/header-alignment-proof/{native,web}.tsx",
         "scripts/room-list-proof.tsx",
         "scripts/room-list-corner-longpress-proof.tsx",
         "scripts/room-list-gestures-proof.tsx",
@@ -203,6 +207,7 @@
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
         "scripts/agent-profile-usage-native-proof.tsx",
+        "scripts/agent-usage-refresh-native-proof.tsx",
         // Invoked by path or selected as Metro aliases for the Android screenshot proof.
         "scripts/search-cell-proof/*.{cjs,ts,tsx}",
       ],

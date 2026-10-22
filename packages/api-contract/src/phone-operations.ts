@@ -178,6 +178,7 @@ export type PhoneOperationMap = {
   claimAgentPairing: { input: PairingCodeInput; output: AgentPairingClaimView };
   updateAgentSoul: { input: UpdateAgentSoulInput; output: AgentDetailView };
   updateAgentModelSelection: { input: UpdateAgentModelInput; output: AgentDetailView };
+  refreshAgentUsage: { input: WorkspaceAgentInput; output: void };
   refreshAgentModelCatalog: { input: WorkspaceAgentInput; output: void };
   /** Owner-only: relay the code pasted into an `@agent /login` card to the agent's machine. */
   completeAgentSignIn: { input: CompleteAgentSignInInput; output: CompleteAgentSignInResult };

@@ -1,0 +1,48 @@
+{
+  "reproduction": "VOICE-LABEL-1",
+  "mode": "punctuation-fixed",
+  "prompt": "Ruby, what should I look for?",
+  "synthesis": [
+    {
+      "text": "A small ceramic planter.",
+      "at": 1792695269610
+    },
+    {
+      "text": "A small ceramic planter.",
+      "at": 1792695269892
+    }
+  ],
+  "transcript": [
+    {
+      "text": "@ruby Ruby, what should I look for?",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "text": "A small ceramic planter.",
+      "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "text": "@ruby Ruby, what should I look for?",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "text": "A small ceramic planter.",
+      "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "receivedAudioFrames": 165,
+  "samplesMs": [
+    50.4372170000006,
+    29.064688000000388,
+    30.266630000000077,
+    30.812807999999677,
+    46.6843659999995,
+    33.13481700000011,
+    44.18018399999892,
+    32.77394600000116,
+    32.25515799999994,
+    30.61913999999888
+  ],
+  "medianMs": 32.51455200000055,
+  "providers": "controlled SSE and PCM; actual local LiveKit RTC"
+}

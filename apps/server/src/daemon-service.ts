@@ -1,3 +1,4 @@
+import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
@@ -551,6 +552,8 @@ export class DaemonService {
       'assignWorkflowRole',
       'reportFeedback',
       'notifyFeedbackFixed',
+      'sendOperatorSystemDm',
+      'readOperatorSystemDm',
     ]);
     if (
       !this.commandTransaction &&
@@ -1885,7 +1888,7 @@ export class DaemonService {
       case 'setCornerHold': {
         const hold = input as Input<'setCornerHold'>;
         await this.access(hold.cornerId, authenticatedAgentId);
-        return (await this.database.transaction(async (db) => {
+        const result = await this.database.transaction(async (db) => {
           await lockCornerLifecycle(db, hold.cornerId);
           const command = await authorizeCommandOutput(
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
@@ -1898,7 +1901,11 @@ export class DaemonService {
           )).rows[0];
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
-        })) as Output<Name>;
+        });
+        const reconcile = async () => { await this.github?.reconcileQueuedCorners(hold.cornerId); };
+        if (this.afterCommit) this.afterCommit(reconcile);
+        else await reconcile();
+        return result as Output<Name>;
       }
       case 'orderCornerMerge': {
         const order = input as Input<'orderCornerMerge'>;
@@ -2006,6 +2013,12 @@ export class DaemonService {
           authenticatedAgentId,
           input as Input<'reportFeedback'>,
         )) as Output<Name>;
+      case 'sendOperatorSystemDm':
+        return (await sendOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
+          authenticatedAgentId, input as Input<'sendOperatorSystemDm'>)) as Output<Name>;
+      case 'readOperatorSystemDm':
+        return (await readOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
+          authenticatedAgentId, (input as Input<'readOperatorSystemDm'>).sendId)) as Output<Name>;
       case 'notifyFeedbackFixed':
         return (await notifyFeedbackFixed(
           this.database,
@@ -3603,7 +3616,7 @@ export class DaemonService {
     if (landed.status === 'not-attempted')
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
     if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
-    return { status: 'merge-started', headSha: corner.head_sha };
+    return { status: landed.status === 'queued' ? 'queued' : 'merge-started', headSha: corner.head_sha };
   }
 
   /**
@@ -8370,7 +8383,10 @@ export class DaemonService {
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
-      stored: true, visible: true, receipt: 'Message stored and visible.' };
+      stored: true, visible: true, receipt: 'Message stored and visible.' +
+        (input.cornerId === command.room_id
+          ? '\nPosted to your current place. Your closing text here also publishes, so only write it if it adds something new; do not repeat this post.'
+          : '') };
   }
 
   /** Public posts accept Rooms and corners without broadening corner-only operations. */
@@ -8725,6 +8741,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   walletSignTypedData: true,
   reportFeedback: true,
   notifyFeedbackFixed: true,
+  sendOperatorSystemDm: true,
+  readOperatorSystemDm: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

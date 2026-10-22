@@ -2802,7 +2802,9 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'report':
     case 'report_feedback':
-    case 'notify_feedback_fixed': return execute(name);
+    case 'notify_feedback_fixed':
+    case 'send_operator_system_dm':
+    case 'read_operator_system_dm': return execute(name);
     case 'dispatch_release': return execute(name);
     case 'approve_merge':
     case 'merge_corner':
@@ -3235,6 +3237,17 @@ async function executeAgentOperation(
           ...(args.releaseHoldId !== undefined ? { releaseHoldId: args.releaseHoldId } : {}),
         }),
       );
+    case 'send_operator_system_dm':
+      return JSON.stringify(await daemonExecute('sendOperatorSystemDm', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        recipients: args.recipients as string | string[], text: String(args.text ?? ''),
+      }));
+    case 'read_operator_system_dm':
+      return JSON.stringify(await daemonExecute('readOperatorSystemDm', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), sendId: String(args.sendId ?? ''),
+      }));
     case 'order_corner_merge':
       return JSON.stringify(
         await daemonExecute('orderCornerMerge', {
@@ -3483,8 +3496,7 @@ async function executeAgentOperation(
       );
     case 'post': {
       const cornerId = typeof args.cornerId === 'string' && args.cornerId
-        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-      if (!cornerId) throw new Error('address is required outside a corner');
+        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID');
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(

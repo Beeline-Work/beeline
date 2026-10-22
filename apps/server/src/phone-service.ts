@@ -4339,10 +4339,12 @@ export class PhoneService {
           input as Input<'createHumanCorner'>,
           viewerId,
         )) as Output<Name>;
-      case 'setCornerHold':
-        return (await this.database.transaction((db) =>
-          setCornerHold(db, input as Input<'setCornerHold'>, viewerId),
-        )) as Output<Name>;
+      case 'setCornerHold': {
+        const hold = input as Input<'setCornerHold'>;
+        const result = await this.database.transaction(db => setCornerHold(db, hold, viewerId));
+        await this.github?.reconcileQueuedCorners(hold.cornerId);
+        return result as Output<Name>;
+      }
       case 'setCornerLocked': {
         const value = input as Input<'setCornerLocked'>;
         if (typeof value.locked !== 'boolean') throw new Error('locked must be a boolean');
@@ -4465,6 +4467,15 @@ export class PhoneService {
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
         return (await this.readAgent((input as Input<'updateAgentModelSelection'>).workspaceId,
           (input as Input<'updateAgentModelSelection'>).agentId, viewerId)) as Output<Name>;
+      case 'refreshAgentUsage': {
+        const request = input as Input<'refreshAgentUsage'>;
+        await this.requireWorkspaceAgent(request.workspaceId, request.agentId, viewerId);
+        await this.database.query(`SELECT pg_notify($1, $2)`, [
+          POSTGRES_LIVE_CHANNEL,
+          JSON.stringify({ table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: request.agentId }),
+        ]);
+        return;
+      }
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
@@ -6515,6 +6526,10 @@ export class PhoneService {
          WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`,
         [input.workspaceId, id, viewerId],
       );
+      if (repository) await db.query(
+        `INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2)
+         ON CONFLICT DO NOTHING`, [viewerId, input.workspaceId],
+      );
       await joinWorkspaceMembersToPublicRoom(db, input.workspaceId, id);
     });
     return { id };
@@ -8486,28 +8501,38 @@ export class PhoneService {
   }
   private async setRepository(input: Input<'setRoomRepository'>, viewerId: string) {
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
-    if (input.githubInstallationId !== undefined) {
-      const repositoryId = input.key.match(/^github:(\d+)$/)?.[1];
-      const fullName = input.remote.match(/^git:\/\/github\.com\/([^/\s]+\/[^/\s]+)$/i)?.[1];
-      if (!repositoryId || !fullName || input.name.toLowerCase() !== fullName.toLowerCase())
-        throw new Error('GitHub repository binding is invalid');
-      const access = await this.database.query(
-        `SELECT 1 FROM github_repositories r JOIN github_installations i USING(installation_id) WHERE r.repository_id=$1 AND r.installation_id=$2 AND lower(r.full_name)=lower($3) AND r.active AND i.owner_id=$4 AND i.status='active'`,
-        [repositoryId, input.githubInstallationId, fullName, viewerId],
+    await this.database.transaction(async (db) => {
+      if (input.githubInstallationId !== undefined) {
+        const repositoryId = input.key.match(/^github:(\d+)$/)?.[1];
+        const fullName = input.remote.match(/^git:\/\/github\.com\/([^/\s]+\/[^/\s]+)$/i)?.[1];
+        if (!repositoryId || !fullName || input.name.toLowerCase() !== fullName.toLowerCase())
+          throw new Error('GitHub repository binding is invalid');
+        const access = await db.query(
+          `SELECT 1 FROM github_repositories r JOIN github_installations i USING(installation_id) WHERE r.repository_id=$1 AND r.installation_id=$2 AND lower(r.full_name)=lower($3) AND r.active AND i.owner_id=$4 AND i.status='active'`,
+          [repositoryId, input.githubInstallationId, fullName, viewerId],
+        );
+        if (!access.rowCount) throw new Error('GitHub repository access denied');
+      }
+      await db.query(
+        `UPDATE rooms SET repository_key=$2,repository_name=$3,repository_remote=$4,repository_target_branch=$5,github_installation_id=$6,repository_updated_at=now(),repository_resolution='repository',updated_at=now() WHERE id=$1`,
+        [
+          input.roomId,
+          input.key,
+          input.name,
+          input.remote,
+          input.targetBranch,
+          input.githubInstallationId ?? null,
+        ],
       );
-      if (!access.rowCount) throw new Error('GitHub repository access denied');
-    }
-    await this.database.query(
-      `UPDATE rooms SET repository_key=$2,repository_name=$3,repository_remote=$4,repository_target_branch=$5,github_installation_id=$6,repository_updated_at=now(),repository_resolution='repository',updated_at=now() WHERE id=$1`,
-      [
-        input.roomId,
-        input.key,
-        input.name,
-        input.remote,
-        input.targetBranch,
-        input.githubInstallationId ?? null,
-      ],
-    );
+      if (input.githubInstallationId !== undefined) {
+        await db.query(
+          `INSERT INTO repository_link_successes(identity_id,workspace_id)
+         SELECT $2,workspace_id FROM rooms WHERE id=$1
+         ON CONFLICT DO NOTHING`,
+          [input.roomId, viewerId],
+        );
+      }
+    });
     return this.roomRepository(input.roomId);
   }
   /**
@@ -10615,6 +10640,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'claimAgentPairing',
   'updateAgentSoul',
   'updateAgentModelSelection',
+  'refreshAgentUsage',
   'refreshAgentModelCatalog',
   'completeAgentSignIn',
   'updateAgentYolo',

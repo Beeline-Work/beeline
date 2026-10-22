@@ -35,8 +35,6 @@ createRoot(document.getElementById('root')!).render(<><Viewer pubkey="giselle" /
 setTimeout(() => {
   const inputs = [...document.querySelectorAll('textarea,input')].filter(node => node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) as (HTMLInputElement | HTMLTextAreaElement)[];
   const values = inputs.map(node => node.value);
-  const requesterTag = document.querySelector('[data-testid="giselle-tag-charles"]');
-  const otherTag = document.querySelector('[data-testid="other-human-tag-charles"]');
-  document.getElementById('result')!.textContent = 'Requester tag: ' + requesterTag?.textContent + '\nOther tag: ' + Boolean(otherTag) + '\nRESULT ' +
-    (values.length === 2 && requesterTag?.textContent === '@charles' && !otherTag ? 'PASS' : 'FAIL');
+  document.getElementById('result')!.textContent = 'Requester draft: ' + JSON.stringify(values[0]) + '\nOther draft: ' + JSON.stringify(values[1]) + '\nRESULT ' +
+    (values.length === 2 && values[0] === '@charles ' && values[1] === '' ? 'PASS' : 'FAIL');
 }, 1000);

@@ -159,12 +159,12 @@ export class HarnessQuotaReader {
     },
   ) {}
 
-  publish(provider: string | undefined, env: Record<string, string>): Promise<void> {
+  publish(provider: string | undefined, env: Record<string, string>, force = false): Promise<void> {
     const now = this.options.now?.() ?? Date.now();
     const slots = this.options.slots ?? AGENT_READ_SLOTS;
     let slot = slots.get(this.options.agentId);
     if (!slot) slots.set(this.options.agentId, (slot = { lastStartedAt: -Infinity, running: false }));
-    if (!provider || slot.running || now - slot.lastStartedAt < (this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS))
+    if (!provider || slot.running || (!force && now - slot.lastStartedAt < (this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS)))
       return Promise.resolve();
     // Turn-loop tests must never read the developer's real vendor quota.
     if (!this.options.run && process.env.VITEST) return Promise.resolve();

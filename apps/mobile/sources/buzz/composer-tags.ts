@@ -1,24 +1,24 @@
 /**
- * Recipient chips in the composer.
+ * Room member tags in the composer.
  *
- * The composer text stays the one source of truth: a chip is a leading
- * `@handle ` token whose handle belongs to a Room member. The composer shows
- * those tokens as chips and the rest as typed text, so a send, a draft and a
- * reply still carry the exact `@handle ` prefix the server routes on.
+ * Tags are plain text: a leading `@handle ` run whose handles belong to Room
+ * members addresses the message, and the text after it is what the person
+ * typed. A send, a draft and a reply carry the exact `@handle ` text the
+ * server routes on.
  */
 
 export type ComposerTagSplit = {
-  /** Chip handles, in text order, without `@`. */
+  /** Leading tag handles, in text order, without `@`. */
   readonly tags: readonly string[];
-  /** The leading text the chips stand for, including its spaces. */
+  /** The leading tags' text, including its spaces. */
   readonly prefix: string;
-  /** Everything after the chips: the text the person types. */
+  /** Everything after the leading tags: the text the person typed. */
   readonly rest: string;
 };
 
 const LEADING_TAG = /^@([^\s@]+) +/;
 
-/** Only current Room members' handles can become leading composer chips. */
+/** Only current Room members' handles count as composer tags. */
 export function roomComposerTagHandles(members: readonly { handle: string }[]): Set<string> {
   return new Set(members.map((member) => member.handle).filter(Boolean));
 }
@@ -37,51 +37,62 @@ export function splitComposerTags(text: string, handles: ReadonlySet<string>): C
   return { tags, prefix: text.slice(0, offset), rest: text.slice(offset) };
 }
 
-function joinTags(tags: readonly string[], rest: string): string {
-  return tags.map((tag) => `@${tag} `).join('') + rest;
-}
+const MEMBER_TAG_BEFORE_CURSOR = /(?:^|[\s([{])@([\p{L}\p{M}\p{N}_.-]+)$/u;
+const HANDLE_WORD_CHARACTER = /^[\p{L}\p{M}\p{N}_]/u;
+const HANDLE_CHARACTER = /^[\p{L}\p{M}\p{N}_.-]/u;
 
-/** The text without every chip for `handle`; typed text is untouched. */
-export function removeComposerTag(
+/**
+ * A backspace with the cursor right after a Room member's `@handle` deletes
+ * the whole tag. Returns the text without the tag and the cursor where the tag
+ * began, or null when the character before the cursor does not end a member
+ * tag, so the backspace removes one character as usual.
+ */
+export function deleteComposerTagBackward(
   text: string,
+  cursor: number,
   handles: ReadonlySet<string>,
-  handle: string,
-): string {
-  const split = splitComposerTags(text, handles);
-  if (!split.tags.includes(handle)) return text;
-  return joinTags(
-    split.tags.filter((tag) => tag !== handle),
-    split.rest,
-  );
+): { text: string; cursor: number } | null {
+  if (handles.size === 0 || !Number.isInteger(cursor) || cursor <= 0 || cursor > text.length) {
+    return null;
+  }
+  const match = MEMBER_TAG_BEFORE_CURSOR.exec(text.slice(0, cursor));
+  const handle = match?.[1];
+  if (!handle || !(handles.has(handle) || handles.has(handle.normalize('NFKC').toLocaleLowerCase()))) {
+    return null;
+  }
+  // The cursor must end the handle, as the mention parser reads it: not in
+  // the middle of a longer word such as `@rubyx` or `@ruby.dev`.
+  const after = text.slice(cursor);
+  const punctuation = after.match(/^[.-]+/u)?.[0] ?? '';
+  if (HANDLE_WORD_CHARACTER.test(after)) return null;
+  if (punctuation && HANDLE_CHARACTER.test(after.slice(punctuation.length))) return null;
+  const start = cursor - handle.length - 1;
+  return { text: text.slice(0, start) + after, cursor: start };
 }
 
-/** The text without its last chip, for a backspace at the start of the field. */
-export function removeLastComposerTag(text: string, handles: ReadonlySet<string>): string {
-  const split = splitComposerTags(text, handles);
-  if (split.tags.length === 0) return text;
-  return joinTags(split.tags.slice(0, -1), split.rest);
-}
-
-/** Adds `handle` after the existing chips, or removes it when it is already a chip. */
-export function toggleComposerTag(
-  text: string,
-  handles: ReadonlySet<string>,
-  handle: string,
-): string {
-  const split = splitComposerTags(text, handles);
-  if (split.tags.includes(handle)) return removeComposerTag(text, handles, handle);
-  return `${split.prefix}@${handle} ${split.rest}`;
-}
-
-/** A whole-text selection as offsets into the input, which holds only the text after the chips. */
-export function composerFieldSelection(
-  text: string,
-  handles: ReadonlySet<string>,
+/**
+ * The cursor a backspace was pressed at, read from a native text change that
+ * removed one character, or null for any other change. iOS and Android report
+ * the change before the cursor moves, so `selection` is where the cursor was:
+ * a backspace removed the character before it, and a forward delete or a
+ * deleted one-character selection removed the one after it. Only when the
+ * selection fits neither is the cursor read from the text alone; inside a run
+ * of one letter it is then the run's end, the only place a tag can end.
+ */
+export function composerBackspaceCursor(
+  before: string,
+  after: string,
   selection: { start: number; end: number },
-): { start: number; end: number } {
-  const offset = splitComposerTags(text, handles).prefix.length;
-  return {
-    start: Math.max(0, selection.start - offset),
-    end: Math.max(0, selection.end - offset),
-  };
+): number | null {
+  if (after.length !== before.length - 1) return null;
+  const without = (at: number) => before.slice(0, at) + before.slice(at + 1);
+  if (selection.start === selection.end) {
+    if (selection.start > 0 && without(selection.start - 1) === after) return selection.start;
+    if (without(selection.start) === after) return null;
+  } else if (selection.end === selection.start + 1 && without(selection.start) === after) {
+    return null;
+  }
+  let at = 0;
+  while (at < after.length && after[at] === before[at]) at += 1;
+  return without(at) === after ? at + 1 : null;
 }

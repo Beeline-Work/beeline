@@ -142,6 +142,7 @@ const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
   'discovery-wake',
   'corner-complete',
   'connector-assignment',
+  'usage-refresh',
   'agent-sign-in',
   'config-changed',
   'subscribed',
@@ -182,6 +183,7 @@ export class DaemonApiClient {
   private roomsChangedListener?: (event?: RoomMembershipChange) => void;
   private configChangedListener?: () => void;
   private connectorAssignmentListener?: () => void;
+  private usageRefreshListener?: () => void;
   private agentSignInListener?: (frame: AgentSignInFrame) => void;
   private cornerCompleteListener?: (roomId: string) => void;
   private helperReleaseListener?: (release: { version: string; sha: string }) => void;
@@ -344,6 +346,10 @@ export class DaemonApiClient {
   }
 
   /** One `@agent /login` step the agent's owner started in a Room. */
+  setUsageRefreshListener(listener: () => void): void {
+    this.usageRefreshListener = listener;
+  }
+
   setAgentSignInListener(listener: (frame: AgentSignInFrame) => void): void {
     this.agentSignInListener = listener;
   }
@@ -483,6 +489,10 @@ export class DaemonApiClient {
     }
     if (event.type === 'connector-assignment') {
       this.connectorAssignmentListener?.();
+      return;
+    }
+    if (event.type === 'usage-refresh') {
+      this.usageRefreshListener?.();
       return;
     }
     if (event.type === 'agent-sign-in') {

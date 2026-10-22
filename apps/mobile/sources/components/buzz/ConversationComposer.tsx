@@ -26,7 +26,7 @@ import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { DictationWaveform } from './DictationWaveform';
 import { useSpeechInput } from '@/buzz/speech-input';
-import { removeComposerTag, removeLastComposerTag, splitComposerTags } from '@/buzz/composer-tags';
+import { composerBackspaceCursor, deleteComposerTagBackward, splitComposerTags } from '@/buzz/composer-tags';
 
 /**
  * A dictated message on its way out. Stop sets `cancelled` until the parent sets
@@ -95,12 +95,10 @@ type Props = {
   };
   onCancelReply?(): void;
   /**
-   * Room member handles. A leading `@handle ` for one of them shows as a chip
-   * instead of typed text; the text itself, and so the send, is unchanged.
+   * Room member handles. One backspace right after an `@handle` for one of
+   * them deletes the whole tag.
    */
   tagHandles?: ReadonlySet<string>;
-  /** Opens the tag menu from a tag. */
-  onEditTags?(): void;
   attachments?: readonly {
     uri: string;
     name: string;
@@ -117,18 +115,6 @@ type Props = {
 export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26;
 export const COMPOSER_MAX_INPUT_HEIGHT = 5 * groknight.type.body.lineHeight;
 const NO_TAG_HANDLES: ReadonlySet<string> = new Set();
-/**
- * A native input draws its leading tags as styled spans of its own text, so
- * typed text wraps under them. react-native-web's input takes no spans, so on
- * the web the tags sit over the field's first line, which is indented past
- * them. Decided once at load: the browser proofs report Android afterwards.
- */
-const TAGS_AS_SPANS = Platform.OS !== 'web';
-
-/** The leading tags as `@handle` and space runs, in text order. */
-function tagSegments(prefix: string) {
-  return prefix.match(/@\S+| +/g) ?? [];
-}
 
 export function ConversationComposer(props: Props) {
   return <RuntimeErrorBoundary scope="conversation" onError={() => props.voice?.end()}
@@ -169,7 +155,6 @@ function ConversationComposerContent({
   reply,
   onCancelReply,
   tagHandles = NO_TAG_HANDLES,
-  onEditTags,
   attachments = [],
   attachmentsUploading = false,
   onRemoveAttachment,
@@ -220,62 +205,45 @@ function ConversationComposerContent({
     onChangeText(nextValue);
   };
 
-  // Leading Room member tags show as tinted words at the start of the text. On the
-  // web the input holds only the typed rest, and every edit is written back
-  // with the tags' text in front of it; a native input holds the whole text.
+  // Tags are plain text. Send and dictation still read the leading ones:
+  // tags alone are not a message.
   const tagSplit = splitComposerTags(value, tagHandles);
-  const restSelectionRef = React.useRef({ start: 0, end: 0 });
-  const commitRestChange = (nextRest: string) => commitInputChange(tagSplit.prefix + nextRest);
-  const commitSpanChange = (nextText: string) => {
-    const { prefix } = tagSplit;
-    if (prefix && nextText.length < value.length && !nextText.startsWith(prefix)) {
-      // A deletion inside the tags removes the whole tag it reaches into.
-      let at = 0;
-      while (at < nextText.length && nextText[at] === value[at]) at += 1;
-      const deletedEnd = at + value.length - nextText.length;
-      let start = 0;
-      for (const handle of tagSplit.tags) {
-        const end = prefix.indexOf('@', start + 1);
-        if (deletedEnd <= prefix.length && at < (end < 0 ? prefix.length : end)) {
-          commitInputChange(removeComposerTag(value, tagHandles, handle));
-          return;
-        }
-        start = end;
-      }
+  // The selection the input last reported, for a backspace after a tag.
+  const selectionRef = React.useRef({ start: 0, end: 0 });
+  // Where the cursor goes once the input holds the text without a deleted tag.
+  const pendingCursorRef = React.useRef<number | null>(null);
+  /** Deletes the whole tag that ends at `cursor`, if one does. */
+  const deleteTagBackward = (cursor: number) => {
+    const next = deleteComposerTagBackward(value, cursor, tagHandles);
+    if (!next) return false;
+    if (isInputRevisionCurrent?.(inputRevision) !== false) {
+      pendingCursorRef.current = next.cursor;
+      selectionRef.current = { start: next.cursor, end: next.cursor };
     }
+    commitInputChange(next.text);
+    return true;
+  };
+  const commitNativeChange = (nextText: string) => {
+    // Android keyboards often send no Backspace key event, so a one-character
+    // deletion at the end of a tag is read from the text instead.
+    const cursor = composerBackspaceCursor(value, nextText, selectionRef.current);
+    if (cursor !== null && deleteTagBackward(cursor)) return;
     commitInputChange(nextText);
   };
-  // When the field was last touched: a tap that lands the caret inside a
-  // native tag edits the tags instead.
-  const touchedAtRef = React.useRef(0);
-  // The web tags over the field, measured before paint so its first line
-  // starts after the last of them.
-  const tagOverlayRef = React.useRef<View | null>(null);
-  const [tagIndent, setTagIndent] = React.useState<{ paddingTop: number; textIndent: number }>();
-  const measureTags = React.useCallback(() => {
-    const overlay = tagOverlayRef.current as unknown as HTMLElement | null;
-    if (!overlay) return;
-    // Each tag's face, not its larger touch target.
-    const origin = overlay.getBoundingClientRect();
-    const faces = [...overlay.children]
-      .map((target) => target.firstElementChild?.getBoundingClientRect())
-      .filter((face) => face !== undefined);
-    if (faces.length === 0) return;
-    const top = Math.round(Math.max(...faces.map((face) => face.top - origin.top)));
-    const right = Math.max(
-      ...faces
-        .filter((face) => Math.round(face.top - origin.top) === top)
-        .map((face) => face.right - origin.left),
-    );
-    setTagIndent((current) =>
-      current?.paddingTop === top && current.textIndent === right + INLINE_TAG_GAP
-        ? current
-        : { paddingTop: top, textIndent: right + INLINE_TAG_GAP },
-    );
-  }, []);
+  React.useLayoutEffect(() => {
+    const cursor = pendingCursorRef.current;
+    if (cursor === null) return;
+    pendingCursorRef.current = null;
+    const input = ownInputRef.current as unknown as {
+      setSelection?(start: number, end: number): void;
+      setSelectionRange?(start: number, end: number): void;
+    } | null;
+    if (Platform.OS === 'web') input?.setSelectionRange?.(cursor, cursor);
+    else input?.setSelection?.(cursor, cursor);
+  }, [value]);
 
   React.useLayoutEffect(() => {
-    if (TAGS_AS_SPANS) return;
+    if (Platform.OS !== 'web') return;
     const input = ownInputRef.current as unknown as HTMLTextAreaElement | null;
     if (!input || typeof input.getBoundingClientRect !== 'function') return;
     let active = true;
@@ -305,7 +273,7 @@ function ConversationComposerContent({
       window.removeEventListener('resize', measure);
       observer?.disconnect();
     };
-  }, [height, inputRevision, tagSplit.prefix, theme.buzz.type.body]);
+  }, [height, inputRevision, theme.buzz.type.body]);
 
   // Speech recognition — internal hook, scoped to the composer.
   // What the current take added to the text, so Stop can take exactly that out.
@@ -323,9 +291,6 @@ function ConversationComposerContent({
   // The parent replaces the input once it has taken the message into the Room.
   React.useEffect(() => setSendingTake(null), [inputRevision]);
   const dictationBusy = isCapturingSpeech || sendingTake !== null;
-  React.useLayoutEffect(() => {
-    if (!TAGS_AS_SPANS) measureTags();
-  }, [measureTags, tagSplit.prefix, dictationBusy]);
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
   // Tags alone are not a message: the field reads as empty and keeps the mic.
   const hasSomethingToSend = canSend ?? Boolean(tagSplit.rest.trim());
@@ -373,7 +338,7 @@ function ConversationComposerContent({
     const added = takeTextRef.current;
     takeTextRef.current = [];
     if (added.length === 0) return;
-    // Chips, typed text and the reply stay; only the take's words go.
+    // Tags, typed text and the reply stay; only the take's words go.
     commitInputChange(
       added.reduceRight((text, part) => {
         const at = text.lastIndexOf(part);
@@ -530,11 +495,6 @@ function ConversationComposerContent({
               style={[styles.textMeasurement, Platform.OS === 'android' && styles.inputAndroid]}
               testID={`${testIDPrefix}-text-measurement`}
             >
-              {tagSegments(tagSplit.prefix).map((segment, index) => (
-                <Text key={index} style={segment.startsWith('@') ? styles.inlineTag : undefined}>
-                  {segment}
-                </Text>
-              ))}
               Message
             </Text>
           ) : null}
@@ -553,66 +513,42 @@ function ConversationComposerContent({
               // The input stays mounted under the waveform; its typed text
               // returns when dictation ends.
               dictationBusy ? styles.inputHidden : undefined,
-              !TAGS_AS_SPANS && tagSplit.tags.length > 0 ? (tagIndent as object) : undefined,
             ]}
-            // A native input holds the whole text, its tags as spans.
-            value={TAGS_AS_SPANS ? undefined : tagSplit.rest}
-            onChangeText={TAGS_AS_SPANS ? commitSpanChange : commitRestChange}
+            value={value}
+            onChangeText={Platform.OS === 'web' ? commitInputChange : commitNativeChange}
             onContentSizeChange={onContentSizeChange}
             onFocus={onFocus}
             onBlur={onBlur}
-            onPressIn={() => {
-              touchedAtRef.current = Date.now();
-            }}
-            onKeyPress={
-              TAGS_AS_SPANS || tagSplit.tags.length === 0
-                ? onKeyPress
-                : (event) => {
-                    // One backspace at the start of the field removes the last tag.
-                    const selection = restSelectionRef.current;
-                    if (
-                      event.nativeEvent.key === 'Backspace' &&
-                      (!tagSplit.rest || (selection.start === 0 && selection.end === 0))
-                    ) {
-                      event.preventDefault();
-                      commitInputChange(removeLastComposerTag(value, tagHandles));
-                      return;
-                    }
-                    onKeyPress(event);
-                  }
-            }
-            onSelectionChange={(event) => {
-              const selection = event.nativeEvent.selection;
-              if (TAGS_AS_SPANS) {
-                const prefixEnd = tagSplit.prefix.length;
-                if (selection.start === selection.end && selection.start < prefixEnd) {
-                  // The caret never rests inside the tags: typing there would
-                  // break them into text. A tap on one opens the tag menu.
-                  // Ranges must remain intact for Select all and selection handles.
-                  ownInputRef.current?.setSelection(
-                    Math.max(selection.end, prefixEnd),
-                    Math.max(selection.end, prefixEnd),
-                  );
-                  const tapped = Date.now() - touchedAtRef.current < TAG_TAP_MS;
-                  if (tapped && selection.start === selection.end && onEditTags) {
-                    touchedAtRef.current = 0;
-                    ownInputRef.current?.blur();
-                    onEditTags();
-                  }
+            onKeyPress={(event) => {
+              // The web gets every Backspace as a key event, before the
+              // browser deletes anything; a word or line delete keeps its own.
+              const key = event.nativeEvent as TextInputKeyPressEventData & {
+                altKey?: boolean;
+                ctrlKey?: boolean;
+                metaKey?: boolean;
+              };
+              if (
+                Platform.OS === 'web' &&
+                key.key === 'Backspace' &&
+                !key.altKey &&
+                !key.ctrlKey &&
+                !key.metaKey
+              ) {
+                const node = (event as unknown as { target?: HTMLTextAreaElement }).target;
+                const selection =
+                  typeof node?.selectionStart === 'number'
+                    ? { start: node.selectionStart, end: node.selectionEnd }
+                    : selectionRef.current;
+                if (selection.start === selection.end && deleteTagBackward(selection.start)) {
+                  event.preventDefault();
+                  return;
                 }
-                onSelectionChange?.(event);
-                return;
               }
-              restSelectionRef.current = selection;
-              // The parent reads offsets into the whole text, tags included.
-              const offset = tagSplit.prefix.length;
-              onSelectionChange?.({
-                ...event,
-                nativeEvent: {
-                  ...event.nativeEvent,
-                  selection: { start: selection.start + offset, end: selection.end + offset },
-                },
-              });
+              onKeyPress(event);
+            }}
+            onSelectionChange={(event) => {
+              selectionRef.current = event.nativeEvent.selection;
+              onSelectionChange?.(event);
             }}
             placeholder={!isDirectMessage && hasAgentMembers ? 'Tag an agent with @' : 'Message'}
             placeholderTextColor={theme.buzz.dim}
@@ -626,68 +562,15 @@ function ConversationComposerContent({
             submitBehavior="newline"
             testID={`${testIDPrefix}-input`}
             accessibilityLabel="Message"
-          >
-            {TAGS_AS_SPANS ? (
-              <>
-                {tagSegments(tagSplit.prefix).map((segment, index) =>
-                  segment.startsWith('@') ? (
-                    <Text
-                      key={index}
-                      style={styles.inlineTag}
-                      testID={`${testIDPrefix}-tag-${segment.slice(1)}`}
-                    >
-                      {segment}
-                    </Text>
-                  ) : (
-                    <Text key={index}>{segment}</Text>
-                  ),
-                )}
-                <Text>{tagSplit.rest}</Text>
-              </>
-            ) : null}
-          </TextInput>
-          {!TAGS_AS_SPANS && !dictationBusy && tagSplit.tags.length > 0 ? (
-            // Over the field's first line, which is indented past them.
-            <View
-              ref={tagOverlayRef}
-              // A narrower field can wrap the tags onto another line.
-              onLayout={measureTags}
-              pointerEvents="box-none"
-              style={[styles.tagOverlay, { transform: [{ translateY: textOffset }] }]}
-              testID={`${testIDPrefix}-tags`}
-            >
-              {tagSplit.tags.map((handle, index) => (
-                <TouchableOpacity
-                  key={`${handle}:${index}`}
-                  accessibilityLabel={`Edit tags, @${handle}`}
-                  accessibilityRole="button"
-                  disabled={!onEditTags}
-                  onPress={onEditTags}
-                  style={styles.overlayTag}
-                  testID={`${testIDPrefix}-tag-${handle}-edit`}
-                >
-                  <Text
-                    style={[styles.inlineTag, styles.overlayTagFace]}
-                    testID={`${testIDPrefix}-tag-${handle}`}
-                  >
-                    @{handle}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : null}
+          />
           {dictationBusy ? (
             <View style={styles.waveformOverlay}>
-              {/* The tags stay in view, read-only, while the take is recorded. */}
-              {tagSplit.tags.map((handle, index) => (
-                <Text
-                  key={`${handle}:${index}`}
-                  style={[styles.inlineTag, styles.dictationTag]}
-                  testID={`${testIDPrefix}-tag-${handle}`}
-                >
-                  @{handle}
+              {/* The leading tags stay in view, as text, while the take is recorded. */}
+              {tagSplit.tags.length > 0 ? (
+                <Text numberOfLines={1} style={styles.dictationTags} testID={`${testIDPrefix}-dictation-tags`}>
+                  {tagSplit.prefix.trimEnd()}
                 </Text>
-              ))}
+              ) : null}
               <DictationWaveform
                 level={speech.volumeLevel}
                 live={isListening}
@@ -854,9 +737,6 @@ function ConversationComposerContent({
 }
 
 const CONTROL_SIZE = 26;
-const INLINE_TAG_GAP = 4;
-/** How long after a touch a caret move counts as that touch's tap. */
-const TAG_TAP_MS = 500;
 
 const styles = StyleSheet.create((theme) => ({
   // The voice spot and the go action: one 26pt slot each, reached by a 44pt
@@ -974,33 +854,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // A tag reads as a word of the text: the accent on a soft tint.
-  inlineTag: {
-    ...theme.buzz.type.machine,
-    // Unset, so a tag takes the input's line height and never changes its line.
-    lineHeight: undefined,
-    color: theme.buzz.accent,
-    backgroundColor: theme.buzz.bgHighlight,
+  dictationTags: {
+    ...theme.buzz.type.body,
+    ...Platform.select({ android: { lineHeight: undefined }, default: {} }),
+    flexShrink: 1,
+    marginRight: theme.buzz.space.xs,
+    color: theme.buzz.textSecondary,
   } as any,
-  tagOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    columnGap: INLINE_TAG_GAP,
-  },
-  // Like ＋ and the mic, a tag's target is at least 44 by 44: it reaches 16
-  // past the tag on every side, and the negative margin keeps the tag's own
-  // place in the line.
-  // Every tag opens the same menu, so overlapping targets are harmless.
-  overlayTag: {
-    padding: theme.buzz.space.md,
-    margin: -theme.buzz.space.md,
-  },
-  overlayTagFace: { borderRadius: theme.buzz.radius, overflow: 'hidden' },
-  dictationTag: { marginRight: INLINE_TAG_GAP, borderRadius: theme.buzz.radius },
   input: {
     ...theme.buzz.type.body,
     // The wrapper owns the row's flexible width. Its children sit in Yoga's

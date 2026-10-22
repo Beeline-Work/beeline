@@ -1,3 +1,4 @@
+import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
@@ -84,6 +85,8 @@ export function postgresPoolConfig(
   return {
     connectionString,
     max: maximumConnections,
+    // These latency-sensitive connections should not compile each complex read.
+    options: '-c jit=off',
     // Half-open TCP connections (peer/NAT dropped without FIN/RST) never emit
     // an error on their own; keepalive probes eventually fail and surface the
     // dead connection so the pool can reclaim it instead of wedging.
@@ -117,11 +120,11 @@ export function postgresPoolConfig(
           : mode === 'migration'
             ? {
                 connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
-                options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+                options: `-c jit=off -c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
               }
             : {
               statement_timeout: JOB_STATEMENT_TIMEOUT_MS,
-              options: `-c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
+              options: `-c jit=off -c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
             }),
   };
@@ -750,6 +753,16 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS allow_fix_sweep boolean NOT NULL DEFAULT true;
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS internal boolean NOT NULL DEFAULT false;
+-- Confirmed fixtures and the operator team's Workspace (verified by its Room ID).
+-- Classification is persisted; readers never infer it from names or membership.
+UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
+  'bee11e00-0000-4000-8000-000000000105',
+  'c2e54c45-cf58-4cc1-a620-89b196096e7b',
+  'b81a2815-924c-4bd9-bc04-d38bdee177bc',
+  '18e555f7-e191-452b-9b0f-b825f58ee4ba'
+);
+
 
 CREATE TABLE IF NOT EXISTS service_review_notice_deliveries (
   identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
@@ -2185,6 +2198,21 @@ ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS allow_auto_merge boolea
 
 DROP TABLE IF EXISTS github_head_checks;
 
+-- First confirmed link per person and Workspace, without repository or message content.
+-- Keeping Workspace scope prevents a fixture success masking a later real success.
+CREATE TABLE IF NOT EXISTS repository_link_successes (
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  first_linked_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (identity_id, workspace_id)
+);
+CREATE INDEX IF NOT EXISTS repository_link_successes_workspace_idx ON repository_link_successes(workspace_id);
+CREATE TABLE IF NOT EXISTS operator_metric_epochs (
+  metric text PRIMARY KEY,
+  started_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO operator_metric_epochs(metric) VALUES('repository_link') ON CONFLICT DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS github_user_tokens (
   subject text PRIMARY KEY,
   encrypted_token text NOT NULL,
@@ -3083,6 +3111,7 @@ export async function migrate(
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
+  await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);
   await ddl('retire room webhooks', `
     DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
       room_webhook_deliveries, room_webhook_requests, room_webhooks;

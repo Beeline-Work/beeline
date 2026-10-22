@@ -147,7 +147,7 @@ it('deduplicates client steps, gives state-bound server callbacks authority, and
 });
 it('excludes hidden, fixture and known team installs retroactively at authenticated signed-in', async () => {
   const fixture = 'c2e54c45-cf58-4cc1-a620-89b196096e7b';
-  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Fixture')`, [fixture]);
+  await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Fixture',true)`, [fixture]);
   for (const [index, hidden, handle, isFixture] of [
     [1, true, 'hidden', false],
     [2, false, 'lunchboxfortwo', false],

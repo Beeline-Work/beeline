@@ -20,6 +20,7 @@ exports[`requires review for every new System DM destination producer 1`] = `
   "phone-service.ts:resolveDirectMessage:ensureSystemDirectMessageRoomResult",
   "system-line.ts:ensureSystemDirectMessageRoom:ensureSystemDirectMessageRoomResult",
   "system-line.ts:ensureSystemDirectMessageRoomResult:directMessageRoomId",
+  "system-line.ts:sendSystemDirectMessage:ensureSystemDirectMessageRoom",
   "wallet-notices.ts:postWalletNotice:ensureSystemDirectMessageRoom",
   "wallet.ts:agentSignTypedData:ensureSystemDirectMessageRoom",
   "wallet.ts:createWallet:ensureSystemDirectMessageRoom",

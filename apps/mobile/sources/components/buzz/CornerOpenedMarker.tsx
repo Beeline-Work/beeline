@@ -3,7 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
-import { RepositoryLifecycleRow } from './PrLifecycleCard';
+import { NotificationLifecycleCard, RepositoryLifecycleRow } from './PrLifecycleCard';
+import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
+import { lifecycleCornerTitle } from '@/buzz/pr-lifecycle';
 
 /**
  * The line a message carries once a corner was opened from it. It is the
@@ -48,3 +50,34 @@ const styles = StyleSheet.create(() => ({
   // Clear of the Ledger's timestamp column, like the message it hangs off.
   line: { paddingRight: LEDGER_MARGINALIA_WIDTH },
 }));
+
+/** Anchored corners use the repository run's disclosure and truncation rules. */
+export function CornerOpenedMarkers({
+  message,
+  onOpenCorner,
+}: {
+  message: ChatDisplayMessage;
+  onOpenCorner(id: string): void;
+}) {
+  const items = (message.cornerMarkers ?? []).map((marker) => ({
+    id: marker.id,
+    title: lifecycleCornerTitle(marker.daemonFact!),
+    state: 'Opened',
+    kind: 'corner' as const,
+    kindLine: 'corner',
+    cornerId: marker.daemonFact!.cornerId,
+    actor: '',
+    updatedBy: marker.id,
+  }));
+  if (!items.length) return null;
+  return (
+    <View style={styles.line}>
+      <NotificationLifecycleCard
+        anchored
+        message={{ ...message, notificationLifecycleRun: { items, subline: '' } }}
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={() => undefined}
+      />
+    </View>
+  );
+}

@@ -100,8 +100,7 @@ ${pc.dim('Usage:')}
   beeline update --manifest-url <u>  Override the published manifest URL
 
 The supervised helper checks the manifest on connection and on release notices,
-then waits for a quiet gap to restart. BEELINE_UPDATE_DISABLE=1 turns the
-automatic path off. \`beeline update\` always works.
+then waits for a quiet gap to restart.
 `);
 }
 

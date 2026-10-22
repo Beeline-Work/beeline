@@ -1,3 +1,4 @@
+import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
@@ -551,6 +552,8 @@ export class DaemonService {
       'assignWorkflowRole',
       'reportFeedback',
       'notifyFeedbackFixed',
+      'sendOperatorSystemDm',
+      'readOperatorSystemDm',
     ]);
     if (
       !this.commandTransaction &&
@@ -2006,6 +2009,12 @@ export class DaemonService {
           authenticatedAgentId,
           input as Input<'reportFeedback'>,
         )) as Output<Name>;
+      case 'sendOperatorSystemDm':
+        return (await sendOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
+          authenticatedAgentId, input as Input<'sendOperatorSystemDm'>)) as Output<Name>;
+      case 'readOperatorSystemDm':
+        return (await readOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
+          authenticatedAgentId, (input as Input<'readOperatorSystemDm'>).sendId)) as Output<Name>;
       case 'notifyFeedbackFixed':
         return (await notifyFeedbackFixed(
           this.database,
@@ -8725,6 +8734,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   walletSignTypedData: true,
   reportFeedback: true,
   notifyFeedbackFixed: true,
+  sendOperatorSystemDm: true,
+  readOperatorSystemDm: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

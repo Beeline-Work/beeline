@@ -1,3 +1,4 @@
+import { flushOperatorSystemDms } from './operator-system-dm.js';
 import { captureServerError, flushServerErrors } from './sentry.js';
 
 // Expected voice failures are handled at their task boundary. Report any escape.
@@ -457,6 +458,7 @@ async function main() {
         pushPending = false;
         await backgroundJobs.run('push', () => push.runOnce());
       }
+      await backgroundJobs.run('operator-system-dms', () => flushOperatorSystemDms(jobsDatabase));
       await backgroundJobs.run('schedules', () => schedules.runOnce());
       await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());

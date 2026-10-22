@@ -976,6 +976,24 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    "name": "send_operator_system_dm",
+    "description": "Queue plain System DMs on the operator owner's explicit command. recipients: exact user id/handle, list, or all. Returns sendId and recipient/delivered/failed/pending counts. Delivery runs in durable background batches; use read_operator_system_dm for completion. Never retry a send merely because it is pending.",
+    "inputSchema": {
+      "type": "object", "properties": {
+        "recipients": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "minItems": 1}]},
+        "text": {"type": "string", "minLength": 1, "maxLength": 16000}
+      }, "required": ["recipients", "text"], "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_operator_system_dm",
+    "description": "Read the recipient, delivered, failed and pending counts for a queued System DM send. Requires the operator owner's human command.",
+    "inputSchema": {
+      "type": "object", "properties": {"sendId": {"type": "string", "format": "uuid"}},
+      "required": ["sendId"], "additionalProperties": false
+    }
+  },
+  {
     "name": "record_merge_yes",
     "description": "Record an authorized person’s explicit merge yes at address through command provenance. Does not land or release a hold.",
     "inputSchema": {

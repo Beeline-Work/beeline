@@ -1,10 +1,11 @@
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { EmptyState } from '@/components/buzz/EmptyState';
-import { githubConnectionErrorMessage } from '@/auth/github-connection-error';
+import { githubConnectionErrorNotice } from '@/auth/github-connection-error';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import type { RoomViewIdentity } from '@beeline/api-contract/phone';
 import React, { useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { AppState, Platform } from 'react-native';
 import type { RepositoryOnboardingAction, RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
 import { TranscriptCard, type TranscriptCardAction, type TranscriptCardChoice } from '@/components/buzz/TranscriptCard';
@@ -17,9 +18,11 @@ export function RepositoryOnboardingCard(props: Props) {
   return enabled ? <EnabledRepositoryOnboardingCard {...props} /> : null;
 }
 function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionError }: Props) {
-  const [picker, setPicker] = useState(false);
+  const { repositoryPicker } = useLocalSearchParams<{ repositoryPicker?: string }>();
+  const [picker, setPicker] = useState(repositoryPicker === card.id);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(connectionError ? githubConnectionErrorMessage(connectionError) : null);
+  const [errorTitle, setErrorTitle] = useState(connectionError ? githubConnectionErrorNotice(connectionError).title : 'GitHub could not connect');
+  const [error, setError] = useState<string | null>(connectionError ? githubConnectionErrorNotice(connectionError).description : null);
   const canAct = card.status === 'open' && card.requesterId === viewerId && !busy;
   const act = async (action: RepositoryOnboardingAction['action'], extra: Partial<RepositoryOnboardingAction> = {}) => {
     if (!canAct) return;
@@ -32,21 +35,29 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
           { githubInstallationRedirectUri, runGitHubInstallationSession }] = await Promise.all([
           import('@/auth/auth-session'), import('@/auth/desktop-auth-session'), import('@/auth/github-auth-session'),
         ]);
+        const result = await monolithPhoneOperation('actOnRepositoryCard', {
+          ...request, redirectUri: githubInstallationRedirectUri(),
+        });
+        if (result.openPicker) { setPicker(true); return; }
+        if (!result.url) throw new Error('GitHub installation could not start. Try again.');
         await runGitHubInstallationSession({
-          returnPath: `/beeline/chat/${card.roomId}`,
-          startInstallation: async () => {
-            const result = await monolithPhoneOperation('actOnRepositoryCard', { ...request, redirectUri: githubInstallationRedirectUri() });
-            if (!result.url) throw new Error('GitHub installation could not start. Try again.');
-            return result.url;
+          returnPath: `/beeline/chat/${card.roomId}?repositoryPicker=${card.id}`,
+          startInstallation: async () => result.url!,
+          onRefreshPhase: phase => {
+            if (phase === 'refresh_failed') setError('Connect to Wi-Fi or mobile data, then try again.');
           },
           openAuthSession: (url, redirect) => openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect)),
           subscribeToUrls: subscribeToAuthUrls,
           subscribeToAppState: listener => AppState.addEventListener('change', listener),
           refreshRepositories: async () => { await monolithPhoneOperation('actOnRepositoryCard', { ...request, action: 'refresh' }); },
         });
+        setPicker(true);
       } else await monolithPhoneOperation('actOnRepositoryCard', request);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      const code = reason && typeof reason === 'object' && 'code' in reason && typeof reason.code === 'string' ? reason.code : 'unknown';
+      const notice = githubConnectionErrorNotice(code);
+      setErrorTitle(notice.title);
+      setError(notice.description);
     } finally { setBusy(false); }
   };
   const choices: TranscriptCardChoice[] = card.kind === 'starters'
@@ -72,7 +83,8 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
     body={card.kind === 'repository' ? card.canLink ? card.githubLinked === false && !card.installationId ? 'Connect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.' : `New repo: ${card.defaultName}` : card.ownerHandle ? `Ask @${card.ownerHandle} to link a repository for this Room` : 'Ask a Workspace owner or admin to choose a repository for this Room.' : undefined}
     choices={choices} actions={actions}
     footerNote={busy ? 'Working…' : card.selected ? `Selected · ${card.selected}` : undefined}>
-    {error ? <ErrorBanner title={error} /> : picker && !card.repositories.length ?
+    {error ? <ErrorBanner title={errorTitle}
+      description={error} retryLabel="Back to Room" retryVariant="primary" onRetry={() => setError(null)} /> : picker && !card.repositories.length ?
       <EmptyState title="No repositories found. Install Beeline, then try again." /> : null}
   </TranscriptCard>;
 }

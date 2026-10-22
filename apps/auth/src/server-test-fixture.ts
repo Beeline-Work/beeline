@@ -260,6 +260,7 @@ export const state: {
   githubAppInstallations: number[] | Error;
   /** Org login → what the user's own token says about their membership. */
   githubOrganizationMemberships: Record<string, GitHubOrganizationMembership>;
+  githubOrganizationAdmins: string[];
   githubAppInstallationDetail:
     | Array<{
         installationId: number;
@@ -297,6 +298,7 @@ export const state: {
   githubUserInstallations: [],
   githubAppInstallations: [],
   githubOrganizationMemberships: {},
+  githubOrganizationAdmins: [],
   githubAppInstallationDetail: undefined,
   githubAppRepositoryDetail: undefined,
   githubInstallationListCalls: 0,
@@ -326,6 +328,7 @@ export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthO
     state.githubUserInstallations = [];
     state.githubAppInstallations = [];
     state.githubOrganizationMemberships = {};
+    state.githubOrganizationAdmins = [];
     state.githubAppInstallationDetail = undefined;
     state.githubAppRepositoryDetail = undefined;
     state.githubInstallationListCalls = 0;
@@ -383,6 +386,7 @@ export function useAuthServerFixture(options: {onFunnelAuth?: (input:FunnelAuthO
             if (state.githubUserInstallations instanceof Error) throw state.githubUserInstallations;
             return state.githubUserInstallations;
           },
+          organizationAdmin: async (_token: string, organization: string) => state.githubOrganizationAdmins.includes(organization),
           // The membership fallback: what the user's own token says about the
           // organization that owns an installation the listing left out.
           organizationMembership: async (_token: string, organization: string) =>

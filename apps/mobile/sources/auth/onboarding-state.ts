@@ -118,6 +118,7 @@ interface WaitForAuthCallbackInput {
   ): AuthUrlSubscription | Promise<AuthUrlSubscription>;
   callbackGraceMs?: number;
   openedCallbackWaitMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface AuthCallbackResult {
@@ -150,6 +151,7 @@ export async function waitForAuthCallbackResult({
   subscribeToUrls,
   callbackGraceMs = 1_500,
   openedCallbackWaitMs = 120_000,
+  signal,
 }: WaitForAuthCallbackInput): Promise<AuthCallbackResult> {
   let resolveObservedCallback: (result: AuthCallbackResult) => void = () => undefined;
   const observedCallback = new Promise<AuthCallbackResult>((resolve) => {
@@ -162,8 +164,14 @@ export async function waitForAuthCallbackResult({
   });
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
+  let abort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => reject(new OidcBindError('browser_canceled', 'Account authorization was canceled'));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+  });
   try {
-    const browserResult = await openAuthSession();
+    const browserResult = await Promise.race([openAuthSession(), aborted]);
     if (
       browserResult.type === 'success' &&
       browserResult.url &&
@@ -179,6 +187,7 @@ export async function waitForAuthCallbackResult({
     const waitMs = browserResult.type === 'opened' ? openedCallbackWaitMs : callbackGraceMs;
     const callback = await Promise.race([
       observedCallback,
+      aborted,
       new Promise<null>((resolve) => {
         timeout = setTimeout(() => resolve(null), waitMs);
       }),
@@ -187,6 +196,7 @@ export async function waitForAuthCallbackResult({
     throw new OidcBindError('browser_canceled', 'Account authorization was canceled');
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
+    if (abort) signal?.removeEventListener('abort', abort);
     subscription.remove();
   }
 }
@@ -209,7 +219,7 @@ function isNetworkFailure(error: unknown): boolean {
  */
 export const OFFLINE_NOTICE: OnboardingNotice = {
   status: 'offline',
-  title: 'NO CONNECTION',
+  title: 'No connection',
   message: "You're offline. Connect to Wi-Fi or mobile data, then try again.",
   retryable: true,
 };
@@ -217,20 +227,18 @@ export const OFFLINE_NOTICE: OnboardingNotice = {
 export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (isNetworkFailure(error)) return OFFLINE_NOTICE;
   const code = error instanceof OidcBindError ? error.code : 'unknown';
-  const codeLabel = (code.replace(/[^a-z0-9_-]/gi, '_').slice(0, 40) || 'unknown').toUpperCase();
-  const titleWithCode = (title: string): string => `${title} · ${codeLabel}`;
   if (code === 'ticket_expired' || code === 'unknown_ticket' || code === 'invalid_oidc_flow') {
     return {
       status: 'token_expired',
-      title: titleWithCode('SESSION EXPIRED'),
-      message: 'The one-time account proof expired. Start again to get a new one.',
+      title: 'Sign-in expired',
+      message: 'Continue with GitHub again to start a new sign-in.',
       retryable: false,
     };
   }
   if (code === 'identity_conflict') {
     return {
       status: 'link_conflict',
-      title: titleWithCode('DEVICE KEY ALREADY LINKED'),
+      title: 'Device key already linked',
       message:
         'This GitHub account is linked to another device key. Replace it to continue with a new identity, or import your backed-up key to keep the existing identity.',
       retryable: false,
@@ -239,16 +247,16 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (code === 'state_mismatch') {
     return {
       status: 'bind_retry',
-      title: titleWithCode('SIGN-IN REJECTED'),
+      title: 'Sign-in did not finish',
       message:
-        'This callback did not match the sign-in started on this device. Start again from Beeline.',
+        'Continue with GitHub again to finish signing in.',
       retryable: false,
     };
   }
   if (code === 'oidc_denied' || code === 'github_denied' || code === 'browser_canceled') {
     return {
       status: 'browser_canceled',
-      title: titleWithCode('SIGN-IN CANCELED'),
+      title: 'Sign-in did not finish',
       message: 'Nothing changed on this device. Sign in again when you are ready.',
       retryable: false,
     };
@@ -256,8 +264,8 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (code === 'invalid_redirect' || code === 'invalid_configuration' || code === 'invalid_state') {
     return {
       status: 'bind_retry',
-      title: titleWithCode('SIGN-IN CONFIG ERROR'),
-      message: 'The app rejected its sign-in callback configuration. Update or reinstall the app.',
+      title: 'Sign-in needs an update',
+      message: 'Update Beeline, then continue with GitHub again.',
       retryable: false,
     };
   }
@@ -267,7 +275,7 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   if (code === 'offline' || (error instanceof OidcBindError && error.retryable)) {
     return {
       status: 'bind_retry',
-      title: titleWithCode('BIND INTERRUPTED'),
+      title: 'Sign-in interrupted',
       message:
         'The device key is ready but could not be bound. Check the connection and retry before the proof expires.',
       retryable: true,
@@ -275,8 +283,8 @@ export function noticeForAuthError(error: unknown): OnboardingNotice {
   }
   return {
     status: 'bind_retry',
-    title: titleWithCode('BIND FAILED'),
-    message: error instanceof Error ? error.message : 'The device key could not be bound.',
+    title: 'Sign-in did not finish',
+    message: 'Continue with GitHub again to finish signing in.',
     retryable: false,
   };
 }

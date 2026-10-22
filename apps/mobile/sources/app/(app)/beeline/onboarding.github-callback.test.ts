@@ -456,7 +456,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
       // Offline, no browser opens: it could only show its own error page.
       expect(browser.open).not.toHaveBeenCalled();
-      expect(noticeText(tree)).toContain('NO CONNECTION');
+      expect(noticeText(tree)).toContain('No connection');
       expect(noticeText(tree)).toContain("You're offline.");
       expect(signIn().props.label).toBe('Try again');
       expect(signIn().props.loading).toBe(false);
@@ -506,8 +506,8 @@ describe('GitHub callback delivery into onboarding', () => {
     });
 
     expect(browser.open).toHaveBeenCalledTimes(1);
-    expect(noticeText(tree)).not.toContain('NO CONNECTION');
-    expect(noticeText(tree)).toContain('SIGN-IN CANCELED');
+    expect(noticeText(tree)).not.toContain('No connection');
+    expect(noticeText(tree)).toContain('Sign-in did not finish');
     expect(
       tree.root.find(
         (node: any) =>
@@ -585,7 +585,7 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).not.toHaveBeenCalled();
     expect(identityStorage.save).not.toHaveBeenCalled();
-    expect(noticeText(tree)).toContain('SIGN-IN REJECTED · STATE_MISMATCH');
+    expect(noticeText(tree)).toContain('Sign-in did not finish');
   });
 
   it('shows SESSION EXPIRED and leaves the sign-in action available', async () => {
@@ -596,7 +596,7 @@ describe('GitHub callback delivery into onboarding', () => {
     const tree = await render();
 
     expect(sdk.finish).not.toHaveBeenCalled();
-    expect(noticeText(tree)).toContain('SESSION EXPIRED · TICKET_EXPIRED');
+    expect(noticeText(tree)).toContain('Sign-in expired');
     expect(
       tree.root.findAll(
         (node: any) => node.type === 'Button' && node.props.label === 'Continue with GitHub',

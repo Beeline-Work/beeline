@@ -3002,6 +3002,15 @@ describe('GitHub phone operations', () => {
       'installationUrl' | 'userCanAccessInstallation' | 'installationAccount' | 'listRepositories'
     >;
 
+  it('opens select-target when a connected user explicitly adds an organization', async () => {
+    const app = orgInstallationApp('allow');
+    const { operations } = await boundInstallationOperations(app, 'select-target-state');
+    await operations.beginInstallation(HUMAN, {
+      redirectUri: 'beeline://github-installation', selectTarget: true,
+    });
+    expect(app.installationUrl).toHaveBeenLastCalledWith(expect.any(String), true);
+  });
+
   it('completes an organization installation even when the user-token listing cannot verify it', async () => {
     const app = orgInstallationApp('throw-404');
     const { operations, installState } = await boundInstallationOperations(app);

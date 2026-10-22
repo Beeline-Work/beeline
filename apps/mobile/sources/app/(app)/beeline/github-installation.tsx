@@ -6,7 +6,6 @@ import { Platform, Text, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet } from 'react-native-unistyles';
 import { Redirect, type Href, useLocalSearchParams } from 'expo-router';
-import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { completeGitHubInstallationRoute, githubInstallationReturnPath } from '@/auth/github-auth-session';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -17,7 +16,6 @@ function EnhancedGitHubInstallation() {
   const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
   const [returnPath, setReturnPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
   const [recoveryPath, setRecoveryPath] = useState('/beeline/channels');
   useEffect(() => {
     let alive = true;
@@ -41,17 +39,15 @@ function EnhancedGitHubInstallation() {
       }
     })();
     return () => { alive = false; };
-  }, [installed, connectionError, attempt]);
+  }, [installed, connectionError]);
   if (returnPath) return <Redirect href={returnPath as Href} />;
   return <View style={styles.page} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
-    {error ? <ErrorBanner title={error} /> : <Text style={styles.copy}>
+    {error ? <ErrorBanner title="Continue connecting GitHub"
+      description="Return to your Room to refresh repositories and finish setup."
+      retryLabel="Back to Room" retryVariant="primary" onRetry={() => setReturnPath(recoveryPath)} /> : <Text style={styles.copy}>
       Checking your installation and loading the repositories Beeline can work in.
     </Text>}
-    {error ? <Button label="Retry" variant="secondary" onPress={() => {
-      if (installed !== '1' || connectionError) setReturnPath(recoveryPath);
-      else setAttempt(value => value + 1);
-    }} /> : null}
   </View>;
 }
 const styles = StyleSheet.create(theme => ({

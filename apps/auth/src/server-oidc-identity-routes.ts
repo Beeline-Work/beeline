@@ -1,5 +1,5 @@
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
+import { onboardingCookie } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
 import { agentConnectApprovedPage } from './server-agent-connect-routes.js';
@@ -348,13 +348,10 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       }
       deviceCodeHash = device.deviceCodeHash;
     }
-    const onboarding = query.onboarding === '1' && !!appRedirectUri && !!onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, now().getTime());
-    // This cookie is only a routing hint. The callback still verifies the user's installation.
-    const returningInstall = /(?:^|;\s*)beeline_github_installed=1(?:;|$)/.test(request.headers.cookie ?? '');
-    const installOnSignIn = onboarding && !returningInstall;
+    // Identify first: a prior browser cookie does not prove current installation coverage.
     const issuedAt = now();
-    const state = onboarding ? `onboarding_${randomToken()}` : randomToken();
-    const verifier = installOnSignIn ? '' : randomToken();
+    const state = randomToken();
+    const verifier = randomToken();
     const browserSession = randomToken();
     const codeChallenge = Buffer.from(sha256Bytes(verifier)).toString('base64url');
     const redirectUri = `${tenant.origin}/auth/github/callback`;
@@ -362,7 +359,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       community: tenant.community,
       issuer: 'https://github.com',
       audience: GITHUB_IDENTITY_AUDIENCE,
-      nonce: onboarding ? `onboarding_user:${onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, issuedAt.getTime())}` : (query.onboarding === '1' && appRedirectUri ? 'onboarding_probe' : randomToken()),
+      nonce: query.onboarding === '1' && appRedirectUri ? 'onboarding_probe' : randomToken(),
       pkceVerifier: verifier,
       browserSessionHash: sha256(browserSession),
       redirectUri,
@@ -380,7 +377,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       `${flowCookieName}=${browserSession}; Path=/; Max-Age=${Math.floor(flowTtlMs / 1_000)};${cookieSecurity} HttpOnly; SameSite=Lax`,
     );
     return reply.redirect(
-      installOnSignIn ? options.github.app.installationUrl(state) : options.github.oauth.authorizationUrl({ state, codeChallenge, redirectUri }),
+      options.github.oauth.authorizationUrl({ state, codeChallenge, redirectUri }),
       302,
     );
   });
@@ -482,15 +479,18 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     );
     if (flow.nonce === 'onboarding_probe') {
       let accounts: Awaited<ReturnType<typeof options.github.app.installationAccount>>[];
+      let installed = false;
       try {
         const ids = await options.github.app.listUserInstallationIds(identity.accessToken);
         accounts = await Promise.all(ids.map(id => options.github!.app.installationAccount(id)));
+        installed = (await Promise.all(accounts.map(account => account.type === 'User'
+          ? Promise.resolve(account.id === identity.subject)
+          : options.github!.app.organizationAdmin(identity.accessToken, account.login)))).some(Boolean);
       } catch {
         const completion = nativeCompletion(flow, { error: 'github_installation_unavailable', message: 'GitHub could not verify your installation. Please try again.' });
         if (completion) return deliverNativeCompletion(reply, completion);
         throw new ProtocolError(503, 'github_installation_unavailable', 'GitHub installation verification failed');
       }
-      const installed = accounts.some(account => account.type === 'User' && account.login.toLowerCase() === identity.login.toLowerCase() && account.repositorySelection === 'all');
       if (!installed) {
         const installState = `onboarding_${randomToken()}`;
         await options.store.createFlow(sha256(installState), {

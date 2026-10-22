@@ -407,7 +407,7 @@ export class GitHubOperations {
   async beginInstallation(viewerId: string, input: Input<'beginGitHubInstallation'>) {
     const credential = await this.userCredential(viewerId, this.database);
     const binding = input.reconnect === true || !credential?.token;
-    const state = `${binding ? 'github_bind_' : 'repository_install_'}${randomBytes(32).toString('base64url')}`;
+    const state = `${binding ? (input.selectTarget ? 'github_bind_org_' : 'github_bind_') : 'repository_install_'}${randomBytes(32).toString('base64url')}`;
     await this.database.query(
       `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
       [hash(state), viewerId, input.redirectUri],
@@ -417,7 +417,7 @@ export class GitHubOperations {
       await this.syncInstallation(viewerId, input.installationId);
     }
     // Use the App's registered OAuth callback, not the final client return URL.
-    return { url: binding ? this.oauth.authorizationUrl({ state, codeChallenge: challenge(state) }) : this.app.installationUrl(state) };
+    return { url: binding ? this.oauth.authorizationUrl({ state, codeChallenge: challenge(state) }) : this.app.installationUrl(state, input.selectTarget) };
   }
 
   async completeInstallation(state: string, installationId?: number, code?: string, callbackUri?: string) {
@@ -459,15 +459,15 @@ export class GitHubOperations {
         const credential = await this.userCredential(flow.identity_id, database);
         if (!credential?.token) throw new Error('GitHub installation access denied');
         installationIds = [...(await this.listAdministeredInstallations(credential.token) ?? [])];
-        if (!installationIds.length) {
+        if (!installationIds.length || state.startsWith('github_bind_org_')) {
           if (!state.startsWith('github_bind_')) throw new Error('GitHub installation access denied');
-          const nextState = `github_bind_${randomBytes(32).toString('base64url')}`;
+          const nextState = `${state.startsWith('github_bind_org_') ? 'repository_install_' : 'github_bind_'}${randomBytes(32).toString('base64url')}`;
           await database.query(
             `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
             [hash(nextState), flow.identity_id, flow.redirect_uri],
           );
           await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [hash(state)]);
-          return this.app.installationUrl(nextState);
+          return this.app.installationUrl(nextState, state.startsWith('github_bind_org_'));
         }
       }
       let installed = 0;

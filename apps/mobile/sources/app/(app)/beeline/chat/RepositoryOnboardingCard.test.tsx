@@ -1,3 +1,4 @@
+vi.mock('expo-router', () => ({ useLocalSearchParams: () => ({}) }));
 vi.mock('@/components/buzz/ErrorBanner', () => ({ErrorBanner:(props:any)=>React.createElement('ErrorBanner',props)}));
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));
@@ -6,7 +7,7 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
-const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn(async () => ({})) }));
+const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})) }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('react-native', () => ({ AppState: {}, Platform: { OS: 'android' } }));
 vi.mock('@/components/buzz/TranscriptCard', () => ({ TranscriptCard: (props: any) => React.createElement('TranscriptCard', props) }));
@@ -67,6 +68,23 @@ it('E7: a failed cold return explains the other account and keeps Connect GitHub
     card={{...card,installationId:undefined,githubLinked:false,state:'install_missing'}} viewerId={H}
     connectionError="github_account_already_linked" />); });
   const props=renderer.root.findByType('TranscriptCard').props;
-  expect(renderer.root.findByType(ErrorBanner).props.title).toContain('Sign out and continue with GitHub');
+  expect(renderer.root.findByType(ErrorBanner).props.title).toBe('GitHub account already connected');
+  expect(renderer.root.findByType(ErrorBanner).props.retryVariant).toBe('primary');
+  expect(renderer.root.findByType(ErrorBanner).props.description).toContain('sign out of Beeline');
   expect(props.actions.map((action:any) => action.label)).toEqual(['Connect GitHub']);
+});
+
+
+it('opens the repository picker for a covered user without opening GitHub', async () => {
+  const { runGitHubInstallationSession } = await import('@/auth/github-auth-session');
+  vi.mocked(runGitHubInstallationSession).mockClear();
+  mocks.operation.mockResolvedValueOnce({ openPicker: true });
+  let renderer: any;
+  await act(async () => { renderer = create(<RepositoryOnboardingCard
+    card={{...card, installationId: undefined, repository: undefined}} viewerId={H} />); });
+  await act(async () => renderer.root.findByType('TranscriptCard').props.actions
+    .find((action: any) => action.testID === 'repo-card-install').onPress());
+  expect(runGitHubInstallationSession).not.toHaveBeenCalled();
+  expect(renderer.root.findByType('TranscriptCard').props.choices.map((choice: any) => choice.label))
+    .toEqual(['test/current', 'test/other']);
 });

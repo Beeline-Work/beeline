@@ -15,7 +15,7 @@ describe('provider onboarding error states', () => {
     const error = new OidcBindError(code, code, code === 'internal_error' ? 500 : undefined);
     const notice = noticeForAuthError(error);
     expect(notice).toMatchObject({ status, retryable });
-    expect(notice.title).toContain(code.toUpperCase());
+    expect(notice.title).not.toContain(code.toUpperCase());
   });
 
   it.each([
@@ -28,7 +28,7 @@ describe('provider onboarding error states', () => {
     const notice = noticeForAuthError(error);
     expect(notice).toEqual({
       status: 'offline',
-      title: 'NO CONNECTION',
+      title: 'No connection',
       message: "You're offline. Connect to Wi-Fi or mobile data, then try again.",
       retryable: true,
     });
@@ -37,13 +37,13 @@ describe('provider onboarding error states', () => {
   it('keeps a server that answered with an error distinct from no connection', () => {
     const notice = noticeForAuthError(new OidcBindError('offline', 'unavailable', 503));
     expect(notice.status).toBe('bind_retry');
-    expect(notice.title).not.toBe('NO CONNECTION');
+    expect(notice.title).not.toBe('No connection');
   });
 
   it('keeps a genuine GitHub error on its own message', () => {
     const notice = noticeForAuthError(new OidcBindError('github_denied', 'denied'));
     expect(notice.status).toBe('browser_canceled');
-    expect(notice.title).toBe('SIGN-IN CANCELED · GITHUB_DENIED');
+    expect(notice.title).toBe('Sign-in did not finish');
   });
 
   it.each(['invalid_redirect', 'invalid_configuration', 'invalid_state'])(
@@ -54,8 +54,8 @@ describe('provider onboarding error states', () => {
         status: 'bind_retry',
         retryable: false,
       });
-      expect(notice.title).toBe(`SIGN-IN CONFIG ERROR · ${code.toUpperCase()}`);
-      expect(notice.message).toContain('callback configuration');
+      expect(notice.title).toBe('Sign-in needs an update');
+      expect(notice.message).toContain('Update Beeline');
       expect(notice.message).not.toContain('connection');
     },
   );
@@ -68,7 +68,7 @@ describe('provider onboarding error states', () => {
         409,
       ),
     );
-    expect(notice.title).toBe('DEVICE KEY ALREADY LINKED · IDENTITY_CONFLICT');
+    expect(notice.title).toBe('Device key already linked');
     expect(notice.message).toContain('Replace it');
     expect(notice.message).toContain('import your backed-up key');
     expect(notice.message).not.toContain('Recovery is required');
@@ -78,8 +78,8 @@ describe('provider onboarding error states', () => {
     const notice = noticeForAuthError(new OidcBindError('invalid_callback', 'Bad callback'));
     expect(notice).toEqual({
       status: 'bind_retry',
-      title: 'BIND FAILED · INVALID_CALLBACK',
-      message: 'Bad callback',
+      title: 'Sign-in did not finish',
+      message: 'Continue with GitHub again to finish signing in.',
       retryable: false,
     });
   });

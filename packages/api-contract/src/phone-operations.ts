@@ -133,7 +133,7 @@ export type PhoneOperationMap = {
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
-  actOnRepositoryCard: { input: RepositoryOnboardingAction; output: { readonly url?: string; readonly selected?: string } };
+  actOnRepositoryCard: { input: RepositoryOnboardingAction; output: { readonly url?: string; readonly selected?: string; readonly openPicker?: boolean } };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
   setCornerLocked: { input: RoomInput & { readonly locked: boolean }; output: void };
@@ -772,6 +772,7 @@ export type GitHubRepositoryListResult = {
   readonly githubReconnectNeeded?: boolean;
 };
 export type BeginGitHubInstallationInput = {
+  readonly selectTarget?: boolean;
   readonly reconnect?: boolean;
   readonly redirectUri: string;
   readonly installationId?: number;

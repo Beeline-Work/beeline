@@ -7580,7 +7580,20 @@ export class PhoneService {
       const service = new PhoneService(database, this.publicOrigin, this.github, this.sendPushTest, this.live, true);
       if (input.action === 'install' || input.action === 'organization') {
         if (!input.redirectUri) throw new Error('installation return is required');
-        return this.requireGitHub().beginInstallation(viewerId, { redirectUri: input.redirectUri });
+        if (input.action === 'install') {
+          await this.requireGitHub().refresh(viewerId);
+          const covered = (await database.query(
+            `SELECT installation_id FROM github_installations WHERE owner_id=$1 AND status='active' LIMIT 1`,
+            [viewerId],
+          )).rows.length > 0;
+          if (covered) {
+            followup = { roomId: input.roomId, agentId: card.agentId, requesterId: viewerId, kind: 'repository' };
+            return { openPicker: true };
+          }
+        }
+        return this.requireGitHub().beginInstallation(viewerId, {
+          redirectUri: input.redirectUri, selectTarget: input.action === 'organization',
+        });
       }
       if (input.action === 'starter') {
         if (card.kind !== 'starters') throw new Error('this card does not offer starter tasks');

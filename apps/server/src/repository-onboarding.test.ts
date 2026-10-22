@@ -147,3 +147,15 @@ it('E19/E20: allows any Google-only identity without configuration', async () =>
   expect(card.githubLinked).toBe(false);
   expect(card.repositories).toEqual([]);
 });
+
+
+it('opens the picker for covered users and refreshes one live card in place', async () => {
+  const card = await db.transaction(tx => postRepositoryOnboarding(tx, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' }));
+  const result = await phone.execute('actOnRepositoryCard', { roomId:R, cardId:card.id, action:'install', redirectUri:'beeline://beeline/github-installation' }, H);
+  expect(result).toEqual({ openPicker:true });
+  await phone.execute('actOnRepositoryCard', { roomId:R, cardId:card.id, action:'refresh' }, H);
+  const current = (await phone.readRoom(R,H))!.messages.filter(m => m.onboarding?.kind === 'repository' && m.onboarding.status === 'open');
+  expect(current).toHaveLength(1);
+  expect(current[0]!.id).toBe(card.id);
+  expect(current[0]!.onboarding!.defaultName).toBe(card.defaultName);
+});

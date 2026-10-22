@@ -5176,6 +5176,7 @@ export class DaemonService {
       throw new Error('schedule prompt is required');
     }
     const title = validateScheduleTitle(input.title);
+    if (!title) throw new Error('title is required when creating a schedule');
     validateScheduleCadence(input.cadence);
     if (
       input.maxRuns !== undefined &&

@@ -200,14 +200,14 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
 
     const { AgentScheduleLoop } = await import('./agent-schedules.js');
     const scheduleLoop = new AgentScheduleLoop(db);
-    await expect(service.execute('createAgentSchedule', {
+    await expect(service.execute('createAgentSchedule', { title: 'Scheduled check',
       roomId: room, requestId: input.requestId, generationId: 'stale',
       prompt: 'Unauthorized schedule', cadence: { kind: 'interval', everyMinutes: 60 },
     }, agent)).rejects.toThrow(/authority rejected/);
     expect((await db.query(`SELECT id FROM agent_schedules WHERE message='Unauthorized schedule'`)).rows).toHaveLength(0);
     const scheduledRun = async (humanRoot: boolean, edited = false, legacy = false) => {
       await db.query(`UPDATE agent_commands SET root_source_message_id=$1 WHERE id='command'`, [humanRoot && !legacy ? 'human-command' : 'missing']);
-      const saved = await service.execute('createAgentSchedule', {
+      const saved = await service.execute('createAgentSchedule', { title: 'Scheduled check',
         roomId: room, requestId: input.requestId, generationId: input.generationId,
         prompt: 'Run the explicitly commanded nightly production release with dispatch_release.',
         cadence: { kind: 'cron', expression: '0 2 * * *', timeZone: 'America/New_York' }, maxRuns: 1,

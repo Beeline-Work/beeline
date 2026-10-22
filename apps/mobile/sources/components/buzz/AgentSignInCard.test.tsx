@@ -169,7 +169,7 @@ describe('@agent login card', () => {
     expect(byId(renderer, 'agent-sign-in-input').props.value).toBe('');
   });
 
-  it('pastes from the clipboard and shows a rejection as a brass ✗ with its reason', async () => {
+  it('pastes from the clipboard and shows a rejection in the shared error banner', async () => {
     clipboard.getStringAsync.mockResolvedValueOnce('  old-code  ');
     const rejected = 'Claude did not accept that code.';
     const { renderer } = render(claude, true, vi.fn(async () => {
@@ -182,7 +182,7 @@ describe('@agent login card', () => {
     });
     expect(byId(renderer, 'agent-sign-in-input').props.value).toBe('old-code');
     await act(async () => byId(renderer, 'agent-sign-in-submit').props.onPress());
-    expect(texts(byId(renderer, 'agent-sign-in-error') as any)).toEqual(['✗', rejected]);
+    expect(texts(byId(renderer, 'agent-sign-in-error') as any)).toEqual([rejected]);
   });
 
   it('shows a device code to type on the provider page and waits', async () => {
@@ -247,7 +247,7 @@ describe('@agent login card', () => {
     expect(done).toMatchObject({ tier: 'record', title: 'Signed in to Claude', subline: 'Hoots uses it next turn' });
     const offline = "The agent's machine is offline. Start its helper with `beeline start`, then try again.";
     const { renderer } = render({ ...claude, status: 'failed', authorizeUrl: undefined, kind: undefined, errorMessage: offline });
-    expect(texts(byId(renderer, 'agent-sign-in-error') as any)).toEqual(['✗', offline]);
+    expect(texts(byId(renderer, 'agent-sign-in-error') as any)).toEqual([offline]);
     const starting = render({ agentId: AGENT, ownerId: OWNER, harness: 'goose', status: 'starting' }).renderer;
     expect(texts(starting)).toContain("Asking Hoots's machine to start its sign-in…");
   });

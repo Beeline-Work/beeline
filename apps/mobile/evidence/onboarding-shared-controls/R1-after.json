@@ -1,0 +1,113 @@
+[
+  {
+    "file": "app/(app)/beeline/chat/RepositoryOnboardingCard.tsx",
+    "components": [],
+    "offences": []
+  },
+  {
+    "file": "app/(app)/beeline/community.tsx",
+    "components": [],
+    "offences": []
+  },
+  {
+    "file": "app/(app)/beeline/create-workspace.tsx",
+    "components": [],
+    "offences": []
+  },
+  {
+    "file": "app/(app)/beeline/github-installation.tsx",
+    "components": [],
+    "offences": []
+  },
+  {
+    "file": "app/(app)/beeline/onboarding.tsx",
+    "components": [],
+    "offences": []
+  },
+  {
+    "file": "app/(app)/join/[token].tsx",
+    "components": [],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/AgentSignInCard.tsx",
+    "components": [
+      "AgentSignInCard",
+      "failureLine",
+      "field",
+      "linkStep",
+      "waitLine"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/EmptyLedgerState.tsx",
+    "components": [
+      "EmptyLedgerState"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/FaceGrid.tsx",
+    "components": [
+      "FaceGrid"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/NewRoomDialog.tsx",
+    "components": [
+      "NewRoomDialog"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/RepoList.tsx",
+    "components": [
+      "RepoList"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/RepoPicker.tsx",
+    "components": [
+      "RepoPicker",
+      "candidateRow"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/RepositoryChoice.tsx",
+    "components": [
+      "RepositoryChoice",
+      "connectRow",
+      "createRow",
+      "linkRow",
+      "loadingRow",
+      "ownerMenu"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/WelcomeCards.tsx",
+    "components": [
+      "CornerScene",
+      "ModelScene",
+      "RoomScene",
+      "SampleEntry",
+      "ToolsScene",
+      "WelcomeCards",
+      "WelcomeCardsContent",
+      "footer",
+      "illustration"
+    ],
+    "offences": []
+  },
+  {
+    "file": "components/buzz/YouStep.tsx",
+    "components": [
+      "YouStep"
+    ],
+    "offences": []
+  }
+]

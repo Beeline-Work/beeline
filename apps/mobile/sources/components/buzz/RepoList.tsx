@@ -1,9 +1,10 @@
+import { EmptyState } from './EmptyState';
 import { HullActionSheetRow } from './HullActionSheet';
 import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useMemo } from 'react';
-import { SectionList, Text, View } from 'react-native';
+import { SectionList, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import {
@@ -66,9 +67,7 @@ export function RepoList({
       <SectionList
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
-          <Text style={styles.empty} testID={`${testIDPrefix}-empty`}>
-            {loading ? 'Loading repos…' : 'No repos match.'}
-          </Text>
+          <EmptyState testID={`${testIDPrefix}-empty`} title={loading ? 'Loading repos…' : 'No repos match.'} />
         }
         nestedScrollEnabled
         renderItem={({ item, section }) => (
@@ -101,11 +100,5 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flexShrink: 1, minHeight: 0 },
-    empty: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textMuted,
-      paddingVertical: hull.space.sm,
-    },
   };
 });

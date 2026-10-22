@@ -1,12 +1,14 @@
+import { IndexRow, InlineRow } from './IndexRow';
+import { Button } from './Button';
+import { ErrorBanner } from './ErrorBanner';
 import { HullActionSheetRow } from './HullActionSheet';
 import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import { githubFullNameFromInput, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { Typography } from '@/constants/Typography';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
 export type RepoMode = 'none' | 'link' | 'create';
 
@@ -159,99 +161,24 @@ export function RepositoryChoice({
   const { theme } = useUnistyles();
   const [menuHeight, setMenuHeight] = useState(0);
   const [headHeight, setHeadHeight] = useState(0);
-  const connectRow = (
-    <TouchableOpacity
-      accessibilityRole="button"
-      disabled={busy || !onConnect}
-      onPress={onConnect}
-      style={styles.boxRow}
-      testID={`${p}-github-connect`}
-    >
-      <Text style={styles.boxKey}>GitHub</Text>
-      <Text style={styles.connectValue}>Connect GitHub</Text>
-      <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
-    </TouchableOpacity>
-  );
-
-  const loadingRow = (
-    <View style={styles.boxRow} testID={`${p}-repo-loading`}>
-      <Text style={styles.quiet}>Loading GitHub…</Text>
-    </View>
-  );
-
+  const connectRow = <IndexRow title="GitHub" value="Connect GitHub" chevron="right"
+    disabled={busy || !onConnect} onPress={onConnect} testID={`${p}-github-connect`} />;
+  const loadingRow = <IndexRow title="Loading GitHub…" tone="quiet" testID={`${p}-repo-loading`} />;
   const linkRow = () => {
     const parts = linkRepo ? splitFullName(linkRepo) : null;
-    return (
-      <TouchableOpacity
-        accessibilityLabel={
-          linkRepo
-            ? `Linked repository ${repoFullName(linkRepo) ?? linkRepo.name}`
-            : 'Choose a repo'
-        }
-        accessibilityRole="button"
-        disabled={busy}
-        onPress={onOpenList}
-        style={styles.repoRow}
-        testID={`${p}-repo-link`}
-      >
-        <View style={styles.twoLine}>
-          {parts?.owner && (
-            <Text numberOfLines={1} style={styles.ownerLine}>
-              {parts.owner}
-            </Text>
-          )}
-          <Text numberOfLines={1} style={[styles.nameLine, !parts && styles.placeholderName]}>
-            {parts?.name ?? 'Choose a repo'}
-          </Text>
-        </View>
-        <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
-      </TouchableOpacity>
-    );
+    return <IndexRow title={parts?.name ?? 'Choose a repo'} description={parts?.owner ?? undefined}
+      accessibilityLabel={linkRepo ? `Linked repository ${repoFullName(linkRepo) ?? linkRepo.name}` : 'Choose a repo'}
+      disabled={busy} onPress={onOpenList} chevron="right" testID={`${p}-repo-link`} />;
   };
-
-  const createRow = () => (
-    <View style={styles.repoRow} testID={`${p}-repo-create`}>
-      <View style={styles.twoLine}>
-        <View style={styles.ownerLineRow}>
-          <TouchableOpacity
-            accessibilityLabel={`Owner ${selectedInstallation?.accountLogin ?? ''}, change`}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: ownerMenuOpen }}
-            disabled={busy}
-            hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-            onPress={() => setOwnerMenuOpen(!ownerMenuOpen)}
-            style={styles.ownerChip}
-            testID={`${p}-repo-owner`}
-          >
-            <Text numberOfLines={1} style={styles.ownerChipText}>
-              {selectedInstallation?.accountLogin}
-            </Text>
-            <ChevronGlyph
-              color={styles.chevron.color}
-              direction={ownerMenuOpen ? 'up' : 'down'}
-              size={12}
-            />
-          </TouchableOpacity>
-        </View>
-        <Text numberOfLines={1} style={[styles.nameLine, !createName && styles.placeholderName]}>
-          {createName || 'room-name'}
-        </Text>
-        {takenRepo && (
-          <View style={styles.takenLine}>
-            <Text style={styles.takenText}>Already exists.</Text>
-            <TouchableOpacity
-              accessibilityRole="button"
-              hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
-              onPress={() => onLinkInstead(takenRepo)}
-              testID={`${p}-repo-link-instead`}
-            >
-              <Text style={styles.takenAction}>Link it instead</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </View>
-    </View>
-  );
+  const createRow = () => <View testID={`${p}-repo-create`}>
+    <IndexRow title={selectedInstallation?.accountLogin ?? ''} disabled={busy}
+      accessibilityLabel={`Owner ${selectedInstallation?.accountLogin ?? ''}, change`}
+      accessibilityState={{ expanded: ownerMenuOpen }} onPress={() => setOwnerMenuOpen(!ownerMenuOpen)}
+      chevron={ownerMenuOpen ? 'up' : 'down'} testID={`${p}-repo-owner`} />
+    <IndexRow title={createName || 'room-name'} tone={createName ? undefined : 'quiet'} />
+    {takenRepo && <IndexRow title="Already exists." actionControl={{label:'Link it instead',
+      onPress:()=>onLinkInstead(takenRepo),testID:`${p}-repo-link-instead`}} />}
+  </View>;
 
   const ownerMenu = (
     <View
@@ -314,27 +241,12 @@ export function RepositoryChoice({
         <View style={styles.labelLine}>
           <Text style={styles.fieldLabel}>Repository</Text>
         </View>
-        <View style={styles.segments} testID={`${p}-repo-mode`}>
-          {MODES.map(({ mode: option, label }, index) => (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{ selected: mode === option, disabled: busy }}
-              disabled={busy}
-              key={option}
-              onPress={() => onChooseMode(option)}
-              style={[
-                styles.segment,
-                index > 0 && styles.segmentDivided,
-                mode === option && styles.segmentSelected,
-              ]}
-              testID={`${p}-repo-mode-${option}`}
-            >
-              <Text style={[styles.segmentText, mode === option && styles.segmentTextSelected]}>
-                {label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        <InlineRow style={styles.segments} testID={`${p}-repo-mode`}>
+          {MODES.map(({mode:option,label})=><Button key={option} label={label}
+            variant={mode===option ? 'brass' : 'secondary'} disabled={busy}
+            accessibilityState={{selected:mode===option}} onPress={()=>onChooseMode(option)}
+            style={{flex:1}} testID={`${p}-repo-mode-${option}`} />)}
+        </InlineRow>
       </View>
       {mode !== 'none' && (
         <View style={styles.slot}>
@@ -343,9 +255,7 @@ export function RepositoryChoice({
         </View>
       )}
       {!!error && (
-        <Text accessibilityRole="alert" style={styles.error} testID={`${p}-repo-error`}>
-          {error}
-        </Text>
+        <ErrorBanner title={error} testID={`${p}-repo-error`} />
       )}
       {mode !== 'none' && !error && !!notice && (
         <Text accessibilityLiveRegion="polite" style={styles.hint}>
@@ -374,24 +284,6 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       marginTop: hull.space.sm,
     },
-    chevron: { color: hull.textMuted },
-    // One quiet boxed row: the collapsed Repository choice, GitHub Connect, loading.
-    boxRow: {
-      minHeight: 46,
-      paddingHorizontal: hull.space.md,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.xs,
-      borderWidth: 1,
-      borderColor: hull.border,
-      borderRadius: hull.radius,
-    },
-    boxKey: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary, flex: 1 },
-    connectValue: {
-      ...Typography.default('semiBold'),
-      ...hull.type.meta,
-      color: hull.buttonPrimaryFill,
-    },
     repoBlock: {
       paddingVertical: hull.space.sm,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -403,76 +295,10 @@ const styles = StyleSheet.create((theme) => {
     segments: {
       flexDirection: 'row',
       marginTop: hull.space.xs,
-      borderWidth: 1,
-      borderColor: hull.border,
-      borderRadius: hull.radius,
-      overflow: 'hidden',
-    },
-    segment: {
-      flex: 1,
-      minHeight: 34,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: 'transparent',
-    },
-    segmentDivided: { borderLeftColor: hull.border },
-    segmentSelected: {
-      backgroundColor: hull.bgHighlight,
-      borderColor: hull.borderStrong,
-      borderLeftColor: hull.borderStrong,
-    },
-    segmentText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
-    segmentTextSelected: {
-      ...Typography.default('semiBold'),
-      color: hull.textPrimary,
+      gap: hull.space.xs,
     },
     // The owner menu hangs above the row it changes and covers the switch.
     slot: { position: 'relative', zIndex: 2, marginTop: hull.space.sm },
-    // Unboxed: the picker is part of the open row, not a field inside it.
-    repoRow: {
-      paddingVertical: hull.space.xs,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.sm,
-    },
-    twoLine: { flex: 1, minWidth: 0, gap: hull.space.xs },
-    ownerLineRow: { flexDirection: 'row', alignItems: 'center' },
-    ownerLine: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
-    ownerChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.xs,
-      flexShrink: 1,
-      minHeight: 22,
-      paddingLeft: hull.space.sm,
-      paddingRight: hull.space.xs,
-      backgroundColor: hull.bgHighlight,
-      borderWidth: 1,
-      borderColor: hull.borderStrong,
-      borderRadius: hull.radius,
-    },
-    ownerChipText: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textPrimary,
-      flexShrink: 1,
-    },
-    takenLine: { flexDirection: 'row', alignItems: 'center', gap: hull.space.xs },
-    takenText: { ...Typography.default(), ...hull.type.meta, color: hull.warning },
-    takenAction: {
-      ...Typography.default('semiBold'),
-      ...hull.type.meta,
-      color: hull.buttonPrimaryFill,
-      textDecorationLine: 'underline',
-    },
-    nameLine: {
-      ...Typography.default('semiBold'),
-      ...hull.type.bodyStrong,
-      color: hull.textPrimary,
-    },
-    placeholderName: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
-    quiet: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted, flex: 1 },
     ownerMenu: {
       position: 'absolute',
       left: 0,
@@ -485,12 +311,6 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.borderStrong,
       borderRadius: hull.radius,
       backgroundColor: hull.bgRaised,
-    },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.dialogDanger,
-      marginTop: hull.space.sm,
     },
   };
 });

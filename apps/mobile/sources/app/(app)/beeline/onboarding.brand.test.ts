@@ -210,7 +210,7 @@ describe('onboarding — canonical brand source assertions', () => {
     // family, now read through the shared body role (DESIGN.md → Type) rather
     // than a bare fontFamily line — body's family is still proseRegular.
     expect(src).toMatch(/subtitle: \{\s*\.\.\.theme\.buzz\.type\.body/);
-    expect(src).toMatch(/noticeText: \{\s*\.\.\.theme\.buzz\.type\.body/);
+
   });
 
   it('renders every onboarding action through the one shared Button', () => {

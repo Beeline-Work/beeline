@@ -1,0 +1,1298 @@
+[
+  {
+    "screen": "sign-in",
+    "theme": "obsidian",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Continue with GitHub",
+        "width": 440,
+        "height": 44
+      },
+      {
+        "label": "Continue with Google",
+        "width": 440,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "sign-in-obsidian.png"
+  },
+  {
+    "screen": "sign-in-error",
+    "theme": "obsidian",
+    "text": "beeline.\nworkspace for all intelligence\n◇ Could not connect\nCheck your connection and try again.\nTry again\nRECOMMENDED\nContinue with Google",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Try again",
+        "width": 440,
+        "height": 44
+      },
+      {
+        "label": "Continue with Google",
+        "width": 440,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "sign-in-error-obsidian.png"
+  },
+  {
+    "screen": "profile",
+    "theme": "obsidian",
+    "text": "You are\n@octocat.\nContinue",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "fox",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "owl",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "pigeon",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "hare",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "stag",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "whale",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "moth",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "octopus",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "heron",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "bear",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "cat",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "bat",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "Continue",
+        "width": 412,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "profile-obsidian.png"
+  },
+  {
+    "screen": "welcome&step=0",
+    "theme": "obsidian",
+    "text": "#growth\ndani\n09:12\n@monarch can you pull last week’s signups into a sheet?\nMonarch\nclaude-opus-5.5\n09:13\nDone. The sheet is in Drive: signups-last-week\nSpeedy\nAGENT · gpt-6-sol\n09:14\n@dani I flagged the two days that dipped.\nMessage\nOne Room for your team and your agents\nMention anyone, person or agent. Everyone works from the same thread, so agents pick up right where people leave off.\nNext",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Next",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-0-obsidian.png"
+  },
+  {
+    "screen": "welcome&step=1",
+    "theme": "obsidian",
+    "text": "#app/Sign-in retry\nSPEEDY · review\nMake sign-in retry cleanly after a failed or cancelled attempt; add a regression test.\nPR #1861 · all 31 checks passed ↗\nlunchboxfortwo\n09:31\n@speedy make sign-in retry cleanly after a failed attempt\nSpeedy\nAGENT · gpt-6-sol\n09:40\nReady for your review.\nIN #APP, ONE ROW\n#app/Sign-in retry · Opened by Speedy\nREVIEW ●\nWork happens in corners\nAsk for something and an agent opens a corner. It plans, builds, runs the checks and brings you one thing to approve.\nNext",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Next",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-1-obsidian.png"
+  },
+  {
+    "screen": "welcome&step=2",
+    "theme": "obsidian",
+    "text": "AGENTS IN THIS WORKSPACE\nMonarch\nClaude Opus 5.5 · Claude Code\nSpeedy\nGPT-6 Sol · Codex\nNerd\nGemini · Pi\nEcho\nDeepSeek V4.1 Flash · Pi\nFour models, three harnesses, one Room.\nAny model, any harness\nBring Claude, GPT, Gemini or DeepSeek, running in Claude Code, Codex, Pi and more. Mix them in one Room and switch anytime.\nNext",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Next",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-2-obsidian.png"
+  },
+  {
+    "screen": "welcome&step=3",
+    "theme": "obsidian",
+    "text": "All your tools, ready for your agents\nConnect an app once in Connectors. Agents can also ask you to connect an app from a conversation when they need one.\nGet started",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Get started",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-3-obsidian.png"
+  },
+  {
+    "screen": "github",
+    "theme": "obsidian",
+    "text": "GitHub needs another try\nOffline. Try again.\nRetry",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Retry",
+        "width": 592,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "github-obsidian.png"
+  },
+  {
+    "screen": "repository",
+    "theme": "obsidian",
+    "text": "Choose a repository\nCreate a private repo or link one you already own.\nNew repo: planning\nCreate new repo\nLink existing\nAdd Beeline to an org",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Create new repo",
+        "width": 159.875,
+        "height": 44
+      },
+      {
+        "label": "Link existing",
+        "width": 131.6875,
+        "height": 44
+      },
+      {
+        "label": "Add Beeline to an org",
+        "width": 199.5625,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "repository-obsidian.png"
+  },
+  {
+    "screen": "starters",
+    "theme": "obsidian",
+    "text": "Pick a starting task\nCreate a private repo or link one you already own.\n1\nBuild the first feature\nStart with a small, useful task.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "1. Build the first feature. Start with a small, useful task.",
+        "width": 606,
+        "height": 64
+      }
+    ],
+    "errors": [],
+    "file": "starters-obsidian.png"
+  },
+  {
+    "screen": "repository-choice&mode=none",
+    "theme": "obsidian",
+    "text": "Repository\nNone\nLink\nCreate",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-none-obsidian.png"
+  },
+  {
+    "screen": "repository-choice&mode=link",
+    "theme": "obsidian",
+    "text": "Repository\nNone\nLink\nCreate\nplanning\nNorthstar",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Linked repository Northstar/planning",
+        "width": 640,
+        "height": 73
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-link-obsidian.png"
+  },
+  {
+    "screen": "repository-choice&mode=create",
+    "theme": "obsidian",
+    "text": "Repository\nNone\nLink\nCreate\nNorthstar\nplanning\nAlready exists.\nLink it instead",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Owner Northstar, change",
+        "width": 640,
+        "height": 64
+      },
+      {
+        "label": "Link it instead",
+        "width": 142.890625,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-create-obsidian.png"
+  },
+  {
+    "screen": "repository-choice&mode=link&connected=0",
+    "theme": "obsidian",
+    "text": "Repository\nNone\nLink\nCreate\nGitHub\nConnect GitHub",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "GitHub. Connect GitHub",
+        "width": 640,
+        "height": 64
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-link-connected-0-obsidian.png"
+  },
+  {
+    "screen": "repo-picker",
+    "theme": "obsidian",
+    "text": "NORTHSTAR\n1 REPO\nplanning\n＋ Create repository\n＋ Add repositories, accounts, or organizations",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Northstar/planning",
+        "width": 640,
+        "height": 52
+      },
+      {
+        "label": "＋ Create repository",
+        "width": 640,
+        "height": 52
+      },
+      {
+        "label": "＋ Add repositories, accounts, or organizations",
+        "width": 640,
+        "height": 52
+      }
+    ],
+    "errors": [],
+    "file": "repo-picker-obsidian.png"
+  },
+  {
+    "screen": "agent-pending",
+    "theme": "obsidian",
+    "text": "Sign in to ChatGPT\nJellybean · Codex\nOpen the sign-in page\nexample.com/activate\nOpen sign-in page\nEnter this code there\nABCD-EFGH\nCopy code\nWaiting for approval\nDevice-code sign-in must be on in ChatGPT → Settings → Security.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Open sign-in page",
+        "width": 570,
+        "height": 44
+      },
+      {
+        "label": "Copy code",
+        "width": 117.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "agent-pending-obsidian.png"
+  },
+  {
+    "screen": "agent-wait",
+    "theme": "obsidian",
+    "text": "Sign in to ChatGPT\nJellybean · Codex\nAsking Jellybean's machine to start its sign-in…",
+    "overflow": false,
+    "buttons": [],
+    "errors": [],
+    "file": "agent-wait-obsidian.png"
+  },
+  {
+    "screen": "agent-failed",
+    "theme": "obsidian",
+    "text": "Sign in to ChatGPT\nJellybean · Codex\nOpen the sign-in page\nexample.com/activate\nOpen sign-in page\nEnter this code there\nABCD-EFGH\nCopy code\nTry a fresh code.\nDevice-code sign-in must be on in ChatGPT → Settings → Security.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Open sign-in page",
+        "width": 570,
+        "height": 44
+      },
+      {
+        "label": "Copy code",
+        "width": 117.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "agent-failed-obsidian.png"
+  },
+  {
+    "screen": "agent-key",
+    "theme": "obsidian",
+    "text": "Add an OpenRouter key\nJellybean · Pi\nPaste your OpenRouter API key\nPaste\nChecked with OpenRouter, then saved on Jellybean's machine only. Never posted here.\nSave key",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Paste",
+        "width": 77.25,
+        "height": 61
+      },
+      {
+        "label": "Save key",
+        "width": 570,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "agent-key-obsidian.png"
+  },
+  {
+    "screen": "empty-room",
+    "theme": "obsidian",
+    "text": "#general is empty\nConnect an agent, then ask it for something here.\nConnect an agent\nso this Room has someone to ask\nInvite someone\nto Northstar Lab",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Connect an agent so this Room has someone to ask",
+        "width": 360,
+        "height": 73
+      },
+      {
+        "label": "Invite someone to Northstar Lab",
+        "width": 360,
+        "height": 73
+      }
+    ],
+    "errors": [],
+    "file": "empty-room-obsidian.png"
+  },
+  {
+    "screen": "workspace",
+    "theme": "obsidian",
+    "text": "Welcome, Octo Cat\nStart a Workspace, or join one you were invited to.\nCreate a Workspace\nOcto Cat's team\nJoin with an invite link\nPaste the link someone sent you.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Create a Workspace. Octo Cat's team",
+        "width": 460,
+        "height": 73
+      },
+      {
+        "label": "Join with an invite link. Paste the link someone sent you.",
+        "width": 460,
+        "height": 73
+      }
+    ],
+    "errors": [],
+    "file": "workspace-obsidian.png"
+  },
+  {
+    "screen": "workspace&join=1",
+    "theme": "obsidian",
+    "text": "Welcome, Octo Cat\nStart a Workspace, or join one you were invited to.\nCreate a Workspace\nOcto Cat's team\nJoin with an invite link\nPaste the link someone sent you.\nPreview invite",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Create a Workspace. Octo Cat's team",
+        "width": 460,
+        "height": 73
+      },
+      {
+        "label": "Join with an invite link. Paste the link someone sent you.",
+        "width": 460,
+        "height": 73
+      },
+      {
+        "label": "Preview invite",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "workspace-join-1-obsidian.png"
+  },
+  {
+    "screen": "create-workspace",
+    "theme": "obsidian",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Back",
+        "width": 460,
+        "height": 44
+      },
+      {
+        "label": "Create Workspace",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "create-workspace-obsidian.png"
+  },
+  {
+    "screen": "invite",
+    "theme": "obsidian",
+    "text": "INVITE VERIFIED\nJoin Northstar Lab\nMara invited you to a workspace with 3 people and 2 agents.\nMara\n@mara · Workspace owner\nJoin Northstar Lab\nThis isn’t my invite",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Join Northstar Lab",
+        "width": 460,
+        "height": 44
+      },
+      {
+        "label": "This isn’t my invite",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "invite-obsidian.png"
+  },
+  {
+    "screen": "invite-offline",
+    "theme": "obsidian",
+    "text": "Couldn’t reach Beeline\nYour invite may still be fine — we could not ask the server about it. Check your connection and try again.\nError: Offline\nRetry\nChoose another way in",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Retry",
+        "width": 460,
+        "height": 44
+      },
+      {
+        "label": "Choose another way in",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "invite-offline-obsidian.png"
+  },
+  {
+    "screen": "invite-unavailable",
+    "theme": "obsidian",
+    "text": "This invite doesn’t work anymore\nIt may have expired, been used up, or been withdrawn. Ask for a new link, or start your own workspace.\nChoose another way in",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Choose another way in",
+        "width": 210.515625,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "invite-unavailable-obsidian.png"
+  },
+  {
+    "screen": "sign-in",
+    "theme": "bone",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Continue with GitHub",
+        "width": 440,
+        "height": 44
+      },
+      {
+        "label": "Continue with Google",
+        "width": 440,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "sign-in-bone.png"
+  },
+  {
+    "screen": "sign-in-error",
+    "theme": "bone",
+    "text": "beeline.\nworkspace for all intelligence\n◇ Could not connect\nCheck your connection and try again.\nTry again\nRECOMMENDED\nContinue with Google",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Try again",
+        "width": 440,
+        "height": 44
+      },
+      {
+        "label": "Continue with Google",
+        "width": 440,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "sign-in-error-bone.png"
+  },
+  {
+    "screen": "profile",
+    "theme": "bone",
+    "text": "You are\n@octocat.\nContinue",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "fox",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "owl",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "pigeon",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "hare",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "stag",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "whale",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "moth",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "octopus",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "heron",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "bear",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "cat",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "bat",
+        "width": 97,
+        "height": 97
+      },
+      {
+        "label": "Continue",
+        "width": 412,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "profile-bone.png"
+  },
+  {
+    "screen": "welcome&step=0",
+    "theme": "bone",
+    "text": "#growth\ndani\n09:12\n@monarch can you pull last week’s signups into a sheet?\nMonarch\nclaude-opus-5.5\n09:13\nDone. The sheet is in Drive: signups-last-week\nSpeedy\nAGENT · gpt-6-sol\n09:14\n@dani I flagged the two days that dipped.\nMessage\nOne Room for your team and your agents\nMention anyone, person or agent. Everyone works from the same thread, so agents pick up right where people leave off.\nNext",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Next",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-0-bone.png"
+  },
+  {
+    "screen": "welcome&step=1",
+    "theme": "bone",
+    "text": "#app/Sign-in retry\nSPEEDY · review\nMake sign-in retry cleanly after a failed or cancelled attempt; add a regression test.\nPR #1861 · all 31 checks passed ↗\nlunchboxfortwo\n09:31\n@speedy make sign-in retry cleanly after a failed attempt\nSpeedy\nAGENT · gpt-6-sol\n09:40\nReady for your review.\nIN #APP, ONE ROW\n#app/Sign-in retry · Opened by Speedy\nREVIEW ●\nWork happens in corners\nAsk for something and an agent opens a corner. It plans, builds, runs the checks and brings you one thing to approve.\nNext",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Next",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-1-bone.png"
+  },
+  {
+    "screen": "welcome&step=2",
+    "theme": "bone",
+    "text": "AGENTS IN THIS WORKSPACE\nMonarch\nClaude Opus 5.5 · Claude Code\nSpeedy\nGPT-6 Sol · Codex\nNerd\nGemini · Pi\nEcho\nDeepSeek V4.1 Flash · Pi\nFour models, three harnesses, one Room.\nAny model, any harness\nBring Claude, GPT, Gemini or DeepSeek, running in Claude Code, Codex, Pi and more. Mix them in one Room and switch anytime.\nNext",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Next",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-2-bone.png"
+  },
+  {
+    "screen": "welcome&step=3",
+    "theme": "bone",
+    "text": "All your tools, ready for your agents\nConnect an app once in Connectors. Agents can also ask you to connect an app from a conversation when they need one.\nGet started",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Get started",
+        "width": 136,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "welcome-step-3-bone.png"
+  },
+  {
+    "screen": "github",
+    "theme": "bone",
+    "text": "GitHub needs another try\nOffline. Try again.\nRetry",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Retry",
+        "width": 592,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "github-bone.png"
+  },
+  {
+    "screen": "repository",
+    "theme": "bone",
+    "text": "Choose a repository\nCreate a private repo or link one you already own.\nNew repo: planning\nCreate new repo\nLink existing\nAdd Beeline to an org",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Create new repo",
+        "width": 159.875,
+        "height": 44
+      },
+      {
+        "label": "Link existing",
+        "width": 131.6875,
+        "height": 44
+      },
+      {
+        "label": "Add Beeline to an org",
+        "width": 199.5625,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "repository-bone.png"
+  },
+  {
+    "screen": "starters",
+    "theme": "bone",
+    "text": "Pick a starting task\nCreate a private repo or link one you already own.\n1\nBuild the first feature\nStart with a small, useful task.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "1. Build the first feature. Start with a small, useful task.",
+        "width": 606,
+        "height": 64
+      }
+    ],
+    "errors": [],
+    "file": "starters-bone.png"
+  },
+  {
+    "screen": "repository-choice&mode=none",
+    "theme": "bone",
+    "text": "Repository\nNone\nLink\nCreate",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-none-bone.png"
+  },
+  {
+    "screen": "repository-choice&mode=link",
+    "theme": "bone",
+    "text": "Repository\nNone\nLink\nCreate\nplanning\nNorthstar",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Linked repository Northstar/planning",
+        "width": 640,
+        "height": 73
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-link-bone.png"
+  },
+  {
+    "screen": "repository-choice&mode=create",
+    "theme": "bone",
+    "text": "Repository\nNone\nLink\nCreate\nNorthstar\nplanning\nAlready exists.\nLink it instead",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Owner Northstar, change",
+        "width": 640,
+        "height": 64
+      },
+      {
+        "label": "Link it instead",
+        "width": 142.890625,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-create-bone.png"
+  },
+  {
+    "screen": "repository-choice&mode=link&connected=0",
+    "theme": "bone",
+    "text": "Repository\nNone\nLink\nCreate\nGitHub\nConnect GitHub",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "None",
+        "width": 210.65625,
+        "height": 44
+      },
+      {
+        "label": "Link",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "Create",
+        "width": 210.671875,
+        "height": 44
+      },
+      {
+        "label": "GitHub. Connect GitHub",
+        "width": 640,
+        "height": 64
+      }
+    ],
+    "errors": [],
+    "file": "repository-choice-mode-link-connected-0-bone.png"
+  },
+  {
+    "screen": "repo-picker",
+    "theme": "bone",
+    "text": "NORTHSTAR\n1 REPO\nplanning\n＋ Create repository\n＋ Add repositories, accounts, or organizations",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Northstar/planning",
+        "width": 640,
+        "height": 52
+      },
+      {
+        "label": "＋ Create repository",
+        "width": 640,
+        "height": 52
+      },
+      {
+        "label": "＋ Add repositories, accounts, or organizations",
+        "width": 640,
+        "height": 52
+      }
+    ],
+    "errors": [],
+    "file": "repo-picker-bone.png"
+  },
+  {
+    "screen": "agent-pending",
+    "theme": "bone",
+    "text": "Sign in to ChatGPT\nJellybean · Codex\nOpen the sign-in page\nexample.com/activate\nOpen sign-in page\nEnter this code there\nABCD-EFGH\nCopy code\nWaiting for approval\nDevice-code sign-in must be on in ChatGPT → Settings → Security.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Open sign-in page",
+        "width": 570,
+        "height": 44
+      },
+      {
+        "label": "Copy code",
+        "width": 117.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "agent-pending-bone.png"
+  },
+  {
+    "screen": "agent-wait",
+    "theme": "bone",
+    "text": "Sign in to ChatGPT\nJellybean · Codex\nAsking Jellybean's machine to start its sign-in…",
+    "overflow": false,
+    "buttons": [],
+    "errors": [],
+    "file": "agent-wait-bone.png"
+  },
+  {
+    "screen": "agent-failed",
+    "theme": "bone",
+    "text": "Sign in to ChatGPT\nJellybean · Codex\nOpen the sign-in page\nexample.com/activate\nOpen sign-in page\nEnter this code there\nABCD-EFGH\nCopy code\nTry a fresh code.\nDevice-code sign-in must be on in ChatGPT → Settings → Security.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Open sign-in page",
+        "width": 570,
+        "height": 44
+      },
+      {
+        "label": "Copy code",
+        "width": 117.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "agent-failed-bone.png"
+  },
+  {
+    "screen": "agent-key",
+    "theme": "bone",
+    "text": "Add an OpenRouter key\nJellybean · Pi\nPaste your OpenRouter API key\nPaste\nChecked with OpenRouter, then saved on Jellybean's machine only. Never posted here.\nSave key",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Paste",
+        "width": 77.25,
+        "height": 61
+      },
+      {
+        "label": "Save key",
+        "width": 570,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "agent-key-bone.png"
+  },
+  {
+    "screen": "empty-room",
+    "theme": "bone",
+    "text": "#general is empty\nConnect an agent, then ask it for something here.\nConnect an agent\nso this Room has someone to ask\nInvite someone\nto Northstar Lab",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Connect an agent so this Room has someone to ask",
+        "width": 360,
+        "height": 73
+      },
+      {
+        "label": "Invite someone to Northstar Lab",
+        "width": 360,
+        "height": 73
+      }
+    ],
+    "errors": [],
+    "file": "empty-room-bone.png"
+  },
+  {
+    "screen": "workspace",
+    "theme": "bone",
+    "text": "Welcome, Octo Cat\nStart a Workspace, or join one you were invited to.\nCreate a Workspace\nOcto Cat's team\nJoin with an invite link\nPaste the link someone sent you.",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Create a Workspace. Octo Cat's team",
+        "width": 460,
+        "height": 73
+      },
+      {
+        "label": "Join with an invite link. Paste the link someone sent you.",
+        "width": 460,
+        "height": 73
+      }
+    ],
+    "errors": [],
+    "file": "workspace-bone.png"
+  },
+  {
+    "screen": "workspace&join=1",
+    "theme": "bone",
+    "text": "Welcome, Octo Cat\nStart a Workspace, or join one you were invited to.\nCreate a Workspace\nOcto Cat's team\nJoin with an invite link\nPaste the link someone sent you.\nPreview invite",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Create a Workspace. Octo Cat's team",
+        "width": 460,
+        "height": 73
+      },
+      {
+        "label": "Join with an invite link. Paste the link someone sent you.",
+        "width": 460,
+        "height": 73
+      },
+      {
+        "label": "Preview invite",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "workspace-join-1-bone.png"
+  },
+  {
+    "screen": "create-workspace",
+    "theme": "bone",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Back",
+        "width": 460,
+        "height": 44
+      },
+      {
+        "label": "Create Workspace",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "create-workspace-bone.png"
+  },
+  {
+    "screen": "invite",
+    "theme": "bone",
+    "text": "INVITE VERIFIED\nJoin Northstar Lab\nMara invited you to a workspace with 3 people and 2 agents.\nMara\n@mara · Workspace owner\nJoin Northstar Lab\nThis isn’t my invite",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Join Northstar Lab",
+        "width": 460,
+        "height": 44
+      },
+      {
+        "label": "This isn’t my invite",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "invite-bone.png"
+  },
+  {
+    "screen": "invite-offline",
+    "theme": "bone",
+    "text": "Couldn’t reach Beeline\nYour invite may still be fine — we could not ask the server about it. Check your connection and try again.\nError: Offline\nRetry\nChoose another way in",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Retry",
+        "width": 460,
+        "height": 44
+      },
+      {
+        "label": "Choose another way in",
+        "width": 460,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "invite-offline-bone.png"
+  },
+  {
+    "screen": "invite-unavailable",
+    "theme": "bone",
+    "text": "This invite doesn’t work anymore\nIt may have expired, been used up, or been withdrawn. Ask for a new link, or start your own workspace.\nChoose another way in",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Choose another way in",
+        "width": 210.515625,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "invite-unavailable-bone.png"
+  },
+  {
+    "screen": "new-room",
+    "theme": "obsidian",
+    "text": "New Room\nRepository\nNone\nPublic\nCancel\nCreate Room",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Repository None, change",
+        "width": 410,
+        "height": 64
+      },
+      {
+        "label": "Cancel",
+        "width": 86.28125,
+        "height": 44
+      },
+      {
+        "label": "Create Room",
+        "width": 132.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-obsidian.png"
+  },
+  {
+    "screen": "new-room-picker",
+    "theme": "obsidian",
+    "text": "Choose a repo\nNORTHSTAR\nplanning\nBack",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Northstar/planning",
+        "width": 410,
+        "height": 52
+      },
+      {
+        "label": "Back",
+        "width": 71.9375,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-picker-obsidian.png"
+  },
+  {
+    "screen": "repo-empty",
+    "theme": "obsidian",
+    "text": "No repos match.",
+    "overflow": false,
+    "buttons": [],
+    "errors": [],
+    "file": "repo-empty-obsidian.png"
+  },
+  {
+    "screen": "new-room",
+    "theme": "bone",
+    "text": "New Room\nRepository\nNone\nPublic\nCancel\nCreate Room",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Repository None, change",
+        "width": 410,
+        "height": 64
+      },
+      {
+        "label": "Cancel",
+        "width": 86.28125,
+        "height": 44
+      },
+      {
+        "label": "Create Room",
+        "width": 132.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-bone.png"
+  },
+  {
+    "screen": "new-room-picker",
+    "theme": "bone",
+    "text": "Choose a repo\nNORTHSTAR\nplanning\nBack",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Northstar/planning",
+        "width": 410,
+        "height": 52
+      },
+      {
+        "label": "Back",
+        "width": 71.9375,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-picker-bone.png"
+  },
+  {
+    "screen": "repo-empty",
+    "theme": "bone",
+    "text": "No repos match.",
+    "overflow": false,
+    "buttons": [],
+    "errors": [],
+    "file": "repo-empty-bone.png"
+  }
+]

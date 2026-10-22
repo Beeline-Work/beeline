@@ -1,6 +1,7 @@
+import { IndexRow } from './IndexRow';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
-import { Keyboard, Text, TouchableOpacity, View } from 'react-native';
+import { Keyboard, Text, View } from 'react-native';
 import { HullSwitch } from './HullSwitch';
 import { StyleSheet } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
@@ -230,31 +231,12 @@ export function NewRoomDialog({
               testIDPrefix="create-room"
             />
           ) : (
-            // Flat, matching Name's hairline rule and the Public row below —
-            // no box. Kept local (not HullActionSheetRow) so it stays inside
-            // `styles.form`'s own 24px inset instead of doubling it.
-            <TouchableOpacity
-              accessibilityLabel="Repository None, change"
-              accessibilityRole="button"
-              disabled={busy}
-              onPress={reveal}
-              style={styles.fieldRow}
-              testID="create-room-repo-row"
-            >
-              <Text style={styles.fieldLabel}>Repository</Text>
-              <Text style={styles.fieldValue}>None</Text>
-            </TouchableOpacity>
+            <IndexRow title="Repository" value="None" disabled={busy} onPress={reveal}
+              accessibilityLabel="Repository None, change" testID="create-room-repo-row" />
           )}
-          <View style={styles.fieldRow} testID="create-room-public-row">
-            <Text style={styles.fieldLabel}>Public</Text>
-            <HullSwitch
-              accessibilityLabel="Public Room"
-              disabled={busy}
-              onValueChange={(value) => setInviteOnly(!value)}
-              testID="create-room-public"
-              value={!inviteOnly}
-            />
-          </View>
+          <IndexRow title="Public" disabled={busy} testID="create-room-public-row"
+            toggle={{ accessibilityLabel: 'Public Room', disabled: busy,
+              onValueChange: value => setInviteOnly(!value), value: !inviteOnly }} />
         </View>
       )}
       {step === 'picker' && (
@@ -289,31 +271,6 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       color: hull.textMuted,
       marginTop: hull.space.sm,
-    },
-    // Shared by the Repository and Public rows below: same label weight and
-    // row rhythm as Name's hairline rule, so the three fields read as one
-    // list instead of Repository standing out in its own box.
-    fieldLabel: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.textPrimary,
-      flex: 1,
-      fontFamily: hull.proseRegular,
-    },
-    fieldValue: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textMuted,
-      fontFamily: hull.proseRegular,
-    },
-    fieldRow: {
-      minHeight: 52,
-      paddingVertical: hull.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.sm,
     },
     picker: { paddingBottom: 8 },
     pickerContent: { paddingHorizontal: HULL_SHEET_INSET, flexShrink: 1 },

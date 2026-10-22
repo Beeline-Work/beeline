@@ -2546,3 +2546,50 @@ it('VOICE-TIMEOUT-1: a real stalled Aura request still publishes a plain retry m
     expect(signals).toContainEqual({ type: 'error', message: 'Voice reply unavailable; please try again' });
   } finally { vi.useRealTimers(); await runtime.close(); capture.mockRestore(); }
 });
+
+
+it('Reproduction VOICE-DISPOSE-1: ending a call while synthesis unwinds never clears disposed audio', async () => {
+  const { service, speech } = conversationService(1);
+  const release = deferred<void>();
+  const entered = deferred<void>();
+  speech.synthesize.mockImplementation(async function* () {
+    entered.resolve();
+    await release.promise;
+    throw new DOMException('Interrupted', 'AbortError');
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  let disposed = false;
+  const audio = state.audio;
+  audio.close = vi.fn(async () => { disposed = true; });
+  audio.clearQueue.mockImplementation(() => {
+    if (disposed) throw new Error('Invalid request: handle not found: ClearAudioBuffer source_handle 1');
+  });
+  const work = runtime.utterance('human', 'Ruby explain this');
+  const outcome = work.catch(error => error);
+  try {
+    await entered.promise;
+    await runtime.close();
+    expect(disposed).toBe(true);
+    const clears = audio.clearQueue.mock.calls.length;
+    (runtime as any).interruptPlayback();
+    release.resolve();
+    expect(await outcome).toMatchObject({ name: 'AbortError' });
+    await (runtime as any).speechIdle;
+    expect((runtime as any).speaking).toBeUndefined();
+    expect(audio.clearQueue).toHaveBeenCalledTimes(clears);
+    expect(service.runtimeClosed).toHaveBeenCalledOnce();
+  } finally { release.resolve(); await outcome; await runtime.close(); }
+});
+
+
+it('VOICE-DISPOSE-1: live audio failures remain observable and release turn cleanup', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const failure = new Error('unexpected live audio failure');
+  state.audio.clearQueue.mockImplementationOnce(() => {}).mockImplementationOnce(() => { throw failure; });
+  try {
+    await expect(runtime.utterance('human', 'Ruby explain this')).rejects.toBe(failure);
+    await (runtime as any).speechIdle;
+    expect((runtime as any).speaking).toBeUndefined();
+  } finally { await runtime.close(); }
+});

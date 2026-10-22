@@ -138,6 +138,7 @@ export class VoiceRoomRuntime {
   private leaseExpiry?: ReturnType<typeof setTimeout>;
   private leaseRenewal?: ReturnType<typeof setInterval>;
   private closed = false;
+  private audioDisposed = false;
   private leaseValidUntil = 0;
   private refreshPending = false;
   private reportQueue = Promise.resolve();
@@ -360,7 +361,7 @@ export class VoiceRoomRuntime {
       this.turnIndices.set(human, event.turn_index);
       if (stop) {
         this.assembler.cancel(human);
-        this.speaking?.abort(); this.audio.clearQueue();
+        this.speaking?.abort(); this.clearAudioQueue();
         return;
       }
       }, human); }, error => {
@@ -518,9 +519,14 @@ export class VoiceRoomRuntime {
     }
   }
 
+  private clearAudioQueue() {
+    // Provider cancellation can unwind after close has disposed the native handle.
+    if (!this.audioDisposed) this.audio.clearQueue();
+  }
+
   private interruptPlayback() {
     this.playbackVersion++;
-    this.speaking?.abort(); this.audio.clearQueue();
+    this.speaking?.abort(); this.clearAudioQueue();
   }
 
   participantLeft(human: string) {
@@ -765,14 +771,18 @@ export class VoiceRoomRuntime {
       throw error;
     } finally {
       controller.abort();
-      if (this.speaking === controller) {
-        this.audio.clearQueue(); this.speaking = undefined;
-        await this.safeSignal({ type: 'speaker', agentId: null });
+      try {
+        if (this.speaking === controller) {
+          this.speaking = undefined;
+          this.clearAudioQueue();
+          await this.safeSignal({ type: 'speaker', agentId: null });
+        }
+      } finally {
+        finishSpeech?.();
+        this.shutdown.signal.removeEventListener('abort', stop);
+        generation.signal.removeEventListener('abort', pausePlayback);
+        await Promise.all(completions);
       }
-      finishSpeech?.();
-      this.shutdown.signal.removeEventListener('abort', stop);
-      generation.signal.removeEventListener('abort', pausePlayback);
-      await Promise.all(completions);
     }
   }
 
@@ -839,7 +849,7 @@ export class VoiceRoomRuntime {
                 const request = this.assembler.current(report.human_id);
                 if (request?.id === report.source_message_id) this.assembler.finish(report.human_id, request);
               }, undefined, undefined, members);
-            } finally { controller.abort(); finishSpeech(); if (this.speaking === controller) { this.audio.clearQueue(); this.speaking = undefined; await this.safeSignal({ type: 'speaker', agentId: null }); } }
+            } finally { controller.abort(); finishSpeech(); if (this.speaking === controller) { this.clearAudioQueue(); this.speaking = undefined; await this.safeSignal({ type: 'speaker', agentId: null }); } }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });
         const queued = this.reportQueue;
@@ -932,11 +942,12 @@ export class VoiceRoomRuntime {
     const cleanup = async (work: () => unknown) => {
       try { await work(); } catch (error) { captureServerError(error, { surface: 'voice-cleanup' }); }
     };
-    await cleanup(() => { this.speaking?.abort(); this.audio.clearQueue(); });
+    await cleanup(() => { this.speaking?.abort(); this.clearAudioQueue(); });
     this.missingSince.clear();
     for (const human of this.inputs.keys()) await cleanup(() => this.stopInput(human));
     await cleanup(() => this.meter?.close());
     await cleanup(() => this.room.disconnect());
+    this.audioDisposed = true;
     await cleanup(() => this.audio.close());
     await cleanup(() => this.spokenWrites);
     await cleanup(() => this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`,

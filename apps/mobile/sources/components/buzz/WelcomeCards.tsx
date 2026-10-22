@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { InlineRow } from './IndexRow';
 import { StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -275,7 +276,7 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
       <ToolsScene />
     );
   const footer = (
-    <View style={card.footer} testID="welcome-footer">
+    <InlineRow style={card.footer} testID="welcome-footer">
       <View style={card.steps}>
         {COPY.map((_, i) => (
           <View key={i} style={[card.step, i === index && card.stepActive]} />
@@ -289,7 +290,7 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
         style={card.next}
         testID="welcome-next"
       />
-    </View>
+    </InlineRow>
   );
   return (
       <View
@@ -304,7 +305,7 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
         testID="welcome-cards"
       >
         <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
-        <View
+        <InlineRow
           style={[
             card.content,
             { maxWidth: desktop ? 960 : wideCanvas ? 600 : Math.min(390, width) },
@@ -340,7 +341,7 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
               {footer}
             </>
           )}
-        </View>
+        </InlineRow>
       </View>
   );
 }
@@ -352,7 +353,7 @@ const card = StyleSheet.create((theme) => ({
     alignItems: 'center',
     paddingHorizontal: theme.buzz.space.lg,
   },
-  content: { flex: 1, width: '100%', gap: theme.buzz.space.lg },
+  content: { flex: 1, flexDirection: 'column', width: '100%', gap: theme.buzz.space.lg },
   desktopPage: {
     justifyContent: 'center',
     paddingTop: theme.buzz.space.xl,

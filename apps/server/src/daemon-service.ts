@@ -4636,6 +4636,12 @@ export class DaemonService {
           .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
           .digest('hex')
       : id();
+    // PostgreSQL jsonb cannot store NUL or lone UTF-16 surrogates. Replace
+    // only those string characters, including nested fields, with U+FFFD.
+    // Unicode mode keeps valid surrogate pairs (emoji, for example) intact.
+    const serializedActivity = JSON.stringify(input.activity, (_key, value: unknown) =>
+      typeof value === 'string' ? value.replace(/[\u0000\uD800-\uDFFF]/gu, '\uFFFD') : value,
+    );
     const activity = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity,agent_model)
@@ -4649,7 +4655,7 @@ export class DaemonService {
           input.roomId,
           agentId,
           input.requestId,
-          JSON.stringify(input.activity),
+          serializedActivity,
           input.agentModel !== undefined,
           input.agentModel ?? null,
         ],
@@ -4661,7 +4667,7 @@ export class DaemonService {
             `SELECT id,created_at FROM messages
              WHERE id=$1 AND room_id=$2 AND author_id=$3 AND request_id=$4
                AND presentation='activity' AND activity=$5::jsonb`,
-            [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
+            [messageId, input.roomId, agentId, input.requestId, serializedActivity],
           )
         ).rows[0];
       if (!row) throw new Error('corner activity ID conflicts with another message');

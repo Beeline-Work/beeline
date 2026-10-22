@@ -247,6 +247,14 @@ test('packages and a path outside the four app trees still open every path-filte
   }
 });
 
+test('PR concurrency cancels superseded pushes and isolates non-PR runs', () => {
+  for (const name of ['checks', 'desktop', 'prompt-cases']) {
+    const doc = parse(readFileSync(new URL(`../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
+    assert.equal(doc.concurrency.group,
+      `${name}-` + "${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}");
+    assert.equal(doc.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}");
+  }
+});
 test('required workflows run merge groups and filter the group head against its base', () => {
   for (const name of ['checks.yml', 'desktop.yml', 'prompt-cases.yml']) {
     const doc = parse(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'));

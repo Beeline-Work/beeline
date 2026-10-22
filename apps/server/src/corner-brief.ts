@@ -8,7 +8,7 @@ import {
 import type { SqlDatabase } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import { commandOrder } from './commander.js';
-import { CommandRefusalError } from './command-refusal.js';
+import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 
 /** Most files one brief revision may carry. */
 const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
@@ -25,7 +25,7 @@ export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = 
       `corner brief spec must contain 1–${CORNER_BRIEF_SPEC_MAX_LENGTH} characters of Markdown`,
     );
   if (draft.approval !== undefined && !boundedText(draft.approval?.sourceMessageId, 256))
-    throw new Error('corner brief approval must name a human Room message');
+    throw new ExpectedRefusalError('corner brief approval must name a human Room message');
   if (
     draft.change !== undefined &&
     (typeof draft.change !== 'string' || draft.change.length > 1_000)

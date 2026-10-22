@@ -200,3 +200,97 @@ it.each(['server', 'body'] as const)('R-SENTRY-REPEAT: %s sends one envelope for
     expect(events).toHaveLength(1);
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 });
+
+it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still alert', async () => {
+  const envelopes: string[] = [];
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    envelopes.push(Buffer.concat(chunks).toString());
+    response.writeHead(200); response.end('{}');
+  });
+  await new Promise<void>(r => collector.listen(0, '127.0.0.1', r));
+  try {
+    const port = (collector.address() as AddressInfo).port;
+    const source = `
+      import assert from 'node:assert/strict';
+      import { PgliteDatabase } from './src/test-support.ts';
+      import { migrate } from './src/database.ts';
+      import { DaemonService } from './src/daemon-service.ts';
+      import { LiveHub } from './src/live.ts';
+      import { createAgentCommand } from './src/agent-command.ts';
+      import { createBeelineServer } from './src/server.ts';
+      import { flushServerErrors } from './src/sentry.ts';
+      const db = new PgliteDatabase();
+      await migrate(db);
+      const agent = 'c'.repeat(64), human = 'a'.repeat(64);
+      const room = '22222222-2222-4222-8222-222222222222';
+      const workspace = '11111111-1111-4111-8111-111111111111';
+      const media = '33333333-3333-4333-8333-333333333333';
+      await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Worker'),($2,'human','Owner')", [agent,human]);
+      await db.query("INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)", [agent,human]);
+      await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Test')", [workspace]);
+      await db.query("INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Test')", [room,workspace]);
+      await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')", [workspace,room,agent]);
+      await db.query("INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at) VALUES($1,$2,'artifact','test/key','text/plain','File',10,repeat('d',64),'ready',now()+interval '24 hours')", [media,agent]);
+      const live = new LiveHub();
+      const daemon = new DaemonService(db, live, undefined, 10);
+      const command = await createAgentCommand(db, {roomId:room,agentId:agent,sourceMessageId:null,reason:'system'});
+      const [pending] = (await daemon.execute('getAgentCommands',{roomId:room},agent)).commands;
+      assert.equal(pending.id,command.id);
+      await daemon.execute('claimAgentCommand',{roomId:room,commandId:pending.id,generationId:'proof'},agent);
+      const server = createBeelineServer({ database: db, live, daemon, phone: {},
+        auth: { authenticateDaemon: async () => agent, authenticatePhone: async () => null }, mediaMaximumBytes: 10 });
+      await new Promise(r => server.listen(0,'127.0.0.1',r));
+      const input = {roomId:room,requestId:pending.turnRequestId,generationId:'proof',
+        attachment:{url:'http://test/v1/media/'+media,name:'file.txt',mimeType:'text/plain',size:9}};
+      const call = async (payload=input) => {
+        const response = await fetch('http://127.0.0.1:' + server.address().port + '/v1/daemon/operations/postAgentAttachment', {
+          method:'POST', headers:{authorization:'Bearer isolated-sentry-proof-token','content-type':'application/json'}, body:JSON.stringify(payload) });
+        return {status:response.status, body:await response.json()};
+      };
+      const queue = async () => (await db.query('SELECT * FROM agent_pending_attachments ORDER BY id')).rows;
+      try {
+        assert.equal((await call()).status,200); // One byte below the total cap.
+        assert.equal((await call({...input,attachment:{...input.attachment,size:1}})).status,200); // Exactly at cap.
+        const before = await queue();
+        assert.equal(before.length,2);
+        const over = await call({...input,attachment:{...input.attachment,size:1}});
+        console.log('ATTACH-CAP-1 over-cap HTTP response',JSON.stringify(over));
+        assert.equal(over.status,400);
+        assert.deepEqual(over.body,{error:'queued attachments exceed the size cap'});
+        assert.deepEqual(await queue(),before);
+        await db.query('DELETE FROM agent_pending_attachments');
+        assert.equal((await call({...input,attachment:{...input.attachment,size:11}})).status,400);
+        assert.deepEqual(await queue(),[]);
+        // Turn and ownership checks must still refuse without queueing.
+        assert.equal((await call({...input,generationId:'stale'})).status,403);
+        await db.query('UPDATE objects SET owner_id=$2 WHERE id=$1',[media,human]);
+        assert.equal((await call()).status,503);
+        assert.deepEqual(await queue(),[]);
+        // The exact same wording on an unexpected failure must still alert.
+        daemon.execute = async () => { throw new Error('queued attachments exceed the size cap'); };
+        assert.equal((await call()).status,503);
+        await flushServerErrors();
+      } finally {
+        await new Promise(r => server.close(r));
+        await db.close();
+      }
+      process.exit(0);`;
+    const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
+        stdio: ['ignore', 'inherit', 'pipe'],
+      });
+      let error = ''; child.stderr.on('data', value => { error += String(value); });
+      child.on('error', reject); child.on('exit', code => done({ code, error }));
+    });
+    expect(result, result.error).toMatchObject({ code: 0 });
+    const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
+      .filter(item => item.exception);
+    expect(events).toHaveLength(2);
+    expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
+      'attachment media is not owned by this agent', 'queued attachments exceed the size cap',
+    ]);
+  } finally { await new Promise<void>(r => collector.close(() => r())); }
+}, 60_000);

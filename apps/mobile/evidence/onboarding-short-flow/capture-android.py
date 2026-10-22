@@ -1,7 +1,7 @@
 """Walk the real native sign-in and Workspace screens against the isolated service."""
 import json,re,subprocess,time,os,xml.etree.ElementTree as ET
 from pathlib import Path
-serial='emulator-5566'
+serial=os.environ.get('ONBOARDING_ANDROID_SERIAL','emulator-5570')
 out=Path(__file__).resolve().parent/'android';out.mkdir(exist_ok=True)
 def adb(*args):return subprocess.check_output(['adb','-s',serial,*args])
 def nodes():
@@ -43,7 +43,7 @@ for theme in themes:
   tap('Create Workspace');time.sleep(.7)
   shot('general')
   if not any('Three things to know' in t for t in records[-1]['text']):raise RuntimeError(str(records[-1]['text']))
-  adb('shell','input swipe 540 2000 540 450 450');time.sleep(.3);shot('general-card')
+  if any('Choose a repository' in t for t in records[-1]['text']):raise RuntimeError('Unexpected repository card')
   (out/'results.json').write_text(json.dumps(records,indent=2))
   print(json.dumps(dict(theme=theme,provider=provider,passed=True)),flush=True)
 (out/'results.json').write_text(json.dumps(records,indent=2))

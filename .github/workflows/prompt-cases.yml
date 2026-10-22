@@ -38,6 +38,7 @@ jobs:
           filters: |
             prompts:
               - 'apps/body/src/prompt-assembly.ts'
+              - 'apps/server/src/free-agents.ts'
               - 'apps/body/src/beeline-skill.ts'
               - 'apps/body/src/minimal-tool-surface.ts'
               - 'apps/body/src/read-only-mcp.ts'

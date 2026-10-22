@@ -46,8 +46,7 @@ export function repositoryStarters(signals: RepositorySignals): RepositoryStarte
 }
 
 export async function postRepositoryOnboarding(database: SqlDatabase, github: GitHubOperations | undefined,
-  input: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' },
-  ordering?: { afterMessageId: string }): Promise<RepositoryOnboardingCard> {
+  input: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' }): Promise<RepositoryOnboardingCard> {
   const room = (await database.query<{ repository_name: string | null; name: string; can_link: boolean; owner_handle: string | null; github_linked: boolean }>(
     `SELECT r.repository_name,i.name,(w.role IN ('owner','admin')) can_link,
      (SELECT owner.handle FROM memberships membership JOIN identities owner ON owner.id=membership.identity_id
@@ -87,7 +86,6 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
     subject: { id: input.agentId, kind: 'agent', name: room.name },
     verb: kind === 'starters' ? 'suggested work' : 'offered a repository',
     object: room.repository_name ?? 'Choose or create a repository', presentation: 'card',
-    cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown>,
-    ...ordering });
+    cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown> });
   return card;
 }

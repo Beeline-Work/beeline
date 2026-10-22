@@ -38,7 +38,7 @@ createServer(async (req, res) => {
       const view = await phone.readRoom(req.url.slice(6), viewer);
       const hello = view?.messages.filter(m => m.text?.includes("Hi, I'm Beebee"));
       const cards = view?.messages.filter(m => m.onboarding?.kind === 'repository');
-      if (hello?.length !== 1 || cards?.length !== 1) throw new Error('Expected exactly one hello and repository card');
+      if (hello?.length !== 1 || cards?.length !== 0) throw new Error('Expected exactly one hello and no repository card');
       res.end(JSON.stringify(view)); return;
     }
     res.statusCode = 404; res.end('{}');

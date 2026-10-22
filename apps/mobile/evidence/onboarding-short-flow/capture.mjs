@@ -27,7 +27,7 @@ for(const device of ['web','desktop'])for(const theme of ['obsidian','bone'])for
   await until(`document.body.innerText.includes('Three things to know:')`);
   await shoot('general');
   const text=await evaluate('document.body.innerText');
-  if(!text.includes('Connect once, use everywhere.')||!text.includes('Big jobs get a corner.')||!text.includes('Choose a repository'))throw new Error(text);
+  if(!text.includes('Connect once, use everywhere.')||!text.includes('Big jobs get a corner.')||text.includes('Choose a repository')||!text.includes('What are you working on?'))throw new Error(text);
   console.log(JSON.stringify({device,theme,provider,passed:true}));
 }
 fs.writeFileSync(path.join(import.meta.dirname,'results.json'),JSON.stringify(records,null,2));ws.close();

@@ -219,3 +219,19 @@ test('paired memory export changes only the note and grades variants separately'
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+
+test('free-agent saved cases distinguish writing from coding and load the current guide', async () => {
+  const { loadSource, replayPrompt } = await import('./prompt-cases.js');
+  const source = await loadSource(process.cwd());
+  const cold = JSON.parse(readFileSync('docs/prompts/cases/free-agent-cold-email-no-repository.json', 'utf8'));
+  const coding = JSON.parse(readFileSync('docs/prompts/cases/free-agent-login-bug-repository.json', 'utf8'));
+  const card = { name: 'app_tool', args: { app: 'beeline:onboarding', tool: 'repository', args: {} } };
+  assert.equal(evaluateRule(cold.pass, { calls: [], text: 'Subject: A quick introduction\nHi there, I can help your team.' }).pass, true);
+  assert.equal(evaluateRule(cold.pass, { calls: [card], text: 'First link a repository.' }).pass, false);
+  assert.equal(evaluateRule(cold.pass, { calls: [], text: 'First link a repo.' }).pass, false);
+  assert.equal(evaluateRule(coding.pass, { calls: [], text: 'First link a repository.' }).pass, false);
+  assert.equal(evaluateRule(coding.pass, { calls: [card], text: '' }).pass, true);
+  assert.ok(readFileSync('apps/server/src/free-agents.ts', 'utf8').includes(source.freeAgentRepositoryGuide));
+  for (const saved of [cold, coding]) assert.ok(replayPrompt(source, saved).includes(source.freeAgentRepositoryGuide));
+});

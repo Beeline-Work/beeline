@@ -318,7 +318,7 @@ describe('minimal agent surface', () => {
   });
   it('requires creation names and event trigger words, and forwards them', async () => {
     const schema = agentToolsFor(true, false).find(tool => tool.name === 'wake')!.inputSchema;
-    const schedule = { action: 'create', trigger: 'schedule', title: 'Check work', prompt: 'Check work',
+    const schedule = { action: 'create', trigger: 'schedule', prompt: 'Check work',
       cadence: { kind: 'interval', everyMinutes: 60 } };
     const event = { action: 'create', trigger: 'event', source: 'room', event: 'check-failed',
       prompt: 'Fix checks', title: 'Fix failing checks' };

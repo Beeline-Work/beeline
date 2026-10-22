@@ -2732,15 +2732,15 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
     const required = tool.inputSchema.required as string[] | undefined;
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));
-    const details = tool.name === 'wake'
-      ? Errors(tool.inputSchema, args).filter(error => {
-        if (error.keyword === 'anyOf') return false;
-        const branch = /^#\/anyOf\/(\d+)/.exec(error.schemaPath);
-        if (!branch) return true;
-        const schema = (tool.inputSchema.anyOf as JsonObject[])[Number(branch[1])]!;
+    const diagnosticSchema = tool.name === 'wake'
+      ? { ...tool.inputSchema, anyOf: (tool.inputSchema.anyOf as JsonObject[]).filter(schema => {
         const action = asObject(schema.properties).action;
         return !action || Check(action, requestedAction);
-      }).map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
+      }) }
+      : tool.inputSchema;
+    const details = tool.name === 'wake'
+      ? Errors(diagnosticSchema, args).filter(error => error.keyword !== 'anyOf')
+        .map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
       : '';
     throw new Error(`${tool.name}: invalid arguments${details ? `; ${details}` : ''}${missing?.length ? `; required: ${missing.join(', ')}` : ''}${extra.length ? `; unknown fields: ${extra.join(', ')}` : ''}; follow the advertised schema`);
   }

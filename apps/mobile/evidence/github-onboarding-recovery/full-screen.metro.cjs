@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-// The original config is copied next to this file only for the proof build.
-const config = require('../../metro.product.cjs');
+// Expo selects this resolver with EXPO_OVERRIDE_METRO_CONFIG.
+const config = require('../../metro.config');
 const original = config.resolver.resolveRequest;
 const dir = path.resolve(__dirname, '../../.scratch/full-screen-proof');
 fs.mkdirSync(dir, { recursive: true });

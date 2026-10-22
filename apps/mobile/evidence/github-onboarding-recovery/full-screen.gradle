@@ -1,0 +1,19 @@
+// This proof also rebuilds JVM plugin classes: the shared host cache can
+// retain up-to-date records after those generated outputs have been removed.
+gradle.beforeProject { project ->
+    project.tasks.configureEach { task ->
+        if (task.name == 'compileKotlin') {
+            task.outputs.upToDateWhen { false }
+        }
+    }
+}
+
+// Select only the proof entry; leave the product's generated build files intact.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.findProject(':app')
+    if (app != null) {
+        app.tasks.named('createBundleReleaseJsAndAssets').configure {
+            entryFile.set(app.file(System.getenv('BEELINE_PROOF_ENTRY')))
+        }
+    }
+}

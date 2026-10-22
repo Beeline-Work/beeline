@@ -14,14 +14,14 @@ for theme in ['bone','obsidian']:
   if state=='offline':
    adb('shell','uiautomator dump /sdcard/onboarding.xml')
    before=ET.fromstring(adb('shell','cat /sdcard/onboarding.xml'))
-   button=next(n for n in before.iter('node') if n.get('text')=='Continue with GitHub')
+   button=next(n for n in before.iter('node') if 'Continue with GitHub' in [n.get('text'),n.get('content-desc')])
    x1,y1,x2,y2=map(int,re.findall(r'\d+',button.get('bounds')))
    adb('shell',f'input tap {(x1+x2)//2} {(y1+y2)//2}')
    time.sleep(1)
   adb('shell','uiautomator dump /sdcard/onboarding.xml')
   xml=adb('shell','cat /sdcard/onboarding.xml')
   nodes=list(ET.fromstring(xml).iter('node'))
-  labels=[n.get('text') for n in nodes if n.get('text') in ['Continue with GitHub','Continue with Google','Try again']]
+  labels=list(dict.fromkeys(value for n in nodes for value in [n.get('text'),n.get('content-desc')] if value in ['Continue with GitHub','Continue with Google','Try again']))
   expected=['Continue with GitHub','Continue with Google'] if state=='initial' else ['Try again'] if state=='offline' else ['Continue with GitHub']
   if labels!=expected:raise RuntimeError(f'{state}-{theme}: expected {expected}, got {labels}')
   title={'offline':'No connection','cancel':'Sign-in did not finish','expired':'Sign-in expired'}.get(state)

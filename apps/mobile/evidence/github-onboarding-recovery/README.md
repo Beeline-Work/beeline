@@ -14,6 +14,20 @@ The required production web reviewer-bypass proof remains unavailable: the conne
 
 Reproduction GITHUB-FULL-SCREEN-ACTIONS: on the actual onboarding screen, Continue with GitHub while offline displayed both Try again and Continue with Google as primary actions. Before an error, GitHub used the provider variant (white in Bone). The callback component tests exercise this full screen, including cancellation and expiry, rather than a standalone banner.
 
-`full-screen.js` renders the actual `BuzzOnboarding` screen, shared controls, fonts, and theme tokens. `full-screen.metro.cjs` isolates account/session, storage, transport, and telemetry boundaries; its sign-in boundary deterministically rejects offline. Cancellation and expiry use the real notice publisher. No sign-in or external GitHub transaction is claimed. For the generated Android proof build, preserve `metro.config.js` as `metro.product.cjs`, replace the root config with a require of `./evidence/github-onboarding-recovery/full-screen.metro.cjs`, and set the generated Gradle entryFile to `../../evidence/github-onboarding-recovery/full-screen.js`. Build x86_64 with two workers and a bounded heap, install on the leased emulator, then run `python3 apps/mobile/evidence/github-onboarding-recovery/capture-full-screen.py emulator-PORT OUTPUT_DIRECTORY`. Restore both generated build configuration changes afterward and remove `metro.product.cjs`.
+`full-screen.js` configures the real app themes before loading the actual `BuzzOnboarding` screen, shared controls, and fonts. `full-screen.metro.cjs` isolates account/session, storage, transport, and telemetry boundaries; its sign-in boundary deterministically rejects offline. Cancellation and expiry use the real notice publisher. No sign-in or external GitHub transaction is claimed.
+
+Build the generated Android project from the repository root with the isolated overrides below. These select the proof entry and resolver without editing the product Metro or Gradle configuration:
+
+```sh
+BEELINE_PROOF_ENTRY="$PWD/apps/mobile/evidence/github-onboarding-recovery/full-screen.js" \
+EXPO_OVERRIDE_METRO_CONFIG="$PWD/apps/mobile/evidence/github-onboarding-recovery/full-screen.metro.cjs" \
+NODE_ENV=production apps/mobile/android/gradlew -p apps/mobile/android :app:assembleRelease \
+  --init-script "$PWD/apps/mobile/evidence/github-onboarding-recovery/full-screen.gradle" \
+  --no-daemon --project-cache-dir /tmp/onboarding-proof-gradle-cache \
+  -PreactNativeArchitectures=x86_64 --max-workers=2 \
+  -Dorg.gradle.jvmargs='-Xmx4g -XX:MaxMetaspaceSize=1g'
+```
+
+Install the APK on the leased emulator, then run `python3 apps/mobile/evidence/github-onboarding-recovery/capture-full-screen.py emulator-PORT OUTPUT_DIRECTORY`.
 
 The capture checks the full initial screen, cancellation, expiry, and a tap through the real sign-in handler into offline recovery in Bone and Obsidian. Each error screen must expose exactly one recovery action; the initial screen retains both providers with GitHub primary.

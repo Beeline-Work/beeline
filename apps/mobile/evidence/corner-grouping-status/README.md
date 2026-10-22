@@ -13,7 +13,7 @@ The web proof bundles the shipped disclosure, anchored adapter, status slot and 
 Run:
 
 ```sh
-node apps/mobile/scripts/corner-grouping-status-proof.mjs
+npm run corner-grouping:proof --prefix apps/mobile
 python apps/mobile/scripts/check-corner-grouping-status-proof.py
 ```
 

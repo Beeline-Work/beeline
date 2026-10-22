@@ -2,7 +2,7 @@ import { approvalCardSource } from './approval-card-source.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
-import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
+import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
@@ -5202,7 +5202,7 @@ export class DaemonService {
         nextRunAt,
         workflowName ?? null,
         ownerId ?? null,
-        title ?? scheduleFallbackTitle(workflowName),
+        title ?? scheduleDisplayTitle({ workflow: workflowName, prompt: input.prompt }),
       ],
     );
     await this.recordScheduleAuthorization(db, scheduleId, input.roomId, agentId, requestId,
@@ -5365,10 +5365,12 @@ export class DaemonService {
     return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
   }
   /**
-   * Self-only wake reads span the current Workspace. Legacy Room tools list
-   * the schedules an agent in this Room may manage: every schedule that
-   * mentions it, and every schedule any agent created for itself here. A
-   * schedule a person created for another agent stays that person's.
+   * Self-only wake reads span every Room the agent belongs to, in any
+   * Workspace, so the agent that created a schedule can find and edit it from
+   * any chat. Legacy Room tools list the schedules an agent in this Room may
+   * manage: every schedule that mentions it, and every schedule any agent
+   * created for itself here. A schedule a person created for another agent
+   * stays that person's.
    */
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
@@ -5390,7 +5392,10 @@ export class DaemonService {
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
        JOIN rooms room ON room.id=schedule.room_id
-       WHERE (schedule.room_id=$1 OR ($3::boolean AND schedule.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$1)))
+       WHERE (schedule.room_id=$1 OR ($3::boolean AND EXISTS (
+           SELECT 1 FROM memberships self_membership
+           WHERE self_membership.room_id=schedule.room_id
+             AND self_membership.identity_id=$2 AND self_membership.removed_at IS NULL)))
          AND schedule.workflow_run IS NULL
          AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
@@ -5406,7 +5411,7 @@ export class DaemonService {
         const activeRunIds = [...new Set([...workflowRunIds, ...scheduleRunIds])];
         return {
           ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
-          title: row.title ?? scheduleFallbackTitle(row.workflow_slug),
+          title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
           scheduleId: row.id,
           ...(input.selfOnly ? { roomId: row.room_id, roomName: row.room_name } : {}),
           agentId: row.agent_id,
@@ -5426,7 +5431,10 @@ export class DaemonService {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
        WHERE id=$1
-         AND (room_id=$2 OR ($4::boolean AND workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)))
+         AND (room_id=$2 OR ($4::boolean AND EXISTS (
+           SELECT 1 FROM memberships self_membership
+           WHERE self_membership.room_id=agent_schedules.room_id
+             AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
          AND workflow_run IS NULL
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
@@ -5470,7 +5478,10 @@ export class DaemonService {
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null; room_id: string }>(
         `SELECT message,workflow_slug,room_id FROM agent_schedules WHERE id=$1
-           AND (room_id=$2 OR ($4::boolean AND workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)))
+           AND (room_id=$2 OR ($4::boolean AND EXISTS (
+             SELECT 1 FROM memberships self_membership
+             WHERE self_membership.room_id=agent_schedules.room_id
+               AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
            AND workflow_run IS NULL
            AND (NOT $4::boolean OR agent_id=$3)`,
         [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -5486,6 +5497,12 @@ export class DaemonService {
       )) ?? existing.workflow_slug;
     const nextRunAt =
       input.cadence === undefined ? null : nextScheduleOccurrence(input.cadence, new Date());
+    // Keep the stored name in step with the prompt it now runs.
+    const resolvedTitle =
+      title ??
+      (input.prompt === undefined
+        ? undefined
+        : scheduleDisplayTitle({ workflow: workflowName, prompt: input.prompt }));
     const updated = await db.query<{ next_run_at: Date }>(
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
@@ -5503,7 +5520,7 @@ export class DaemonService {
         workflowName ?? null,
         agentId,
         input.selfOnly === true,
-        title ?? null,
+        resolvedTitle ?? null,
       ],
     );
     const row = updated.rows[0];

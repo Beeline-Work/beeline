@@ -1,4 +1,4 @@
-import { scheduleFallbackTitle } from './schedule-title.js';
+import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
 import { CommandRefusalError } from './command-refusal.js';
@@ -980,7 +980,7 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
     roomId: row.room_id,
     agentId: row.agent_id,
     creatorId: row.creator_id,
-    title: row.title ?? scheduleFallbackTitle(row.workflow_slug),
+    title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
     ...(row.max_runs != null ? { maxRuns: row.max_runs } : {}),
     cadence: row.cadence,
     message: row.message,
@@ -5067,7 +5067,8 @@ export class PhoneService {
               surface.parent_id surface_parent_id,surface.name surface_name
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
-       WHERE (surface.id=$1 OR surface.parent_id=$1) AND schedule.workflow_run IS NULL
+       WHERE (surface.id=$1 OR surface.parent_id=$1) AND surface.archived_at IS NULL
+         AND schedule.workflow_run IS NULL
        ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );

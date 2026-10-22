@@ -69,12 +69,20 @@ it('coalesces a newer notice during preparation before accepting any handoff', a
   expect(f.handoff).toHaveBeenCalledWith('newer', false);
   f.transaction.dispose();
 });
+it('an ordinary release notice starts preparation even with the removed BEELINE_UPDATE_DISABLE set', async () => {
+  const prepare = vi.fn(async () => undefined);
+  const f = await fixture({ env: { BEELINE_UPDATE_DISABLE: '1' }, prepare });
+  f.transaction.notify('release-a');
+  await f.transaction.pending;
+  expect(prepare).toHaveBeenCalledOnce();
+  f.transaction.dispose();
+});
 it('a forced minimum joins the same transaction, interrupts immediately and refuses below-minimum content', async () => {
-  const f = await fixture({ env: { BEELINE_UPDATE_DISABLE: '1' }, prepare: async () => undefined });
+  const f = await fixture({ prepare: async () => undefined });
   await mkdir(resolve(f.layout.releasesRoot, 'new/lib/beeline'), { recursive: true });
   await writeFile(resolve(f.layout.releasesRoot, 'new/lib/beeline/bundle.json'), JSON.stringify({ version: 'v1.0.0' }));
   await writeUpdateState(f.layout, { stagedReleaseId: 'new' });
-  f.transaction.notify(undefined, 'v2.0.0', true);
+  f.transaction.notify(undefined, 'v2.0.0');
   await f.transaction.pending;
   expect(f.interrupt).toHaveBeenCalledOnce();
   expect(f.failed).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('below required v2.0.0') }), 'v2.0.0');

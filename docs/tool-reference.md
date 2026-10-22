@@ -15,21 +15,17 @@ corners also mount the release-owned `codegraph` server after its local index is
 | `read_agent_file`                               | Read the agent's approved materialized skills |
 
 The retired private per-agent `MEMORY.md` and `write_memory` tool are not part of the live
-Room/corner runtime. Institutional memory is ON by default on server and Body. No background
+Room/corner runtime. Institutional memory is always on, on server and Body. No background
 review exists: the answering agent keeps memory current with `search_memory`, `save_memory`,
 `update_memory`, `delete_memory`, and an end-of-turn `report_memory_used`. Each turn receives one
 relevance-selected, command-bound snapshot: facts capped at 1,000 UTF-8 bytes, and the procedure
-and workflow index on its own 1,000-byte budget; failures omit the optional block. `BEELINE_INSTITUTIONAL_MEMORY_ENABLED=false` turns live memory off and
-`BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED=false` turns the measurement-only mode off (set both
-to stop the feature entirely). `search_history` intersects every result with the requester,
+and workflow index on its own 1,000-byte budget; failures omit the optional block. Memory has no off switch. `search_history` intersects every result with the requester,
 answering agent, and complete output audience. `save_skill` and `save_workflow` record Workspace
 procedures; turns see only their catalog entry (`workspace-core` first, then by relevance),
 `delete_skill` soft-deletes one at its current version, and `load_workspace_skill` returns
 the procedure as quoted, non-authoritative guidance with measured use. Generated procedures are
-never installed as native harness skills. Every Workspace is enrolled at the `live` stage by
-default; the release migration advances existing `shadow`/`pilot` rows to `live` and enrolls
-Workspaces that have no row, so `stage` is only an off switch (`paused` stops the curator without
-unstaging, `off` removes the Workspace from every lane). The server's idempotent weekly curator
+never installed as native harness skills. Every Workspace gets memory; the rollout table's `stage`
+column is no longer read. The server's idempotent weekly curator
 deletes a Workspace fact an agent saved on its own once it goes the Workspace's expiry days
 (default 90) without a save, update, or used report; profile facts, standing orders (facts a person
 asked to keep), skills, and workflows never expire.

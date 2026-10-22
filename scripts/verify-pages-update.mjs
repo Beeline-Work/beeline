@@ -111,7 +111,7 @@ export async function verifyPagesUpdate({ manifestUrl, expectedManifest, workDir
     const { stdout } = await run(join(layout.binDir, 'beeline'), ['--version'], {
       cwd: prefix,
       timeout: 30_000,
-      env: { ...process.env, XDG_STATE_HOME: join(prefix, 'state'), BEELINE_UPDATE_DISABLE: '1' },
+      env: { ...process.env, XDG_STATE_HOME: join(prefix, 'state') },
     });
     console.log(stdout.trim());
     console.log(

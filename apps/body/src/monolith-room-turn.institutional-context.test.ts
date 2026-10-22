@@ -21,7 +21,6 @@ const HUMAN = '22'.repeat(32);
 
 describe('monolith Room turn institutional-memory prefetch', () => {
   it('starts the snapshot fetch before activation, and serves a snapshot slower than the raw budget when it still beats activation', async () => {
-    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-memory-prefetch-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Bee');

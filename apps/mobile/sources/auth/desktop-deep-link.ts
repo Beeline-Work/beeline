@@ -1,11 +1,10 @@
-import { captureGooglePreviewUrl } from './google-preview';
 import type { Href, Router } from 'expo-router';
 import { parseCommunityInviteToken } from '@/buzz/community-invite';
 import { parseReviewSecret } from '@/buzz/review-link';
 
 export type DesktopDeepLinkDestination = {
   href: Href;
-  kind: 'review' | 'invite' | 'github-callback' | 'github-installation' | 'google-callback' | 'google-preview' | 'browser-share';
+  kind: 'review' | 'invite' | 'github-callback' | 'github-installation' | 'google-callback' | 'browser-share';
 };
 
 function routeValue(url: URL): string {
@@ -30,12 +29,6 @@ export function desktopDeepLinkDestination(rawUrl: string): DesktopDeepLinkDesti
     return null;
   }
   if (url.protocol !== 'beeline:') return null;
-  if (url.hostname === 'beeline' && (url.pathname === '/onboarding' || url.pathname === '/') && url.searchParams.has('google_preview')) {
-    const captured = captureGooglePreviewUrl(rawUrl);
-    void captured.saved.catch(() => undefined);
-    return { kind: 'google-preview', href: '/beeline/onboarding' };
-  }
-
   if (url.hostname === 'review') {
     return {
       kind: 'review',

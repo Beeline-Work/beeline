@@ -49,7 +49,7 @@ try {
   await once(server, 'listening');
   const env = { ...process.env, HOME: root, XDG_STATE_HOME: root,
     XDG_CONFIG_HOME: resolve(root, 'config'), BEELINE_SYSTEMD_USER: '0',
-    BEELINE_LAUNCHD_USER: '0', BEELINE_MANAGED_BY_SYSTEMD: '0', BEELINE_UPDATE_DISABLE: '0',
+    BEELINE_LAUNCHD_USER: '0', BEELINE_MANAGED_BY_SYSTEMD: '0',
     BEELINE_LIB_DIR: layout.libDir,
     BEELINE_UPDATE_MANIFEST_URL: `http://127.0.0.1:${server.address().port}/manifest.json` };
   const staged = await stageMonolithAgentRuntime({ workspaceId: 'proof', pairedBy: 'proof',

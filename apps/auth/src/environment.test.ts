@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authTenantsFromEnvironment, readEnv, oidcClientFromEnvironment } from './environment.js';
+import { authTenantsFromEnvironment, oidcClientFromEnvironment } from './environment.js';
 
 const settings = {
   ISSUER: 'https://accounts.google.com',
@@ -14,9 +14,9 @@ const environment = (prefix: string): NodeJS.ProcessEnv => ({
   ...Object.fromEntries(Object.entries(settings).map(([key, value]) => [prefix + key, value])),
 });
 
-describe('OIDC environment migration', () => {
-  it.each(['BEELINE_AUTH_OIDC_', 'BUZZY_AUTH_OIDC_'])('starts authorization with %s configuration', (prefix) => {
-    const client = oidcClientFromEnvironment(environment(prefix));
+describe('OIDC environment', () => {
+  it('starts authorization with BEELINE_AUTH_OIDC_ configuration', () => {
+    const client = oidcClientFromEnvironment(environment('BEELINE_AUTH_OIDC_'));
     const url = new URL(client.authorizationUrl({ state: 'state', nonce: 'nonce', codeChallenge: 'challenge', redirectUri: 'https://server.usebeeline.app/auth/oidc/callback' }));
     expect(url.origin + url.pathname).toBe(settings.AUTHORIZATION_ENDPOINT);
     expect(url.searchParams.get('client_id')).toBe(settings.CLIENT_ID);
@@ -26,26 +26,12 @@ describe('OIDC environment migration', () => {
     expect(client.config.jwksUri).toBe(settings.JWKS_URI);
   });
 
-  it('prefers every new setting over a conflicting legacy setting', () => {
-    const legacy = Object.fromEntries(Object.keys(settings).map((key) => ['BUZZY_AUTH_OIDC_' + key, 'https://legacy.example']));
-    expect(oidcClientFromEnvironment({ ...legacy, ...environment('BEELINE_AUTH_OIDC_') }).config)
-      .toEqual(oidcClientFromEnvironment(environment('BEELINE_AUTH_OIDC_')).config);
+  it('ignores legacy BUZZY_AUTH_OIDC_ names', () => {
+    expect(() => oidcClientFromEnvironment(environment('BUZZY_AUTH_OIDC_')))
+      .toThrow('BEELINE_AUTH_OIDC_ISSUER is required');
   });
 
-  it('falls back per setting when a new name is absent', () => {
-    const env = environment('BUZZY_AUTH_OIDC_');
-    env.BEELINE_AUTH_OIDC_CLIENT_ID = 'new-client';
-    const client = oidcClientFromEnvironment(env);
-    expect(client.config.clientId).toBe('new-client');
-    expect(client.config.clientSecret).toBe(settings.CLIENT_SECRET);
-  });
-
-  it('rejects an explicitly empty new required setting rather than using the old value', () => {
-    expect(() => oidcClientFromEnvironment({ ...environment('BUZZY_AUTH_OIDC_'), BEELINE_AUTH_OIDC_CLIENT_ID: '' }))
-      .toThrow('BEELINE_AUTH_OIDC_CLIENT_ID is required');
-  });
-
-  it('requires a production secret under the new name', () => {
+  it('requires a production secret', () => {
     const env = environment('BEELINE_AUTH_OIDC_');
     delete env.BEELINE_AUTH_OIDC_CLIENT_SECRET;
     expect(() => oidcClientFromEnvironment(env)).toThrow('BEELINE_AUTH_OIDC_CLIENT_SECRET is required in production');
@@ -56,30 +42,19 @@ describe('OIDC environment migration', () => {
 describe('insecure OIDC development opt-in', () => {
   it.each([
     [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'true' }, true],
-    [{ BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, true],
-    [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'false', BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, false],
-    [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: '', BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, false],
-  ])('resolves the new name before the legacy fallback (%j)', (flags, expected) => {
+    [{ BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, false],
+    [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'false' }, false],
+  ])('reads only the Beeline name (%j)', (flags, expected) => {
     const client = oidcClientFromEnvironment({ ...environment('BEELINE_AUTH_OIDC_'), NODE_ENV: 'test', ...flags });
     expect(client.config.allowInsecure).toBe(expected);
   });
 
-  it('never enables insecure OIDC in production with either name', () => {
-    const client = oidcClientFromEnvironment({ ...environment('BEELINE_AUTH_OIDC_'), BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'true', BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' });
+  it('never enables insecure OIDC in production', () => {
+    const client = oidcClientFromEnvironment({ ...environment('BEELINE_AUTH_OIDC_'), BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'true' });
     expect(client.config.allowInsecure).toBe(false);
   });
 });
 
-
-describe.each(['AUTH_TENANTS_JSON', 'AUTH_SETUP_TOKEN'])('%s aliases', (suffix) => {
-  it('retains old configuration and prefers new values including empty values', () => {
-    expect(readEnv({ ['BUZZY_' + suffix]: 'old' }, suffix)).toBe('old');
-    expect(readEnv({ ['BUZZY_' + suffix]: 'old', ['BEELINE_' + suffix]: 'new' }, suffix)).toBe(
-      'new',
-    );
-    expect(readEnv({ ['BUZZY_' + suffix]: 'old', ['BEELINE_' + suffix]: '' }, suffix)).toBe('');
-  });
-});
 const tenants = [
   {
     host: 'localhost',
@@ -88,19 +63,11 @@ const tenants = [
     origin: 'http://localhost',
   },
 ];
-it.each(['BEELINE_', 'BUZZY_'])('loads auth tenants from %s config', (prefix) => {
+it('loads auth tenants from BEELINE_AUTH_TENANTS_JSON only', () => {
   expect(
-    authTenantsFromEnvironment({ [prefix + 'AUTH_TENANTS_JSON']: JSON.stringify(tenants) }),
+    authTenantsFromEnvironment({ BEELINE_AUTH_TENANTS_JSON: JSON.stringify(tenants) }),
   ).toEqual(tenants);
-});
-it('new tenant config wins over old and errors name the migration', () => {
-  expect(
-    authTenantsFromEnvironment({
-      BEELINE_AUTH_TENANTS_JSON: JSON.stringify(tenants),
-      BUZZY_AUTH_TENANTS_JSON: 'invalid',
-    }),
-  ).toEqual(tenants);
-  expect(() => authTenantsFromEnvironment({})).toThrow(
-    /BEELINE_AUTH_TENANTS_JSON.*BUZZY_AUTH_TENANTS_JSON/,
+  expect(() => authTenantsFromEnvironment({ BUZZY_AUTH_TENANTS_JSON: JSON.stringify(tenants) })).toThrow(
+    'BEELINE_AUTH_TENANTS_JSON is required',
   );
 });

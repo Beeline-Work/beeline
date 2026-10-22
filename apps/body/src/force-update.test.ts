@@ -19,7 +19,7 @@ it('a server minimum durably interrupts every active agent through the one relea
     prepare: async () => undefined, changed: () => undefined, handoff, failed: (error) => { throw error; },
   });
   try {
-    transaction.notify(undefined, 'v2.0.0', true);
+    transaction.notify(undefined, 'v2.0.0');
     // Journals precede any asynchronous preparation or shutdown.
     for (const dir of agents) expect(await readFile(resolve(dir, 'force-update-interruptions.json'), 'utf8')).toContain('old');
     await transaction.pending;

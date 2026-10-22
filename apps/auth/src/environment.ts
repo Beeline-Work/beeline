@@ -1,11 +1,6 @@
 import { OidcClient } from './oidc.js';
 import type { AuthTenant } from './server.js';
 
-/** Prefer Beeline names while retaining existing operator configuration. */
-export function readEnv(env: NodeJS.ProcessEnv, suffix: string): string | undefined {
-  return env[`BEELINE_${suffix}`] ?? env[`BUZZY_${suffix}`];
-}
-
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`${name} is required`);
@@ -13,14 +8,10 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 export function authTenantsFromEnvironment(env: NodeJS.ProcessEnv): AuthTenant[] {
-  const raw = readEnv(env, 'AUTH_TENANTS_JSON');
-  if (!raw)
-    throw new Error('BEELINE_AUTH_TENANTS_JSON is required (BUZZY_AUTH_TENANTS_JSON still works)');
+  const raw = env.BEELINE_AUTH_TENANTS_JSON;
+  if (!raw) throw new Error('BEELINE_AUTH_TENANTS_JSON is required');
   const parsed = JSON.parse(raw) as unknown;
-  if (!Array.isArray(parsed))
-    throw new Error(
-      'BEELINE_AUTH_TENANTS_JSON (BUZZY_AUTH_TENANTS_JSON still works) must be an array',
-    );
+  if (!Array.isArray(parsed)) throw new Error('BEELINE_AUTH_TENANTS_JSON must be an array');
   return parsed.map((entry) => {
     if (!entry || typeof entry !== 'object') throw new Error('invalid auth tenant');
     const candidate = entry as Record<string, unknown>;
@@ -49,13 +40,8 @@ export function authTenantsFromEnvironment(env: NodeJS.ProcessEnv): AuthTenant[]
 }
 
 export function oidcClientFromEnvironment(env: NodeJS.ProcessEnv): OidcClient {
-  const oidcEnv = { ...env };
-  for (const suffix of ['ISSUER', 'AUTHORIZATION_ENDPOINT', 'TOKEN_ENDPOINT', 'JWKS_URI', 'CLIENT_ID', 'CLIENT_SECRET']) {
-    const name = `BEELINE_AUTH_OIDC_${suffix}`;
-    oidcEnv[name] = env[name] ?? env[`BUZZY_AUTH_OIDC_${suffix}`];
-  }
-  const allowInsecure =
-    env.NODE_ENV !== 'production' && (env.BEELINE_AUTH_ALLOW_INSECURE_OIDC ?? env.BUZZY_AUTH_ALLOW_INSECURE_OIDC) === 'true';
+  const oidcEnv = env;
+  const allowInsecure = env.NODE_ENV !== 'production' && env.BEELINE_AUTH_ALLOW_INSECURE_OIDC === 'true';
   const oidc = new OidcClient({
     issuer: required(oidcEnv, 'BEELINE_AUTH_OIDC_ISSUER'),
     authorizationEndpoint: required(oidcEnv, 'BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT'),

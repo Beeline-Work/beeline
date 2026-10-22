@@ -267,18 +267,6 @@ describe('Room turn phase trace', () => {
     } });
     expect(operations).not.toContain('getAgentUsage');
   });
-  it('uses the legacy private layout on the next cold activation after rollback', async () => {
-    vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
-
-      const { acpOptions, receipts } = await runTurns({
-        sharedAssets: true,
-        asks: [{ id: 'rollback-room', body: 'work' }],
-        prompt: async () => answer('Done'),
-      });
-      expect(receipts.at(-1)?.status).toBe('complete');
-      expect(acpOptions?.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
-  });
-
   it.each(AGENT_KINDS)('shares downloads for unpinned %s harness turns', async (kind) => {
     const hostCommand = `host-${kind}`;
     const { acpOptions, receipts } = await runTurns({

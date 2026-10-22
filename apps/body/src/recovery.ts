@@ -191,8 +191,6 @@ export async function bootstrapMachine(env: NodeJS.ProcessEnv = process.env): Pr
     }
   }
   if (!releaseId) {
-    if (env.BEELINE_UPDATE_DISABLE === '1')
-      throw new Error('automatic release selection disabled; no verified runnable release');
     // Recovery of a missing/broken install still prepares before importing code.
     releaseId = (await prepareMachineRelease(layout, {
       env, deadlineAt: Date.now() + 180_000, logger: line => console.error(line),

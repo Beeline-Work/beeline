@@ -79,9 +79,6 @@ describe('archived corner branch cleanup', () => {
       const first = internal.roomConfig('room-a', resolve(root, 'rooms/room-a'));
       const second = internal.roomConfig('room-b', resolve(root, 'rooms/room-b'));
       expect(first.agentSharedAssetRoot).toBe(second.agentSharedAssetRoot);
-      vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
-      expect(internal.roomConfig('room-a', resolve(root, 'rooms/room-a')).agentSharedAssetRoot).toBeUndefined();
-      expect(internal.roomConfig('room-b', resolve(root, 'rooms/room-b')).agentSharedAssetRoot).toBeUndefined();
     } finally { await coordinator.shutdown(); }
   });
 

@@ -2849,7 +2849,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'wake': {
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
-      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
       if (args.trigger !== 'lifecycle' && args.address !== undefined) throw new Error('address is only supported for lifecycle wakes; schedules and events belong to this place');
       if (args.trigger === 'lifecycle' && !args.address) throw new Error('lifecycle wake requires address');
@@ -3558,6 +3558,7 @@ async function executeAgentOperation(
       if (!prompt) throw new Error('prompt is required');
       const result = await daemonExecute('createAgentSubscription', {
         roomId: agentScheduleRoomId(), source, event, prompt,
+        title: args.title, when: args.when,
         ...(typeof args.repository === 'string' ? { repository: args.repository } : {}),
         ...(typeof args.channelId === 'string' ? { channelId: args.channelId } : {}),
         ...(typeof args.channelName === 'string' ? { channelName: args.channelName } : {}),

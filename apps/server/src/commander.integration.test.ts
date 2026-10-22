@@ -898,7 +898,7 @@ it('lists only the caller’s own lifecycle watches at the current address', asy
 });
 
 it('compact schedule operations manage only self-owned sources', async () => {
-  const mine = await daemon.execute('createAgentSchedule', { ...authority(order), agentId: RUBY,
+  const mine = await daemon.execute('createAgentSchedule', { title: 'Scheduled check', ...authority(order), agentId: RUBY,
     prompt: 'Inspect my pending work', cadence: { kind: 'interval', everyMinutes: 5 } }, RUBY) as { scheduleId: string };
   const otherId = randomUUID();
   await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)

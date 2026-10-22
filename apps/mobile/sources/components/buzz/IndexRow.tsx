@@ -164,6 +164,8 @@ export type IndexRowProps = {
   descriptionContent?: React.ReactNode;
   /** A second quiet line under `description`, for one provenance fact. */
   descriptionDetail?: string;
+  /** Inline marks and text for the second quiet line; descriptionDetail is its spoken text. */
+  descriptionDetailContent?: React.ReactNode;
   /** A failed row may put its exact error in the subtitle. */
   descriptionTone?: 'danger';
   descriptionAction?: IndexRowDescriptionAction;
@@ -238,6 +240,7 @@ export function IndexRow({
   descriptionAction,
   descriptionContent,
   descriptionDetail,
+  descriptionDetailContent,
   descriptionLead,
   descriptionTone,
   disabled = false,
@@ -408,11 +411,11 @@ export function IndexRow({
             ) : null}
           </View>
         ) : null}
-        {descriptionDetail ? (
-          <View style={styles.descriptionRow}>
-            <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>
+        {descriptionDetail || descriptionDetailContent ? (
+          <View style={[styles.descriptionRow, Boolean(descriptionDetailContent) && styles.inlineDetail]}>
+            {descriptionDetailContent ?? <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>
               {descriptionDetail}
-            </Text>
+            </Text>}
           </View>
         ) : null}
       </View>
@@ -429,7 +432,7 @@ export function IndexRow({
     </>
   );
 
-  const described = Boolean(description || descriptionContent || descriptionDetail);
+  const described = Boolean(description || descriptionContent || descriptionDetail || descriptionDetailContent);
   const rowStyle = [
     styles.row,
     density === 'sheet' ? styles.sheetRow : styles.pageRow,
@@ -531,6 +534,7 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
       marginTop: DESCRIPTION_GAP,
     },
+    inlineDetail: { gap: 0 },
     descriptionLeadRow: { gap: hull.space.xs },
     descriptionLead: {
       ...Typography.default(),

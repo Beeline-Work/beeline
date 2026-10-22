@@ -1,3 +1,5 @@
+import { ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
+
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
 export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
@@ -1054,27 +1056,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         },
         "mime": {
           "type": "string",
-          "enum": [
-            "text/html",
-            "image/svg+xml",
-            "application/pdf",
-            "text/markdown",
-            "image/png",
-            "image/jpeg",
-            "image/gif",
-            "image/webp",
-            "text/plain",
-            "application/json",
-            "text/csv",
-            "application/zip",
-            "video/mp4",
-            "video/quicktime",
-            "video/webm",
-            "audio/mpeg",
-            "audio/wav",
-            "audio/mp4",
-            "application/octet-stream"
-          ],
+          "enum": [...ARTIFACT_MIME_TYPES],
           "description": "The artifact mime type; it selects the validator and the viewer. Optional when posting by path (defaults to the file extension)."
         }
       },

@@ -42,8 +42,7 @@ Pass `--profile <file>` containing the live `agentId`, `model` (`grok-4.7`),
 configuration read. The runner hashes this snapshot into its result and copies
 the soul into the disposable fixture; it never updates the live agent. Without
 a snapshot the fixture has a neutral persona and can only be a smoke test.
-Before calling a run an as-configured Nerd baseline, confirm the normal login route; the incomplete first attempt is explicitly not
-that baseline. Never infer identity/configuration parity from the display name.
+Before calling a run an as-configured Nerd baseline, confirm the normal login route; the incomplete attempts are explicitly not a completed baseline. Nerd subsequently supplied an as-configured smoke with its profile hash in `cases/discovery/nerd-smoke.json`; that normal signed-in route hit the same provider balance refusal. Never infer identity/configuration parity from the display name.
 
 No schedule worker runs in the fixture. Created reminders cannot dispatch real
 work. The cleanup case must create then delete its reminder; remaining rows are

@@ -69,8 +69,8 @@ capability gaps or pass rate have been measured.
 
 ## Run prerequisites, ranked
 
-1. Restore or identify Nerd’s normal active Grok subscription route. The owner’s shared CLI login was authenticated but the provider returned HTTP 402, “Grok Build usage balance exhausted.” No account/model was substituted.
-2. Capture Nerd’s authorized current soul/model/effort snapshot. The live Members read confirms Grok 4.7 xhigh, but this session cannot see Nerd’s private harness home. Run with the profile on Nerd’s normal route before labeling results a baseline.
+1. Restore allowance on Nerd’s existing Grok subscription route. Both the owner’s shared login and Nerd’s own normal signed-in harness returned HTTP 402, “Grok Build usage balance exhausted.” No account/model was substituted.
+2. Rerun the usage smoke and then the full cohort after the provider accepts requests. Nerd captured its current soul/model/effort privately and attempted that exact signed-in route. The attached result is preserved in [nerd-smoke.json](nerd-smoke.json), including configuration and source hashes; the smoke completed no cases. The full cohort and wording judgments are still outstanding.
 3. Reuse the existing game-mime-schema follow-up for the independently reproduced advertised-schema gap. The game MIME exists in artifact validation but the current tool input enum rejects it. This is service evidence, not something Nerd did.
 
 ## Verified service paths
@@ -81,7 +81,7 @@ The no-model integration test sends calls through the production MCP and local H
 
 - Live Beeline Members read: Nerd is online, model grok-4.7-xhigh.
 - Installed CLI: Grok 1.0.52. The local Room, ACP session, skill filter and model-selection path launch; the provider returns the balance refusal.
-- Host filesystem: Nerd’s private agent directory is absent from this session’s view. Its private configuration was not read.
+- Host filesystem: Nerd’s private agent directory is outside Jellybean’s session view. Nerd then ran the isolated smoke itself with its authorized private profile and normal GROK_HOME; that route returned the same provider balance refusal.
 - Connected-service discovery: the separate Grok API connector is not connected. It is not the required normal harness route, so it was not provisioned or used as a substitute.
 
 Ruby owns skill-fix follow-ups after a complete measured run. There are no observed model-discovery gaps to file yet.

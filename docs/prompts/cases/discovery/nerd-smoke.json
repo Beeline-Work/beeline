@@ -1,0 +1,58 @@
+{
+  "sourceHashes": {
+    "scripts/discovery-live.mjs": "07379ce53308274485c4fd78a9e285e7f997e36cfde114ae58dab3af2e567b27",
+    "scripts/discovery-launch.mjs": "28f357556f2ac40d19bbc7edd31b8b04e817717263e1ab1a67a448951830dcad",
+    "scripts/discovery-mcp.mjs": "5d46366a5f82014d6c8ee07ecaf565b1674cd6f75787c1d221a39321a9deeb61",
+    "scripts/discovery-score.mjs": "573c5953878d00f75042601935f90bbcceeddad38d488404ec360a0467c34e47",
+    "docs/prompts/cases/discovery/corpus.json": "077836425b3a061509a617a1cbdb8f9d918ec4629178456a554007272b8a522c",
+    "apps/body/src/beeline-skill.ts": "ba0b92d8ee8166fc86fa3048092c7b0e7d515d5ccdd998dd91993e2a499c4009",
+    "apps/body/src/prompt-assembly.ts": "2c4ee143d62eb0819ef65061c515200f93397af1c6aa3426c8f45a1106757ea1",
+    "apps/body/src/minimal-tool-surface.ts": "f6dd71fe4036140d5252032dfe2dd9d6c4b0d0642c88bca4eecc603a06066cf8",
+    "apps/body/dist/read-only-mcp.js": "b4797b566447280b4c8c772dcdb1e0b67861c7907a688f20c654d2c1150a5996"
+  },
+  "configurationParity": {
+    "agentId": "2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762",
+    "profileSha256": "a9878abbf7f827f367a8481150286b1e2da0e4d15dd52501125c19ba81989171"
+  },
+  "agent": "nerd",
+  "model": "grok-4.7",
+  "effort": "xhigh",
+  "harness": "grok 1.0.52 (0920c8169e27)",
+  "commit": "7f8530faca3bb8a45b62a5eda733294cf260c064",
+  "startedAt": "2026-10-22T20:07:46.499Z",
+  "rows": [
+    {
+      "id": "usage",
+      "category": "usage",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read own live plan/allowance; report reset without inventing figures"
+      },
+      "status": "incomplete",
+      "reason": "ACP error -32603: Internal error; harness stderr: 2026-10-22T20:07:54.227799Z ERROR failed to decode Some(RawValue({})): Method not found 2026-10-22T20:08:04.986628Z ERROR responses API error status=\u2026",
+      "provisional": false
+    }
+  ],
+  "passed": 0,
+  "completed": 0,
+  "total": 1,
+  "passRate": null,
+  "provisionalPassRate": null,
+  "completedPassRate": null,
+  "gaps": [],
+  "observations": [
+    {
+      "id": "usage",
+      "room": "e1207c90-7aff-425e-8a89-431d1c9dc14a",
+      "completed": false,
+      "calls": [],
+      "text": "",
+      "execution": "local-service",
+      "error": "ACP error -32603: Internal error; harness stderr: 2026-10-22T20:07:54.227799Z ERROR failed to decode Some(RawValue({})): Method not found 2026-10-22T20:08:04.986628Z ERROR responses API error status=\u2026",
+      "effects": {
+        "remainingSchedules": 0,
+        "objects": []
+      }
+    }
+  ]
+}

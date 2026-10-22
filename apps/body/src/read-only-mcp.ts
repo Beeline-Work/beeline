@@ -3496,8 +3496,7 @@ async function executeAgentOperation(
       );
     case 'post': {
       const cornerId = typeof args.cornerId === 'string' && args.cornerId
-        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-      if (!cornerId) throw new Error('address is required outside a corner');
+        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID');
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(

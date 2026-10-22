@@ -431,13 +431,19 @@ describe('open_corner over the grok wire', () => {
     );
   }, 30_000);
 
-  it('R1: refuses post outside a corner when no corner is named', async () => {
+  it.each([
+    { cornerId: undefined, directMessage: false },
+    { cornerId: undefined, directMessage: true },
+    { cornerId: CORNER, directMessage: false },
+  ].flatMap(options => [false, true].map(explicit => ({ ...options, explicit }))))('posts to its current place: %j', async ({ explicit, ...options }) => {
     const door = await daemonDoor();
-    const { result } = await callTool(door.origin, {text: 'A note'}, { name: 'post' });
-
-    expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toContain('address is required outside a corner');
-    expect(door.calls.some((call) => call.operation === 'postCornerMessage')).toBe(false);
+    const { result } = await callTool(door.origin, { text: 'A note',
+      ...(explicit ? { address: options.cornerId ?? ROOM } : {}),
+    }, { name: 'post', ...options });
+    expect(result?.isError).not.toBe(true);
+    expect(door.calls).toContainEqual(expect.objectContaining({
+      operation: 'postCornerMessage', cornerId: options.cornerId ?? ROOM, text: 'A note',
+    }));
   }, 30_000);
 
   it('acts on a named child corner from a Room turn: close, close PR, rename, read, list and post', async () => {

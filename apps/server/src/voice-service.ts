@@ -21,7 +21,7 @@ import { VoiceRoomRuntime } from './voice-room-runtime.js';
 import type { SpeechMember } from './markdown-to-speech.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
-  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal) => Promise<string>; budgetLimitMs?: number; objects?: ObjectService };
+  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal, currentTime?: number) => Promise<string>; budgetLimitMs?: number; objects?: ObjectService };
 type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null; end_reason?: string | null };
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
 const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
@@ -452,7 +452,7 @@ export class VoiceService {
       }, { roomId: source.room_id, agentId, query: request.query, limit: 3 }));
     }
     if (!this.config.searchWeb) throw new Error('Voice web search is unavailable');
-    return this.config.searchWeb(request.query, signal);
+    return this.config.searchWeb(request.query, signal, request.currentTime);
   }
 
   async dispatch(callId: string, sourceId: string, agentId: string) {

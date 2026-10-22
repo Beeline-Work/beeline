@@ -37,7 +37,7 @@ const dmPrompt = (context: Partial<SessionPromptContext> = {}) =>
 describe('GitHub routing across sessions', () => {
   it.each(PROMPT_SURFACES)('keeps linked-repository writes on the App in %s', (surface) => {
     const prompt = sessionPrompt({ surface }).systemPrompt;
-    expect(prompt).toContain('use the Beeline GitHub App for linked-repository code, branch and PR writes');
+    expect(prompt).toContain('Beeline App writes linked repos');
     expect(prompt).not.toContain('prefer personal GitHub over the repository App');
   });
 });
@@ -239,7 +239,7 @@ describe('Room guidance', () => {
     for (const surface of ['room', 'dm'] as const) {
       const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
       expect(context.systemPrompt).toContain(
-        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
+        'Services: use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
       );
       expect(context.systemPrompt).not.toContain('For every user request');
       expect(context.systemPrompt).not.toContain('sign up for an account');

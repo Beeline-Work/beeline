@@ -73,7 +73,7 @@ describe('locked event row v2', () => {
     expect(rows[1]).toBe(decision);
     expect(rows[1].notificationLifecycleRun).toBeUndefined();
   });
-  it('keeps corner opens as markers, hides closes and cleanup, preserves merged PR facts', () => {
+  it('folds unanchored corner opens, hides closes and cleanup, preserves merged PR facts', () => {
     const opened = corner('opened', 'corner-open');
     const merged = {
       ...corner('merged', 'corner-complete'),
@@ -89,10 +89,11 @@ describe('locked event row v2', () => {
       corner('closed', 'corner-complete'),
       corner('cleaned', 'worktree-cleaned'),
     ]);
-    expect(rows.map((row) => row.id)).toEqual(['opened', 'merged']);
-    expect(rows[0]).toBe(opened);
-    expect(lifecycleSummary(rows[1].notificationLifecycleRun!.items)).toBe('1 PR merged');
-    expect(rows[1].notificationLifecycleRun?.items[0]).toMatchObject({
+    expect(rows.map((row) => row.id)).toEqual(['opened']);
+    expect(lifecycleSummary(rows[0].notificationLifecycleRun!.items)).toBe(
+      '1 corner opened · 1 PR merged',
+    );
+    expect(rows[0].notificationLifecycleRun?.items[1]).toMatchObject({
       cornerId: 'merged',
       url: merged.daemonFact.pullRequest.url,
     });
@@ -168,8 +169,26 @@ it('folds passive payment and wallet records but keeps an insufficient-funds act
 });
 
 it('retains the original opening event when the server settles that card in place', () => {
-  const opened = { id: 'opened', text: 'Opened a corner', timestamp: 1, isUser: false,
-    daemonFact: { type: 'corner-complete' as const, cornerId: 'corner', objective: 'Task', outcome: 'abandoned' as const },
-    systemEvent: { kind: 'corner-opened' as const, subject: { kind: 'agent' as const, name: '@ruby' }, verb: 'opened a corner' } };
-  expect(foldPrLifecycleRuns([opened])).toEqual([opened]);
+  const opened = {
+    id: 'opened',
+    text: 'Opened a corner',
+    timestamp: 1,
+    isUser: false,
+    daemonFact: {
+      type: 'corner-complete' as const,
+      cornerId: 'corner',
+      objective: 'Task',
+      outcome: 'abandoned' as const,
+    },
+    systemEvent: {
+      kind: 'corner-opened' as const,
+      subject: { kind: 'agent' as const, name: '@ruby' },
+      verb: 'opened a corner',
+    },
+  };
+  expect(foldPrLifecycleRuns([opened])[0].notificationLifecycleRun?.items[0]).toMatchObject({
+    state: 'Opened',
+    kind: 'corner',
+    cornerId: 'corner',
+  });
 });

@@ -1,7 +1,8 @@
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { ChevronGlyph, CHEVRON_ROW_SIZE } from './ChevronGlyph';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
 
@@ -10,9 +11,9 @@ const HIT_SLOP = { top: 6, bottom: 6 } as const;
 
 /**
  * The line a message carries once a corner was opened from it: the branch
- * mark, `Corner opened · <title>`, and a brass `Open →` that goes straight
+ * mark, `Corner opened · <title>`, and a brass corner chevron that goes straight
  * into that corner. Inscribed, not framed — it is a fact about the message
- * above, in the ledger's quiet tier, with the one brass word as its action.
+ * above, in the ledger's quiet tier, with the brass chevron as its action.
  * The whole line is the target so the tap never has to find the word.
  */
 export function CornerOpenedMarker({
@@ -27,6 +28,7 @@ export function CornerOpenedMarker({
   onOpen: () => void;
   testID?: string;
 }) {
+  const { theme } = useUnistyles();
   return (
     <Pressable
       accessibilityLabel={`Open corner ${title}`}
@@ -42,9 +44,9 @@ export function CornerOpenedMarker({
       <Text numberOfLines={1} style={styles.line}>
         {closed ? 'Corner closed' : 'Corner opened'}
         {' · '}
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.title}>#{title}</Text>
       </Text>
-      <Text style={styles.open}>Open →</Text>
+      <ChevronGlyph color={theme.buzz.accent} size={CHEVRON_ROW_SIZE} />
     </Pressable>
   );
 }
@@ -53,6 +55,7 @@ const styles = StyleSheet.create((theme) => ({
   marker: {
     width: '100%',
     minWidth: 0,
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.buzz.space.sm,
@@ -72,10 +75,4 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   title: { color: theme.buzz.ledgerBody },
-  open: {
-    ...theme.buzz.type.meta,
-    fontFamily: theme.buzz.proseRegular,
-    color: theme.buzz.accent,
-    flexShrink: 0,
-  },
 }));

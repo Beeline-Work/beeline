@@ -510,8 +510,6 @@ function CornerCockpit({
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
         ) : kind === 'github' ? (
           <GitHubEventCard message={item} onOpenUrl={openUrl} />
-        ) : kind === 'daemon' && (item.daemonFact?.type === 'corner-open' || item.systemEvent?.kind === 'corner-opened') ? (
-          marker(item)
         ) : kind === 'daemon' ? (
           <DaemonFactCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={openUrl} />
         ) : kind === 'system' ? (

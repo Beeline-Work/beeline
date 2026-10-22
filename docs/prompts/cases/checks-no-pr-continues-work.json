@@ -1,0 +1,64 @@
+{
+  "id": "checks-no-pr-continues-work",
+  "section": "corner",
+  "summary": "A mid-task implementer with no PR continues work after reading checks rather than inventing a PR URL.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    },
+    "reviewerHandle": "@juniper",
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "Continue the assigned token expiry fix. No pull request has been opened. You just called read(facet:checks); its result is in the transcript. Choose your next action.",
+      "commandReason": "order"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "brief": {
+      "fileLines": [
+        "apps/server/src/auth.ts"
+      ]
+    }
+  },
+  "pass": {
+    "all": [
+      {
+        "call": "Bash"
+      },
+      {
+        "noCall": "read",
+        "args": {
+          "facet": "checks"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "https://github\\.com/[^\\s]+/pull/\\d+"
+          }
+        }
+      }
+    ]
+  },
+  "messages": [
+    "Tool result \u2014 read(facet:checks): {\"checks\": \"unknown\", \"reason\": \"no pull request or checks are recorded for this corner\", \"approved\": false, \"held\": false, \"mergeAllowed\": false, \"reviewer\": null, \"reviewerExists\": false, \"archived\": false, \"next\": \"No PR is recorded for this corner yet. Continue the assigned work; when it is ready, push the corner branch and open a PR. If you already opened one, print its actual full URL as your final response so it can be recorded, then end the turn. Do not invent a PR URL or reread checks before a PR exists.\"}"
+  ],
+  "tools": [
+    "Bash"
+  ],
+  "toolResults": {
+    "read": "{\"checks\": \"unknown\", \"reason\": \"no pull request or checks are recorded for this corner\", \"approved\": false, \"held\": false, \"mergeAllowed\": false, \"reviewer\": null, \"reviewerExists\": false, \"archived\": false, \"next\": \"No PR is recorded for this corner yet. Continue the assigned work; when it is ready, push the corner branch and open a PR. If you already opened one, print its actual full URL as your final response so it can be recorded, then end the turn. Do not invent a PR URL or reread checks before a PR exists.\"}"
+  }
+}

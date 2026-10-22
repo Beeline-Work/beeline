@@ -2453,6 +2453,23 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
   });
 
+  it('R1 preserves an unlocked corner, its open PR and the owner merge hold when phone close is refused', async () => {
+    const cornerId = await inReview();
+    const hold = await phone.execute('setCornerHold', { cornerId }, H);
+    const before = (await db.query(`SELECT lifecycle,locked FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!;
+    expect(before.locked).toBe(false);
+    await expect(phone.execute('requestCornerClose', { roomId: cornerId }, H)).rejects.toMatchObject({
+      status: 409,
+      message: 'close the corner pull request with close_corner_pr before closing the corner',
+    });
+    expect((await db.query(`SELECT lifecycle,locked FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]).toEqual(before);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
+    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).toBeNull();
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+  });
+
   it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,

@@ -85,7 +85,16 @@ export class MonolithPhoneOperationError extends Error {
  * saying why reads as a control that does nothing.
  */
 export function phoneOperationFailureReason(error: unknown): string {
-  if (error instanceof MonolithPhoneOperationError) return error.code;
+  if (error instanceof MonolithPhoneOperationError) {
+    if (
+      error.operation === 'requestCornerClose' &&
+      error.status === 409 &&
+      error.code === 'close the corner pull request with close_corner_pr before closing the corner'
+    ) {
+      return 'This corner still has an open pull request. Ask an agent to close the pull request, then try closing the corner again.';
+    }
+    return error.code;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 

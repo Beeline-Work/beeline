@@ -263,7 +263,10 @@ describe('corner message attribution', () => {
     await greenHead(11, '1'.repeat(40));
     const [review] = await commands(B, C);
     await claim(review!);
-    await result(review!, '@human the reproduction is missing. Fix that and push.');
+    // A check event is not a human assignment, even when its fixture author is human.
+    await expect(result(review!, '@human the reproduction is missing. Fix that and push.'))
+      .rejects.toThrow('not your direct commander');
+    await result(review!, 'The reproduction is missing. Fix that and push.');
     expect(await commands(A, C)).toEqual([]);
     expect((await db.query<{ workflow_state: string }>(
       `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
@@ -770,16 +773,14 @@ describe('corner message attribution', () => {
       const send = vi.fn().mockResolvedValue(undefined);
       const push = new PushDeliveryLoop(db, { send });
       await push.runOnce();
-      const source = await systemLine(db, {
-        roomId: C,
-        authorId: H,
-        subject: { kind: 'person', id: H, name: 'Human' },
-        verb: 'requested work',
-      });
+      // An Attention request is a human message, not a system lifecycle fact.
+      const sourceId = 'd'.repeat(63) + (tagged ? '1' : '0');
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Please attach the report.')`,
+        [sourceId, C, H]);
       await createAgentCommand(db, {
         roomId: C,
         agentId: A,
-        sourceMessageId: source.id,
+        sourceMessageId: sourceId,
         reason: 'corner_objective',
       });
       const [worker] = await commands(A, C);

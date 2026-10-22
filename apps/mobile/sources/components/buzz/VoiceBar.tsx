@@ -71,7 +71,7 @@ const styles = StyleSheet.create(theme => ({
   selected: { backgroundColor: theme.buzz.bgHighlight, borderColor: theme.buzz.borderStrong },
   pinBadge: { position: 'absolute', top: -7, right: -7, width: 18, height: 18, borderRadius: 3, backgroundColor: theme.buzz.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.buzz.bgBase, zIndex: 2 },
   pinnedName: { color: theme.buzz.textPrimary, fontFamily: theme.buzz.proseSemibold },
-  pinLine: { justifyContent: 'center', height: 20, paddingRight: 44, marginBottom: 8 },
+  pinLine: { justifyContent: 'center', height: 20, paddingRight: theme.buzz.space.xxl, marginBottom: 8 },
   unpinTarget: { position: 'absolute', right: -8, top: -12 },
   pinLabel: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
   unpin: { ...theme.buzz.type.meta, color: theme.buzz.accent, textDecorationLine: 'underline' },

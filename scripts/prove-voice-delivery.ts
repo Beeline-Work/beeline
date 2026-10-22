@@ -91,6 +91,8 @@ service.dispatch = async (...args) => {
   await originalDispatch(...args);
   deliveries.push({source: args[1], at: Date.now()});
 };
+// Keep the disposable call open while capturing the pin states in both themes.
+if (process.env.VOICE_PIN_PROOF === '1') service.callWorkState = async () => ({ pending: true, finishedAt: 0 });
 const nativeHuman = process.env.SILENCE_PROOF_ANDROID_FIRST === '1' ? H : SECOND;
 const partner = nativeHuman === H ? SECOND : H;
 const first = await service.join(R,partner);

@@ -234,7 +234,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           await room.connect(fresh.url, fresh.token);
           if (version !== revision.current) { await release(); await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           const agentId = targetRef.current;
-          if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
+          await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(agentId
+            ? { type: 'target', agentId, tap: true } : { type: 'unpin' })),
             { reliable: true, topic: VOICE_DATA_TOPIC });
           await room.localParticipant.setMicrophoneEnabled(!quotaRef.current && !mutedRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
           microphonePublished = true;

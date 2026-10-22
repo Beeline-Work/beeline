@@ -1,0 +1,19 @@
+{
+  "mode": "baseline",
+  "prompt": "Ruby ready?",
+  "samplesMs": [
+    27.936064000001352,
+    25.37923800000135,
+    28.081500000000233,
+    34.476713000003656,
+    27.33762900000147,
+    30.520119999993767,
+    22.81140400000004,
+    29.546214999994845,
+    48.74685700000555,
+    56.84401299999445
+  ],
+  "medianMs": 28.81385749999754,
+  "warmupTurns": 2,
+  "path": "HTTP utterance -> production runtime -> disposable PGlite -> controlled provider SSE/PCM -> native LiveKit captureFrame -> native RTC latency signal; excludes live model/network and phone speaker latency"
+}

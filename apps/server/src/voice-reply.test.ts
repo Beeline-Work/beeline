@@ -17,3 +17,7 @@ it('Reproduction R2: makes today current evidence for every voice prompt', () =>
 it('preserves a quotation in the answer after an unquoted label', () => {
   expect(cleanVoiceReply('Niglet: “Hello,” I said.', 'Niglet')).toBe('“Hello,” I said.');
 });
+
+it.each(['Dr. Ruby', '[Ruby]', 'Ruby+'])('escapes the own name literally: %s', name => {
+  expect(cleanVoiceReply(`${name}: Hello.`, name)).toBe('Hello.');
+});

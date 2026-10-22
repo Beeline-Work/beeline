@@ -1,0 +1,11 @@
+{
+  "platform": "Android API 36 x86_64",
+  "viewport": "1080x2400",
+  "standIn": "Production voice controls and hook, disposable native RTC fixture",
+  "sha256": {
+    "apps/mobile/sources/buzz/use-voice-call.ts": "71feade167691bffb3f7921942e65953c07292911aa671c4c3e6cefa55beb60d",
+    "apps/mobile/sources/components/buzz/VoiceBar.tsx": "c58966befb26295258857c5630cc335cfd38176dce4f483f116d25e5ff6fc671",
+    "apps/mobile/scripts/voice-delivery-native-proof.tsx": "f447ffbf4a3728def6f4ac24edb546f80d140289390ee06cacc734c330d28051",
+    "apps/mobile/android/app/build/outputs/apk/release/app-release.apk": "3ce18cc8a040ba4da9988477b61f454d3f3883afe1039d5d2cc9470e6308a11f"
+  }
+}

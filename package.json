@@ -82,7 +82,9 @@
     "prove:runnable-server": "node --import tsx scripts/serve-runnable-artifact-proof.mjs",
     "game-host": "node scripts/runnable-artifact-proxy.mjs",
     "mobile:web": "npm run web --prefix apps/mobile",
-    "mobile:typecheck": "npm run typecheck --prefix apps/mobile"
+    "mobile:typecheck": "npm run typecheck --prefix apps/mobile",
+    "prompt:discovery": "node --import tsx scripts/discovery-live.mjs",
+    "test:prompt-discovery": "node --import tsx --test scripts/discovery-score.test.mjs scripts/discovery-service.test.mjs scripts/discovery-launch.test.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

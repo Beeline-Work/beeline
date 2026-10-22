@@ -50,6 +50,8 @@ jobs:
               - 'scripts/prompt-case-rules.test.ts'
               - 'scripts/prompt-nightly.mjs'
               - 'scripts/prompt-nightly.test.mjs'
+              - 'scripts/discovery-*.mjs'
+              - 'docs/prompts/discovery.md'
               - '.github/workflows/prompt-cases.yml'
 
   prompt-cases:
@@ -67,9 +69,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Build the shared contract the assembler imports
-        run: npx turbo run build --filter=@beeline/api-contract
+      - name: Build contracts and local service harness
+        run: npx turbo run build --filter=@beeline/body --filter=@beeline/server
       - name: Check the case library
         run: npm run test:prompt-cases
       - name: Check nightly replay controls without spending model tokens
         run: npm run test:prompt-nightly
+      - name: Check capability discovery controls and real local service paths
+        run: npm run test:prompt-discovery

@@ -1,0 +1,73 @@
+/** Exercise real local MCP -> service -> persisted schedule and artifact paths, without a model. */
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { randomUUID, createHash } from 'node:crypto';
+import { test } from 'node:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { fixture } from './discovery-live.mjs';
+test('safe actions persist and clean up; unsafe call is only recorded', { timeout: 60000 }, async () => {
+    const f = await fixture();
+    const root = await mkdtemp(join(tmpdir(), 'discovery-service-'));
+    const client = new Client({ name: 'discovery-controller', version: '1.0.0' });
+    try {
+        const identities = await f.database.query(`SELECT id,kind FROM identities WHERE handle IN ('nerd','fixture-owner')`);
+        const agent = identities.rows.find((r) => r.kind === 'agent').id;
+        const human = identities.rows.find((r) => r.kind === 'human').id;
+        const room = randomUUID();
+        const workspace = (await f.database.query(`SELECT id FROM workspaces WHERE name='Discovery evaluation'`)).rows[0].id;
+        await f.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Test actions')`, [room, workspace]);
+        await f.database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [workspace, room, human, agent]);
+        const messageId = createHash('sha256').update(room).digest('hex');
+        await f.phone.execute('sendRoomMessage', { roomId: room, messageId, text: '@nerd Create and remove a test schedule; post a test file.' }, human);
+        const command = (await f.database.query(`SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1`, [room])).rows[0];
+        const generation = randomUUID();
+        await f.daemon.execute('claimAgentCommand', { roomId: room, commandId: command.id, generationId: generation }, agent);
+        const context = join(root, 'turn.json');
+        await writeFile(context, JSON.stringify({ roomId: room, requestId: command.turn_request_id, generationId: generation }));
+        const trace = join(root, 'trace.jsonl');
+        await writeFile(trace, '');
+        await client.connect(new StdioClientTransport({ command: process.execPath, args: [resolve('scripts/discovery-mcp.mjs'), resolve('apps/body/dist/read-only-mcp.js')], env: {
+                PATH: process.env.PATH, HOME: root, BEELINE_TURN_CONTEXT_FILE: context, BEELINE_DISCOVERY_TRACE: trace, BEELINE_MCP_SURFACE: 'agent',
+                BEELINE_DAEMON_BASE_URL: f.origin, BEELINE_DAEMON_TOKEN: f.daemonToken, BEELINE_DAEMON_AGENT_ID: agent,
+                BEELINE_DAEMON_ROOM_ID: room, BEELINE_DAEMON_WORKSPACE_ID: workspace, BEELINE_ATTACH_ROOT: root, BEELINE_ATTACH_SCRATCH_ROOT: root,
+                BEELINE_OPERATOR_HOME: root,
+            } }));
+        const members = await client.callTool({ name: 'read', arguments: { facet: 'members' } });
+        assert.equal(members.isError, undefined, JSON.stringify(members));
+        const created = await client.callTool({ name: 'wake', arguments: { action: 'create', trigger: 'schedule', title: 'Eval cleanup', cadence: { kind: 'interval', everyMinutes: 10 }, prompt: 'A local fixture reminder' } });
+        assert.ok(!created.isError, JSON.stringify(created));
+        const schedules = await f.database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [room]);
+        assert.equal(schedules.rows.length, 1, JSON.stringify(created));
+        const deleted = await client.callTool({ name: 'wake', arguments: { action: 'delete', trigger: 'schedule', scheduleId: schedules.rows[0].id } });
+        assert.ok(!deleted.isError, JSON.stringify(deleted));
+        assert.equal((await f.database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [room])).rows.length, 0);
+        const artifact = join(root, 'hello.txt');
+        await writeFile(artifact, 'hello');
+        const posted = await client.callTool({ name: 'post_artifact', arguments: { path: artifact, mime: 'text/plain', title: 'Fixture text' } });
+        assert.ok(!posted.isError, JSON.stringify(posted));
+        const objects = await f.database.query(`SELECT mime FROM objects WHERE owner_id=$1`, [agent]);
+        assert.deepEqual(objects.rows.map((r) => r.mime), ['text/plain']);
+        const game = join(root, 'game.html');
+        await writeFile(game, '<!doctype html><button onclick="this.textContent=Number(this.textContent)+1">0</button>');
+        const playable = await client.callTool({ name: 'post_artifact', arguments: { path: game, mime: 'application/vnd.beeline.game+html', title: 'Tap game' } });
+        const schemas = await client.listTools();
+        const supportsGame = JSON.stringify(schemas.tools.find((t) => t.name === 'post_artifact').inputSchema).includes('application/vnd.beeline.game+html');
+        // Keep the as-is schema gap observable; this corner does not fix tool text.
+        assert.equal(Boolean(playable.isError), !supportsGame, JSON.stringify(playable));
+        assert.equal((await f.database.query(`SELECT id FROM objects WHERE owner_id=$1 AND mime=$2`, [agent, 'application/vnd.beeline.game+html'])).rows.length, supportsGame ? 1 : 0);
+        // This operation never crosses the forwarding boundary, including on a repo-less Room.
+        const intended = await client.callTool({ name: 'merge_corner', arguments: { address: 'fixture-corner' } });
+        assert.match(JSON.stringify(intended), /intended call recorded/);
+        const calls = (await readFile(trace, 'utf8')).trim().split('\n').map(JSON.parse).filter((e) => e.type === 'call');
+        assert.equal(calls.at(-1).intendedOnly, true);
+        assert.equal(calls.filter((c) => c.name === 'wake').length, 2);
+    }
+    finally {
+        await client.close();
+        await f.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});

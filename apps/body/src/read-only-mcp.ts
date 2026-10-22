@@ -1011,7 +1011,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call read(facet:checks) again in this turn.',
+          next: 'No PR is recorded for this corner yet. Continue the assigned work; when it is ready, push the corner branch and open a PR. If you already opened one, print its actual full URL as your final response so it can be recorded, then end the turn. Do not invent a PR URL or reread checks before a PR exists.',
         }
       : {}),
   });

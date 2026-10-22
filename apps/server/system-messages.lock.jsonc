@@ -7,6 +7,7 @@
 // Ask normalizer in DaemonService.askRoomChoice and run-owner addressing in postWorkflowGate approved by lunchboxfortwo for PR #2660 (message da6d4a94fec1a6c13558d01d5a74d50559a10f38582cb06308ca50eaec2141db); wording unchanged.
 // Onboarding producers approved by lunchboxfortwo, DM bdf39511 (yes), relayed by Ruby; snapshot only.
 // Connection-install card wording for PR #2765 approved by lunchboxfortwo, DM e9967365 (yes), relayed by Ruby; three requestAgentGrant entries only.
+// Corner failure report wording approved by lunchboxfortwo (message 26355fa9), relayed by Ruby: failed: <corner name> (<corner id>): <reason>.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -4714,16 +4715,16 @@
     "occurrences": 1
   },
   {
-    "id": "src/turn-silence-notice.ts:inscribeSilence:wrapper:8988f5b358276876",
+    "id": "src/turn-silence-notice.ts:inscribeSilence:wrapper:d1f96d6950119753",
     "file": "apps/server/src/turn-silence-notice.ts",
     "kind": "wrapper",
-    "template": "reportToCommander(database, input.roomId, input.agentId, `failed: ${reason || classified.fault || 'agent turn failed'}`, command, `failure:${command.id}:${attempt}`, { automatic: true })",
+    "template": "reportToCommander(database, input.roomId, input.agentId, `failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`, command, `failure:${command.id}:${attempt}`, { automatic: true })",
     "literals": [
       "' '",
       "''",
       "'agent turn failed'",
       "'claimed'",
-      "`failed: ${reason || classified.fault || 'agent turn failed'}`",
+      "`failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`",
       "`failure:${command.id}:${attempt}`"
     ],
     "occurrences": 1

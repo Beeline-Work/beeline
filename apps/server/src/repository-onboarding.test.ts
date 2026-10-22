@@ -19,7 +19,6 @@ const github = { onboardingSignals: vi.fn(async () => signals), refresh: vi.fn(a
 
 beforeAll(async () => {
   vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '296966200,123');
   db = new PgliteDatabase();
 
   await migrate(db);
@@ -133,9 +132,8 @@ it('keeps another requester\'s unanswered card open when onboarding an invitee',
   expect(cards.every(card => card.status === 'open')).toBe(true);
 });
 
-it('E19/E20: allows a Google identity by Beeline id only while the rollout is enabled', async () => {
+it('E19/E20: allows any Google-only identity while the kill switch is enabled', async () => {
   await db.query(`UPDATE identities SET github_subject=NULL WHERE id=$1`, [OTHER]);
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', OTHER);
   const card = await postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
   expect(card.githubLinked).toBe(false);
   expect(card.repositories).toEqual([]);

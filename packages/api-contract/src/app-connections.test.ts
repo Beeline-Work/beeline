@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   APP_ROUTES,
+  builtinBeelineApp,
   APP_CONTINUATION_MAX_LENGTH,
   appIdentity,
   appKeyForHost,
@@ -104,4 +105,12 @@ describe('urlBelongsToApp', () => {
     expect(urlBelongsToApp('http://linear.app/settings', 'linear')).toBe(false);
     expect(urlBelongsToApp('linear.app/settings', 'linear')).toBe(false);
   });
+});
+
+it('routes repository intent before external app discovery without losing GitHub account identity', () => {
+  for (const request of ['GitHub', 'repo', 'repository', 'link my repository', 'GitHub-repository', 'connect my repo'])
+    expect(builtinBeelineApp(request)).toBe('beeline:onboarding');
+  expect(appIdentity('GitHub')).toEqual({key:'github'});
+  expect(builtinBeelineApp('Stripe Link')).toBeUndefined();
+  expect(builtinBeelineApp('GitHub.com')).toBeUndefined();
 });

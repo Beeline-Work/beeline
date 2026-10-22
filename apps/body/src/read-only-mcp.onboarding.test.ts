@@ -34,3 +34,26 @@ it('hides the new tools when server eligibility is absent', async () => {
   const discovered = JSON.parse(await callAgentTool('connect',{mode:'discover'},'discover'));
   expect(discovered.capabilities).not.toContain('beeline:onboarding');
 });
+
+it.each(['GitHub', 'link my repository', 'connect my repo', 'GitHub repository'])('R-REPO-CARD: routes %s to the repository card before connector search', async service => {
+  const result = JSON.parse(await callAgentTool('connect', {mode:'ensure', service, reason:'Connect the Room repository', continuation:'Show the repository card.'}, 'repo-connect'));
+  expect(result).toMatchObject({status:'ready', app:'beeline:onboarding'});
+  await callAgentTool('app_tool', {app:result.app, tool:'repository', args:{}}, 'repo-card');
+  expect(calls.some(call => call.name === 'postRepositoryOnboarding')).toBe(true);
+  expect(calls.some(call => ['connect','find_connectors'].includes(call.name))).toBe(false);
+});
+it('advertises repository onboarding without an exact-name query', async () => {
+  const result = JSON.parse(await callAgentTool('connect', {mode:'discover'}, 'discover'));
+  expect(result.capabilities).toContain('beeline:onboarding');
+});
+
+it('reports unavailable repo cards without attempting an external connector', async () => {
+  vi.stubGlobal('fetch', async (url: URL) => {
+    calls.push({name:new URL(url).pathname.split('/').pop()!,input:{}});
+    return Response.json({repositoryOnboarding:false});
+  });
+  const result = JSON.parse(await callAgentTool('connect', {mode:'ensure',service:'link my repository',reason:'Connect the repository',continuation:'Show the repository card.'}, 'connect'));
+  expect(result).toMatchObject({status:'unavailable',app:'beeline:onboarding'});
+  expect(result.next).toContain('active Room');
+  expect(calls.map(call => call.name)).toEqual(['getRoomRepositoryState']);
+});

@@ -688,7 +688,7 @@ describe('connect_app', () => {
       connectorId: installed.connectorId, steps: [],
       signIn: { method: 'oauth', url: 'https://github.com/login/oauth/authorize?state=fixture',
         attemptId: 'github-owner-sign-in' } }, HELPER);
-    const started = await daemon.execute('connect', { ...turn, service: 'GitHub',
+    const started = await daemon.execute('connect', { ...turn, service: 'github.com',
       reason: 'connect personal GitHub' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client);
@@ -746,7 +746,7 @@ describe('connect_app', () => {
           fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 2, stale: false, state: 'error' },
       ]);
     const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
-    const connected = await daemon.execute('connect', { ...turn, service: 'github',
+    const connected = await daemon.execute('connect', { ...turn, service: 'github.com',
       reason: 'List repositories', squireAvailable: true }, HELPER);
     expect(connected).toMatchObject({ status: 'ready', connectionReference: 'vault:github-work' });
     expect(connected.next).toContain('reference "vault:github-work"');

@@ -1,5 +1,4 @@
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { repositoryOnboardingEnabled } from '@beeline/api-contract/phone';
 import { GOOGLE_PREVIEW_HEADER, googlePreviewVisible } from './google-preview.js';
 import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
@@ -70,7 +69,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     noStore(reply);
     return reply.send({ github: Boolean(options.github), oidc: true,
       ...(googlePreviewVisible(options, request.headers[GOOGLE_PREVIEW_HEADER]) ? { google: true } : {}),
-      ...(options.github && onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, now().getTime()) ? { repositoryOnboarding: true } : {}),
+      ...(options.github && process.env.BEELINE_REPOSITORY_ONBOARDING === '1' ? { repositoryOnboarding: true } : {}),
     });
   });
 
@@ -462,7 +461,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       throw new ProtocolError(401, 'invalid_github_proof', 'GitHub code exchange failed');
     }
     await callbackObservation(state,'github','success');
-    const eligible = repositoryOnboardingEnabled(identity.subject, process.env);
+    const eligible = (process.env.BEELINE_REPOSITORY_ONBOARDING === '1');
     if (flow.nonce.startsWith('onboarding_user:') && flow.nonce !== `onboarding_user:${identity.subject}`)
       throw new ProtocolError(403, 'onboarding_account_mismatch', 'Use the GitHub account that started this installation');
     if (eligible) {

@@ -3,7 +3,6 @@ import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
-import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
@@ -1359,7 +1358,7 @@ export class DaemonService {
         return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
-        )), ...(owner && await onboardingEnabledForViewer(this.database, owner) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
+        )), ...(owner && (process.env.BEELINE_REPOSITORY_ONBOARDING === '1') ? { repositoryOnboarding: true } : {}) } as Output<Name>;
       }
       case 'noteEmptyRoomRepository': {
         const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
@@ -1763,7 +1762,7 @@ export class DaemonService {
         const requester = await this.grantRequester();
         const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
           `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
-        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
+        if (!owner || process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') throw new Error('repository onboarding unavailable');
         if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
         if (request.kind === 'repository') await this.github?.refresh(owner);
         const card = await postRepositoryOnboarding(this.database, this.github, {
@@ -3805,7 +3804,7 @@ export class DaemonService {
         `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
       )).rowCount > 0;
       const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
-      if (owner && await onboardingEnabledForViewer(this.database, owner))
+      if (owner && (process.env.BEELINE_REPOSITORY_ONBOARDING === '1'))
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
     const isReviewer =
@@ -6973,6 +6972,8 @@ export class DaemonService {
     const builtin = builtinBeelineApp(service);
     if (builtin) {
       await this.access(input.roomId, agentId);
+      if (builtin === 'beeline:onboarding' && process.env.BEELINE_REPOSITORY_ONBOARDING !== '1')
+        return { status: 'unavailable', app: builtin, next: 'Repository onboarding is disabled. Ask the workspace operator to enable repository onboarding, then retry in this Room.' };
       return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };
     }
     const continuation = normalizeAppContinuation(input.continuation);

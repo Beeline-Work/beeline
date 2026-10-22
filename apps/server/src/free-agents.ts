@@ -1,4 +1,3 @@
-import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -215,7 +214,7 @@ export const FREE_AGENT_CONNECT_GUIDE = `Offer help bringing their own agent onl
 
 When they accept, guide them one step at a time, waiting for the result of each step. Help them choose their own computer or an always-on machine they control. Install Node.js and an agent CLI (Claude Code, Codex or OpenCode), and help them sign in to that CLI. Send them to Members -> Add agent in their Workspace to copy the command. The command format is npx usebeeline connect <code>; they must run the actual command copied from Add agent on their chosen machine. Never create, retrieve, request, repeat or post a pairing code in a Room. Troubleshoot using redacted errors, never secrets. Keep helping until Members shows their new agent online, then have them tag it with a small task. Do not claim it is online without confirmation.`;
 
-export const FREE_AGENT_REPOSITORY_GUIDE = `For repository work, use app_tool(app:"beeline:onboarding") to discover the repository and starters tools. When a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path. Never explain corners during this onboarding flow.`;
+export const FREE_AGENT_REPOSITORY_GUIDE = `For any request to connect or link a repo, repository or GitHub, call app_tool(app:"beeline:onboarding", tool:"repository", args:{}). For other repository work, discover the repository and starters tools with app_tool(app:"beeline:onboarding"). If the card fails, explain the actual reason and the concrete next step to connect the repository. When a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path. Never explain corners during this onboarding flow.`;
 
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
@@ -346,7 +345,7 @@ export async function createFreeAgentInWorkspace(
   const owner = (await database.query<{ handle: string }>(
     `SELECT COALESCE(handle,id) handle FROM identities WHERE id=$1`, [input.creatorId],
   )).rows[0]!;
-  const enabled = await onboardingEnabledForViewer(database, input.creatorId);
+  const enabled = (process.env.BEELINE_REPOSITORY_ONBOARDING === '1');
   const hello = (enabled ? FREE_AGENT_ONBOARDING_HELLO : FREE_AGENT_HELLO).replace('<owner>', owner.handle).replace('<handle>', handle);
   // An ordinary agent-authored message: the existing mention/push path notifies the owner.
   await database.query(

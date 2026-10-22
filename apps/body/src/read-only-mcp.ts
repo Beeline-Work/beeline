@@ -2806,7 +2806,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return execute(name);
     case 'connect': {
       const builtin = builtinBeelineApp(String(args.service ?? args.query ?? ''));
-      const capabilities = await availableCapabilities(builtin === 'beeline:onboarding');
+      const capabilities = builtin || args.mode === 'discover' || args.mode === 'status'
+        ? await availableCapabilities(!builtin || builtin === 'beeline:onboarding') : [];
+      if (builtin === 'beeline:onboarding' && !capabilities.includes(builtin))
+        return JSON.stringify({ status: 'unavailable', app: builtin, next: 'Repository cards are unavailable on this surface. Check repository onboarding is enabled and use an active Room with current members.' });
       if (builtin && capabilities.includes(builtin) && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
         return JSON.stringify({ status: 'ready', app: builtin,
           next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` });
@@ -2889,12 +2892,12 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
   }
 }
 
-async function availableCapabilities(checkOnboarding = false): Promise<string[]> {
+async function availableCapabilities(checkOnboarding = true): Promise<string[]> {
   let onboarding = false;
   try {
     if (checkOnboarding) {
-    const state = await daemonExecute('getRoomRepositoryState', { roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID') });
-    onboarding = state.repositoryOnboarding === true;
+      const state = await daemonExecute('getRoomRepositoryState', { roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID') });
+      onboarding = state.repositoryOnboarding === true;
     }
   } catch { /* Missing server eligibility always leaves the feature dark. */ }
 

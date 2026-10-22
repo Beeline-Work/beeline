@@ -1,3 +1,4 @@
+import { validateScheduleTitle } from './schedule-title.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
 import { isRepositorySubscriptionEvent, type RoomSubscriptionView, type SubscriptionSource } from '@beeline/api-contract/phone';
@@ -33,6 +34,8 @@ CREATE TABLE IF NOT EXISTS agent_subscriptions (
  CHECK ((source='room' AND repository IS NULL) OR (source='repository' AND repository IS NOT NULL)
    OR (source='service' AND service_app_id IS NOT NULL AND trigger_id IS NOT NULL))
 );
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS title text;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS trigger_text text;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_account_id text;
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_channel_id text;
@@ -63,6 +66,7 @@ CREATE INDEX IF NOT EXISTS agent_subscriptions_service_app ON agent_subscription
 `;
 
 type Row = {
+  title?: string | null; trigger_text?: string | null;
   id: string; room_id: string; agent_id: string; source: SubscriptionSource;
   event: string; repository: string | null; prompt: string; workflow_slug: string | null; fired_count: number;
   service_app_id: string | null; service_account_id: string | null; service_channel_id: string | null;
@@ -85,6 +89,8 @@ function view(row: Row): RoomSubscriptionView {
       ? { service: 'Stripe' as const, when: 'On payment succeeded in Stripe' } : {}),
     ...(row.source === 'service' && providerForEvent(row.event)
       ? { registrationStatus: row.provider_status ?? 'registering' } : {}),
+    ...(row.title ? { title: row.title } : {}),
+    ...(row.trigger_text ? { when: row.trigger_text } : {}),
     prompt: row.prompt, ...(row.workflow_slug ? { workflowSlug: row.workflow_slug } : {}), firedCount: row.fired_count,
     createdAt: Math.floor(row.created_at.getTime() / 1000),
     ...(row.last_fired_at ? { lastFiredAt: Math.floor(row.last_fired_at.getTime() / 1000) } : {}),
@@ -137,7 +143,7 @@ function validEvent(source: SubscriptionSource, event: string): boolean {
 export async function createAgentSubscription(
   db: SqlDatabase, agentId: string,
   input: { roomId: string; source: SubscriptionSource; event: string; repository?: string;
-    channelId?: string; channelName?: string; prompt: string; workflowName?: string },
+    channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string },
   service?: { composio?: ComposioApps; receiverUrl: string },
 ): Promise<RoomSubscriptionView> {
   return input.source === 'service' && providerForEvent(input.event)
@@ -148,9 +154,14 @@ export async function createAgentSubscription(
 async function createAgentSubscriptionInDb(
   db: SqlDatabase, agentId: string,
   input: { roomId: string; source: SubscriptionSource; event: string; repository?: string;
-    channelId?: string; channelName?: string; prompt: string; workflowName?: string },
+    channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string },
   service?: { composio?: ComposioApps; receiverUrl: string },
 ): Promise<RoomSubscriptionView> {
+  const title = validateScheduleTitle(input.title);
+  if (!title) throw new Error('title is required when creating a subscription');
+  const when = typeof input.when === 'string' ? input.when.trim().replace(/\s+/g, ' ') : '';
+  if (!when || when.split(' ').length > 5)
+    throw new Error('when is required: a trigger phrase of one to five words');
   const prompt = input.prompt?.trim();
   if (!prompt || prompt.length > 4000) throw new Error('prompt must be 1–4000 characters');
   if (!['room', 'repository', 'service'].includes(input.source) || !validEvent(input.source, input.event))
@@ -221,17 +232,17 @@ async function createAgentSubscriptionInDb(
   }
   const rows = await db.query<Row>(
     `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,repository,prompt,workflow_slug,
-       service_app_id,service_account_id,service_channel_id,service_channel_name,trigger_id)
-     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       service_app_id,service_account_id,service_channel_id,service_channel_name,trigger_id,title,trigger_text)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),
        COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) DO UPDATE
-       SET prompt=EXCLUDED.prompt,workflow_slug=EXCLUDED.workflow_slug,
+       SET title=EXCLUDED.title,trigger_text=EXCLUDED.trigger_text,prompt=EXCLUDED.prompt,workflow_slug=EXCLUDED.workflow_slug,
          service_channel_name=EXCLUDED.service_channel_name,trigger_id=EXCLUDED.trigger_id
      RETURNING *`,
     [randomUUID(), room.rows[0]!.workspace_id, input.roomId, agentId, input.source, input.event,
       repository ?? null, prompt, workflowSlug ?? null, app?.id ?? null, app?.composio_account_id ?? null,
       input.source === 'service' && input.event === 'new_message' ? input.channelId : null,
-      input.source === 'service' && input.event === 'new_message' ? input.channelName ?? null : null, triggerId ?? null],
+      input.source === 'service' && input.event === 'new_message' ? input.channelName ?? null : null, triggerId ?? null, title, when],
   );
   if (providerConnectorId) await notifyConnectorHelper(db, providerConnectorId);
   if (providerStatus) rows.rows[0]!.provider_status = providerStatus;

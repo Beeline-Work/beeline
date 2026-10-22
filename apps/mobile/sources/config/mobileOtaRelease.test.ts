@@ -41,10 +41,6 @@ const unifiedReleaseScript = readFileSync(
   resolve(mobileRoot, '../../scripts/unified-release.mjs'),
   'utf8',
 );
-const serverReleaseSmoke = readFileSync(
-  resolve(mobileRoot, '../../scripts/server-release-smoke.mjs'),
-  'utf8',
-);
 const daemonWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/actions/daemon-leg/action.yml'),
   'utf8',
@@ -1715,8 +1711,8 @@ esac
     expect(merge.failures.map((failure: { class: string }) => failure.class)).toEqual(
       failures.map((failure) => failure[2]),
     );
-    expect(unifiedWorkflow).toContain('createWorkflowDispatch');
-    expect(unifiedWorkflow).toContain('release_sha: process.env.RELEASE_SHA');
+    // A failed release never redispatches itself; recovery is an explicit dispatch.
+    expect(unifiedWorkflow).not.toContain('createWorkflowDispatch');
     expect(unifiedWorkflow).toContain('unified-release-state-${process.env.RELEASE_ID}');
     expect(unifiedWorkflow).toContain('release SHA is not a commit on main');
     expect(unifiedWorkflow).not.toContain('maxFailures < 3');
@@ -2038,9 +2034,10 @@ esac
     );
     expect(otaJob).toContain('MOBILE_OTA_OWNER_PUBKEY');
     expect(otaJob).toContain('MOBILE_OTA_RECEIPT_TOKEN');
-    expect(otaJob).toContain('Require rollback evidence and write checkpoint');
-    expect(otaJob).toContain('mobile-ota-ledger.json');
     expect(otaJob).toContain('phase: promote');
+    expect(otaJob).toContain('completed_at: ${{ steps.promote.outputs.completed_at }}');
+    expect(workflow).toContain('mobile OTA promotion produced no rollback ledger');
+    expect(workflow).toContain('RUN_LEDGER=$RUNNER_TEMP/mobile-ota-ledger.json');
     // No cron survives anywhere in the release path.
     expect(unifiedWorkflow).not.toContain("cron: '*/15 * * * *'");
     expect(unifiedWorkflow).not.toContain('schedule:');
@@ -2048,28 +2045,20 @@ esac
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('measures fix-to-phone through OTA completion and marks slow whole runs without failing them', () => {
+  it('reports fix-to-phone through OTA completion and never fails a delivered release on time', () => {
     expect(unifiedWorkflow).toContain('getWorkflowRun');
     expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
-    expect(unifiedWorkflow).toContain('completedAt:Number(completedAt)');
-    expect(unifiedWorkflow).toContain('"$(date +%s)"');
+    expect(workflow).toContain('echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"');
+    expect(unifiedReleaseScript).toContain('const completedAt = Number(needs[job].outputs?.completed_at);');
     expect(unifiedWorkflow).toContain('unified-release.mjs classify-attempt');
     expect(unifiedWorkflow).toContain('--trigger-epoch "$TRIGGER_EPOCH"');
     expect(unifiedWorkflow).toContain('--checkpoints "$RUNNER_TEMP/checkpoints.json"');
-    // The 20-minute fix-to-phone budget stays the default; only a native
-    // store-binary leg extends it (60 minutes).
-    expect(unifiedReleaseScript).toContain(
-      'RELEASE_FIX_TO_PHONE_BUDGET_SECONDS = RELEASE_BUDGET_MINUTES * 60',
-    );
-    expect(unifiedReleaseScript).toContain('RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS = 60 * 60');
-    // A macOS helper release keeps its own 150-minute allowance (PR #1741).
-    expect(unifiedWorkflow).toContain('--helper-macos-build-ran "$helper_macos_build_ran"');
-    expect(unifiedReleaseScript).toContain(
-      'RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS = 150 * 60',
-    );
+    // Duration is reported, never judged: no budget can fail a delivered release.
+    expect(unifiedReleaseScript).not.toContain('BUDGET');
+    expect(unifiedWorkflow).not.toContain('--helper-macos-build-ran');
     expect(unifiedReleaseScript).toContain("checkpoint?.component === 'mobile-ota' && checkpoint.state === 'checked'");
     expect(unifiedReleaseScript).toContain('const otaElapsedSeconds = otaCompletedAt === undefined');
-    expect(unifiedReleaseScript).toContain('const failureClass = otaElapsedSeconds >= budgetSeconds');
+    expect(unifiedReleaseScript).toContain("const failureClass = unfinished ? `component:${unfinished}` : '';");
     expect(unifiedReleaseScript).toContain('RELEASE_SOFT_LIMIT_SECONDS = 45 * 60');
     expect(unifiedReleaseScript).toContain(
       "slow: outcome === 'success' && wholeRunElapsedSeconds > RELEASE_SOFT_LIMIT_SECONDS",
@@ -2080,11 +2069,11 @@ esac
     expect(unifiedWorkflow).toContain('unified-release.mjs finalize');
   });
 
-  it('runs validation beside candidate export and queues production releases', () => {
-    expect(workflow).toContain('Validate while exporting and publishing the beta candidate');
-    expect(workflow).toContain('validation_pid=$!');
-    expect(workflow).toContain('wait "$validation_pid"');
-    expect(workflow).toContain('parallel_candidate_wall');
+  it('publishes the candidate without repeating CI checks and queues production releases', () => {
+    // Typecheck, tests and the publish dry run already passed in CI.
+    expect(workflow).toContain('Export and publish the beta candidate');
+    expect(workflow).not.toMatch(/npm run typecheck|npx vitest|publish --dry-run/);
+    expect(workflow).toContain('candidate_publish');
     expect(unifiedWorkflow).toMatch(/group: unified-production-release\s+cancel-in-progress: false/);
     expect(workflow).toContain('--before "${PUSH_BEFORE:-}"');
     expect(unifiedWorkflow).toMatch(/server:[\s\S]*?helper:[\s\S]*?mobile_ota:/);
@@ -2099,9 +2088,7 @@ esac
       unifiedWorkflow.indexOf('release_result:'),
     );
     expect(unifiedWorkflow).toContain("needs.initialize.outputs.run_mobile_ota == 'true'");
-    expect(unifiedWorkflow).toContain(
-      'release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota',
-    );
+    expect(unifiedReleaseScript).toContain("'mobile-ota': ['mobile_ota', 'mobile_ota_after_native'],");
     // The only sanctioned device work in the release workflow is the
     // `release_proof` component gate, which runs the rig's proof flows
     // BEFORE promotion and whose failure blocks the promote leg. The retired
@@ -2910,18 +2897,13 @@ esac
     expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
     expect(serverWorkflow).toContain('--build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA"');
     expect(serverWorkflow).toContain(
-      'Canary one Machine, observe for five minutes, then update its peer',
+      'Canary one Machine for ninety seconds, then update its peer',
     );
     expect(serverWorkflow).toContain('trap rollback_canary ERR');
-    expect(unifiedWorkflow).toContain('Bounded exact server smoke check');
-    expect(unifiedWorkflow).toContain('run: node scripts/server-release-smoke.mjs');
-    expect(serverReleaseSmoke).toContain('SERVER_BOOT_BUDGET_MS = 8 * 60_000');
-    expect(serverReleaseSmoke).toContain('ROOM_READ_BUDGET_MS = 2_000');
-    expect(serverReleaseSmoke).toContain('fetchImpl(`${origin}/health`');
-    expect(serverReleaseSmoke).toContain('/v1/auth/review/exchange');
-    expect(serverReleaseSmoke).toContain('authorization: `Bearer ${session.accessToken}`');
-    expect(serverReleaseSmoke).toContain('fetchImpl(`${origin}/v1/phone/rooms/${roomId}`');
-    expect(serverReleaseSmoke).toContain('signal: AbortSignal.timeout(roomReadBudgetMs)');
+    // The canary's authenticated Room reads are the one server smoke check.
+    expect(serverWorkflow).toContain('/v1/auth/review/exchange');
+    expect(serverWorkflow).toContain('https://server.usebeeline.app/v1/phone/rooms/$SERVER_CANARY_ROOM_ID');
+    expect(unifiedWorkflow).not.toContain('server-release-smoke');
   });
 
   it('the canary script owns the parked-reason contract for every preflight stage', () => {

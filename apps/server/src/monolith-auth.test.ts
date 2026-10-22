@@ -31,6 +31,7 @@ describe('mounted monolith auth', () => {
   let origin: string;
   let githubOperations: GitHubOperations;
   let installationAccess: boolean;
+  let availableInstallations: number[];
   let githubSubject: string;
   let repositorySelection: 'selected' | 'all';
   let processWebhook: ReturnType<typeof vi.fn>;
@@ -70,11 +71,12 @@ describe('mounted monolith auth', () => {
       }),
     } as unknown as GitHubOAuthClient;
     installationAccess = true;
+    availableInstallations = [77];
     repositorySelection = 'selected';
     const githubApp = {
       installationUrl: (state: string) => `https://github.test/install?state=${state}`,
       userCanAccessInstallation: async () => installationAccess,
-      listUserInstallationIds: async () => [77],
+      listUserInstallationIds: async () => availableInstallations,
       installationAccount: async () => ({
         id: '42',
         login: 'owner',
@@ -389,8 +391,6 @@ describe('mounted monolith auth', () => {
     await database.query(`INSERT INTO identities(id,kind,name,handle,avatar) VALUES($1,'human','Alex Chen','alex.chen','google-photo')`, [id]);
     await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('google','google-owner',$1,'https://accounts.google.com','test-client')`, [id]);
     repositorySelection = 'all';
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', id);
     const phone = new PhoneService(database, tenant.origin, githubOperations);
     const workspace = await phone.execute('createWorkspace', { name:'Google owner' }, id);
     const roomId = workspace.roomId!;
@@ -443,9 +443,47 @@ describe('mounted monolith auth', () => {
     expect((await database.query(`SELECT identity_id FROM identity_external_links WHERE provider='github' AND subject='42'`)).rows[0]?.identity_id).toBe(id);
   });
 
+  it('GH-EXIST-1: repo-card OAuth binds an existing installation and returns its repositories', async () => {
+    const id = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Google owner')`, [id]);
+    const phone = new PhoneService(database, tenant.origin, githubOperations);
+    const workspace = await phone.execute('createWorkspace', { name:'Existing installation' }, id);
+    const agent = 'b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Beebee')`, [agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent,id]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [workspace.id,agent,workspace.roomId]);
+    const card = await postRepositoryOnboarding(database, githubOperations, {roomId:workspace.roomId!,agentId:agent,requesterId:id,kind:'repository'});
+    expect(card.state).toBe('install_missing');
+    const started = await githubOperations.beginInstallation(id, {redirectUri:'https://web.usebeeline.app/beeline/github-installation'});
+    const url = new URL(started.url!);
+    expect(url.pathname).toBe('/authorize');
+    const state = url.searchParams.get('state')!;
+    const completed = await mountedRequest(`/auth/github/callback?code=bind-code&state=${state}`);
+    expect(completed.headers.location).toBe('https://web.usebeeline.app/beeline/github-installation?installed=1');
+    expect((await database.query(`SELECT owner_id FROM github_installations WHERE installation_id=77`)).rows[0]?.owner_id).toBe(id);
+    const refreshed = await postRepositoryOnboarding(database, githubOperations, {roomId:workspace.roomId!,agentId:agent,requesterId:id,kind:'repository'});
+    expect(refreshed.repositories.map(repo => repo.fullName)).toEqual(['owner/widgets']);
+    expect((await mountedRequest(`/auth/github/callback?code=bind-code&state=${state}`)).status).not.toBe(302);
+  });
+
+  it('GH-EXIST-1: no installation continues to install with fresh single-use state', async () => {
+    const id = 'd'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Google owner')`, [id]);
+    availableInstallations = [];
+    const started = await githubOperations.beginInstallation(id, {redirectUri:'https://web.usebeeline.app/beeline/github-installation'});
+    const state = new URL(started.url).searchParams.get('state')!;
+    const first = await mountedRequest(`/auth/github/callback?code=bind-code&state=${state}`);
+    const install = new URL(String(first.headers.location));
+    expect(install.pathname).toBe('/install');
+    const next = install.searchParams.get('state')!;
+    expect(next).not.toBe(state);
+    expect((await database.query(`SELECT consumed_at FROM github_auth_flows WHERE state_hash=$1`, [createHash('sha256').update(state).digest('hex')])).rows[0]?.consumed_at).toBeTruthy();
+    availableInstallations = [77];
+    const completed = await mountedRequest(`/auth/github/callback?code=install-code&state=${next}&installation_id=77`);
+    expect(completed.headers.location).toBe('https://web.usebeeline.app/beeline/github-installation?installed=1');
+  });
+
   it('completes repo-card installation through the OAuth callback and rejects replay or forged state', async () => {
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '42');
     const start = await mountedRequest(
       `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'r'.repeat(43)}`,
     );

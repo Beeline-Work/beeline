@@ -4,3 +4,5 @@ self-hosted-runner:
     - ios-builder
     - beeline-android
     - beeline-android-rig
+    # GitHub-hosted Intel macOS image, newer than actionlint 1.7.7's label list.
+    - macos-15-intel

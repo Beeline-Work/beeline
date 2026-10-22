@@ -21,14 +21,14 @@ import {
 describe('OIDC and identity HTTP routes', () => {
   useAuthServerFixture();
 
-  it('advertises GitHub only when its complete configuration is present', async () => {
+  it('advertises GitHub configuration and always offers repository onboarding', async () => {
     const response = await app.inject({
       method: 'GET',
       url: '/auth/capabilities',
       headers: { host: alphaTenant.host },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ github: true, oidc: true });
+    expect(response.json()).toEqual({ github: true, oidc: true, google: true, repositoryOnboarding: true });
   });
 
   it('E22: recovers only a live Google completion in its own tenant and burns it on cancel', async () => {

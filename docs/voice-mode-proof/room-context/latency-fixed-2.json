@@ -1,0 +1,18 @@
+{
+  "mode": "fixed",
+  "samplesMs": [
+    32.917750999993586,
+    28.696224999999686,
+    31.467917999994825,
+    43.952562000005855,
+    37.4337830000004,
+    29.778189999997267,
+    67.56273200000578,
+    37.65645400000358,
+    58.163666000000376,
+    37.141858000002685
+  ],
+  "medianMs": 37.287820500001544,
+  "warmupTurns": 4,
+  "path": "Runtime end-of-turn to first voiced server audio, received by native RTC partner; controlled SSE and PCM"
+}

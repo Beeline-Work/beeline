@@ -397,9 +397,14 @@ it('quiet termination puts its reason on the ended card and explicit leave omits
   const first = await service.join(R, H);
   const second = await service.join(R, SECOND);
   await service.leave(first.call.id, SECOND, false, second.sessionId);
-  await db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
+  await db.query(`UPDATE voice_calls SET started_at=now()-interval '2 minutes',runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
   await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE state IN ('pending','claimed')`);
-  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'That answers my question.')`, ['f'.repeat(64),R,H]);
+  // Model the actual quiet interval so millisecond Date conversion cannot tie
+  // the end card with the final utterance in a fast in-memory database.
+  await db.query(`UPDATE messages SET created_at=now()-interval '2 minutes'
+    WHERE id=(SELECT message_id FROM voice_calls WHERE id=$1)`, [first.call.id]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+    VALUES($1,$2,$3,'That answers my question.',now()-interval '61 seconds')`, ['f'.repeat(64),R,H]);
   expect(await service.endInactive(first.call.id, service.owner, () => true)).toBe(true);
   const endedRoom=await new PhoneService(db,'http://proof').readRoom(R,H);
   expect(endedRoom?.messages.at(-1)?.voiceCall?.id).toBe(first.call.id);
@@ -514,6 +519,26 @@ it('call history search excludes Rooms another caller cannot read and privately 
     const result = JSON.parse(await service.search(call.call.id, source, A, { name: 'search_history', query: 'saffronmarker' }, new AbortController().signal));
     expect(result.results.some((row: any) => row.messageId === 'voice-shared-search')).toBe(true);
     expect(result.results.some((row: any) => row.messageId === 'voice-private-search')).toBe(false);
+    const posted = JSON.parse(await service.search(call.call.id, source, A,
+      { name: 'read_posted_item', query: 'voice-shared-search' }, new AbortController().signal));
+    expect(posted.text).toBe('saffronmarker public answer');
+    const attachmentUrl = '/v1/media/12345678-1234-4234-8234-123456789012';
+    await db.query(`UPDATE messages SET attachments=$1 WHERE id='voice-shared-search'`,
+      [ JSON.stringify([{name:'notes.txt',url:attachmentUrl}])]);
+    const read = vi.fn(async () => new TextEncoder().encode('The picnic starts at noon.'));
+    const readRoomObject = vi.fn(async () => ({name:'notes.txt',mimeType:'text/plain',size:26,read}));
+    service.config.objects = { readRoomObject } as any;
+    try {
+      const file = JSON.parse(await service.search(call.call.id, source, A,
+        {name:'read_posted_item',query:attachmentUrl}, new AbortController().signal));
+      expect(file).toEqual({title:'notes.txt',text:'The picnic starts at noon.'});
+      expect(readRoomObject).toHaveBeenCalledWith(room,A,'12345678-1234-4234-8234-123456789012',service.db);
+      await expect(service.search(call.call.id,source,A,{name:'read_posted_item',query:'https://example.com/private'},new AbortController().signal)).rejects.toThrow('not available');
+      expect(read).toHaveBeenCalledOnce();
+    } finally { delete service.config.objects; }
+
+    await expect(service.search(call.call.id, source, A,
+      { name: 'read_posted_item', query: 'voice-private-search' }, new AbortController().signal)).rejects.toThrow('not available');
     await service.dispatch(call.call.id, source, A);
     const { readAgentCommands } = await import('./agent-command.js');
     const commands = await readAgentCommands(db, room, A);

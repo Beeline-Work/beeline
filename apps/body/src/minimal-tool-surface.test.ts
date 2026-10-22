@@ -66,13 +66,14 @@ afterEach(() => {
 
 describe('minimal agent surface', () => {
   it('dispatches release recovery inputs with active corner authority and no grant runner', async () => {
-    await callAgentTool('dispatch_release', { inputs: { retry_attempt: '2' } });
+    await callAgentTool('dispatch_release', { inputs: { release_version: 'v0.1.94' } });
     expect(calls).toEqual([{ operation: 'dispatchRoomWorkflow', input: {
-      roomId: 'corner', requestId: 'request', generationId: 'generation', inputs: { retry_attempt: '2' },
+      roomId: 'corner', requestId: 'request', generationId: 'generation', inputs: { release_version: 'v0.1.94' },
     } }]);
     const schema = agentToolsFor(true, false).find(tool => tool.name === 'dispatch_release')!.inputSchema;
     expect(Check(schema as never, { inputs: { dispatched_by: 'forged' } })).toBe(false);
-    expect(Check(schema as never, { inputs: { retry_attempt: '2' } })).toBe(true);
+    expect(Check(schema as never, { inputs: { retry_attempt: '2' } })).toBe(false);
+    expect(Check(schema as never, { inputs: { release_version: 'v0.1.94' } })).toBe(true);
   });
 
   it.each([
@@ -275,11 +276,12 @@ describe('minimal agent surface', () => {
     expect(status.capabilities).toEqual(
       expect.arrayContaining(['beeline:workflow', 'beeline:wallet', 'beeline:browser_share']),
     );
-    expect(calls.every((call) => call.operation === 'readAgentWorkbench')).toBe(true);
+    expect(calls.map(call => call.operation)).toEqual(['getRoomRepositoryState', 'readAgentWorkbench']);
     const before = calls.length;
     const discovery = JSON.parse(await callAgentTool('connect', { mode: 'discover' }, 'discover'));
     expect(discovery.capabilities).toContain('beeline:workflow');
-    expect(calls).toHaveLength(before);
+    expect(calls).toHaveLength(before + 1);
+    expect(calls.at(-1)?.operation).toBe('getRoomRepositoryState');
   });
 
   it('discovers optional schemas locally and scopes an existing workflow wake to its corner', async () => {

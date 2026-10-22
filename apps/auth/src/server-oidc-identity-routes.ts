@@ -1,5 +1,4 @@
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { repositoryOnboardingEnabled } from '@beeline/api-contract/phone';
 import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
@@ -63,12 +62,12 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
   });
   app.get('/health', async () => ({ ok: true }));
 
-  /** Public feature discovery. Missing GitHub config deliberately means dark. */
+  /** Public provider discovery; repository cards do not require a linked GitHub account. */
   app.get('/auth/capabilities', async (request, reply) => {
     tenantFor(request);
     noStore(reply);
     return reply.send({ github: Boolean(options.github), oidc: true, google: true,
-      ...(options.github && onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, now().getTime()) ? { repositoryOnboarding: true } : {}),
+      repositoryOnboarding: true,
     });
   });
 
@@ -363,7 +362,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       community: tenant.community,
       issuer: 'https://github.com',
       audience: GITHUB_IDENTITY_AUDIENCE,
-      nonce: onboarding ? `onboarding_user:${onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, issuedAt.getTime())}` : (query.onboarding === '1' && appRedirectUri && process.env.BEELINE_REPOSITORY_ONBOARDING === '1' ? 'onboarding_probe' : randomToken()),
+      nonce: onboarding ? `onboarding_user:${onboardingCookieSubject(request.headers.cookie, options.github.oauth.config.clientSecret, issuedAt.getTime())}` : (query.onboarding === '1' && appRedirectUri ? 'onboarding_probe' : randomToken()),
       pkceVerifier: verifier,
       browserSessionHash: sha256(browserSession),
       redirectUri,
@@ -390,7 +389,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     if (!options.github)
       throw new ProtocolError(503, 'github_unavailable', 'GitHub sign-in is not configured');
     const query = request.query as Record<string, unknown>;
-    if (typeof query.state === 'string' && (query.state.startsWith('github_bind_') || (process.env.BEELINE_REPOSITORY_ONBOARDING === '1' && query.state.startsWith('repository_install_')))) {
+    if (typeof query.state === 'string' && (query.state.startsWith('github_bind_') || query.state.startsWith('repository_install_'))) {
       const installationId = query.installation_id === undefined ? undefined : Number(query.installation_id);
       if ((query.error && !query.state.startsWith('github_bind_')) || (installationId !== undefined && (!Number.isSafeInteger(installationId) || installationId <= 0)) ||
           !options.completeRepositoryInstallation) {
@@ -406,7 +405,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     // post-install callback too. Repository selection updates carry the
     // installation id/setup action instead of an ordinary sign-in code.
     if ((query.installation_id !== undefined || query.setup_action !== undefined) &&
-        !(process.env.BEELINE_REPOSITORY_ONBOARDING === '1' && typeof query.state === 'string' && query.state.startsWith('onboarding_'))) {
+        !(typeof query.state === 'string' && query.state.startsWith('onboarding_'))) {
       return completeGitHubInstallation(request, reply);
     }
     const tenant = tenantFor(request);
@@ -460,18 +459,13 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       throw new ProtocolError(401, 'invalid_github_proof', 'GitHub code exchange failed');
     }
     await callbackObservation(state,'github','success');
-    const eligible = repositoryOnboardingEnabled(identity.subject, process.env);
     if (flow.nonce.startsWith('onboarding_user:') && flow.nonce !== `onboarding_user:${identity.subject}`)
       throw new ProtocolError(403, 'onboarding_account_mismatch', 'Use the GitHub account that started this installation');
-    if (eligible) {
-      const existing = reply.getHeader('set-cookie');
-      reply.header('set-cookie', [
-        ...(Array.isArray(existing) ? existing.map(String) : existing ? [String(existing)] : []),
-        `beeline_onboarding=${onboardingCookie(identity.subject, options.github.oauth.config.clientSecret, now().getTime())}; Path=/; Max-Age=86400;${cookieSecurity} HttpOnly; SameSite=Lax`,
-      ]);
-    }
-    if (state.startsWith('onboarding_') && !eligible)
-      throw new ProtocolError(403, 'onboarding_unavailable', 'Onboarding is not enabled for this GitHub account');
+    const existing = reply.getHeader('set-cookie');
+    reply.header('set-cookie', [
+      ...(Array.isArray(existing) ? existing.map(String) : existing ? [String(existing)] : []),
+      `beeline_onboarding=${onboardingCookie(identity.subject, options.github.oauth.config.clientSecret, now().getTime())}; Path=/; Max-Age=86400;${cookieSecurity} HttpOnly; SameSite=Lax`,
+    ]);
     await options.store.saveGitHubUserToken(
       tenant.community,
       identity.subject,
@@ -486,7 +480,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
           : undefined,
       },
     );
-    if (eligible && flow.nonce === 'onboarding_probe') {
+    if (flow.nonce === 'onboarding_probe') {
       let accounts: Awaited<ReturnType<typeof options.github.app.installationAccount>>[];
       try {
         const ids = await options.github.app.listUserInstallationIds(identity.accessToken);

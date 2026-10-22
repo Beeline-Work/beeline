@@ -43,22 +43,27 @@ const deliveries: {source: string; at: number}[] = [];
 const turns = new Map<string, number>();
 let dispatchAttempts = 0;
 const frameCounts = { received: 0 };
+const brainHistories: unknown[] = [];
 const replies: string[] = [], signals: unknown[] = [], observations: unknown[] = [];
 if (process.env.VOICE_DELIVERY_BASELINE === '1') {
   const before = await import('../apps/server/src/' + '.voice-delivery-baseline.js');
   VoiceRoomRuntime.connect = before.VoiceRoomRuntime.connect;
 }
+const Brain: typeof OpenRouterVoiceBrain = process.env.VOICE_CONTEXT_BASELINE === '1'
+  ? (await import('../apps/server/src/' + '.voice-context-baseline-providers.js')).OpenRouterVoiceBrain : OpenRouterVoiceBrain;
 const live=new LiveHub();
 const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'devkey',apiSecret:'secret',
-  brain:new OpenRouterVoiceBrain('local-proof', async (_url, init) => {
+  brain:new Brain('local-proof', async (_url, init) => {
     const input = JSON.parse(String(init!.body));
+    brainHistories.push(input.messages);
+    const capped = /capped reply/.test(input.messages.at(-1).content);
     const work = /build|check my latest report/.test(input.messages.at(-1).content);
     decisionRequests++;
     if (decisionGate && work) await decisionGate;
-    const text = work ? 'Checking.' : 'Ready.';
+    const text = capped ? (process.env.VOICE_CAPPED_REPLY ?? 'One complete sentence. Then a trailing fragment') : work ? 'Checking.' : 'Ready.';
     replies.push(text);
     return new Response('data: '+JSON.stringify({ choices: [{ delta: { content: text,
-      ...(work ? { tool_calls: [{function:{name:'order'}}] } : {}) } }] })+'\n\n');
+      ...(work ? { tool_calls: [{function:{name:'order'}}] } : {}) }, ...(capped ? { finish_reason: 'length' } : {}) }] })+'\n\n');
   }),
   speech:new AuraSpeech('local-proof','local-account', async (_url, init) => {
     if (holdSpeech) await new Promise<void>((resolve, reject) => {
@@ -70,7 +75,7 @@ const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'dev
     synthesis.push({text: JSON.parse(String(init!.body)).text, at: Date.now()});
     if (fault === 'tts-fail') { fault = ''; throw new Error('Injected TTS failure'); }
     const pcm = Buffer.alloc(speechMs * 48);
-    for(let i=0;i<speechMs * 24;i++) pcm.writeInt16LE(Math.round(2000*Math.sin(i/8)),i*2);
+    for(let i=0;i<speechMs * 24;i++) pcm.writeInt16LE(Math.round((process.env.VOICE_CONTEXT_PROOF === '1' ? 800 + 7000 * Math.abs(Math.sin(i/6000)) : 2000)*Math.sin(i/8)),i*2);
     return new Response(pcm);
   }),
   stt:async onEvent => { inputs.push(onEvent); const index=microphoneFrames.push(0)-1; return {send(){microphoneFrames[index]!++;},close(){}}; },
@@ -149,6 +154,14 @@ const server = createServer((req,res)=> { void (async()=>{
     }, command.agent_id);
     await runtime.refresh();
   }
+  else if(req.url==='/context-probe') {
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments) VALUES($1,$2,$3,'Goosey suggests a picnic',$4) ON CONFLICT DO NOTHING`,
+      ['e'.repeat(64),R,B,JSON.stringify([{name:'picnic.txt',url:'/v1/media/88888888-8888-4888-8888-888888888888'}])]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES($1,$2,$3,'Plan','card','document',$4) ON CONFLICT DO NOTHING`,
+      ['f'.repeat(64),R,partner,JSON.stringify({title:'Picnic plan',url:'https://example.com/picnic'})]);
+    await runtime.utterance(partner,'Ruby, capped reply please');
+    value={brainHistories,synthesis};
+  }
   else if(req.url==='/fixture') value={roomId:R,workspaceId:W,humanId:H};
   else if(url.pathname==='/v1/phone/workspaces') value=await phone.readWorkspaces(H);
   else if(url.pathname===`/v1/phone/workspaces/${W}`) value=await phone.readWorkspace(W,H);
@@ -160,10 +173,10 @@ const server = createServer((req,res)=> { void (async()=>{
   else if(url.pathname.includes('/history')) value=await phone.readHistory(R,H);
 
   else if(req.url==='/observe') { observations.push(body); value={}; }
-  else if(req.url==='/result') value={commandDetails:(await db.query(`SELECT id,turn_request_id,source_message_id,agent_id,state,reason FROM agent_commands WHERE room_id=$1`,[R])).rows,decisionRequests,synthesis,deliveries,orders:(await db.query(`SELECT o.*,m.text FROM voice_orders o JOIN messages m ON m.id=o.source_message_id`)).rows,transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey})),pid:process.pid,callId:runtime.callId,dispatchAttempts,frameCounts,commands:(await db.query(`SELECT count(*)::int count FROM agent_commands WHERE room_id=$1`,[R])).rows[0],activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
+  else if(req.url==='/result') value={brainHistories,commandDetails:(await db.query(`SELECT id,turn_request_id,source_message_id,agent_id,state,reason FROM agent_commands WHERE room_id=$1`,[R])).rows,decisionRequests,synthesis,deliveries,orders:(await db.query(`SELECT o.*,m.text FROM voice_orders o JOIN messages m ON m.id=o.source_message_id`)).rows,transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey})),pid:process.pid,callId:runtime.callId,dispatchAttempts,frameCounts,commands:(await db.query(`SELECT count(*)::int count FROM agent_commands WHERE room_id=$1`,[R])).rows[0],activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
     secondMicrophone:[...(client.remoteParticipants.get(SECOND)?.trackPublications.values() ?? [])].map(p=>({muted:p.muted,kind:p.kind})),
     participants:(await db.query(`SELECT identity_id,parked_at,left_at FROM voice_participants WHERE call_id=$1`,[first.call.id])).rows};
-  else if(req.url==='/say') { speechMs=body.speechMs??100; const current=await service.current(R,H); if(!current)throw new Error('No active call'); const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0]; await (await service.ensureRuntime(row))!.utterance(H,body.text??'How are you doing today?'); speechMs=100; }
+  else if(req.url==='/say') { speechMs=body.speechMs??100; const current=await service.current(R,H); if(!current)throw new Error('No active call'); const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0]; await (await service.ensureRuntime(row))!.utterance(body.human === 'partner' ? partner : H,body.text??'How are you doing today?'); speechMs=100; }
   else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman,body.expectedCallId); value={...joined,url:'ws://10.0.2.2:17890'}; }
   else if(req.url?.endsWith('/idle')) value=await service.idle(first.call.id,nativeHuman,body.sessionId);
   else if(req.url?.includes('/state')) value=await service.idleState(url.pathname.split('/').at(-2)!,nativeHuman,db,url.searchParams.get('sessionId')??undefined);

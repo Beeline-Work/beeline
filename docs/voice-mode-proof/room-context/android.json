@@ -1,0 +1,18 @@
+{
+  "device": "Android API 36 emulator, x86_64 release/Hermes fixture",
+  "localMicrophone": "muted in both screenshots",
+  "voiceObservation": {
+    "at": 1792632802320,
+    "joined": true,
+    "humans": 2,
+    "error": null,
+    "unaddressed": 0,
+    "firstAudioMs": 111.74585600000137
+  },
+  "maxInboundAudioEnergy": 0.17692127995759444,
+  "synthesis": {
+    "text": "Ready.",
+    "at": 1792632802412
+  },
+  "apkSha256": "296124c7092a16f87ea77be8ad8fd06b12326f05cc470d8a7efcf96895c84576"
+}

@@ -397,9 +397,14 @@ it('quiet termination puts its reason on the ended card and explicit leave omits
   const first = await service.join(R, H);
   const second = await service.join(R, SECOND);
   await service.leave(first.call.id, SECOND, false, second.sessionId);
-  await db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
+  await db.query(`UPDATE voice_calls SET started_at=now()-interval '2 minutes',runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
   await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE state IN ('pending','claimed')`);
-  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'That answers my question.')`, ['f'.repeat(64),R,H]);
+  // Model the actual quiet interval so millisecond Date conversion cannot tie
+  // the end card with the final utterance in a fast in-memory database.
+  await db.query(`UPDATE messages SET created_at=now()-interval '2 minutes'
+    WHERE id=(SELECT message_id FROM voice_calls WHERE id=$1)`, [first.call.id]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+    VALUES($1,$2,$3,'That answers my question.',now()-interval '61 seconds')`, ['f'.repeat(64),R,H]);
   expect(await service.endInactive(first.call.id, service.owner, () => true)).toBe(true);
   const endedRoom=await new PhoneService(db,'http://proof').readRoom(R,H);
   expect(endedRoom?.messages.at(-1)?.voiceCall?.id).toBe(first.call.id);

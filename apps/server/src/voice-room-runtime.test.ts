@@ -2218,6 +2218,19 @@ it.each(['stay', 'turn', 'leave'] as const)('reports wait for human quiet and re
   } finally { await runtime.close(); }
 });
 
+it('VOICE-CONTEXT-1: a capped abbreviation fragment never reaches synthesis', async () => {
+  const { OpenRouterVoiceBrain } = await import('./voice-providers.js');
+  const { service, speech } = conversationService(1);
+  const content = 'The appointment is confirmed. Dr. Smith will explain the';
+  const brain = new OpenRouterVoiceBrain('test', async () => new Response(
+    'data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'length' }] }) + '\n\n'));
+  const runtime = await VoiceRoomRuntime.connect({ ...service, config: { ...service.config, brain } } as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby confirm the appointment');
+    expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual(['The appointment is confirmed.']);
+  } finally { await runtime.close(); }
+});
+
 it.each(['fast', 'failed', 'slow'] as const)('call search %s reaches audio or exactly one ordinary order', async mode => {
   const { OpenRouterVoiceBrain } = await import('./voice-providers.js');
   const { service, speech } = conversationService(1);

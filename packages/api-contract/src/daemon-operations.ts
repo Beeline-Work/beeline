@@ -720,6 +720,14 @@ export type DaemonOperationMap = {
    * a reviewer's PASS, and the server merges at once when checks are green
    * and no hold stands.
    */
+  sendOperatorSystemDm: Operation<
+    AgentRoomInput & TurnOutputAuthority & { requestId: string; recipients: string | readonly string[]; text: string },
+    { sendId: string; recipients: number; delivered: number; failed: number; pending: number }
+  >;
+  readOperatorSystemDm: Operation<
+    AgentRoomInput & TurnOutputAuthority & { requestId: string; sendId: string },
+    { sendId: string; recipients: number; delivered: number; failed: number; pending: number }
+  >;
   orderCornerMerge: Operation<
     CornerInput & TurnOutputAuthority & RoomInput & { requestId: string },
     { roomId: string; headSha: string }

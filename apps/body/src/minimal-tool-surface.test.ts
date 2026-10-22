@@ -21,6 +21,8 @@ const names = [
   'notify_feedback_fixed',
   'approve_merge',
   'merge_corner',
+  'send_operator_system_dm',
+  'read_operator_system_dm',
   'record_merge_yes',
   'set_corner_hold',
   'close_corner',
@@ -144,6 +146,17 @@ describe('minimal agent surface', () => {
     expect(calls[0]!.input).not.toHaveProperty('address');
     expect(calls[0]!.input.roomId).toBe('corner');
   });
+  it('routes operator System DM sends and status reads with active command authority', async () => {
+    await callAgentTool('send_operator_system_dm', { recipients: ['@recipient'], text: 'Fixed.' }, 'send');
+    await callAgentTool('read_operator_system_dm', { sendId: '11111111-1111-4111-8111-111111111111' }, 'read');
+    expect(calls[0]).toEqual({ operation: 'sendOperatorSystemDm', input: {
+      roomId: 'corner', requestId: 'request', generationId: 'generation', agentId: 'self',
+      recipients: ['@recipient'], text: 'Fixed.',
+    } });
+    expect(calls[1]!.operation).toBe('readOperatorSystemDm');
+    expect(calls[1]!.input).toMatchObject({ roomId: 'corner', requestId: 'request', generationId: 'generation' });
+  });
+
   it('R1 accepts the nested brief its schema advertises for revise_corner(action:brief)', async () => {
     const tool = agentToolsFor(true, false, true).find((value) => value.name === 'revise_corner')!;
     const input = {

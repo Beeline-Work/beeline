@@ -1,3 +1,4 @@
+import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
@@ -3083,6 +3084,7 @@ export async function migrate(
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
+  await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);
   await ddl('retire room webhooks', `
     DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
       room_webhook_deliveries, room_webhook_requests, room_webhooks;

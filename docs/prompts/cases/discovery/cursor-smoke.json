@@ -1,8 +1,8 @@
 {
   "sourceHashes": {
-    "scripts/discovery-live.mjs": "685746557463ef8daf57417d99f7842fb65d6ba930629a7ab2ecdfdaa1cda68e",
+    "scripts/discovery-live.mjs": "9016688396810d3c4b07ff6edb03d8e23aaa85bddfe7c2fc99804fdb1bf4d780",
     "scripts/discovery-launch.mjs": "63e64ea6981c1807150f9e1f3c6fff719b7579f6cfd5c53b6f3087794c179a2a",
-    "scripts/discovery-mcp.mjs": "968c43e9875e3ed05238a05ac5d882ecb0f03f9cd32b642b71b1eed0334ea79a",
+    "scripts/discovery-mcp.mjs": "e6f25de970975104003a17e7bfe156a3aaf6df441d571b6bdefbcf81437e89c6",
     "scripts/discovery-score.mjs": "573c5953878d00f75042601935f90bbcceeddad38d488404ec360a0467c34e47",
     "docs/prompts/cases/discovery/corpus.json": "077836425b3a061509a617a1cbdb8f9d918ec4629178456a554007272b8a522c",
     "apps/body/src/beeline-skill.ts": "ba0b92d8ee8166fc86fa3048092c7b0e7d515d5ccdd998dd91993e2a499c4009",
@@ -19,8 +19,8 @@
   "effort": null,
   "harness": "cursor",
   "harnessVersion": "2026.09.28-64d2043",
-  "commit": "59eb7d5a0c8b0c441802c763960d3c306a09c4e1",
-  "startedAt": "2026-10-22T20:32:41.677Z",
+  "commit": "d4b8b32e3bd6fd2d2ce8e3663021b0dc02e5b10a",
+  "startedAt": "2026-10-22T20:40:44.610Z",
   "rows": [
     {
       "id": "usage",
@@ -44,7 +44,7 @@
   "observations": [
     {
       "id": "usage",
-      "room": "7d1e4b96-e271-4378-bab0-b496cd29c92f",
+      "room": "f389142f-576b-4e50-9ebd-2f8e12eea030",
       "completed": true,
       "calls": [
         {
@@ -59,7 +59,7 @@
             "content": [
               {
                 "type": "text",
-                "text": "{\"summary\":\"Usage: unknown (harness reports none).\"}"
+                "text": "{\"summary\":\"Usage: Fixture plan plan included 25% (resets Thu 16:40), as of 16:40.\",\"usage\":{\"updatedAt\":1792701647.383,\"windows\":[{\"rateLimitType\":\"included_usage\",\"status\":\"allowed\",\"utilization\":0.25,\"resetsAt\":1793306447.383,\"updatedAt\":1792701647.383}],\"plan\":\"Fixture plan\"},\"old\":false}"
               }
             ]
           },
@@ -71,7 +71,7 @@
           "name": "search",
           "args": {
             "scope": "memory",
-            "query": "usage limits plan allowance",
+            "query": "usage limits plan allowance spend",
             "limit": 5
           },
           "intendedOnly": false,
@@ -89,114 +89,23 @@
         {
           "type": "call",
           "id": 4,
-          "name": "search",
-          "args": {
-            "scope": "history",
-            "query": "usage limits",
-            "limit": 5
-          },
-          "intendedOnly": false,
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "daemon operation searchInstitutionalHistory failed (400: institutional memory is disabled)"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
-        },
-        {
-          "type": "call",
-          "id": 5,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:wallet"
-          },
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "{\"app\":\"beeline:wallet\",\"tools\":[{\"name\":\"address\",\"description\":\"Show your connected owner's wallet: the EVM address (and the Solana address when there is one) and whether a wallet is linked at all. Call this before app_tool(app:beeline:wallet, tool:pay, args:...) when you need an address to receive funds.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"balance\",\"description\":\"Read your connected owner's wallet balances: the total USD value and every holding. This is the wallet you spend from; there is no other limit on spending than what the balance holds.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"chains\",\"description\":\"List the chains your owner's wallet can pay and swap on, with the network fee on each and whether the fee is sponsored (free to send).\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"history\",\"description\":\"Read your owner's wallet ledger, oldest first: every transaction in and out, who spent (agents are named), the counterparty, chain and the balance that remained.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100}},\"additionalProperties\":false}},{\"name\":\"quote\",\"description\":\"Quote one send before making it: the network fee (or that it is sponsored), whether the balance covers the amount, and what is available. Always quote when the amount is large or the balance looks tight.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"asset\",\"amount\"],\"properties\":{\"chain\":{\"type\":\"string\",\"description\":\"Defaults to base.\"},\"asset\":{\"type\":\"string\",\"description\":\"Asset symbol, e.g. usdc or eth.\"},\"amount\":{\"type\":\"string\",\"description\":\"Amount to send, in the asset.\"}},\"additionalProperties\":false}},{\"name\":\"pay\",\"description\":\"Send crypto from your connected owner's wallet to one address. Requires the owner's live delegated-signing grant; an expired grant is returned as delegation-expired and means your owner must re-grant permission in the app. Resource access is checked for the original requester; approval includes paid calls within that scope. Insufficient funds still refuses the send. A send a known venue would never credit is refused, e.g. under 5 USDC to Hyperliquid Bridge2 (0x2Df1c51E09aECF9cacB7bc98cB1742757f163dF7 on arbitrum). Every send is written to the @wallet ledger.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"asset\",\"amount\",\"to\"],\"properties\":{\"chain\":{\"type\":\"string\",\"description\":\"Defaults to base.\"},\"asset\":{\"type\":\"string\",\"description\":\"Asset symbol to send, e.g. usdc.\"},\"amount\":{\"type\":\"string\",\"description\":\"Amount to send, in the asset.\"},\"to\":{\"type\":\"string\",\"description\":\"The recipient address on that chain.\"}},\"additionalProperties\":false}},{\"name\":\"swap\",\"description\":\"Swap one asset for another inside your owner's wallet (e.g. usdc to eth) on one chain: base, ethereum, arbitrum, optimism or polygon. Other chains return \\\"swap unsupported on <chain>\\\". Same grant and ledger rules as app_tool(app:beeline:wallet, tool:pay, args:...).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"fromAsset\",\"toAsset\",\"amount\"],\"properties\":{\"chain\":{\"type\":\"string\",\"description\":\"Defaults to base.\"},\"fromAsset\":{\"type\":\"string\"},\"toAsset\":{\"type\":\"string\"},\"amount\":{\"type\":\"string\",\"description\":\"Amount to swap, in fromAsset.\"}},\"additionalProperties\":false}},{\"name\":\"contract_call\",\"description\":\"Call a contract from your owner's wallet, for venues that take an approve and a call rather than a plain transfer: bridges, vaults, lending and similar. `data` is the ABI-encoded call data. `approve` first approves exactly that amount of a token (usdc) for the contract; call data that grants an allowance itself is refused. `value` sends the chain's native token with the call. The approved amount, the value and a USDC transfer in the call data count as spends: insufficient funds refuse the call, and known venue rules apply as for app_tool(app:beeline:wallet, tool:pay, args:...). Same grant and ledger rules as app_tool(app:beeline:wallet, tool:pay, args:...).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"chain\",\"contract\",\"data\"],\"properties\":{\"chain\":{\"type\":\"string\",\"description\":\"The chain the contract is on, e.g. arbitrum.\"},\"contract\":{\"type\":\"string\",\"description\":\"The contract address to call.\"},\"data\":{\"type\":\"string\",\"description\":\"0x-prefixed ABI-encoded call data.\"},\"value\":{\"type\":\"string\",\"description\":\"Native token to send with the call, e.g. 0.01. Defaults to none.\"},\"approve\":{\"type\":\"object\",\"description\":\"Approve exactly this token amount for the contract before the call.\",\"required\":[\"asset\",\"amount\"],\"properties\":{\"asset\":{\"type\":\"string\",\"description\":\"Token symbol, e.g. usdc.\"},\"amount\":{\"type\":\"string\",\"description\":\"Exact amount to approve, in the token.\"}},\"additionalProperties\":false}},\"additionalProperties\":false}},{\"name\":\"sign_typed_data\",\"description\":\"Sign EIP-712 typed data with your connected owner's EVM account. Accepts any domain chainId, including 1337. Typed-data signatures can authorize transfers: the same wallet resource approval and live delegated-signing grant as app_tool(app:beeline:wallet, tool:pay, args:...) and app_tool(app:beeline:wallet, tool:swap, args:...) are required. Successful signatures are recorded in the Wallet ledger. Returns {outcome, signature}; never broadcasts a transaction.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"domain\":{\"type\":\"object\",\"additionalProperties\":true},\"types\":{\"type\":\"object\",\"additionalProperties\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"type\"],\"additionalProperties\":false}}},\"primaryType\":{\"type\":\"string\"},\"message\":{\"type\":\"object\",\"additionalProperties\":true}},\"required\":[\"domain\",\"types\",\"primaryType\",\"message\"],\"additionalProperties\":false}},{\"name\":\"link_request\",\"description\":\"Create a Link purchase request for the owner of this agent. Link asks the owner to approve the exact merchant and amount. Give merchant name, HTTPS merchant URL, amount in USD cents, and a clear description of what the owner asked to buy. For a seller that accepts a Shared Payment Token, set credentialType=shared_payment_token and provide its networkId; Link resolves the merchant and omits merchant URL in that API call. The owner gets a private Link approval card. No Beeline spending limit or approval is added. Use the returned ID with app_tool(app:beeline:wallet, tool:link_wait, args:...).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"merchant\",\"amount\",\"description\"],\"properties\":{\"merchant\":{\"type\":\"string\"},\"merchantUrl\":{\"type\":\"string\"},\"amount\":{\"type\":\"integer\",\"minimum\":1},\"description\":{\"type\":\"string\"},\"test\":{\"type\":\"boolean\",\"description\":\"Link test mode: no real charge.\"},\"credentialType\":{\"type\":\"string\",\"enum\":[\"card\",\"shared_payment_token\"]},\"networkId\":{\"type\":\"string\",\"description\":\"Required for shared_payment_token.\"}},\"additionalProperties\":false}},{\"name\":\"link_wait\",\"description\":\"Wait for the owner to approve a Link spend request. Polls briefly; call again while pending. After approval the result contains a one-time merchant-and-amount scoped card number, expiry, CVC and billing fields, or a shared payment token. Fill ordinary checkout fields with Squire operate_type/operate_drive using those approved details. Never reuse the card for another purchase.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"id\"],\"properties\":{\"id\":{\"type\":\"string\",\"description\":\"The lsrq_... ID from app_tool(app:beeline:wallet,tool:link_request,args).\"}},\"additionalProperties\":false}}]}"
-              }
-            ]
-          },
-          "succeeded": true
-        },
-        {
-          "type": "call",
-          "id": 6,
-          "name": "connect",
-          "args": {
-            "mode": "status"
-          },
-          "intendedOnly": false,
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "{\"readiness\":\"Connectors for @fixture-owner on Nerd (this is the machine you run on; an accepted offer installs here).\\n\\nCatalog:\\n- trusty-squire (Trusty Squire): not added. Signs up and signs in to websites for you hands-off on this machine; its vault holds keys when needed without a raw key reaching chat.\\n- wallet (Wallet): not added — call connect. An on-chain wallet bound to a person; it connects when that person grants agents permission to sign, from Connectors or an offer card.\\n- tailscale (Tailscale): not added — call connect. Private network access between connected machines, including the Tailscale CLI, tailnet services, and Taildrop file exchange.\\n\\nConnections (keys already provisioned, by name only):\\n- none\\n\\nApps (connect; each use is authorized as app:<key>):\\n- Link (link) via Beeline: broken\\n- none\\n\\nI can reach Tailscale on this machine because this node is connected as fixture-account@example.invalid; to fix it, use the tailscale CLI for tailnet resources.\",\"capabilities\":[\"beeline:onboarding\",\"beeline:workflow\",\"beeline:wallet\",\"beeline:browser_share\",\"beeline:avatar\"]}"
-              }
-            ]
-          },
-          "succeeded": true
-        },
-        {
-          "type": "call",
-          "id": 7,
-          "name": "app_tool",
-          "args": {
-            "app": "beeline:wallet",
-            "args": {},
-            "tool": "balance"
-          },
-          "intendedOnly": true,
-          "succeeded": true
-        },
-        {
-          "type": "call",
-          "id": 8,
           "name": "read",
           "args": {
-            "facet": "procedure",
-            "slug": "beeline-memory"
+            "facet": "addresses"
           },
           "intendedOnly": false,
           "response": {
             "content": [
               {
                 "type": "text",
-                "text": "daemon operation loadWorkspaceSkill failed (400: institutional memory is disabled)"
-              }
-            ],
-            "isError": true
-          },
-          "succeeded": false
-        },
-        {
-          "type": "call",
-          "id": 9,
-          "name": "report_feedback",
-          "args": {
-            "category": "bug",
-            "summary": "Usage is unknown and memory search plus procedure load both fail with institutional memory disabled, so saved limits cannot be read.",
-            "tool_name": "search",
-            "error_excerpt": "daemon operation searchInstitutionalMemory failed (400: institutional memory is disabled)"
-          },
-          "intendedOnly": false,
-          "response": {
-            "content": [
-              {
-                "type": "text",
-                "text": "{\"itemId\":\"fb_60832ee7812f07adf778dfce\"}"
+                "text": "{\"rooms\":[{\"roomId\":\"f389142f-576b-4e50-9ebd-2f8e12eea030\",\"name\":\"usage\",\"directMessage\":false}]}"
               }
             ]
           },
           "succeeded": true
         }
       ],
-      "text": "No usage limit is on file for this session. The usage read is **unknown**: the harness reports none, so there is no plan, allowance, or key spend.\n\nOther places that could hold a number:\n\n- Saved memory: refused (400, institutional memory disabled).\n- History search: refused (400, institutional memory disabled).\n- Wallet balance: the call was recorded and not executed. Wallet is not connected on this machine.",
+      "text": "Your Fixture plan included allowance is a quarter used (25%), still allowed. It resets Thursday, October 29, 2026 at 16:40 (UTC-4). That reading is as of 16:40 today.\n\nThat is the limit this account exposes: one included-usage window, shown as how much of it is spent. There is no separate token or dollar cap on the usage read.",
       "execution": "local-service",
       "effects": {
         "remainingSchedules": 0,

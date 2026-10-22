@@ -15,15 +15,17 @@
 #   workflow_dispatch — pick the variant; this is how a tester gets a build of
 #                   an arbitrary branch.
 #   workflow_call   — the unified release builds production installers before
-#                   it creates the GitHub release. Unfiltered.
+#                   it creates the GitHub release. Unfiltered, and without the
+#                   icons gate: pull requests already proved the merged icons.
 #
 # The variant selects which config the CLI merges over tauri.conf.json:
 # production is the release identity, preview installs beside it with console
 # logging kept, dev is the local-identity build. Pull requests build preview —
 # an artifact from a PR should never claim to be the release app.
 #
-# Production macOS builds are signed, notarized, stapled, and strictly verified
-# when the complete repository credential set is available. Trusted in-repo
+# Production macOS builds are signed, notarized once as the disk image (which
+# covers the app inside it), stapled, and strictly verified when the complete
+# repository credential set is available. Trusted in-repo
 # previews exercise the same signed path without claiming the production app
 # identity. Missing-secret previews/production builds are loudly unsigned;
 # dev builds are intentionally unsigned.
@@ -162,7 +164,7 @@ jobs:
     name: DESKTOP ICONS
     needs: changes
     if: >-
-      !cancelled() && (
+      !cancelled() && inputs.release_sha == '' && (
         github.event_name != 'pull_request' ||
         needs.changes.outputs.desktop == 'true'
       )
@@ -184,7 +186,7 @@ jobs:
   build:
     name: DESKTOP BUILD (${{ matrix.label }})
     needs: [changes, icons]
-    if: ${{ !cancelled() && needs.icons.result == 'success' }}
+    if: ${{ !cancelled() && (needs.icons.result == 'success' || inputs.release_sha != '') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -254,7 +256,7 @@ jobs:
           restore-keys: |
             desktop-cargo-${{ matrix.label }}-
 
-      - run: npm ci
+      - run: bash scripts/npm-ci-timed.sh
       # Metro resolves @beeline/* from built dist, exactly as the phone build
       # does, so the web export needs those dists to exist first.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
@@ -262,7 +264,7 @@ jobs:
       # node_modules, including the Tauri CLI.
       - name: Install mobile dependencies
         working-directory: apps/mobile
-        run: npm ci
+        run: bash ../../scripts/npm-ci-timed.sh
 
       # The gate evaluates the complete credential set before Tauri sees any
       # of it. A missing or partially configured set therefore builds fully
@@ -355,6 +357,8 @@ jobs:
 
       # `tauri build` runs the config's beforeBuildCommand (the Expo web
       # export) and then bundles it for this platform's installers.
+      # Tauri signs the app but does not notarize it here: the API key variables
+      # are unset for this step, and the disk image below is notarized once.
       - name: Build the desktop bundle
         timeout-minutes: 25
         working-directory: apps/mobile
@@ -374,7 +378,8 @@ jobs:
             preview) config=(--config src-tauri/tauri.preview.conf.json) ;;
             *) echo "::error::unknown variant '$VARIANT'"; exit 1 ;;
           esac
-          npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
+          env -u APPLE_API_KEY -u APPLE_API_ISSUER -u APPLE_API_KEY_PATH \
+            npx tauri build --target "${{ matrix.target }}" ${config[@]+"${config[@]}"} \
             2>&1 | tee "$RUNNER_TEMP/tauri-build.log"
 
       # This safe local fixture proves the plugin call reaches the runner OS
@@ -432,9 +437,8 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$test_app"
           echo '::notice::ad-hoc codesign verification passed; this does not represent Developer ID or notarization'
 
-      # Tauri signs, submits, and staples the inner .app. Submit and staple the
-      # outer disk image too: that .dmg is the file users actually download and
-      # the artifact `stapler validate` must accept.
+      # One notarization: the .dmg users download, which registers the signed
+      # .app inside it too. Staple the ticket to the disk image.
       - name: Notarize and staple the macOS disk image
         if: steps.macos_signing.outputs.enabled == 'true'
         env:
@@ -542,7 +546,9 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The release keeps only the stable installer names staged below.
       - uses: actions/upload-artifact@v4
+        if: inputs.variant != 'production'
         with:
           name: beeline-desktop-${{ inputs.variant || 'preview' }}-${{ matrix.label }}
           # The whole bundle directory: a macOS run carries both the .dmg and

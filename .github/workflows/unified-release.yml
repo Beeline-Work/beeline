@@ -11,6 +11,10 @@
 # - The emulator device proof (run_release_proof=true) is opt-in: it never runs
 #   by default. An OTA promoted without it is recorded as UNPROVEN in the
 #   release record.
+#
+# Jobs that need production host tools (flyctl, docker, Android SDK) run on the
+# beeline-prod-host pool, which has two runners, so server and mobile OTA run
+# side by side. Planning and the release record run on GitHub-hosted runners.
 name: Unified production release
 run-name: "Production release · @${{ fromJSON(inputs.dispatched_by || '{}').handle || 'unknown' }} · ${{ fromJSON(inputs.dispatched_by || '{}').auditMessageId }}"
 
@@ -29,11 +33,6 @@ on:
         description: Recovery only - existing vX.Y.Z identity
         type: string
         required: false
-      retry_attempt:
-        description: Recovery only - component-local attempt (1-3)
-        type: string
-        default: '1'
-        required: true
       selection:
         description: Recovery only - routine releases keep auto
         type: string
@@ -49,16 +48,6 @@ on:
           - beta
           - production
         required: true
-      plan_only:
-        description: Recovery only - print server canary and rollback ordering without touching production
-        type: boolean
-        default: false
-        required: false
-      room_open_trace:
-        description: Diagnostic only - build the OTA bundle with the on-device Room-open timing readout visible
-        type: boolean
-        default: false
-        required: false
       run_release_proof:
         description: Opt-in only - run the emulator device proof before OTA promotion; default off (OTA promotes without it, release recorded UNPROVEN)
         type: boolean
@@ -87,26 +76,25 @@ concurrency:
 
 jobs:
   initialize:
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       release_sha: ${{ steps.plan.outputs.release_sha }}
       release_version: ${{ steps.plan.outputs.release_version }}
       release_id: ${{ steps.plan.outputs.release_id }}
       trigger_epoch: ${{ steps.clock.outputs.trigger_epoch }}
+      recovering: ${{ steps.retry_state.outputs.run_id != '' }}
       run_server: ${{ steps.plan.outputs.run_server }}
       run_helper: ${{ steps.plan.outputs.run_helper }}
       run_mobile_ota: ${{ steps.plan.outputs.run_mobile_ota }}
       run_mobile_native: ${{ steps.plan.outputs.run_mobile_native }}
       run_desktop: ${{ steps.plan.outputs.run_desktop }}
       run_website: ${{ steps.plan.outputs.run_website }}
-      stage_server: ${{ steps.plan.outputs.stage_server }}
-      stage_helper: ${{ steps.plan.outputs.stage_helper }}
       helper_reuse_run_id: ${{ steps.helper_reuse.outputs.run_id }}
       previous_mac_run_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.run_id || '' }}
       previous_mac_release_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.release_id || '' }}
-      stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
+      stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
       native_android: ${{ steps.plan.outputs.native_android }}
       native_ios: ${{ steps.plan.outputs.native_ios }}
       native_app_version: ${{ steps.native_version.outputs.version }}
@@ -114,17 +102,13 @@ jobs:
       previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
       next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
       desktop_version: ${{ steps.plan.outputs.desktop_version }}
-      stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
-      stage_website: ${{ steps.plan.outputs.stage_website }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
-          cache: npm
+          node-version: 22
       - name: Verify release dispatch attribution
         uses: actions/github-script@v7
         env:
@@ -176,7 +160,7 @@ jobs:
           path: ${{ runner.temp }}/previous
           run-id: ${{ steps.previous.outputs.run_id }}
           github-token: ${{ github.token }}
-      - name: Locate this identity's latest retry state
+      - name: Locate this identity's latest attempt state
         if: inputs.release_sha != '' && inputs.release_version != ''
         id: retry_state
         uses: actions/github-script@v7
@@ -192,7 +176,7 @@ jobs:
               .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
               .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
             if (artifact) core.setOutput('run_id', String(artifact.workflow_run.id));
-      - name: Download this identity's retry state
+      - name: Download this identity's attempt state
         if: steps.retry_state.outputs.run_id != ''
         uses: actions/download-artifact@v4
         with:
@@ -203,7 +187,6 @@ jobs:
       - name: Assign identity and produce the inspectable release plan
         id: plan
         env:
-          PLAN_ONLY: ${{ inputs.plan_only }}
           REQUESTED_SHA: ${{ inputs.release_sha || '' }}
           REQUESTED_VERSION: ${{ inputs.release_version || '' }}
           SELECTION: ${{ inputs.selection || 'auto' }}
@@ -213,36 +196,27 @@ jobs:
         run: |
           set -euo pipefail
           . scripts/gh-release-retry.sh
-          git fetch origin main
           previous="$RUNNER_TEMP/previous/release-attempt.json"
           [ -f "$previous" ] || previous="$RUNNER_TEMP/previous/unified-release.json"
           retry="$RUNNER_TEMP/retry/release-attempt.json"
-          if [ "$PLAN_ONLY" = true ]; then
-            # workflow_dispatch checks out the selected branch/ref. A dry run is
-            # deliberately allowed to plan an unmerged commit and gets an
-            # unmistakably synthetic release identity.
-            release_sha=$(git rev-parse HEAD)
-            release_version=v0.0.0
+          release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
+          test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
+          git merge-base --is-ancestor "$release_sha" origin/main || {
+            echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
+          }
+          if [ -n "$REQUESTED_VERSION" ]; then
+            release_version="$REQUESTED_VERSION"
+            # Never silently reuse an unrelated old release with this tag.
+            ghr_requested_version_guard "$release_version" "$(git rev-parse --verify "$release_sha^{commit}")"
           else
-            release_sha="${REQUESTED_SHA:-$GITHUB_SHA}"
-            test -n "$release_sha" || { echo 'missing release identity' >&2; exit 1; }
-            git merge-base --is-ancestor "$release_sha" origin/main || {
-              echo "release SHA is not a commit on main: $release_sha" >&2; exit 1;
-            }
-            if [ -n "$REQUESTED_VERSION" ]; then
-              release_version="$REQUESTED_VERSION"
-              # Never silently reuse an unrelated old release with this tag.
-              ghr_requested_version_guard "$release_version" "$(git rev-parse --verify "$release_sha^{commit}")"
-            else
-              # Every existing record reserves its version, including a draft
-              # left by a failed or partially shipped attempt. Keep those
-              # records/assets intact; routine dispatch always gets a fresh
-              # identity. Explicit recovery above retains its strict guard.
-              ghr_api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/reserved-release-versions.txt"
-              version_args=(release-version --sha "$release_sha" --reserved-versions "$RUNNER_TEMP/reserved-release-versions.txt")
-              if [ -f "$previous" ]; then version_args+=(--previous "$previous"); fi
-              release_version=$(node scripts/unified-release.mjs "${version_args[@]}")
-            fi
+            # Every existing record reserves its version, including a draft
+            # left by a failed or partially shipped attempt. Keep those
+            # records/assets intact; routine dispatch always gets a fresh
+            # identity. Explicit recovery above retains its strict guard.
+            ghr_api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/reserved-release-versions.txt"
+            version_args=(release-version --sha "$release_sha" --reserved-versions "$RUNNER_TEMP/reserved-release-versions.txt")
+            if [ -f "$previous" ]; then version_args+=(--previous "$previous"); fi
+            release_version=$(node scripts/unified-release.mjs "${version_args[@]}")
           fi
           release_id="${release_version}-${release_sha}"
           if [ -f "$previous" ]; then
@@ -286,7 +260,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - name: Resolve the shared native store version before building
         id: native_version
-        if: inputs.plan_only != true && steps.plan.outputs.run_mobile_native == 'true'
+        if: steps.plan.outputs.run_mobile_native == 'true'
         env:
           STORE_TRACK: ${{ inputs.store_track }}
           RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
@@ -302,22 +276,6 @@ jobs:
             version=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/mobile-package.json")
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-      - name: Preflight the release record before any component ships
-        if: inputs.plan_only != true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_VERSION: ${{ steps.plan.outputs.release_version }}
-          RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          . scripts/gh-release-retry.sh
-          # A draft is invisible to /releases/latest. Creating it here proves
-          # that this job token can create the record before deploy/OTA/store.
-          # Retries of the same identity reuse it; a different SHA must fail.
-          ghr_requested_version_guard "$RELEASE_VERSION" "$RELEASE_SHA"
-          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes 'Release in progress.' --draft
-          fi
       - uses: actions/upload-artifact@v4
         with:
           name: unified-release-plan-${{ steps.plan.outputs.release_id }}
@@ -330,24 +288,17 @@ jobs:
           retention-days: 90
       - name: Find a reusable daemon artifact for this exact release SHA
         # The ONE reuse decision, and the one place the run holding this
-        # identity's merged bytes is named. A retry of an already-attempted
+        # identity's merged bytes is named. A recovery of an already-attempted
         # release identity still has the earlier attempt's complete, merged
         # three-platform daemon artifact, so helper_macos (which only exists to
         # feed that merge) is skipped and the helper leg runs on the reused
         # bytes; daemon-leg consumes this run id rather than asking again, so
-        # there is one notion of "already built". `built` is the ordinary retry
-        # state for that — the artifact upload and the built checkpoint land
-        # together, and a later leg (promote, the CLI package, Pages) is what
-        # failed — while `pending` covers an attempt lost between the two. A
-        # fresh identity has no artifact under this name, so the Mac bundles
-        # build exactly as before. Every failure — a list error, rate limit, a
-        # blip, an expired artifact — resolves to no run id, which helper_macos
-        # reads as "rebuild", so this lookup can never be what loses a release:
-        # every other job needs this one, and an empty answer costs a cold Mac
-        # build rather than the attempt.
-        if: >-
-          inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
-          contains(fromJSON('["pending","built"]'), steps.plan.outputs.stage_helper)
+        # there is one notion of "already built". A fresh identity has no
+        # artifact under this name, so the Mac bundles build. Every failure — a
+        # list error, rate limit, a blip, an expired artifact — resolves to no
+        # run id, which helper_macos reads as "rebuild", so this lookup can
+        # never be what loses a release.
+        if: steps.plan.outputs.run_helper == 'true'
         id: helper_reuse
         uses: actions/github-script@v7
         with:
@@ -367,10 +318,7 @@ jobs:
       - name: Find the last successful release's Mac bundles
         id: previous_mac
         continue-on-error: true
-        if: >-
-          inputs.plan_only != true && steps.plan.outputs.run_helper == 'true' &&
-          contains(fromJSON('["pending","built"]'), steps.plan.outputs.stage_helper) &&
-          steps.helper_reuse.outputs.run_id == ''
+        if: steps.plan.outputs.run_helper == 'true' && steps.helper_reuse.outputs.run_id == ''
         uses: actions/github-script@v7
         with:
           script: |
@@ -401,28 +349,11 @@ jobs:
               core.info(`Previous Mac bundle lookup unavailable; building: ${error.message}`);
             }
 
-  server_deploy_plan:
-    needs: initialize
-    if: inputs.plan_only == true
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Dry-run canary success and rollback paths
-        run: |
-          node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],JSON.stringify([{id:"machine-a",config:{image:"registry.fly.io/beeline-server:previous"}},{id:"machine-b",config:{image:"registry.fly.io/beeline-server:previous"}}]))' "$RUNNER_TEMP/server-machines.json"
-          node scripts/unified-release.mjs server-deploy-plan \
-            --machines "$RUNNER_TEMP/server-machines.json" \
-            --image "registry.fly.io/beeline-server:${{ needs.initialize.outputs.release_version }}-${{ needs.initialize.outputs.release_sha }}" \
-            --simulate-failure true | tee -a "$GITHUB_STEP_SUMMARY"
-
   server:
     needs: initialize
-    if: inputs.plan_only != true && needs.initialize.outputs.run_server == 'true'
+    if: needs.initialize.outputs.run_server == 'true'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 18
+    timeout-minutes: 15
     concurrency:
       group: deploy-beeline-server
       cancel-in-progress: false
@@ -430,10 +361,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 22
           cache: npm
       - name: Log in to GHCR for the pinned server base image
         uses: docker/login-action@v3
@@ -441,15 +371,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-node@v4
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
-        with:
-          node-version-file: .nvmrc
-          cache: npm
       - name: Prepare the server migration CLI once
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         run: |
-          npm ci
+          set -euo pipefail
+          bash scripts/npm-ci-timed.sh
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract
           npm run build -w @beeline/buzz-client
@@ -457,25 +382,6 @@ jobs:
           npm run build -w @beeline/auth
           npm run build -w @beeline/server
       - uses: ./.github/actions/server-leg
-        if: needs.initialize.outputs.stage_server == 'pending'
-        with:
-          phase: build
-          release_sha: ${{ needs.initialize.outputs.release_sha }}
-          release_version: ${{ needs.initialize.outputs.release_version }}
-      - name: Checkpoint the server build
-        if: needs.initialize.outputs.stage_server == 'pending'
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server-built.json",JSON.stringify({component:"server",version,sourceSha,state:"built",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "server-artifact-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: needs.initialize.outputs.stage_server == 'pending'
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server-built
-          path: checkpoint-server-built.json
-          if-no-files-found: error
-      - uses: ./.github/actions/server-leg
-        id: promote
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
           # Unset = the Welcome Workspace is left alone. The release owner arms
@@ -486,107 +392,27 @@ jobs:
           SERVER_CANARY_PHONE_TOKEN: ${{ secrets.SERVER_CANARY_PHONE_TOKEN }}
           SERVER_CANARY_ROOM_ID: ${{ secrets.SERVER_CANARY_ROOM_ID }}
         with:
-          phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
       - name: Preserve server image rollback ledger
-        if: always() && contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: server-image-ledger-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/server-release/server-image-ledger.json
           if-no-files-found: warn
           retention-days: 90
-      - name: Checkpoint the server promotion
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server-promoted.json",JSON.stringify({component:"server",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "server-artifact-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server-promoted
-          path: checkpoint-server-promoted.json
-          if-no-files-found: error
-      - name: Bounded exact server smoke check
-        run: node scripts/server-release-smoke.mjs
-        env:
-          EXPECTED_RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          EXPECTED_RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          BEELINE_REVIEW_SECRET: ${{ secrets.BEELINE_REVIEW_SECRET }}
-      - name: Write server checkpoint
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-server.json",JSON.stringify({component:"server",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "server-artifact-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server
-          path: checkpoint-server.json
-          if-no-files-found: error
-
-  # Starter image publishing is best effort and cannot delay server promotion
-  # or the release record. Both use this runner, so let the result finish first.
-  free_agent_image:
-    needs: [initialize, server, release_result]
-    if: >-
-      always() && !cancelled() && inputs.plan_only != true &&
-      needs.server.result == 'success' && needs.initialize.outputs.run_server == 'true'
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 18
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.initialize.outputs.release_sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
-      # Helper staging builds pinned block/buzz with its Rust toolchain.
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Publish the free starter agent base image
-        shell: bash
-        run: |
-          set -uo pipefail
-          image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
-          if BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
-            bash scripts/stage-free-agent-helper.sh \
-            && flyctl deploy . \
-            --local-only \
-            --config fly.beeline-free-agents.toml \
-            --dockerfile infra/free-agent/Dockerfile \
-            --app beeline-free-agents \
-            --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
-            --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
-            --image-label "$image_label" --build-only --push --yes \
-            && flyctl auth docker \
-            && docker tag "registry.fly.io/beeline-free-agents:$image_label" registry.fly.io/beeline-free-agents:latest \
-            && docker push registry.fly.io/beeline-free-agents:latest; then
-            echo "Published registry.fly.io/beeline-free-agents:$image_label and :latest"
-          else
-            echo "::warning::Free starter agent image was not published; Machines keep the previous image"
-          fi
-        env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
 
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
     # Reuse is the only reason to skip this build, so it is the only thing that
-    # does. Any stage still owing merged bytes and holding no usable reuse run
-    # id rebuilds them here — including a `built` retry whose artifact expired,
-    # was deleted, or whose lookup hit a transient error. A redundant cold
-    # rebuild is wasteful; a stage with neither a reuse path nor a rebuild path
-    # is a dead end that burns every remaining attempt.
-    if: >-
-      inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
-      contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper) &&
-      needs.initialize.outputs.helper_reuse_run_id == ''
-    runs-on: ${{ fromJSON(matrix.runs_on) }}
-    # A matching verified payload avoids the cold cargo build. Every failed
-    # lookup, download or verification falls through to the normal build.
+    # does. A helper that still owes merged bytes and holds no usable reuse run
+    # id rebuilds them here.
+    if: needs.initialize.outputs.run_helper == 'true' && needs.initialize.outputs.helper_reuse_run_id == ''
+    runs-on: ${{ matrix.runs_on }}
+    # A matching verified payload or cached agent binaries avoid the cold cargo
+    # build. Every failed lookup, download or verification falls through to it.
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -594,25 +420,22 @@ jobs:
         include:
           - platform: darwin-arm64
             machine_arch: arm64
-            runs_on: '["macos-15"]'
+            runs_on: macos-15
+          # GitHub-hosted Intel: never queues behind iOS store builds on the
+          # shared self-hosted Mac.
           - platform: darwin-x64
             machine_arch: x86_64
-            runs_on: '["self-hosted","macOS","X64","ios-builder"]'
+            runs_on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
       - uses: actions/setup-node@v4
         with:
-          node-version: '20.19'
+          node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
+      - run: bash scripts/npm-ci-timed.sh
       - name: Require the native build architecture
         run: test "$(uname -m)" = "${{ matrix.machine_arch }}"
       - name: Download the previous Mac bundle when available
@@ -633,6 +456,10 @@ jobs:
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
+      - uses: ./.github/actions/buzz-agent-cache
+        if: steps.carry_bundle.outcome != 'success'
+        with:
+          platform: ${{ matrix.platform }}
       - name: Build and install-verify the native helper
         if: steps.carry_bundle.outcome != 'success'
         run: npm run bundle:beeline -- --platform "${{ matrix.platform }}"
@@ -654,13 +481,11 @@ jobs:
 
   helper:
     needs: [initialize, helper_macos]
-    # This leg runs when it holds bytes — freshly rebuilt or reused — or when the
-    # stage is already past owing any. A stage that still owes them and got
-    # neither is a failed Mac build, and helper_macos is where that reads.
+    # This leg runs when it holds bytes: freshly rebuilt Mac bundles or a
+    # reused merged artifact. A failed Mac build reads in helper_macos.
     if: >-
-      !cancelled() && inputs.plan_only != true && needs.initialize.outputs.run_helper == 'true' &&
-      (needs.helper_macos.result == 'success' || needs.initialize.outputs.helper_reuse_run_id != '' ||
-        !contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper))
+      !cancelled() && needs.initialize.outputs.run_helper == 'true' &&
+      (needs.helper_macos.result == 'success' || needs.initialize.outputs.helper_reuse_run_id != '')
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 20
     permissions:
@@ -676,17 +501,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 22
           cache: npm
+          registry-url: https://registry.npmjs.org
+      - uses: dtolnay/rust-toolchain@stable
+        if: needs.initialize.outputs.helper_reuse_run_id == ''
+      - run: bash scripts/npm-ci-timed.sh
+      - uses: ./.github/actions/buzz-agent-cache
+        if: needs.initialize.outputs.helper_reuse_run_id == ''
+        with:
+          platform: linux-x64
       # The Mac bundles exist in this run only when helper_macos built them, so
-      # they alone gate their own downloads and the merge inputs — daemon-leg's
-      # emptiness check then still names missing Mac inputs instead of failing
-      # deep inside the merge. The build phase itself runs whenever the `built`
-      # stage is not recorded yet, or whenever a rebuild just happened and only
-      # this run holds the bytes to merge and upload.
+      # they alone gate their own downloads and the merge inputs; daemon-leg's
+      # emptiness check then still names missing Mac inputs.
       - uses: actions/download-artifact@v4
         if: needs.helper_macos.result == 'success'
         with:
@@ -698,9 +527,6 @@ jobs:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64
       - uses: ./.github/actions/daemon-leg
-        if: >-
-          needs.initialize.outputs.stage_helper == 'pending' ||
-          needs.helper_macos.result == 'success'
         with:
           phase: build
           release_sha: ${{ needs.initialize.outputs.release_sha }}
@@ -708,81 +534,34 @@ jobs:
           reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
           darwin_arm64_bundle_dir: ${{ needs.helper_macos.result == 'success' && format('{0}/daemon-darwin-arm64', runner.temp) || '' }}
           darwin_x64_bundle_dir: ${{ needs.helper_macos.result == 'success' && format('{0}/daemon-darwin-x64', runner.temp) || '' }}
-      - name: Checkpoint the helper build
-        if: >-
-          needs.initialize.outputs.stage_helper == 'pending' ||
-          needs.helper_macos.result == 'success'
+      # The Pages update proof and the CLI package both build from these.
+      - name: Build the helper CLI packages
         run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper-built.json",JSON.stringify({component:"helper",version,sourceSha,state:"built",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: >-
-          needs.initialize.outputs.stage_helper == 'pending' ||
-          needs.helper_macos.result == 'success'
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper-built
-          path: checkpoint-helper-built.json
-          if-no-files-found: error
+          set -euo pipefail
+          npm run build -w @beeline/nostr
+          npm run build -w @beeline/api-contract
+          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/body
+          npm run build -w usebeeline
       - uses: ./.github/actions/daemon-leg
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
           reuse_run_id: ${{ needs.initialize.outputs.helper_reuse_run_id }}
           pages_manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
-      - uses: actions/setup-node@v4
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
-        with:
-          node-version: '24'
-          registry-url: https://registry.npmjs.org
       - name: Publish the exact helper CLI package
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
         run: |
           set -euo pipefail
           npm install --global npm@^11.15.0
-          npm ci
-          npm run build -w @beeline/nostr
-          npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
-          npm run build -w @beeline/body
-          npm run build -w usebeeline
           version="${{ needs.initialize.outputs.release_version }}"
           npm version "${version#v}" --allow-same-version --no-git-tag-version --workspace usebeeline
           npm view "usebeeline@${version#v}" version >/dev/null 2>&1 || npm publish --no-provenance --workspace usebeeline
-      - name: Checkpoint helper promotion
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper-promoted.json",JSON.stringify({component:"helper",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper-promoted
-          path: checkpoint-helper-promoted.json
-          if-no-files-found: error
-      - name: Smoke the exact helper package and manifest
+      # The Pages leg already proved the live manifest serves this release.
+      - name: Smoke the exact helper package
         env:
-          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          curl -fsS --max-time 20 "$MANIFEST_URL" -o "$RUNNER_TEMP/live-helper-manifest.json"
-          node - "$RUNNER_TEMP/live-helper-manifest.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
-          const manifest = require(process.argv[2]);
-          if (manifest.version !== process.argv[3] || manifest.sourceCommit !== process.argv[4]) process.exit(1);
-          NODE
-          node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}"
-      - name: Write helper checkpoint
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-helper.json",JSON.stringify({component:"helper",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "daemon-artifact-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-helper
-          path: checkpoint-helper.json
-          if-no-files-found: error
+        run: node scripts/npm-package-visibility.mjs usebeeline "${RELEASE_VERSION#v}"
 
   release_proof:
     # The emulator proof is a release gate, not a check: a blank-screen build
@@ -796,7 +575,7 @@ jobs:
     # the proof.
     needs: [initialize, mobile_native_android]
     if: >-
-      always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
+      always() && needs.initialize.result == 'success' &&
       inputs.run_release_proof == true &&
       needs.initialize.outputs.run_mobile_ota == 'true' &&
       needs.mobile_native_android.result != 'failure'
@@ -806,11 +585,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
       # The proof builds its own sideload APK when the native build was
       # carried, and that build runs Metro. Without this the job inherits the
       # runner's system node, which is older than metro-config's use of
@@ -864,7 +638,7 @@ jobs:
           BEELINE_ANDROID_KEEP_DEVICE: '1'
         run: |
           set -euo pipefail
-          npm ci
+          bash ../../scripts/npm-ci-timed.sh
           # Metro resolves @beeline/* to their built dist/; build them like
           # the OTA leg's eas-build-post-install does.
           npm run eas-build-post-install
@@ -897,88 +671,100 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+
+  # An unchanged runtime pin needs no store binary as its rollback anchor, so
+  # the OTA starts as soon as the plan exists. mobile_ota_after_native below
+  # covers a changed pin or a requested device proof.
   mobile_ota:
-    needs: [initialize, mobile_native_android, mobile_native_ios, release_proof]
+    needs: initialize
     if: >-
-      always() && inputs.plan_only != true && needs.initialize.result == 'success' &&
       needs.initialize.outputs.run_mobile_ota == 'true' &&
-      (needs.initialize.outputs.runtime_pin_changed != 'true' ||
-      needs.initialize.outputs.stage_mobile_native == 'checked' ||
-      (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
-      (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success'))
+      needs.initialize.outputs.runtime_pin_changed != 'true' && inputs.run_release_proof != true
     runs-on: [self-hosted, beeline-prod-host]
     # Six runtime targets (each pin plus the two latest shipped runtimes) and
-    # one bundle per platform. Seventeen per-target bundles hit the old
-    # 15-minute cap; the extra minutes are margin for the ledger and artifact
-    # uploads after EAS has already changed production, not room to grow.
+    # one bundle per platform.
     timeout-minutes: 18
+    outputs:
+      completed_at: ${{ steps.promote.outputs.completed_at }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # A built retry needs the current recovery code; its downloaded
-          # candidate still pins the original release SHA and exact beta groups.
-          # A pending build must compile the original release tree.
-          ref: ${{ needs.initialize.outputs.stage_mobile_ota == 'pending' && needs.initialize.outputs.release_sha || github.sha }}
+          ref: ${{ needs.initialize.outputs.release_sha }}
           fetch-depth: 0
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 22
           cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: ./.github/actions/eas-cli
       - uses: ./.github/actions/mobile-ota-leg
-        if: needs.initialize.outputs.stage_mobile_ota == 'pending'
         with:
           phase: build
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ inputs.retry_attempt }}
+          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
-          # Diagnostic only, and only on the build leg: the promote leg republishes
-          # an existing bundle and cannot change what was compiled into it.
-          room_open_trace: ${{ inputs.room_open_trace && '1' || '' }}
-          # A platform whose store binary was built in this run may treat that
-          # binary's embedded update as the rollback anchor for its new runtime.
-          embedded_anchor_platforms: ${{ format('{0}{1}', needs.mobile_native_android.result == 'success' && 'android,' || '', needs.mobile_native_ios.result == 'success' && 'ios' || '') }}
-      - name: Checkpoint the OTA build
-        if: needs.initialize.outputs.stage_mobile_ota == 'pending'
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota-built.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"built",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-candidate-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: needs.initialize.outputs.stage_mobile_ota == 'pending'
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-built
-          path: checkpoint-mobile-ota-built.json
-          if-no-files-found: error
       - uses: ./.github/actions/mobile-ota-leg
-        if: >-
-          contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
-          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
+        id: promote
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ inputs.retry_attempt }}
+          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
           receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
           receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
-      - name: Checkpoint OTA promotion
-        if: >-
-          contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
-          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota-promoted.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"promoted",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        if: >-
-          contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_mobile_ota) &&
-          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
+
+  mobile_ota_after_native:
+    needs: [initialize, mobile_native_android, mobile_native_ios, release_proof]
+    if: >-
+      always() && needs.initialize.result == 'success' &&
+      needs.initialize.outputs.run_mobile_ota == 'true' &&
+      (needs.initialize.outputs.runtime_pin_changed == 'true' || inputs.run_release_proof == true) &&
+      (needs.initialize.outputs.runtime_pin_changed != 'true' ||
+      needs.initialize.outputs.stage_mobile_native == 'checked' ||
+      (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
+      (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success'))
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 18
+    outputs:
+      completed_at: ${{ steps.promote.outputs.completed_at }}
+    steps:
+      - uses: actions/checkout@v4
         with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota-promoted
-          path: checkpoint-mobile-ota-promoted.json
-          if-no-files-found: error
+          ref: ${{ needs.initialize.outputs.release_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: ./.github/actions/eas-cli
+      - uses: ./.github/actions/mobile-ota-leg
+        with:
+          phase: build
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+          # A platform whose store binary was built in this run may treat that
+          # binary's embedded update as the rollback anchor for its new runtime.
+          embedded_anchor_platforms: ${{ format('{0}{1}', needs.mobile_native_android.result == 'success' && 'android,' || '', needs.mobile_native_ios.result == 'success' && 'ios' || '') }}
+      - uses: ./.github/actions/mobile-ota-leg
+        id: promote
+        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
+        with:
+          phase: promote
+          release_sha: ${{ needs.initialize.outputs.release_sha }}
+          release_version: ${{ needs.initialize.outputs.release_version }}
+          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
+          expo_token: ${{ secrets.EXPO_TOKEN }}
+          owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
+          receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
+          receipt_origin: ${{ vars.MOBILE_OTA_RECEIPT_ORIGIN || 'https://usebeeline.app/push' }}
       - name: Refuse promotion unless the release proof succeeded
         if: inputs.run_release_proof == true && needs.release_proof.result != 'success'
         run: |
@@ -987,52 +773,10 @@ jobs:
           echo 'If the proof ran and failed, see the release-proof-<id> artifact for screenshots and logs.' >&2
           echo 'The proof was explicitly requested for this release, so promotion stays blocked.' >&2
           exit 1
-      - name: Locate promoted OTA evidence for a check-only retry
-        if: >-
-          needs.initialize.outputs.stage_mobile_ota == 'promoted' &&
-          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
-        id: ota_promoted
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const name = `mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}`;
-            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-              owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-            });
-            const artifact = artifacts.filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
-              .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-            if (!artifact) core.setFailed(`missing immutable artifact ${name}`);
-            else core.setOutput('run_id', String(artifact.workflow_run.id));
-      - uses: actions/download-artifact@v4
-        if: >-
-          needs.initialize.outputs.stage_mobile_ota == 'promoted' &&
-          (needs.release_proof.result == 'success' || inputs.run_release_proof != true)
-        with:
-          name: mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/mobile-ota-resume
-          run-id: ${{ steps.ota_promoted.outputs.run_id }}
-          github-token: ${{ github.token }}
-      - name: Require rollback evidence and write checkpoint
-        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
-        run: |
-          set -euo pipefail
-          ledger="$RUNNER_TEMP/mobile-ota-ledger.json"
-          [ -f "$ledger" ] || ledger="$RUNNER_TEMP/mobile-ota-resume/mobile-ota-ledger.json"
-          test -f "$ledger" || {
-            echo 'mobile OTA promotion produced no rollback ledger' >&2; exit 1;
-          }
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef,completedAt]=process.argv.slice(1);fs.writeFileSync("checkpoint-mobile-ota.json",JSON.stringify({component:"mobile-ota",version,sourceSha,state:"checked",artifactRef,completedAt:Number(completedAt)})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-ota-promoted-${{ needs.initialize.outputs.release_id }}" "$(date +%s)"
-      - uses: actions/upload-artifact@v4
-        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-ota
-          path: checkpoint-mobile-ota.json
-          if-no-files-found: error
 
   desktop_installers:
     needs: initialize
-    if: inputs.plan_only != true && needs.initialize.outputs.run_desktop == 'true'
+    if: needs.initialize.outputs.run_desktop == 'true'
     uses: ./.github/workflows/desktop.yml
     with:
       variant: production
@@ -1041,25 +785,9 @@ jobs:
       desktop_version: ${{ needs.initialize.outputs.desktop_version }}
     secrets: inherit
 
-  desktop_checkpoint:
-    needs: [initialize, desktop_installers]
-    if: inputs.plan_only != true && needs.initialize.outputs.run_desktop == 'true' && needs.desktop_installers.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Write desktop checkpoint
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-desktop.json",JSON.stringify({component:"desktop",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "beeline-desktop-release-${{ needs.initialize.outputs.release_id }}-*"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-desktop
-          path: checkpoint-desktop.json
-          if-no-files-found: error
-
   website:
     needs: initialize
-    if: inputs.plan_only != true && needs.initialize.outputs.run_website == 'true'
+    if: needs.initialize.outputs.run_website == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1075,6 +803,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/mobile/package-lock.json
+      - name: Install once and build the shared packages Metro and the Pages build read
+        run: |
+          set -euo pipefail
+          bash scripts/npm-ci-timed.sh
+          npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+      - uses: ./.github/actions/eas-cli
       - uses: ./.github/actions/pages-leg
         if: needs.initialize.outputs.run_helper != 'true'
         with:
@@ -1084,26 +825,11 @@ jobs:
           expo_token: ${{ secrets.EXPO_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-      - uses: actions/upload-artifact@v4
-        if: needs.initialize.outputs.run_helper != 'true'
-        with:
-          name: website-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/usebeeline-pages
-          if-no-files-found: error
-      - name: Write website checkpoint
-        run: |
-          node -e 'const fs=require("node:fs");const [version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync("checkpoint-website.json",JSON.stringify({component:"website",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "website-${{ needs.initialize.outputs.release_id }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-website
-          path: checkpoint-website.json
-          if-no-files-found: error
 
   mobile_native_android:
     needs: initialize
     if: >-
-      inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      needs.initialize.outputs.run_mobile_native == 'true' &&
       ((inputs.store_track != '' && inputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_android == 'true'
@@ -1115,22 +841,16 @@ jobs:
     # to the production host on its own when Chad is offline.
     runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
-    env:
-      EAS_CLI_VERSION: 22.2.0
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/mobile/package-lock.json
+      - uses: ./.github/actions/eas-cli
       - name: Require native release credentials
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -1159,11 +879,8 @@ jobs:
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           echo "Android SDK: $ANDROID_HOME on $(hostname)"
           export PATH="$ANDROID_HOME/platform-tools:$PATH"
-          npm ci
-          # --package + env -u: same reasons as the iOS leg (a bare spec matching a
-          # global eas-cli prepends its bin dir; npm leaks --package into eas's own
-          # nested npx for the local build plugin).
-          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform android --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline.aab"
+          bash ../../scripts/npm-ci-timed.sh
+          "$EAS_CLI_PATH" build --local --platform android --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline.aab"
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'local EAS build did not produce a non-empty aab' >&2; exit 1; }
           sha256=$(sha256sum "$RUNNER_TEMP/beeline.aab" | awk '{print $1}')
           node - "$RUNNER_TEMP/android-build.json" "$RUNNER_TEMP/beeline.aab" "$sha256" <<'NODE'
@@ -1217,23 +934,22 @@ jobs:
   mobile_native_ios:
     needs: initialize
     if: >-
-      inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      needs.initialize.outputs.run_mobile_native == 'true' &&
       ((inputs.store_track != '' && inputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_ios == 'true'
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90
-    env:
-      EAS_CLI_VERSION: 22.2.0
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: 22
           cache: npm
+          cache-dependency-path: apps/mobile/package-lock.json
+      - uses: ./.github/actions/eas-cli
       - name: Isolate the iOS signing keychain
         run: |
           set -euo pipefail
@@ -1279,18 +995,12 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
-          # Use --package with a bare `eas` command (never `npx eas-cli@version ...`): a bare
-          # package spec that matches the eas-cli also installed globally on this runner makes
-          # npm exec resolve that global install and prepend its bin dir (/usr/local/bin) to
-          # PATH, reintroducing Homebrew rsync ahead of /usr/bin for the Xcode export above.
-          # `env -u npm_config_package`: npm exports --package as npm_config_package into the
-          # child environment, and eas itself runs `npx -y eas-cli-local-build-plugin@<v>`; with that
-          # variable inherited the nested npx resolves eas-cli instead and fails with
-          # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
+          # The pinned eas-cli runs by its absolute path, never through npm exec,
+          # which would prepend a global eas-cli's bin dir (/usr/local/bin) to PATH.
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
-          npm ci
-          npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
+          bash ../../scripts/npm-ci-timed.sh
+          "$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
           python3 ../../scripts/ios-build-evidence.py "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-build.json"
       - name: Submit iOS build to TestFlight for a selected store track
@@ -1299,14 +1009,6 @@ jobs:
         run: |
           set -euo pipefail
           # Keep Apple's openrsync ahead of Homebrew rsync during Xcode IPA export.
-          # Use --package with a bare `eas` command (never `npx eas-cli@version ...`): a bare
-          # package spec that matches the eas-cli also installed globally on this runner makes
-          # npm exec resolve that global install and prepend its bin dir (/usr/local/bin) to
-          # PATH, reintroducing Homebrew rsync ahead of /usr/bin for the Xcode export above.
-          # `env -u npm_config_package`: npm exports --package as npm_config_package into the
-          # child environment, and eas itself runs `npx -y eas-cli-local-build-plugin@<v>`; with that
-          # variable inherited the nested npx resolves eas-cli instead and fails with
-          # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
           PATH="$(dirname "$(command -v node)"):/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin"
           export PATH
           # Verify the actual IPA targets this App Store app and a new build
@@ -1354,13 +1056,14 @@ jobs:
           xargs security list-keychains -d user -s < "$RUNNER_TEMP/user-keychains.txt"
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
 
+
   release_result:
     # !cancelled(), not always(): a run superseded by cancel-in-progress must not
     # classify itself as a failed attempt.
-    if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 2
+    if: "!cancelled() && needs.initialize.result == 'success'"
+    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_native, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       actions: write
       contents: write
@@ -1373,76 +1076,28 @@ jobs:
         with:
           ref: ${{ needs.initialize.outputs.release_sha }}
           fetch-depth: 0
-      - name: Install repository Node before release commands
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
-          cache: npm
+          node-version: 22
       - uses: actions/download-artifact@v4
         with:
           name: unified-release-plan-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/release
-      - uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          pattern: release-checkpoint-${{ needs.initialize.outputs.release_id }}-*
-          path: ${{ runner.temp }}/checkpoints
-          merge-multiple: true
-      - name: Collect successful native build evidence
-        if: >-
-          needs.initialize.outputs.run_mobile_native == 'true' &&
-          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
-          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
-        uses: actions/download-artifact@v4
-        with:
-          pattern: mobile-native-*-build-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/native-evidence
-          merge-multiple: true
-      - name: Preserve native build evidence
-        if: >-
-          needs.initialize.outputs.run_mobile_native == 'true' &&
-          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
-          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-native-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/native-evidence
-          if-no-files-found: error
-          retention-days: 90
-      - name: Write native checkpoint
-        if: >-
-          needs.initialize.outputs.run_mobile_native == 'true' &&
-          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
-          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
-        run: |
-          mkdir -p "$RUNNER_TEMP/checkpoints"
-          node -e 'const fs=require("node:fs");const [path,version,sourceSha,artifactRef]=process.argv.slice(1);fs.writeFileSync(path,JSON.stringify({component:"mobile-native",version,sourceSha,state:"checked",artifactRef})+"\n")' \
-            "$RUNNER_TEMP/checkpoints/checkpoint-mobile-native.json" "${{ needs.initialize.outputs.release_version }}" "${{ needs.initialize.outputs.release_sha }}" "mobile-native-${{ needs.initialize.outputs.release_id }}"
-      - name: Publish native checkpoint
-        if: >-
-          needs.initialize.outputs.run_mobile_native == 'true' &&
-          (needs.initialize.outputs.native_android != 'true' || needs.mobile_native_android.result == 'success') &&
-          (needs.initialize.outputs.native_ios != 'true' || needs.mobile_native_ios.result == 'success')
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-native
-          path: ${{ runner.temp }}/checkpoints/checkpoint-mobile-native.json
-          if-no-files-found: error
-      - name: Merge checkpoints and classify the final attempt
+      - name: Record each component job's result and classify the attempt
         id: result
         env:
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
+          NEEDS: ${{ toJSON(needs) }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_ID: ${{ needs.initialize.outputs.release_id }}
         run: |
           set -euo pipefail
           state="$RUNNER_TEMP/release/unified-release.json"
-          node - "$RUNNER_TEMP/checkpoints" "$RUNNER_TEMP/checkpoints.json" <<'NODE'
-          const fs = require('node:fs');
-          const [directory, output] = process.argv.slice(2);
-          const checkpoints = fs.existsSync(directory)
-            ? fs.readdirSync(directory).filter((name) => name.endsWith('.json')).map((name) => JSON.parse(fs.readFileSync(`${directory}/${name}`)))
-            : [];
-          fs.writeFileSync(output, JSON.stringify(checkpoints));
-          NODE
+          printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+          node scripts/unified-release.mjs job-checkpoints --needs "$RUNNER_TEMP/needs.json" \
+            --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --release-id "$RELEASE_ID" \
+            --output "$RUNNER_TEMP/checkpoints.json"
           node scripts/unified-release.mjs apply-checkpoints --state "$state" --checkpoints "$RUNNER_TEMP/checkpoints.json" --summary "$RUNNER_TEMP/retry-plan.json"
           incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
           no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
@@ -1516,12 +1171,14 @@ jobs:
         with:
           script: |
             const prefix = `beeline-desktop-release-${process.env.RELEASE_ID}`;
-            const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-              owner: context.repo.owner, repo: context.repo.repo, per_page: 100,
-            });
-            const candidates = artifacts
-              .filter((candidate) => candidate.name.startsWith(prefix) && !candidate.expired && candidate.workflow_run?.id)
-              .sort((a, b) => b.created_at.localeCompare(a.created_at));
+            const candidates = [];
+            for (const label of ['macos-universal', 'linux-x86_64', 'windows-x86_64']) {
+              const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
+                owner: context.repo.owner, repo: context.repo.repo, name: `${prefix}-${label}`, per_page: 100,
+              });
+              candidates.push(...artifacts.filter((candidate) => !candidate.expired && candidate.workflow_run?.id));
+            }
+            candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
             if (candidates.length === 0) core.setFailed(`no ${prefix}-* artifacts remain; the original attempt's desktop installers expired — re-run the desktop leg for this identity`);
             else core.setOutput('run_id', String(candidates[0].workflow_run.id));
       - name: Download the desktop installers built by the original attempt
@@ -1620,10 +1277,12 @@ jobs:
           test -f "$manifest" || { echo 'desktop updater manifest is missing' >&2; exit 1; }
           mapfile -t assets < <(find "$RUNNER_TEMP/desktop-release" -maxdepth 1 -type f -name 'Beeline-*' ! -name 'Beeline-latest.json' | sort)
           previous="$RUNNER_TEMP/desktop-rollback/Beeline-latest.json"
-          # The release record was created as a draft in initialize, before
-          # any component shipped. A retry first restores the last known-good
-          # manifest; the new manifest remains the final commit point.
-          gh release view "$RELEASE_VERSION" >/dev/null
+          # A recovery reuses the draft its earlier attempt created and first
+          # restores the last known-good manifest; the new manifest remains the
+          # final commit point.
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            ghr_create "$RELEASE_VERSION" --target "$RELEASE_SHA" --title "$RELEASE_VERSION" --notes 'Release in progress.' --draft
+          fi
           [ ! -f "$previous" ] || ghr_upload_verified "$RELEASE_VERSION" "$previous"
           [ "${#assets[@]}" -eq 0 ] || ghr_upload_verified "$RELEASE_VERSION" "${assets[@]}"
           rollback_manifest() {

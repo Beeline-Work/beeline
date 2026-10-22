@@ -8,8 +8,19 @@ export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-nat
 export const RELEASE_SOFT_LIMIT_SECONDS = 45 * 60;
 export const RELEASE_NOTIFY_TIMEOUT_MS = 10_000;
 export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/releases/notify';
-export const SERVER_CANARY_WINDOW_SECONDS = 300;
+// One short canary window: seven samples, fifteen seconds apart. The shell
+// loop in .github/actions/server-leg (`seq 0 6`, `sleep 15`) must match.
+export const SERVER_CANARY_WINDOW_SECONDS = 90;
 export const SERVER_CANARY_SAMPLE_SECONDS = 15;
+export const SERVER_CANARY_SAMPLES = SERVER_CANARY_WINDOW_SECONDS / SERVER_CANARY_SAMPLE_SECONDS + 1;
+// The desktop app bundles the web export, so shared UI edits reach it only
+// when its installers rebuild. Those edits ship at once by OTA and the
+// website; desktop catches up once its bundled UI is a week behind.
+export const DESKTOP_UI_REFRESH_SECONDS = 7 * 24 * 60 * 60;
+const DESKTOP_UI_PREFIXES = [
+  'apps/mobile/sources/', 'apps/mobile/assets/',
+  'packages/api-contract/', 'packages/buzz-client/', 'packages/nostr/',
+];
 
 // Release-affecting paths belong in this inspectable table, beside drift tests,
 // rather than in scattered workflow conditionals.
@@ -18,11 +29,13 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'apps/auth/', components: ['server'] },
   { prefix: 'apps/body/', components: ['helper'] },
   { prefix: 'packages/usebeeline/', components: ['helper'] },
-  { prefix: 'packages/api-contract/', components: ['server', 'helper', 'mobile-ota', 'desktop'] },
-  { prefix: 'packages/buzz-client/', components: ['helper', 'mobile-ota', 'desktop'] },
-  { prefix: 'packages/nostr/', components: ['helper', 'mobile-ota', 'desktop'] },
-  { prefix: 'apps/mobile/sources/', components: ['mobile-ota', 'desktop', 'website'] },
-  { prefix: 'apps/mobile/assets/', components: ['mobile-ota', 'desktop', 'website'] },
+  // Shared UI and protocol edits do not rebuild the desktop installers on
+  // their own; see DESKTOP_UI_REFRESH_SECONDS for when desktop catches up.
+  { prefix: 'packages/api-contract/', components: ['server', 'helper', 'mobile-ota'] },
+  { prefix: 'packages/buzz-client/', components: ['helper', 'mobile-ota'] },
+  { prefix: 'packages/nostr/', components: ['helper', 'mobile-ota'] },
+  { prefix: 'apps/mobile/sources/', components: ['mobile-ota', 'website'] },
+  { prefix: 'apps/mobile/assets/', components: ['mobile-ota', 'website'] },
   { prefix: 'apps/mobile/src-tauri/', components: ['desktop'] },
   { prefix: 'apps/mobile/android/', components: ['mobile-native'] },
   { prefix: 'apps/mobile/ios/', components: ['mobile-native'] },
@@ -57,8 +70,10 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'scripts/desktop-update.', components: ['desktop'] },
   { exact: '.github/workflows/desktop.yml', components: ['desktop'] },
   { exact: '.github/workflows/server-rollback.yml', components: ['server'] },
-  { exact: '.github/workflows/unified-release.yml', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
-  { exact: 'scripts/unified-release.mjs', components: ['server', 'helper', 'mobile-ota', 'desktop', 'website'] },
+  // Pipeline edits exercise the fast legs only; they never change the helper
+  // or desktop artifacts.
+  { exact: '.github/workflows/unified-release.yml', components: ['server', 'mobile-ota', 'website'] },
+  { exact: 'scripts/unified-release.mjs', components: ['server', 'mobile-ota', 'website'] },
 ];
 
 const VERSION = /^v(\d+)\.(\d+)\.(\d+)$/;
@@ -124,11 +139,14 @@ export function planServerCanaryDeployment(machines, newImageRef) {
     imageRef: machine.imageRef ?? machine.config?.image,
   })).sort((left, right) => String(left.id).localeCompare(String(right.id)));
   if (normalized.some((machine) => !machine.id || !machine.imageRef)) fail('Machine inventory is missing id or image');
-  const previous = new Set(normalized.map((machine) => machine.imageRef));
-  if (previous.size !== 1) fail('server fleet is already split across images; refuse an ambiguous rollback');
+  // A fleet left split by an interrupted release converges on the new image.
+  // Each Machine rolls back to the image it ran before this release.
+  const split = new Set(normalized.map((machine) => machine.imageRef)).size !== 1;
   const [canary, second] = normalized;
   return {
     previousImageRef: canary.imageRef,
+    secondPreviousImageRef: second.imageRef,
+    split,
     newImageRef,
     canaryMachineId: canary.id,
     secondMachineId: second.id,
@@ -138,7 +156,11 @@ export function planServerCanaryDeployment(machines, newImageRef) {
       `watch:${canary.id}:${SERVER_CANARY_WINDOW_SECONDS}s`,
       `update:${second.id}:${newImageRef}`,
     ],
-    rollbackSteps: [`update:${canary.id}:${canary.imageRef}`, 'fail-release'],
+    rollbackSteps: [
+      `update:${canary.id}:${canary.imageRef}`,
+      ...(split ? [`update:${second.id}:${second.imageRef}`] : []),
+      'fail-release',
+    ],
   };
 }
 
@@ -185,23 +207,23 @@ export function evaluateServerCanaryWindow(samples, windowSeconds = SERVER_CANAR
  * A few isolated warmup failures are tolerated, but a single good sample can
  * never mask pool contention or broken authenticated Room reads. */
 export function evaluateServerCanaryPromotion(samples) {
-  if (!Array.isArray(samples) || samples.length !== 21)
-    return { clean: false, reason: 'canary requires all 21 samples' };
+  if (!Array.isArray(samples) || samples.length !== SERVER_CANARY_SAMPLES)
+    return { clean: false, reason: `canary requires all ${SERVER_CANARY_SAMPLES} samples` };
   const elapsedSeconds = (Date.parse(samples.at(-1).at) - Date.parse(samples[0].at)) / 1000;
   if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < SERVER_CANARY_WINDOW_SECONDS)
-    return { clean: false, reason: 'canary did not cover the full five-minute window' };
+    return { clean: false, reason: `canary did not cover the full ${SERVER_CANARY_WINDOW_SECONDS}-second window` };
   const cleanCount = samples.filter((sample) => sample.verdict?.clean === true).length;
-  if (cleanCount < 16)
-    return { clean: false, reason: `only ${cleanCount} of 21 canary samples were clean` };
-  if (samples.slice(-5).some((sample) => sample.verdict?.clean !== true))
-    return { clean: false, reason: 'the final five canary samples were not all clean' };
+  if (cleanCount < SERVER_CANARY_SAMPLES - 2)
+    return { clean: false, reason: `only ${cleanCount} of ${SERVER_CANARY_SAMPLES} canary samples were clean` };
+  if (samples.slice(-3).some((sample) => sample.verdict?.clean !== true))
+    return { clean: false, reason: 'the final three canary samples were not all clean' };
   let degradedStreak = 0;
   for (const sample of samples) {
     const reasons = sample.verdict?.reasons ?? [];
     if (reasons.some((reason) => /database pool has|authenticated Room read/.test(reason)))
       degradedStreak++;
     else degradedStreak = 0;
-    if (degradedStreak >= 3)
+    if (degradedStreak >= 2)
       return { clean: false, reason: 'sustained pool wait or Room read degradation' };
   }
   return { clean: true, cleanCount, elapsedSeconds };
@@ -299,7 +321,7 @@ export function selectReleaseComponents(paths, { selection = 'auto', storeTrack 
 
 export function selectReleaseComponentsFromPublishedInputs(
   pathsByComponent,
-  { selection = 'auto', storeTrack = 'none', runtimePin, allowPinRestore = false } = {},
+  { selection = 'auto', storeTrack = 'none', runtimePin, allowPinRestore = false, desktopLagSeconds = 0 } = {},
 ) {
   if (selection !== 'auto' && selection !== '') {
     return selectReleaseComponents([], { selection, storeTrack, runtimePin, allowPinRestore });
@@ -310,7 +332,22 @@ export function selectReleaseComponentsFromPublishedInputs(
     if (!Array.isArray(paths)) fail(`missing changed paths for ${component}`);
     if (selectReleaseComponents(paths, { storeTrack, runtimePin, allowPinRestore }).includes(component)) selected.add(component);
   }
+  if (desktopLagSeconds >= DESKTOP_UI_REFRESH_SECONDS &&
+      pathsByComponent.desktop.some((path) => DESKTOP_UI_PREFIXES.some((prefix) => path.startsWith(prefix)))) {
+    selected.add('desktop');
+  }
   return RELEASE_COMPONENTS.filter((component) => selected.has(component));
+}
+
+/** Seconds between the commit desktop last shipped and the release commit. */
+export function desktopLagFromPublishedInputs(previous, releaseSha, {
+  commitTime = (sha) => Number(execFileSync('git', ['show', '-s', '--format=%ct', sha], {
+    encoding: 'utf8', timeout: 30_000,
+  }).trim()),
+} = {}) {
+  validateReleaseIdentity(previous?.version, previous?.sourceSha);
+  const publishedSha = previous.components?.desktop?.sourceSha ?? previous.sourceSha;
+  return Math.max(0, commitTime(releaseSha) - commitTime(publishedSha));
 }
 
 export function runtimePinChangeFromPublishedInputs(previous, releaseSha, {
@@ -533,6 +570,41 @@ export function releasePlanSummary(state) {
   };
 }
 
+// Each component's job result is its checkpoint: a job that succeeded checked
+// its component. Keys are the workflow job ids in unified-release.yml.
+const COMPONENT_JOBS = {
+  server: ['server'],
+  helper: ['helper'],
+  'mobile-ota': ['mobile_ota', 'mobile_ota_after_native'],
+  desktop: ['desktop_installers'],
+  website: ['website'],
+};
+const ARTIFACT_PREFIX = {
+  server: 'server-artifact', helper: 'daemon-artifact', 'mobile-ota': 'mobile-ota-promoted',
+  'mobile-native': 'mobile-native', desktop: 'beeline-desktop-release', website: 'website',
+};
+
+export function checkpointsFromJobs(needs, { version, sourceSha, releaseId }) {
+  validateReleaseIdentity(version, sourceSha);
+  const plan = needs?.initialize?.outputs ?? fail('job results need the initialize outputs');
+  const succeeded = (job) => needs[job]?.result === 'success';
+  const checkpoint = (component, extra = {}) => ({
+    component, version, sourceSha, state: 'checked',
+    artifactRef: `${ARTIFACT_PREFIX[component]}-${releaseId}${component === 'desktop' ? '-*' : ''}`, ...extra,
+  });
+  const checkpoints = [];
+  for (const [component, jobs] of Object.entries(COMPONENT_JOBS)) {
+    const job = jobs.find(succeeded);
+    if (plan[`run_${component.replace('-', '_')}`] !== 'true' || !job) continue;
+    const completedAt = Number(needs[job].outputs?.completed_at);
+    checkpoints.push(checkpoint(component, Number.isFinite(completedAt) && completedAt > 0 ? { completedAt } : {}));
+  }
+  const native = ['android', 'ios'].every((platform) =>
+    plan[`native_${platform}`] !== 'true' || succeeded(`mobile_native_${platform}`));
+  if (plan.run_mobile_native === 'true' && native) checkpoints.push(checkpoint('mobile-native'));
+  return checkpoints;
+}
+
 export async function notifyRelease({
   version,
   sourceSha,
@@ -578,11 +650,6 @@ function identityFromOptions(args) { return { version: args.version, sourceSha: 
 async function main(argv) {
   const args = options(argv);
   const command = args._[0];
-  if (command === 'next-version') {
-    const previous = args.previous ? readJson(args.previous) : undefined;
-    process.stdout.write(`${nextReleaseVersion(previous?.version)}\n`);
-    return;
-  }
   if (command === 'release-version') {
     const previous = args.previous ? readJson(args.previous) : undefined;
     const reservedVersions = args['reserved-versions']
@@ -600,15 +667,16 @@ async function main(argv) {
     }
     return;
   }
-  if (command === 'plan' || command === 'init') {
+  if (command === 'plan') {
     const previous = args.previous ? readJson(args.previous) : undefined;
     const retry = args.retry ? readJson(args.retry) : undefined;
     const paths = args.paths ? readFileSync(args.paths, 'utf8').split(/\r?\n/).map((path) => path.trim()).filter(Boolean) : [];
     const componentPaths = args['component-paths'] ? readJson(args['component-paths']) : undefined;
-    const selection = args.selection ?? (command === 'init' && !args.paths ? 'all' : 'auto');
+    const selection = args.selection ?? 'auto';
     const runtimePin = previous ? runtimePinChangeFromPublishedInputs(previous, args.sha) : undefined;
     const allowPinRestore = args['allow-pin-restore'] === 'true';
-    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', runtimePin, allowPinRestore };
+    const desktopLagSeconds = previous && componentPaths ? desktopLagFromPublishedInputs(previous, args.sha) : 0;
+    const selectOptions = { selection, storeTrack: args['store-track'] ?? 'none', runtimePin, allowPinRestore, desktopLagSeconds };
     const selectedComponents = componentPaths
       ? selectReleaseComponentsFromPublishedInputs(componentPaths, selectOptions)
       : selectReleaseComponents(paths, selectOptions);
@@ -619,7 +687,7 @@ async function main(argv) {
     if (allowPinRestore && runtimePin?.changed) state.plan.pinRestore = true;
     writeJson(args.state, state);
     if (args.summary) writeJson(args.summary, releasePlanSummary(state));
-    else if (command === 'plan') console.log(JSON.stringify(releasePlanSummary(state)));
+    else console.log(JSON.stringify(releasePlanSummary(state)));
     return;
   }
   if (command === 'notify') {
@@ -651,10 +719,8 @@ async function main(argv) {
   if (command === 'server-deploy-plan') {
     const plan = planServerCanaryDeployment(readJson(args.machines), args.image);
     if (args.output) writeJson(args.output, plan);
-    console.log('[dry-run] ' + plan.steps.join(' -> '));
-    if (args['simulate-failure'] === 'true') {
-      console.log('[dry-run] canary failed -> ' + plan.rollbackSteps.join(' -> '));
-    }
+    console.log(`${plan.split ? 'converge split fleet: ' : ''}${plan.steps.join(' -> ')}`);
+    console.log(`on failure: ${plan.rollbackSteps.join(' -> ')}`);
     return;
   }
   if (command === 'server-canary-sample') {
@@ -692,12 +758,14 @@ async function main(argv) {
     process.stdout.write(`${imageRef}\n`);
     return;
   }
-  const state = readJson(args.state);
-  if (command === 'mark-stage') {
-    markComponentStage(state, args.component, args.stage, identityFromOptions(args), args.artifact);
-    writeJson(args.state, state);
+  if (command === 'job-checkpoints') {
+    const checkpoints = checkpointsFromJobs(readJson(args.needs), {
+      ...identityFromOptions(args), releaseId: args['release-id'],
+    });
+    writeJson(args.output, checkpoints);
     return;
   }
+  const state = readJson(args.state);
   if (command === 'apply-checkpoints') {
     const checkpoints = args.checkpoints ? readJson(args.checkpoints) : fail('missing checkpoints file');
     if (!Array.isArray(checkpoints)) fail('checkpoints file must contain an array');
@@ -712,15 +780,7 @@ async function main(argv) {
     writeJson(args.state, state);
     return;
   }
-  if (command === 'report') {
-    validateReleaseIdentity(args.version, args.sha);
-    if (args.version !== state.version || args.sha !== state.sourceSha) fail('mixed-version delivery report refused');
-    if (state.state !== 'delivered') fail(`NOT DELIVERED: ${state.version}@${state.sourceSha}`);
-    console.log(`DELIVERED ${state.version} (${state.sourceSha}) in ${state.delivery.durationSeconds}s` +
-      (state.delivery.unproven ? ` · UNPROVEN: ${state.delivery.unproven}` : ''));
-    return;
-  }
-  fail('Usage: unified-release.mjs <next-version|release-version|component-paths|plan|init|classify-attempt|server-deploy-plan|server-canary-sample|server-ledger|server-rollback-image|mark-stage|apply-checkpoints|finalize|notify|report>');
+  fail('Usage: unified-release.mjs <release-version|component-paths|plan|job-checkpoints|classify-attempt|server-deploy-plan|server-canary-sample|server-canary-promotion|server-ledger|server-rollback-image|apply-checkpoints|finalize|notify>');
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {

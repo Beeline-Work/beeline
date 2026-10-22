@@ -1,15 +1,12 @@
-# Server leg of the unified release (was .github/workflows/deploy-host.yml).
-# unified-release.yml calls it twice from the self-hosted production host:
-# phase=build records the SHA-pinned monolith artifact, phase=promote migrates
-# once and canaries the exact release SHA across the two Fly Machines. The caller checks out the
-# release SHA before invoking it and owns runner, timeout, and concurrency.
+# Server leg of the unified release. unified-release.yml calls it once from the
+# self-hosted production host: it builds and pushes the one Fly image, migrates
+# once, and canaries the exact release SHA across the two Fly Machines. The
+# caller checks out the release SHA, installs the migration CLI, and owns
+# runner, timeout, and concurrency.
 name: Server release leg
-description: Build the exact server artifact or deploy the monolith to Fly.io
+description: Build the exact server image once and deploy it to Fly.io behind a canary
 
 inputs:
-  phase:
-    description: build | promote
-    required: true
   release_sha:
     required: true
   release_version:
@@ -18,75 +15,10 @@ inputs:
 runs:
   using: composite
   steps:
-    # ---- build -------------------------------------------------------------
-    - name: Find a downloadable server artifact for this exact release SHA
-      if: inputs.phase == 'build'
-      id: reuse
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const name = `server-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}`;
-          const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
-            owner: context.repo.owner, repo: context.repo.repo, name, per_page: 100,
-          });
-          const artifact = artifacts
-            .filter((candidate) => candidate.name === name && !candidate.expired && candidate.workflow_run?.id)
-            .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-          if (artifact) {
-            try {
-              await github.rest.actions.downloadArtifact({
-                owner: context.repo.owner, repo: context.repo.repo,
-                artifact_id: artifact.id, archive_format: 'zip',
-              });
-              core.setOutput('run_id', String(artifact.workflow_run.id));
-            } catch (error) {
-              core.info(`Artifact ${artifact.id} is no longer downloadable: ${error.message}`);
-            }
-          }
-    - name: Reuse the exact server artifact
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id != ''
-      uses: actions/download-artifact@v4
-      with:
-        name: server-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: ${{ runner.temp }}/server-release
-        run-id: ${{ steps.reuse.outputs.run_id }}
-        github-token: ${{ github.token }}
-    - name: Build the SHA-pinned monolith image without changing production
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
-      shell: bash
-      run: ./scripts/build-release-server-images.sh
-      env:
-        BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
-        BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
-    - name: Record the verified server artifact identity
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
-      shell: bash
-      env:
-        RELEASE_SHA: ${{ inputs.release_sha }}
-        RELEASE_VERSION: ${{ inputs.release_version }}
-      run: |
-        mkdir -p "$RUNNER_TEMP/server-release"
-        node - "$RUNNER_TEMP/server-release/identity.json" "$RELEASE_VERSION" "$RELEASE_SHA" <<'NODE'
-        const fs = require('node:fs');
-        fs.writeFileSync(process.argv[2], JSON.stringify({
-          version: process.argv[3], sourceSha: process.argv[4], images: ['server'],
-        }));
-        NODE
-    - if: inputs.phase == 'build'
-      uses: actions/upload-artifact@v4
-      with:
-        name: server-artifact-${{ inputs.release_version }}-${{ inputs.release_sha }}
-        path: ${{ runner.temp }}/server-release/identity.json
-        if-no-files-found: error
-        retention-days: 7
-
-    # ---- promote -----------------------------------------------------------
     - name: Verify Fly.io deployment authority
-      if: inputs.phase == 'promote'
       shell: bash
       run: flyctl auth whoami
     - name: Build the exact Fly image and capture the two-Machine rollback plan
-      if: inputs.phase == 'promote'
       shell: bash
       run: |
         set -euo pipefail
@@ -95,6 +27,7 @@ runs:
         flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/machines-before.json"
         image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
         image_ref="registry.fly.io/beeline-server:$image_label"
+        build_started=$SECONDS
         flyctl deploy . \
           --local-only \
           --config fly.beeline-server.toml \
@@ -103,6 +36,7 @@ runs:
           --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
           --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
           --image-label "$image_label" --build-only --push --yes
+        echo "Server image built and pushed in $((SECONDS - build_started))s"
         node scripts/unified-release.mjs server-deploy-plan \
           --machines "$RUNNER_TEMP/server-release/machines-before.json" \
           --image "$image_ref" --output "$RUNNER_TEMP/server-release/server-deploy-plan.json"
@@ -116,7 +50,6 @@ runs:
 
     - name: Run schema migrations and backfills once before Machine updates
       id: migrate
-      if: inputs.phase == 'promote'
       shell: bash
       run: |
         set -euo pipefail
@@ -148,8 +81,7 @@ runs:
 
         npm run migrate -w @beeline/server
 
-    - name: Canary one Machine, observe for five minutes, then update its peer
-      if: inputs.phase == 'promote'
+    - name: Canary one Machine for ninety seconds, then update its peer
       shell: bash
       run: |
         set -euo pipefail
@@ -160,105 +92,54 @@ runs:
         second="$(read_plan secondMachineId)"
         image_ref="$(read_plan newImageRef)"
         previous_ref="$(read_plan previousImageRef)"
+        second_previous_ref="$(read_plan secondPreviousImageRef)"
         canary_updated=0
         second_update_attempted=0
         fleet_updated=0
 
-        # Retry a flyctl machine update up to 3 times on transient failure.
+        # One retry covers a transient Fly API failure.
         retry_flyctl_update() {
           local machine="$1" image="$2" desc="$3"
-          local attempt=0
-          while [ "$attempt" -lt 3 ]; do
-            if flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1; then
-              return 0
-            fi
-            attempt=$((attempt + 1))
-            if [ "$attempt" -lt 3 ]; then
-              echo "retry_flyctl_update($desc): attempt $attempt failed, sleeping 10s" >&2
-              sleep 10
-            fi
-          done
-          echo "retry_flyctl_update($desc): all 3 attempts failed for machine $machine -> $image" >&2
-          return 1
+          if flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1; then
+            return 0
+          fi
+          echo "retry_flyctl_update($desc): first attempt failed, retrying in 10s" >&2
+          sleep 10
+          flyctl machine update "$machine" --app beeline-server --image "$image" --wait-timeout 300 --yes 2>&1
         }
 
-        # Assert that both Fly Machines report the same image name.
-        verify_machine_convergence() {
-          local raw_expected="$1"
-          local max_wait="${2:-0}"
-          # Normalize both sides: strip @sha256:<digest> that Fly may append to any reference
-          local expected_image="${raw_expected%%@sha256:*}"
-          local deadline=0
-          if [ "$max_wait" -gt 0 ]; then
-            deadline=$((SECONDS + max_wait))
-          fi
-          while true; do
-            local machines_json="$RUNNER_TEMP/server-release/machines-verify.json"
-            flyctl machine list --app beeline-server --json > "$machines_json"
-            local images
-            images="$(node -e '
-              const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
-              for (const m of machines) {
-                const image = (m.imageRef || m.config?.image || "unknown").replace(/@sha256:[0-9a-f]+$/, "");
-                process.stdout.write(m.id + "=" + image + "\n");
-              }
-            ' "$machines_json")"
-            echo "Current machine images:"
-            echo "$images"
-            local divergent=false
-            while IFS='=' read -r mid mimage; do
-              # Fly reports the running image with a resolved @sha256:<digest> suffix
-              # that the expected tag does not carry; compare the tag portion only.
-              mimage="${mimage%%@sha256:*}"
-              if [ "$mimage" != "$expected_image" ]; then
-                echo "Machine $mid: expected $expected_image, found $mimage" >&2
-                divergent=true
-              fi
-            done <<< "$images"
-            if [ "$divergent" != true ]; then
-              echo "Fleet converged on $expected_image"
-              return 0
-            fi
-            if [ "$deadline" -eq 0 ] || [ "$SECONDS" -ge "$deadline" ]; then
-              echo "FLEET SPLIT: machines are not all on the expected image $expected_image" >&2
-              return 1
-            fi
-            local remaining=$((deadline - SECONDS))
-            local sleep_for=$((remaining < 10 ? remaining : 10))
-            echo "Machines not yet converged, retrying in ${sleep_for}s (up to ${remaining}s left)" >&2
-            sleep "$sleep_for"
-          done
+        # Report whether every Fly Machine runs its expected image.
+        verify_machine_images() {
+          local machines_json="$RUNNER_TEMP/server-release/machines-verify.json"
+          flyctl machine list --app beeline-server --json > "$machines_json"
+          # Fly appends a resolved @sha256:<digest> to the running image; compare tags only.
+          node -e '
+            const machines = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
+            const expected = Object.fromEntries(process.argv.slice(2).map((pair) => pair.split("=")));
+            let split = false;
+            for (const m of machines) {
+              const image = (m.imageRef || m.config?.image || "unknown").replace(/@sha256:[0-9a-f]+$/, "");
+              const want = (expected[m.id] || "").replace(/@sha256:[0-9a-f]+$/, "");
+              console.log(`${m.id}=${image}`);
+              if (image !== want) { console.error(`Machine ${m.id}: expected ${want}, found ${image}`); split = true; }
+            }
+            process.exit(split ? 1 : 0);
+          ' "$machines_json" "$canary=$1" "$second=$2"
         }
 
         rollback_canary() {
           status=$?
           if [ "$canary_updated" = 1 ] && [ "$fleet_updated" = 0 ]; then
-            echo "Server promotion failed; restoring attempted Machines to $previous_ref" >&2
+            echo "Server promotion failed; restoring attempted Machines to their previous images" >&2
             retry_flyctl_update "$canary" "$previous_ref" "rollback-canary" || true
+            expected_second="$second_previous_ref"
             if [ "$second_update_attempted" = 1 ]; then
-              retry_flyctl_update "$second" "$previous_ref" "rollback-second" || true
+              retry_flyctl_update "$second" "$second_previous_ref" "rollback-second" || true
             fi
-            # Verify both machines actually converged on previous_ref; retry rollback if split.
-            local rollback_attempt=0
-            while [ "$rollback_attempt" -lt 3 ]; do
-              if verify_machine_convergence "$previous_ref" 2>/dev/null; then
-                echo "Rollback confirmed: all machines on $previous_ref"
-                break
-              fi
-              rollback_attempt=$((rollback_attempt + 1))
-              if [ "$rollback_attempt" -lt 3 ]; then
-                echo "Rollback attempt $rollback_attempt did not converge; re-applying rollback" >&2
-                retry_flyctl_update "$canary" "$previous_ref" "rollback-canary-reverify" || true
-                if [ "$second_update_attempted" = 1 ]; then
-                  retry_flyctl_update "$second" "$previous_ref" "rollback-second-reverify" || true
-                fi
-                sleep 15
-              fi
-            done
-            # Final assertion: if still split, fail loudly.
-            if ! verify_machine_convergence "$previous_ref"; then
-              echo "CRITICAL: Rollback exhausted all retries but fleet remains split!" >&2
-              echo "Manual reconciliation required: ensure both machines on $previous_ref" >&2
+            if verify_machine_images "$previous_ref" "$expected_second"; then
+              echo "Rollback confirmed: every Machine runs its previous image"
+            else
+              echo "CRITICAL: rollback left the fleet on unexpected images; run server-rollback.yml" >&2
             fi
             node scripts/unified-release.mjs server-ledger --plan "$plan" \
               --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state rolled-back --output "$ledger"
@@ -282,11 +163,11 @@ runs:
               remaining=$((deadline - SECONDS))
               if [ "$remaining" -gt 0 ]; then
                 curl_timeout=$((remaining < 10 ? remaining : 10))
-                # Check version match
+                # The Machine must serve this exact release.
                 if curl -fsS --max-time "$curl_timeout" -H "$force_header" \
                   https://server.usebeeline.app/version -o "$version_response" && \
-                  node -e 'const v=require(process.argv[1]);process.exit(v.version === process.argv[2] ? 0 : 1)' \
-                    "$version_response" "$RELEASE_VERSION"; then
+                  node -e 'const v=require(process.argv[1]);process.exit(v.version === process.argv[2] && v.sourceSha === process.argv[3] ? 0 : 1)' \
+                    "$version_response" "$RELEASE_VERSION" "$RELEASE_SHA"; then
                   # Also check /health returns ok:true (database pool ready)
                   if curl -fsS --max-time "$curl_timeout" -H "$force_header" \
                     https://server.usebeeline.app/health -o "$health_response" && \
@@ -307,6 +188,9 @@ runs:
         }
         trap rollback_canary ERR
 
+        if [ "$(read_plan split)" = true ]; then
+          echo "::warning::Server fleet is split ($previous_ref, $second_previous_ref); converging both Machines on $image_ref"
+        fi
         canary_updated=1
         retry_flyctl_update "$canary" "$image_ref" "canary"
         wait_for_machine_ready "$canary"
@@ -367,7 +251,8 @@ runs:
         canary_samples="$RUNNER_TEMP/server-release/canary-samples.jsonl"
         : > "$canary_samples"
 
-        for sample in $(seq 0 20); do
+        # Seven samples over 90s; unified-release.mjs SERVER_CANARY_* must match.
+        for sample in $(seq 0 6); do
           if [ "$sample" -gt 0 ]; then sleep 15; fi
           force_header="fly-force-instance-id: $canary"
           if ! curl -fsS --max-time 12 -H "$force_header" https://server.usebeeline.app/health \
@@ -402,9 +287,6 @@ runs:
         wait_for_machine_ready "$second"
         fleet_updated=1
         trap - ERR
-        # Final assertion: prove both machines are on the target image.
-        # Poll for up to 180s to let a mid-update machine finish converging.
-        verify_machine_convergence "$image_ref" 180
         node scripts/unified-release.mjs server-ledger --plan "$plan" \
           --version "$RELEASE_VERSION" --sha "$RELEASE_SHA" --ledger-state deployed --output "$ledger"
       env:

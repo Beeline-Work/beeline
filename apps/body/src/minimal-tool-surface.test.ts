@@ -66,13 +66,14 @@ afterEach(() => {
 
 describe('minimal agent surface', () => {
   it('dispatches release recovery inputs with active corner authority and no grant runner', async () => {
-    await callAgentTool('dispatch_release', { inputs: { retry_attempt: '2' } });
+    await callAgentTool('dispatch_release', { inputs: { release_version: 'v0.1.94' } });
     expect(calls).toEqual([{ operation: 'dispatchRoomWorkflow', input: {
-      roomId: 'corner', requestId: 'request', generationId: 'generation', inputs: { retry_attempt: '2' },
+      roomId: 'corner', requestId: 'request', generationId: 'generation', inputs: { release_version: 'v0.1.94' },
     } }]);
     const schema = agentToolsFor(true, false).find(tool => tool.name === 'dispatch_release')!.inputSchema;
     expect(Check(schema as never, { inputs: { dispatched_by: 'forged' } })).toBe(false);
-    expect(Check(schema as never, { inputs: { retry_attempt: '2' } })).toBe(true);
+    expect(Check(schema as never, { inputs: { retry_attempt: '2' } })).toBe(false);
+    expect(Check(schema as never, { inputs: { release_version: 'v0.1.94' } })).toBe(true);
   });
 
   it.each([

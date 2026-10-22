@@ -1758,7 +1758,19 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postRepositoryOnboarding': {
-        return await this.postRepositoryCard(input as Input<'postRepositoryOnboarding'>, authenticatedAgentId) as Output<Name>;
+        const request = input as Input<'postRepositoryOnboarding'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const requester = await this.grantRequester();
+        const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
+        if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
+        if (request.kind === 'repository') await this.github?.refresh(owner);
+        const card = await postRepositoryOnboarding(this.database, this.github, {
+          roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,
+        });
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: authenticatedAgentId });
+        return card as Output<Name>;
       }
       case 'askRoomChoice':
         return (await this.askRoomChoice(
@@ -6533,21 +6545,6 @@ export class DaemonService {
     };
   }
 
-  private async postRepositoryCard(request: Input<'postRepositoryOnboarding'>, agentId: string) {
-    await this.access(request.roomId, agentId);
-    const requester = await this.grantRequester();
-    const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
-      `SELECT owner_id FROM agents WHERE agent_id=$1`, [agentId])).rows[0]?.owner_id;
-    if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
-    if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
-    if (request.kind === 'repository') await this.github?.refresh(owner);
-    const card = await postRepositoryOnboarding(this.database, this.github, {
-      roomId: request.roomId, agentId: agentId, requesterId: owner, kind: request.kind,
-    });
-    this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: agentId });
-    return card;
-  }
-
   private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
     if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
     const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
@@ -6992,16 +6989,6 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('service and reason are required');
-    const setup = `${reason} ${typeof input.continuation === 'string' ? input.continuation : ''}`;
-    const repositoryService = ['github','link','stripelink'].includes(appIdentity(service)?.key ?? '') || /^stripe link(?:\s|$)/i.test(service);
-    if (repositoryService &&
-        /\brepo(?:sitor(?:y|ies)|s)?\b/i.test(setup) &&
-        /\b(?:link(?:ing)?|connect(?:ing)?|install(?:ing)?|creat(?:e|ing)|choos(?:e|ing)|switch(?:ing)?|card)\b/i.test(setup) &&
-        !/\b(?:payment|wallet|purchase|buy|checkout|billing|credit|debit|stripe|api|token)\b/i.test(setup)) {
-      await this.postRepositoryCard({ ...input, kind: 'repository' }, agentId);
-      return { status: 'ready', app: 'beeline:onboarding',
-        next: 'The repository card is in this Room. Use it to connect GitHub and choose or create a repository. This does not use the app connector or Registry.' };
-    }
     const builtin = builtinBeelineApp(service);
     if (builtin) {
       await this.access(input.roomId, agentId);

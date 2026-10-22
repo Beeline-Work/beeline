@@ -364,25 +364,6 @@ describe('connect_app', () => {
     console.info('Reproduction link-route-1: Stripe Link -> one Link sign-in card -> login.link.com -> verified callback -> request resumed -> Link ready with no new card');
   });
 
-  it.each(['Link', 'GitHub', 'Stripe Link (link.com)', 'https://github.com'])('R-onb-13/16: %s repository setup posts the Room card without a Registry request', async service => {
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', OWNER);
-    const registry = fakeRegistry([], true);
-    const provider = fakeComposio();
-    const daemon = daemonWith(registry.client, provider);
-    const result = await daemon.execute('connect', { ...turn, service,
-      reason: 'Show a repo linking card so they can connect a repository to this Room',
-    }, HELPER);
-    expect(result).toMatchObject({status:'ready',app:'beeline:onboarding'});
-    const cards = (await database.query<{card: {state:string;githubLinked:boolean}}>(
-      `SELECT card FROM messages WHERE room_id=$1 AND card_type='repository-onboarding'`, [ROOM])).rows;
-    expect(cards).toHaveLength(1);
-    expect(cards[0]!.card).toMatchObject({state:'install_missing',githubLinked:false});
-    expect((await database.query(`SELECT 1 FROM messages WHERE card_type='app-sign-in'`)).rowCount).toBe(0);
-    expect(registry.transport).not.toHaveBeenCalled();
-    expect(provider.supportsOAuth).not.toHaveBeenCalled();
-  });
-
   it('Reproduction first-party-connect-card: built-in apps are ready without grants or cards', async () => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([]).client);

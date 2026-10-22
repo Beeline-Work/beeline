@@ -575,7 +575,7 @@ const styles = StyleSheet.create((theme) => {
       minHeight: hullDialogActionsMinimumHeight(),
       // Quiet buttons carry their own md padding, so sm here lands their
       // labels on the copy's lg edge.
-      paddingHorizontal: hull.space.lg - hull.space.md,
+      paddingHorizontal: space.lg - space.md,
       paddingVertical: HULL_DIALOG_LAYOUT.actionPaddingVertical,
       flexDirection: 'row',
       alignItems: 'center',

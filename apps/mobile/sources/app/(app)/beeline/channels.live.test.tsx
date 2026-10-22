@@ -110,8 +110,6 @@ vi.mock('@/components/buzz/Button', () => hostModule('Button'));
 vi.mock('@/components/buzz/NewRoomDialog', () => hostModule('NewRoomDialog'));
 vi.mock('@/components/buzz/RoomDeckComposeMenu', () => hostModule('RoomDeckComposeMenu'));
 vi.mock('@/components/buzz/RoomDeckLoadingView', () => hostModule('RoomDeckLoadingView'));
-vi.mock('@/components/buzz/WelcomeCards', () => hostModule('WelcomeCards'));
-vi.mock('@/buzz/welcome-cards', () => ({ readWelcomeCards: vi.fn(async () => ({ due: false })) }));
 vi.mock('@/components/buzz/RoomListSectionHeader', () => hostModule('RoomListSectionHeader'));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => hostModule('SurfaceGlyphLoader'));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn(), confirm: vi.fn() } }));

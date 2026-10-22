@@ -9,8 +9,11 @@ type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null
 type Options<T> = {
   load(): Promise<T>;
   subscribe?: (invalidate: () => void, reconnect: () => void,
-    replace: (data: T) => void) => Promise<() => void>;
+    replace: (data: T) => void, recover: () => void) => Promise<() => void>;
   missLimit?: number;
+  /** Event-driven cooldown only; never schedules a retry timer. */
+  retryBackoffMs?: { initial: number; max: number };
+  onError?: (cause: unknown) => void;
 };
 class InstallMissingError extends Error {}
 const resources = new Map<string, Resource<any>>();
@@ -25,6 +28,7 @@ class Resource<T> {
   waiters: Array<() => void> = [];
   misses = 0;
   version = 0;
+  retryAfter = 0;
   stop?: () => void;
   constructor(
     readonly key: string,
@@ -37,12 +41,17 @@ class Resource<T> {
   replace = (data: T) => {
     if (!this.listeners.size) return;
     this.version += 1;
+    this.misses = 0;
+    this.retryAfter = 0;
     this.dirty = false;
     this.publish({ data, loading: false, error: null,
       successVersion: this.snapshot.successVersion + 1 });
   };
   invalidate = () => {
-    if (this.snapshot.error || !this.listeners.size) return Promise.resolve();
+    if (!this.listeners.size) return Promise.resolve();
+    if (this.options.retryBackoffMs) {
+      if (Date.now() < this.retryAfter) return Promise.resolve();
+    } else if (this.snapshot.error) return Promise.resolve();
     this.dirty = true;
     const completed = new Promise<void>((resolve) => this.waiters.push(resolve));
     void this.read();
@@ -50,10 +59,12 @@ class Resource<T> {
   };
   retry = () => {
     this.misses = 0;
+    this.retryAfter = 0;
     this.publish({ ...this.snapshot, error: null, installMissing: false });
     if (!this.stop) this.attach();
     return this.invalidate();
   };
+  recover = () => this.snapshot.error ? this.invalidate() : Promise.resolve();
   async read() {
     if (this.flight || !this.listeners.size) return;
     this.flight = true;
@@ -67,11 +78,15 @@ class Resource<T> {
       })]).finally(() => clearTimeout(timeout));
       if (this.listeners.size && version === this.version) {
         this.misses = 0;
+        this.retryAfter = 0;
         this.publish({ data, loading: false, error: null, successVersion: this.snapshot.successVersion + 1 });
       }
     } catch (cause) {
       if (this.listeners.size && version === this.version) {
+        this.options.onError?.(cause);
         this.misses += 1;
+        const backoff = this.options.retryBackoffMs;
+        if (backoff) this.retryAfter = Date.now() + Math.min(backoff.max, backoff.initial * 2 ** Math.min(this.misses - 1, 30));
         this.publish({
           ...this.snapshot,
           loading: false,
@@ -86,7 +101,8 @@ class Resource<T> {
       this.flight = false;
       if (!this.listeners.size) {
         if (resources.get(this.key) === this) resources.delete(this.key);
-      } else if (this.dirty && (!this.snapshot.error || this.options.subscribe)) {
+      } else if (this.dirty && (!this.snapshot.error || this.options.subscribe) &&
+          (!this.options.retryBackoffMs || Date.now() >= this.retryAfter)) {
         this.publish({ ...this.snapshot, error: null });
         void this.read();
         return;
@@ -103,13 +119,17 @@ class Resource<T> {
       subscriptionStop?.();
     };
     void Promise.resolve()
-      .then(() => (active ? this.options.subscribe?.(this.retry, this.retry, this.replace) : undefined))
+      .then(() => (active ? this.options.subscribe?.(
+        this.options.retryBackoffMs ? this.invalidate : this.retry,
+        this.options.retryBackoffMs ? this.invalidate : this.retry, this.replace,
+        this.recover) : undefined))
       .then((stop) => {
         if (active) subscriptionStop = stop;
         else stop?.();
       })
       .catch((cause) => {
         if (active) {
+          this.options.onError?.(cause);
           this.stop = undefined;
           this.publish({ ...this.snapshot, loading: false, error: String(cause) });
         }
@@ -137,6 +157,7 @@ class Resource<T> {
   reset() {
     this.version += 1;
     this.misses = 0;
+    this.retryAfter = 0;
     this.publish({ data: undefined, loading: true, error: null, successVersion: this.snapshot.successVersion });
     void this.invalidate();
   }
@@ -150,6 +171,7 @@ subscribeClientReset(() => {
 });
 const idleSubscribe = () => () => undefined;
 const idleSnapshot = () => empty;
+const idleRead = () => Promise.resolve();
 
 export function useObservedResource<T>(key: string | undefined, options: Options<T>) {
   const resource = useMemo(() => {
@@ -166,7 +188,7 @@ export function useObservedResource<T>(key: string | undefined, options: Options
     resource?.subscribe ?? idleSubscribe,
     resource?.getSnapshot ?? idleSnapshot,
   );
-  return { ...snapshot, retry: resource?.retry ?? (() => Promise.resolve()) };
+  return { ...snapshot, retry: resource?.retry ?? idleRead, recover: resource?.recover ?? idleRead };
 }
 
 /** Workflow runs, gates and their lifecycle move only through system lines and cards. */

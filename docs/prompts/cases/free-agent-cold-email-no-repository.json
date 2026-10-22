@@ -1,0 +1,40 @@
+{
+  "id": "free-agent-cold-email-no-repository",
+  "section": "identity",
+  "summary": "Non-coding work proceeds without repository setup.",
+  "place": "room",
+  "session": {
+    "agentName": "Beebee",
+    "freeAgent": true,
+    "agentCommand": "pi-acp",
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "help me write a cold email",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @dana \u2014 Dana (person)\nYou are @beebee, the only agent in this Room."
+  },
+  "pass": {
+    "all": [
+      {
+        "noCall": "app_tool",
+        "args": {
+          "app": "beeline:onboarding"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "repository|GitHub|\\brepo\\b",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

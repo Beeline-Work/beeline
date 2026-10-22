@@ -2161,7 +2161,10 @@ export class MonolithCornerTurnLoop {
                   return true;
                 }
                 if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
+                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
+                await flushToolCalls(result.toolCalls, '', true);
+                await stream.retract();
                 await this.discardSession();
                 return true;
               };

@@ -147,3 +147,8 @@ describe('cornerStatusLine', () => {
     ).toBe('PR #840 · closed');
   });
 });
+
+it('shows queued PRs testing against latest main', () => {
+  expect(cornerStatusLine(view({ mergeQueue: { headSha: pr.headSha } }), false))
+    .toBe('PR #840 · queued · testing on latest main');
+});

@@ -1,10 +1,24 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { queueSentrySourcemaps, uploadSentrySourcemaps } from '../../scripts/upload-sentry-sourcemaps.mjs';
+import { prepareWebSourcemaps } from '../../scripts/prepare-web-sourcemaps.mjs';
 
 const directories: string[] = [];
+function webExport() {
+  const directory = mkdtempSync(join(tmpdir(), 'sentry-web-'));
+  directories.push(directory);
+  const bundles = join(directory, '_expo/static/js/web');
+  mkdirSync(bundles, { recursive: true });
+  const bundle = join(bundles, 'index-hash.js');
+  const source = '//# debugId=12345678-1234-4234-8234-123456789abc';
+  writeFileSync(bundle, source);
+  writeFileSync(`${bundle}.map`, JSON.stringify({
+    debugId: '12345678-1234-4234-8234-123456789abc', sources: ['sources/app.ts'], mappings: 'AAAA',
+  }));
+  return { directory, bundle, source };
+}
 afterEach(() => {
   vi.unstubAllEnvs();
   directories.splice(0).forEach(directory => rmSync(directory, { recursive: true, force: true }));
@@ -61,4 +75,31 @@ it('starts an unreferenced worker without waiting for network completion', () =>
   const warn = vi.fn();
   queueSentrySourcemaps('/export', 'a'.repeat(40), { launch: () => { throw new Error('spawn failed'); }, warn });
   expect(warn).toHaveBeenCalledWith(expect.stringContaining('::warning::'));
+});
+
+it('Reproduction missing-sourcemap: waits for web map processing before removing private maps', () => {
+  vi.stubEnv('SENTRY_AUTH_TOKEN', 'test-only');
+  const { directory, bundle, source } = webExport();
+  const run = vi.fn(() => {
+    expect(existsSync(`${bundle}.map`)).toBe(true);
+    return { status: 0 };
+  });
+  prepareWebSourcemaps(directory, 'a'.repeat(40), { run });
+  expect(run.mock.calls).toHaveLength(1);
+  expect(run.mock.calls[0]).toEqual(expect.arrayContaining([expect.arrayContaining(['--wait', '--strict'])]));
+  expect(existsSync(`${bundle}.map`)).toBe(false);
+  expect(readFileSync(bundle, 'utf8')).toBe(source);
+});
+
+it('blocks web deployment on missing credentials, missing maps, mismatched IDs or upload failure', () => {
+  const { directory, bundle } = webExport();
+  vi.stubEnv('SENTRY_AUTH_TOKEN', '');
+  expect(() => prepareWebSourcemaps(directory, 'a'.repeat(40))).toThrow(/SENTRY_AUTH_TOKEN/);
+  vi.stubEnv('SENTRY_AUTH_TOKEN', 'test-only');
+  expect(() => prepareWebSourcemaps(directory, 'a'.repeat(40), { run: () => ({ status: 1 }) })).toThrow(/upload failed/);
+  expect(existsSync(`${bundle}.map`)).toBe(true);
+  writeFileSync(bundle, 'bundle without a debug ID');
+  expect(() => prepareWebSourcemaps(directory, 'a'.repeat(40))).toThrow(/do not match/);
+  rmSync(`${bundle}.map`);
+  expect(() => prepareWebSourcemaps(directory, 'a'.repeat(40))).toThrow(/ENOENT/);
 });

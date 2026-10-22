@@ -62,6 +62,7 @@ it('links from the card, displays starters, starts the selected task once and sw
   const before = await phone.readRoom(R,H);
   expect(before?.messages.find(message => message.id === card.id)?.onboarding?.repositories).toHaveLength(2);
   await phone.execute('actOnRepositoryCard', { roomId:R, cardId:card.id, action:'link', repositoryId:42 }, H);
+  expect((await db.query(`SELECT identity_id FROM repository_link_successes`)).rows).toEqual([{ identity_id: H }]);
   const linked = await phone.readRoom(R,H);
   const starters = linked?.messages.find(message => message.onboarding?.kind === 'starters')?.onboarding;
   expect(starters?.repository).toBe('tester/project');
@@ -101,6 +102,7 @@ it('creates and links a private repository once when the same tap is retried', a
   await phone.execute('actOnRepositoryCard',tap,H);
   await phone.execute('actOnRepositoryCard',tap,H);
   expect(github.createRepository).toHaveBeenCalledTimes(1);
+  expect((await db.query(`SELECT identity_id FROM repository_link_successes`)).rows).toEqual([{ identity_id: H }]);
   expect((await phone.readRoom(R,H))?.repository?.name).toBe(`tester/${card.defaultName}`);
 });
 

@@ -1,0 +1,3 @@
+--------- beginning of main
+10-22 17:35:49.325  6009  6052 W ReactNativeJS: 'Workflow status load failed', { roomId: 'proof-corner',
+10-22 17:35:49.325  6009  6052 W ReactNativeJS:   cause: [Error: forced workflow fetch failure] }

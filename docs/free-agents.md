@@ -18,19 +18,29 @@ soul. Existing free agents keep their names.
   row (harness `pi`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
   presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
+  The first hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
   The hello tags the owner through the normal mention/push path and uses the
   agent's actual handle. It creates no model turn or Machine. The first real
   queued work provisions the Machine through `FreeAgentService.kick` or the sweep.
   A creator owns at most
   `BEELINE_FREE_AGENT_MAX_PER_OWNER` (default 3) free agents.
 - **First boot.** The image builds the thin Beeline helper and its MCP entrypoint
-  from its own release SHA, alongside pinned Pi. `entrypoint.sh` starts it without
-  downloading a bundle. A helper refused by the server's minimum-version gate
-  exits; the entrypoint runs `BEELINE_LAB=1 install.sh` and retries with the
-  published bundle. A failed refresh retains the installed helper. The Machine trades its
+  from its own release SHA, alongside pinned Pi. `entrypoint.sh` runs
+  `BEELINE_LAB=1 install.sh` before launching any helper,
+  reconciling the published bundle even on a persistent rootfs. A helper refused
+  by the server's minimum-version gate exits; the entrypoint refreshes and retries.
+  A failed refresh retains the installed helper. The Machine trades its
   one-time `BEELINE_FREE_AGENT_BOOTSTRAP` at `POST /v1/free-agents/bootstrap`. It gets
   its keys, a fresh daemon exchange token and a revocable model token. The root
   filesystem persists (`rootfs.persist=always`), so later boots skip this step.
+  Runtime owner records include the Linux boot id as well as process start ticks;
+  legacy tick-only records require command-line ownership. A free-agent helper
+  that has not established its runtime within five minutes reports once and
+  exits with status 78; the entrypoint stops that boot instead of retrying.
+  The boot budget spans refreshes and failed launches. A shell watchdog also
+  stops an old fallback helper after five minutes plus ten seconds; installer
+  attempts are bounded to two minutes. Establishing the runtime cancels both
+  startup watchdogs.
 - **Sleep.** The helper reports idleness at `POST /v1/free-agents/sleep` 60 s after the
   last turn ends. The server refuses while a wake is pending. Otherwise it records
   `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the
@@ -84,7 +94,11 @@ reaped_idle, deleted_idle and allowance_reached.
 
 Existing free agents switch to Pi on their next cold boot. The helper upgrades
 the persisted runtime and writes a private Pi provider configuration before
-starting sessions. The image supplies Pi and pi-acp; the helper reports a missing program instead
+starting sessions. Every boot also reconciles the persisted model environment,
+including runtimes already using Pi: legacy `BUZZY_*` names and passthrough
+entries become `BEELINE_*`, the scoped model token stays available to the child,
+and replacement is atomic. The environment reader accepts the legacy allowlist
+spelling until migration completes. The image supplies Pi and pi-acp; the helper reports a missing program instead
 of downloading a replacement. Prior OpenCode harness session history does not carry over;
 Workspace messages remain available. Pi and pi-acp state directories are covered
 by the existing sandbox binds. The provider pins a 1,000,000-token context window
@@ -243,7 +257,9 @@ The image's helper build takes `BEELINE_RELEASE_SHA` and
 `scripts/stage-free-agent-helper.sh` builds the canonical helper bundle from
 that checkout. Image construction verifies its SHA, version and digest, then
 installs it through the existing recovery installer in an isolated build stage.
-`node --test infra/free-agent/entrypoint.test.mjs` exercises both cold-boot paths.
+`node --test infra/free-agent/entrypoint.test.mjs` exercises cold-boot refresh,
+fallback and startup deadlines. The [persistent boot recovery proof](free-agent-persistent-boot-proof.md)
+records a disposable Fly Machine cold stop/start and the stale-owner regression.
 After building the server and image, `node infra/free-agent/cold-start-proof.mjs`
 creates a disposable local database and fresh test Workspace, then drives the
 real server, image and Pi through a mention and reply. Docker substitutes for

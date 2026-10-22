@@ -1,0 +1,29 @@
+{
+  "id": "free-agent-login-bug-repository",
+  "section": "identity",
+  "summary": "Coding work in an unlinked Room receives the repository card.",
+  "place": "room",
+  "session": {
+    "agentName": "Beebee",
+    "freeAgent": true,
+    "agentCommand": "pi-acp",
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "fix the login bug in my app",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @dana \u2014 Dana (person)\nYou are @beebee, the only agent in this Room."
+  },
+  "pass": {
+    "call": "app_tool",
+    "args": {
+      "app": "beeline:onboarding",
+      "tool": "repository"
+    }
+  }
+}

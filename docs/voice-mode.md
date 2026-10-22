@@ -158,8 +158,12 @@ Conversational replies target two complete sentences and about 60 words.
 The hard token cap remains a safety net: a capped response drops its unfinished
 last sentence before synthesis, without adding a settling delay. Each reply reads
 a bounded room window alongside the human transcript write. All participants'
-recent messages are labeled by speaker, including attachment and card titles and
-references. `read_posted_item` reads a referenced message, card or bounded text
+recent messages from other speakers are labeled, including attachment and card titles and
+references. The answering agent's own assistant rows contain plain text, so the
+model does not learn to repeat its transcript label. Leading echoed speaker/item
+labels are removed before the first speech chunk and transcript write, using the
+already collected response without another stream read or delay.
+`read_posted_item` reads a referenced message, card or bounded text
 attachment in this conversation only when requested; the router summarizes it.
 Deleted and inaccessible items are excluded. [Room context proof](voice-mode-proof/room-context/README.md)
 records the capped reply, multi-speaker context and Android waveform checks.

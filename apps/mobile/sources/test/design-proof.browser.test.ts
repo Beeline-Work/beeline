@@ -24,10 +24,6 @@ const PAGES: { page: string; width: number; height: number }[] = [
   { page: 'frames', width: 1200, height: 760 },
   { page: 'workflows', width: 390, height: 640 },
   { page: 'text-selection', width: 390, height: 640 },
-  { page: 'welcome-1', width: 1200, height: 900 },
-  { page: 'welcome-2', width: 1200, height: 900 },
-  { page: 'welcome-3', width: 1200, height: 900 },
-  { page: 'welcome-4', width: 1200, height: 900 },
 ];
 
 async function fontsCss(mobile: string) {
@@ -70,7 +66,6 @@ function shims(mobile: string, theme: 'obsidian' | 'bone'): Record<string, strin
     '@/sync/storage': `
     const state = { settings: {}, localSettings: {} };
     export const storage = Object.assign((select) => select(state), { getState: () => state, subscribe: () => () => undefined });`,
-    '@/buzz/welcome-cards': `export const completeWelcomeCards = async () => {}; export const readWelcomeCards = async () => ({});`,
     '@/auth/buzz-identity-storage': `export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: '${'a'.repeat(64)}' });`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {

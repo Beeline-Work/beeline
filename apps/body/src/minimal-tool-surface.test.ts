@@ -1,3 +1,4 @@
+import { ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -21,6 +22,8 @@ const names = [
   'notify_feedback_fixed',
   'approve_merge',
   'merge_corner',
+  'send_operator_system_dm',
+  'read_operator_system_dm',
   'record_merge_yes',
   'set_corner_hold',
   'close_corner',
@@ -65,6 +68,39 @@ afterEach(() => {
 });
 
 describe('minimal agent surface', () => {
+  it('advertises every shared artifact MIME, including runnable games', () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'post_artifact')!.inputSchema;
+    const properties = schema.properties as Record<string, { enum: string[] }>;
+    expect(properties.mime.enum).toEqual(ARTIFACT_MIME_TYPES);
+    for (const mime of ARTIFACT_MIME_TYPES) {
+      expect(Check(schema as never, { path: '.artifacts/voxel-island.html', mime })).toBe(true);
+    }
+  });
+
+  it('posts a game path through the advertised tool and queues its runnable MIME', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'game-artifact-'));
+    const path = join(root, 'voxel-island.html');
+    const html = '<canvas></canvas><script>game()</script>';
+    writeFileSync(path, html);
+    vi.stubEnv('BEELINE_ATTACH_ROOT', root);
+    const requests: { path: string; body: unknown; mime: string | null }[] = [];
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      const upload = url.pathname === '/v1/daemon/artifacts';
+      requests.push({ path: url.pathname, body: upload ? init.body : JSON.parse(String(init.body)),
+        mime: new Headers(init.headers).get('content-type') });
+      return Response.json(upload ? { url: '/v1/media/game-proof' } : { ok: true });
+    });
+    await callAgentTool('post_artifact', { path, mime: 'application/vnd.beeline.game+html' });
+    expect(requests).toEqual([
+      { path: '/v1/daemon/artifacts', body: Buffer.from(html), mime: 'application/vnd.beeline.game+html' },
+      { path: '/v1/daemon/operations/postAgentAttachment', mime: 'application/json', body: {
+        roomId: 'corner', requestId: 'request', generationId: 'generation',
+        attachment: { url: '/v1/media/game-proof', name: 'voxel-island.html',
+          mimeType: 'application/vnd.beeline.game+html', size: Buffer.byteLength(html) },
+      } },
+    ]);
+  });
+
   it('dispatches release recovery inputs with active corner authority and no grant runner', async () => {
     await callAgentTool('dispatch_release', { inputs: { release_version: 'v0.1.94' } });
     expect(calls).toEqual([{ operation: 'dispatchRoomWorkflow', input: {
@@ -144,6 +180,17 @@ describe('minimal agent surface', () => {
     expect(calls[0]!.input).not.toHaveProperty('address');
     expect(calls[0]!.input.roomId).toBe('corner');
   });
+  it('routes operator System DM sends and status reads with active command authority', async () => {
+    await callAgentTool('send_operator_system_dm', { recipients: ['@recipient'], text: 'Fixed.' }, 'send');
+    await callAgentTool('read_operator_system_dm', { sendId: '11111111-1111-4111-8111-111111111111' }, 'read');
+    expect(calls[0]).toEqual({ operation: 'sendOperatorSystemDm', input: {
+      roomId: 'corner', requestId: 'request', generationId: 'generation', agentId: 'self',
+      recipients: ['@recipient'], text: 'Fixed.',
+    } });
+    expect(calls[1]!.operation).toBe('readOperatorSystemDm');
+    expect(calls[1]!.input).toMatchObject({ roomId: 'corner', requestId: 'request', generationId: 'generation' });
+  });
+
   it('R1 accepts the nested brief its schema advertises for revise_corner(action:brief)', async () => {
     const tool = agentToolsFor(true, false, true).find((value) => value.name === 'revise_corner')!;
     const input = {

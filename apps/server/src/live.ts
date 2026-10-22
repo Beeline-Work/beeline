@@ -124,6 +124,7 @@ export type LiveEvent =
     }
   /** A server instance accepted a newer connection for this agent. Never sent
    *  to a socket; every instance drops its own older connection for the agent. */
+  | { type: 'usage-refresh'; roomId: ''; agentId: string }
   | { type: 'agent-connection'; roomId: ''; agentId: string; epoch: number }
   /** Machine-wide committed helper bundle; never addressed to a Room or agent. */
   | { type: 'helper-release'; roomId?: undefined; agentId?: undefined; version: string; sha: string }

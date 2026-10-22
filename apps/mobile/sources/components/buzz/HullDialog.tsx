@@ -29,7 +29,7 @@ export type HullDialogAction = {
   label: string;
   onPress: NonNullable<ButtonProps['onPress']>;
   testID?: string;
-  variant?: 'quiet' | 'primary' | 'destructive';
+  variant?: 'quiet' | 'primary' | 'secondary' | 'destructive';
 };
 
 export const HULL_DIALOG_LAYOUT = {

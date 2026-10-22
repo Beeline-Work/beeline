@@ -64,6 +64,16 @@ typography:
     fontSize: "10px"
     lineHeight: "15px"
     letterSpacing: "2px"
+  sectionLabel:
+    fontFamily: "SpaceGrotesk-Medium"
+    fontSize: "13px"
+    lineHeight: "19px"
+    letterSpacing: "2px"
+  sectionCount:
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "15px"
+    lineHeight: "22px"
+    letterSpacing: "0"
   machine:
     fontFamily: "IBMPlexMono-Regular"
     fontSize: "13px"
@@ -118,7 +128,7 @@ Bone is the same language run in reverse for light mode: content near-black, chr
 **Key Characteristics:**
 - One canvas, edge to edge; press and hover are the only luminance steps above it.
 - One accent (brass), always redundant with shape, glyph, or copy.
-- Four type sizes plus one mono role, held by a lint.
+- Five type sizes plus one mono role, held by a lint.
 - Boxes only around what you act on, or around a single non-repeating region.
 - Live state breathes; it never travels or fills.
 
@@ -161,7 +171,7 @@ Stated so no one re-litigates them. Each is redundant with a non-colour signal, 
 **Character:** a technical grotesk for everything a person reads, and a plex mono reserved for strings a machine produced.
 
 ### Type
-Four sizes, one mono role, held by a lint. The roles live in `typeRoles` (on every theme as `theme.buzz.type`). Each carries family, size, line height (1.45×, rounded) and tracking. A screen spreads a role; it never sets a raw size.
+Five sizes, one mono role, held by a lint. The roles live in `typeRoles` (on every theme as `theme.buzz.type`). Each carries family, size, line height (1.45×, rounded) and tracking. A screen spreads a role; it never sets a raw size.
 
 | role          | face                   | size | line | use                                                              |
 | ------------- | ---------------------- | ---- | ---- | ---------------------------------------------------------------- |
@@ -170,13 +180,15 @@ Four sizes, one mono role, held by a lint. The roles live in `typeRoles` (on eve
 | `bodyStrong`  | Space Grotesk SemiBold | 16   | 23   | emphasised `body`; page titles                                   |
 | `meta`        | Space Grotesk Regular  | 13   | 19   | previews, captions, stamps, counts, eyebrows                     |
 | `sectionHead` | Space Grotesk Medium   | 10   | 15   | section heads only (tracking 2, uppercase)                       |
+| `sectionLabel` | Space Grotesk Medium | 13 | 19 | shared section labels (tracking 2, uppercase; rendered on the count line) |
+| `sectionCount` | Space Grotesk Regular | 15 | 22 | shared section counts |
 | `machine`     | IBM Plex Mono          | 13   | 19   | commands, paths, hashes, code, tool rows, byline tags and stamps |
 
 Transcript prose uses `proseSize` 16 on `proseLineHeight` 23, the `body` role's own leading. Transcript cards use the same 16/23 body, with `machine`-size (13) kinds and paths (`transcriptCard`).
 
 The transcript's day caption is the one caption exception: `sectionHead` in the `machine` face at `ledgerQuiet` (`THU 17 SEP`). The date also rides that day's first byline stamp when the day is not today.
 
-**The Calm Lint.** `calm-lint.design.test.ts` scans every `sources/**/*.ts(x)` for raw `fontSize:` outside {22, 16, 13, 10}, `letterSpacing:` outside {−0.3, 0, 2}, and computed sizes (arithmetic or ternaries), and holds each file to its count in `apps/mobile/design/calm-baseline.json`. The token sources (`buzz/groknight.ts`, `theme.ts`) are not scanned. Counts only shrink; regenerate with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`. `Typography.mono()` marks deliberate machine identifiers (allowlist in `components/buzz/Typography.test.ts`).
+**The Calm Lint.** `calm-lint.design.test.ts` scans every `sources/**/*.ts(x)` for raw `fontSize:` outside {22, 16, 15, 13, 10}, `letterSpacing:` outside {−0.3, 0, 2}, and computed sizes (arithmetic or ternaries), and holds each file to its count in `apps/mobile/design/calm-baseline.json`. The token sources (`buzz/groknight.ts`, `theme.ts`) are not scanned. Counts only shrink; regenerate with `CALM_BASELINE_WRITE=1 npx vitest run sources/buzz/calm-lint`. `Typography.mono()` marks deliberate machine identifiers (allowlist in `components/buzz/Typography.test.ts`).
 
 **The Mono Is For Machines Rule.** Space Grotesk carries names, rows, buttons, labels and bylines. Mono is for strings a machine produced, plus the byline's model tag and stamp.
 
@@ -232,6 +244,8 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 - **Corner objective.** Under a corner's header, `CornerObjectiveLine` shows the objective in `textSecondary` behind a 2 px `humanRail`, a brief preview (≤3 lines) with a brass "Read brief" link, and the live workflow step when one runs. No box, no label; it wraps rather than truncates.
 
 ### Transcript cards
+
+Approval cards lead with the agent’s plain-language purpose, then available Runs, Touches and Can facts. The full script stays folded behind Show script until requested. Existing requests without a purpose retain their wording with the script folded.
 `TranscriptCard` is the one structured-card anatomy (grant, permission, merge summary, choice, notification): head with identity, title, subline and stamp; rows; code block; footer verbs. Record tier for facts and settled asks, ask tier (raised fill) only while a response is needed. Radius 10, 1 px border, 16 side padding, 26 px identity.
 
 ### Buttons
@@ -258,7 +272,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 ### Identity
 `components/buzz/IdentityMark.tsx` is the one identity component (a test bans any other `*Avatar*`). Faces come from `buzz/faces/`, hues from `buzz/identity-mark.ts`.
 
-1. **Species is the face.** People and agents are one of Speakeasy's twelve creatures (fox, owl, pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat). People choose at onboarding; the server assigns an agent's, together with its name. Without either, `defaultFaceForSeed` (FNV-1a) picks the same animal on every device.
+1. **Species is the face.** People and agents are one of Speakeasy's twelve creatures (fox, owl, pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat). People can choose in Settings → Identity; the server assigns an agent's, together with its name. Without either, `defaultFaceForSeed` (FNV-1a) picks the same animal on every device.
 2. **Plate polarity is the type.** A person is a coloured creature on an ink plate; an agent is the same creature in bone on a plate of its own hue.
 3. **Colour is the memory.** Each identity has one deterministic hue from a curated, scrambled 16-hue palette (≥20° apart), used on the creature, the plate, and the byline name.
 4. **The edge layer** (`recolorEdge`, `EDGE_GROW = 3`) draws a contrast copy behind shapes that would vanish on their plate.
@@ -314,3 +328,5 @@ Each file is held to its per-rule count in `apps/mobile/design/design-baseline.j
 ## Design inconsistencies
 
 None open. The list recorded on 2026-10-03 was fixed in full; the lints in Enforcement keep those classes from returning. The off-scale geometry the design baseline still holds (the arrival halo's concentric radii, the Ledger marginalia column, the QR quiet zone, centring and border compensation, the turn line's pixel budget, the workflow rail column) is not spacing rhythm, and each file names its reason in `DESIGN_BASELINE_REASONS`. Record a newly found inconsistency here, with its file and line, until it is fixed.
+
+Shared section headers use `sectionLabel` (13px, tracking 2) and `sectionCount` (15px) on a 22px line. Phone add actions occupy 44px targets at the screen inset; desktop keeps its existing compact mark within `tapLineHeight`. Icon-only `Button` controls opt into `iconOnly` for a 44px square without label padding.

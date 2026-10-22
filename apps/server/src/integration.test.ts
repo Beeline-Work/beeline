@@ -279,14 +279,14 @@ describe('monolith integration', () => {
   const phoneToken = async (login: string) => (await auth.exchangeGitHubOidc(login)).accessToken;
   const operation = (name: string, payload: unknown, token = accessToken) =>
     request(`/v1/phone/operations/${name}`, 'POST', payload, token);
-  it('serves account-scoped welcome eligibility and durable completion', async () => {
+  it('retires welcome cards for fresh and existing accounts, including older clients', async () => {
     const fresh = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Fresh')`, [
       fresh,
     ]);
     await database.query(`UPDATE identities SET welcome_cards_due=NULL WHERE id=$1`, [HUMAN]);
     expect(await (await operation('readWelcomeCards', {})).json()).toEqual({ due: false });
-    expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: true });
+    expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('completeWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
@@ -649,6 +649,7 @@ describe('monolith integration', () => {
   };
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
+    if (name === 'requestAgentGrant' && !Object.hasOwn(input, 'purpose')) input.purpose = input.reason;
     const fixtureOmitBrief = input.fixtureOmitBrief === true;
     delete input.fixtureOmitBrief;
     const writes = new Set([
@@ -10643,6 +10644,33 @@ describe('monolith integration', () => {
         await daemonOperation('getAgentConfiguration', { agentId: AGENT, roomId: ROOM })
       ).json(),
     ).toEqual(expect.objectContaining({ yoloMode: true }));
+  });
+
+  it.each([undefined, '', '   ', 'x'.repeat(241)])('rejects a grant without a valid purpose (%s)', async (purpose) => {
+    const result = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'command', target: 'git status', reason: 'inspect', purpose,
+    });
+    expect(result.status).toBe(400);
+    expect(await result.json()).toEqual(expect.objectContaining({ error: expect.stringContaining('grant purpose is required') }));
+  });
+
+  it('stores the purpose and declared facts with the approval request', async () => {
+    await database.query('UPDATE agents SET machine_name=$2 WHERE agent_id=$1', [AGENT, 'squire']);
+    const result = await daemonOperation('requestAgentGrant', {
+      roomId: ROOM, kind: 'shared_asset', target: 'package-cache', reason: 'repair corrupt cache',
+      purpose: 'Use a private cache so dependency installation can finish', touches: 'Package cache', capabilities: 'Isolate this cache',
+    });
+    expect(result.status).toBe(200);
+    const { grantId, messageId, status } = await result.json();
+    expect(status).toBe('pending');
+    const facts = { purpose: 'Use a private cache so dependency installation can finish', touches: 'Package cache', capabilities: 'Isolate this cache' };
+    expect((await database.query('SELECT purpose,touches,capabilities FROM agent_grants WHERE id=$1', [grantId])).rows).toEqual([facts]);
+    const view = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(isRoomView(view)).toBe(true);
+    expect(view.messages.find(message => message.id === messageId)?.grantRequest?.grants[0]).toMatchObject({ ...facts, machine: 'squire', status: 'pending' });
+    expect((await operation('decideAgentGrant', { grantId, decision: 'always' })).status).toBe(200);
+    const decided = (await (await request(`/v1/phone/rooms/${ROOM}`)).json()) as RoomView;
+    expect(decided.messages.find(message => message.id === messageId)?.grantRequest?.grants[0]).toMatchObject({ ...facts, status: 'approved', decidedAt: expect.any(Number) });
   });
 
   it('gates the agent yolo switch to its owner and posts one system line per Room', async () => {

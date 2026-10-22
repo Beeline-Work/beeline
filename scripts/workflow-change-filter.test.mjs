@@ -22,7 +22,7 @@ function workflow(name) {
   );
   const decide = steps.find((step) => step.id === 'decide');
   assert.ok(decide?.run, `${name} has a decide script`);
-  return { name, filters, decide };
+  return { name, filters, decide, jobs: doc.jobs };
 }
 
 function patternsOf(entry) {
@@ -51,9 +51,19 @@ function filterOutputs(files, filterSteps) {
   return outputs;
 }
 
-function runDecide(decide, outputs) {
+function runDecide(decide, outputs, context = {}) {
   const env = {};
   for (const [key, expression] of Object.entries(decide.env)) {
+    if (key === 'EVENT_NAME') {
+      assert.equal(expression, '${{ github.event_name }}');
+      env[key] = context.eventName ?? 'pull_request';
+      continue;
+    }
+    if (key === 'FILTER_OUTCOME' || key === 'UNMAPPED_OUTCOME') {
+      assert.match(expression, /steps\.(filter|unmapped)\.outcome/);
+      env[key] = context[key] ?? 'success';
+      continue;
+    }
     const match = String(expression).match(/steps\.[A-Za-z0-9_-]+\.outputs\.([A-Za-z0-9_-]+)/);
     assert.ok(match, `${key} does not read a filter output: ${expression}`);
     assert.ok(Object.hasOwn(outputs, match[1]), `${key} reads missing output ${match[1]}`);
@@ -201,14 +211,10 @@ test('a mapped tree opens only its own suites', () => {
   }
 });
 
-test('packages and a path outside the four app trees still open every path-filtered suite', () => {
+test('packages and unknown executable paths still open every path-filtered suite', () => {
   const cases = [
     { label: 'packages-only', files: ['packages/api-contract/src/index.ts'] },
-    { label: 'docs-only', files: ['docs/foo.md'] },
-    {
-      label: 'mobile-plus-docs',
-      files: ['apps/mobile/sources/scrubber.ts', 'docs/foo.md'],
-    },
+    { label: 'unmapped-script', files: ['scripts/new-proof.mjs'] },
   ];
   for (const item of cases) {
     const { checks, desktop } = evaluate(item.files);
@@ -234,5 +240,94 @@ test('packages and a path outside the four app trees still open every path-filte
     ]) {
       assert.equal(checks.gates[name], 'true', `${item.label} ${name}`);
     }
+  }
+});
+
+test('documentation does not fan out Checks suites', () => {
+  for (const files of [['docs/foo.md'], ['AGENTS.md'], ['docs/foo.md', 'docs/bar.md']]) {
+    const { checks } = evaluate(files);
+    assert.equal(checks.runEverything, 'false');
+    assert.ok(Object.values(checks.gates).every((value) => value === 'false'));
+  }
+  const mobile = evaluate(['apps/mobile/sources/scrubber.ts']).checks;
+  const withDocs = evaluate(['apps/mobile/sources/scrubber.ts', 'docs/foo.md']).checks;
+  assert.deepEqual(withDocs, mobile);
+  assert.deepEqual(
+    evaluate(['apps/server/src/index.ts', 'docs/foo.md']).checks,
+    evaluate(['apps/server/src/index.ts']).checks,
+  );
+  const readme = evaluate(['README.md']).checks;
+  assert.equal(readme.gates.readme, 'true');
+  assert.equal(readme.gates.serverSuite, 'false');
+  assert.equal(readme.gates.mobileSuite, 'false');
+});
+
+test('representative PRs request fewer hosted runners without hiding check contexts', () => {
+  const examples = [
+    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 13 },
+    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 8 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 17 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 15 },
+    { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
+  ];
+  for (const example of examples) {
+    const { gates } = evaluate(example.files).checks;
+    const needs = Object.fromEntries(Object.keys(checksWorkflow.jobs).map((name) => [name, { result: 'success', outputs: gates }]));
+    let runners = 0;
+    for (const job of Object.values(checksWorkflow.jobs)) {
+      const expression = String(job.if ?? 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+        .replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']");
+      const enabled = new Function('needs', 'github', 'inputs', 'cancelled', `return (${expression});`)(
+        needs, { event_name: 'pull_request' }, { suite: '' }, () => false,
+      );
+      if (enabled) runners += job.strategy?.matrix?.shard?.length ?? 1;
+    }
+    console.log(`${example.name}: baseline=${example.before} current=${runners} runner jobs (skipped checks excluded)`);
+    assert.equal(runners, example.after, example.name);
+  }
+});
+
+test('PR concurrency cancels superseded pushes and isolates non-PR runs', () => {
+  for (const name of ['checks', 'desktop', 'prompt-cases']) {
+    const doc = parse(readFileSync(new URL(`../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
+    assert.equal(doc.concurrency.group,
+      `${name}-` + "${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}");
+    assert.equal(doc.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}");
+  }
+});
+test('required workflows run merge groups and filter the group head against its base', () => {
+  for (const name of ['checks.yml', 'desktop.yml', 'prompt-cases.yml']) {
+    const doc = parse(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'));
+    assert.deepEqual(doc.on.merge_group, { types: ['checks_requested'] }, name);
+    assert.match(doc.jobs.changes.if, /merge_group/, name);
+    const checkout = doc.jobs.changes.steps.find(step => step.uses?.startsWith('actions/checkout@'));
+    assert.equal(checkout.with['fetch-depth'], 0, name);
+    for (const filter of doc.jobs.changes.steps.filter(step => step.uses?.startsWith('dorny/paths-filter@'))) {
+      assert.equal(filter.with.base, "${{ github.event.merge_group.base_sha || '' }}", name);
+      assert.equal(filter.with.ref, "${{ github.event.merge_group.head_sha || '' }}", name);
+    }
+  }
+});
+
+
+test('a merge-group diff failure runs every suite instead of pruning from missing outputs', () => {
+  const context = { eventName: 'merge_group', FILTER_OUTCOME: 'failure' };
+  const checks = runDecide(checksWorkflow.decide, filterOutputs([], checksWorkflow.filters), context);
+  const desktop = runDecide(desktopWorkflow.decide, filterOutputs([], desktopWorkflow.filters), context);
+  assert.equal(checks.runEverything, 'true');
+  assert.ok(Object.values(checks.gates).every(value => value === 'true'));
+  assert.equal(desktop.gates.desktop, 'true');
+});
+
+test('merge groups execute both consolidated server shard steps', () => {
+  const job = checksWorkflow.jobs['server-suite-shard'];
+  const steps = job.steps.filter(step => step.name?.startsWith('Run '));
+  assert.equal(steps.length, 2);
+  for (const step of steps) {
+    const expression = String(step.if).replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+    const enabled = new Function('github', 'inputs', 'cancelled', `return (${expression});`)(
+      { event_name: 'merge_group' }, { suite: '' }, () => false,
+    );
+    assert.equal(enabled, true, step.name);
   }
 });

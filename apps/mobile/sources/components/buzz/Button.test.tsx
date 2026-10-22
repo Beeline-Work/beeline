@@ -107,6 +107,15 @@ async function render(props: Partial<React.ComponentProps<typeof Button>> = {}) 
 }
 
 describe('the primary button', () => {
+  it('gives icon-only controls a square target without label padding', async () => {
+    const { frame, pressable } = await render({ label: '', iconOnly: true,
+      accessibilityLabel: 'Members', icon: React.createElement('Text', null, '+') });
+    expect(frame().width).toBe(44);
+    expect(frame().height).toBe(44);
+    expect(frame().paddingHorizontal).toBe(0);
+    expect(pressable.props.accessibilityLabel).toBe('Members');
+  });
+
   it('is cream with ink text in dark mode', async () => {
     active.theme = 'obsidian';
     const { frame, text } = await render();
@@ -174,13 +183,15 @@ describe('the shared Button anatomy', () => {
     }
   });
 
-  it('keeps a disabled primary legible as disabled', async () => {
-    active.theme = 'bone';
+  it.each(['bone', 'obsidian'] as const)('keeps a disabled primary flat in %s', async (name) => {
+    active.theme = name;
+    const palette = beelineThemes[name];
     const { frame, text, pressable } = await render({ disabled: true });
-    expect(frame().backgroundColor).toBe(beelineThemes.bone.buttonPrimaryFill);
-    expect(frame().borderColor).toBe(beelineThemes.bone.buttonPrimaryFill);
-    expect(frame().opacity).toBe(0.4);
-    expect(text.color).toBe(beelineThemes.bone.buttonPrimaryText);
+    expect(frame().backgroundColor).toBe(palette.bgPressed);
+    expect(frame().borderColor).toBe(palette.bgPressed);
+    expect(frame().opacity).toBeUndefined();
+    expect(frame(true)).toEqual(frame(false));
+    expect(text.color).toBe(palette.textDisabled);
     expect(pressable.props.disabled).toBe(true);
     expect(pressable.props.accessibilityState).toMatchObject({ disabled: true, busy: false });
   });

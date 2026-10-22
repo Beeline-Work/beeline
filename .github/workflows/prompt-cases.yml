@@ -13,6 +13,8 @@ name: Prompt cases
 
 on:
   pull_request: {}
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch: {}
 
 permissions:
@@ -20,24 +22,32 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: prompt-cases-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: prompt-cases-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:
     name: Detect prompt changes
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      prompts: ${{ steps.filter.outputs.prompts }}
+      prompts: ${{ steps.filter.outputs.prompts == 'true' || (github.event_name == 'merge_group' && steps.filter.outcome != 'success') }}
     steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'merge_group'
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         with:
+          base: ${{ github.event.merge_group.base_sha || '' }}
+          ref: ${{ github.event.merge_group.head_sha || '' }}
           filters: |
             prompts:
               - 'apps/body/src/prompt-assembly.ts'
+              - 'apps/server/src/free-agents.ts'
               - 'apps/body/src/beeline-skill.ts'
               - 'apps/body/src/minimal-tool-surface.ts'
               - 'apps/body/src/read-only-mcp.ts'

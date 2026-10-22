@@ -32,23 +32,35 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
+  it.each([undefined, '', '   ', 'x'.repeat(241)])('rejects invalid purpose %s before requesting approval', async (purpose) => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await expect(requestGrant({ kind: 'command', target: 'git status', reason: 'inspect', purpose }, deps({}, ops))).rejects.toThrow('purpose is required');
+    expect(ops).toEqual([]);
+  });
+
+  it('requires purpose in the advertised request schema but permits listing without it', () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'request_grant')!.inputSchema;
+    expect(schema.properties.purpose).toMatchObject({ minLength: 1, maxLength: 240 });
+    expect(schema.anyOf).toEqual(expect.arrayContaining([expect.objectContaining({ required: ['action', 'kind', 'target', 'reason', 'purpose'] })]));
+  });
+
   it('asks for one coarse shared asset category with a reason and a Room card', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const answer = await requestSharedAssetIsolation({
-      category: 'package-cache', reason: 'Shared npm tarball is corrupt',
+      category: 'package-cache', purpose: 'Shared npm tarball is corrupt', reason: 'Shared npm tarball is corrupt',
     }, deps({ grantId: 'g-7', status: 'pending', auto: false }, ops));
     expect(ops).toEqual([{ name: 'requestAgentGrant', input: {
       roomId: 'room-1', kind: 'shared_asset', target: 'package-cache',
-      reason: 'Shared npm tarball is corrupt',
+      purpose: 'Shared npm tarball is corrupt', reason: 'Shared npm tarball is corrupt',
     } }]);
     expect(answer).toContain('pending, card posted: isolate package-cache');
-    await expect(requestSharedAssetIsolation({ category: 'cache/file', reason: 'broken' },
+    await expect(requestSharedAssetIsolation({ category: 'cache/file', purpose: 'broken', reason: 'broken' },
       deps({}, ops))).rejects.toThrow('category must be one of');
     expect(ops).toHaveLength(1);
   });
   it.each([
-    { kind: 'budget', target: '$10', reason: 'more tokens' },
-    { kind: 'repository', target: 'acme/widgets', reason: 'edit the repository' },
+    { kind: 'budget', target: '$10', purpose: 'more tokens', reason: 'more tokens' },
+    { kind: 'repository', target: 'acme/widgets', purpose: 'edit the repository', reason: 'edit the repository' },
   ])('rejects retired $kind prompts before calling the server', async (ask) => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await expect(requestGrant(ask, deps({}, ops))).rejects.toThrow('kind must be one of');
@@ -83,7 +95,7 @@ describe('beeline-agent request_grant', () => {
   it('asks for a host MCP route by name and reports it pending, never a yolo approval', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await requestGrant(
-      { kind: 'mcp', target: ' squire ', reason: 'vault the provider key' },
+      { kind: 'mcp', target: ' squire ', purpose: 'vault the provider key', reason: 'vault the provider key' },
       deps(
         {
           grantId: 'g-9',
@@ -102,7 +114,7 @@ describe('beeline-agent request_grant', () => {
           roomId: 'room-1',
           kind: 'mcp',
           target: 'squire',
-          reason: 'vault the provider key',
+          purpose: 'vault the provider key', reason: 'vault the provider key',
         },
       },
     ]);
@@ -121,7 +133,7 @@ describe('beeline-agent request_grant', () => {
       {
         kind: 'command',
         target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
-        reason: 'publish the preview build',
+        purpose: 'publish the preview build', reason: 'publish the preview build',
         ttl: 3600,
       },
       deps(
@@ -142,7 +154,7 @@ describe('beeline-agent request_grant', () => {
           roomId: 'room-1',
           kind: 'command',
           target: 'fly deploy -a beeline-preview --with FLY_TOKEN',
-          reason: 'publish the preview build',
+          purpose: 'publish the preview build', reason: 'publish the preview build',
           ttlSeconds: 3600,
         },
       },
@@ -160,14 +172,14 @@ describe('beeline-agent request_grant', () => {
 
   it('returns approval and, for a command, points at run_granted_command', async () => {
     const command = await requestGrant(
-      { kind: 'command', target: 'npm test', reason: 'run the suite' },
+      { kind: 'command', target: 'npm test', purpose: 'run the suite', reason: 'run the suite' },
       deps({ grantId: 'g-2', status: 'approved', auto: true }),
     );
     expect(command).toBe(
       'approved: run npm test [grant g-2]. Run it now with run_granted_command and the argv.',
     );
     const host = await requestGrant(
-      { kind: 'host', target: ' api.fly.io ', reason: 'reach the Fly API' },
+      { kind: 'host', target: ' api.fly.io ', purpose: 'reach the Fly API', reason: 'reach the Fly API' },
       deps({ grantId: 'g-3', status: 'approved', auto: true }),
     );
     expect(host).toBe(
@@ -177,7 +189,7 @@ describe('beeline-agent request_grant', () => {
 
   it('tells an instantly approved /dev/ device grant that this same turn continues with it', async () => {
     const device = await requestGrant(
-      { kind: 'device', target: '/dev/kvm', reason: 'run the Android emulator' },
+      { kind: 'device', target: '/dev/kvm', purpose: 'run the Android emulator', reason: 'run the Android emulator' },
       deps({ grantId: 'g-4', status: 'approved', auto: true }),
     );
     expect(device).toBe(
@@ -189,7 +201,7 @@ describe('beeline-agent request_grant', () => {
       '/dev/kvm',
     );
     const outside = await requestGrant(
-      { kind: 'device', target: 'kvm', reason: 'run the Android emulator' },
+      { kind: 'device', target: 'kvm', purpose: 'run the Android emulator', reason: 'run the Android emulator' },
       deps({ grantId: 'g-5', status: 'approved', auto: true }),
     );
     expect(outside).toBe(
@@ -201,22 +213,22 @@ describe('beeline-agent request_grant', () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const answer = deps({ grantId: 'never' }, ops);
     await expect(
-      requestGrant({ kind: 'command', target: 'fly deploy; rm -rf /', reason: 'x' }, answer),
+      requestGrant({ kind: 'command', target: 'fly deploy; rm -rf /', purpose: 'x', reason: 'x' }, answer),
     ).rejects.toThrow('shell metacharacters');
     await expect(
-      requestGrant({ kind: 'command', target: 'echo $FLY_TOKEN', reason: 'x' }, answer),
+      requestGrant({ kind: 'command', target: 'echo $FLY_TOKEN', purpose: 'x', reason: 'x' }, answer),
     ).rejects.toThrow('shell metacharacters');
-    await expect(requestGrant({ kind: 'wifi', target: 'x', reason: 'x' }, answer)).rejects.toThrow(
+    await expect(requestGrant({ kind: 'wifi', target: 'x', purpose: 'x', reason: 'x' }, answer)).rejects.toThrow(
       'kind must be one of',
     );
-    await expect(requestGrant({ kind: 'host', target: '  ', reason: 'x' }, answer)).rejects.toThrow(
+    await expect(requestGrant({ kind: 'host', target: '  ', purpose: 'x', reason: 'x' }, answer)).rejects.toThrow(
       'target must be a non-empty string',
     );
     await expect(
-      requestGrant({ kind: 'host', target: 'api.fly.io', reason: ' ' }, answer),
+      requestGrant({ kind: 'host', target: 'api.fly.io', purpose: 'Inspect the checkout', reason: ' ' }, answer),
     ).rejects.toThrow('reason must be a non-empty string');
     await expect(
-      requestGrant({ kind: 'host', target: 'api.fly.io', reason: 'x', ttl: 5 }, answer),
+      requestGrant({ kind: 'host', target: 'api.fly.io', purpose: 'x', reason: 'x', ttl: 5 }, answer),
     ).rejects.toThrow('ttl must be');
     expect(ops).toEqual([]);
   });
@@ -229,7 +241,7 @@ describe('beeline-agent request_grant', () => {
         {
           kind: 'command',
           target: 'fly deploy -a preview --with DOOMED_SECRET --with ANOTHER_MISSING',
-          reason: 'publish',
+          purpose: 'publish', reason: 'publish',
         },
         ask,
       ),
@@ -244,7 +256,7 @@ describe('beeline-agent request_grant', () => {
       {
         kind: 'command',
         target: 'fly deploy -a preview --with FLY_TOKEN',
-        reason: 'publish',
+        purpose: 'publish', reason: 'publish',
       },
       deps({ grantId: 'g-7', status: 'approved', auto: true }, ops),
     );
@@ -253,7 +265,7 @@ describe('beeline-agent request_grant', () => {
       roomId: 'room-1',
       kind: 'command',
       target: 'fly deploy -a preview --with FLY_TOKEN',
-      reason: 'publish',
+      purpose: 'publish', reason: 'publish',
     });
     expect(reply).toContain('approved: run fly deploy -a preview');
   });
@@ -283,7 +295,7 @@ describe('beeline-agent list_grants and store_secret', () => {
               roomId: 'room-1',
               kind: 'command',
               target: 'fly deploy -a preview --with FLY_TOKEN',
-              reason: 'publish the preview',
+              purpose: 'publish the preview', reason: 'publish the preview',
               status: 'pending',
               auto: false,
               requestedBy: 'c'.repeat(64),
@@ -295,7 +307,7 @@ describe('beeline-agent list_grants and store_secret', () => {
               roomId: 'room-1',
               kind: 'command',
               target: 'fly deploy -a preview --with GHOST_SECRET',
-              reason: 'publish the preview',
+              purpose: 'publish the preview', reason: 'publish the preview',
               status: 'pending',
               auto: false,
               requestedBy: 'c'.repeat(64),
@@ -307,7 +319,7 @@ describe('beeline-agent list_grants and store_secret', () => {
               roomId: 'room-1',
               kind: 'host',
               target: 'api.fly.io',
-              reason: 'reach the API',
+              purpose: 'reach the API', reason: 'reach the API',
               status: 'approved',
               auto: true,
               requestedBy: 'c'.repeat(64),
@@ -431,7 +443,7 @@ describe('request_grant carries the script an interpreter will run', () => {
     const root = checkout(body);
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await requestGrant(
-      { kind: 'command', target: 'python3 fix.py', reason: 'clean up' },
+      { kind: 'command', target: 'python3 fix.py', purpose: 'clean up', reason: 'clean up' },
       {
         ...deps(
           { grantId: 'g-1', status: 'pending', auto: false, escalations: ['unseen-script'] },
@@ -456,7 +468,7 @@ describe('request_grant carries the script an interpreter will run', () => {
     const root = checkout(`${Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n')}\n`);
     await expect(
       requestGrant(
-        { kind: 'command', target: 'python3 fix.py', reason: 'x' },
+        { kind: 'command', target: 'python3 fix.py', purpose: 'x', reason: 'x' },
         { ...deps({ grantId: 'g' }), scriptRoots: [root] },
       ),
     ).rejects.toThrow('will not be truncated');
@@ -466,7 +478,7 @@ describe('request_grant carries the script an interpreter will run', () => {
     const root = checkout('print(1)\n');
     await expect(
       requestGrant(
-        { kind: 'command', target: 'python3 /etc/hosts', reason: 'x' },
+        { kind: 'command', target: 'python3 /etc/hosts', purpose: 'x', reason: 'x' },
         { ...deps({ grantId: 'g' }), scriptRoots: [root] },
       ),
     ).rejects.toThrow('cannot be shown on the approval card');
@@ -476,7 +488,7 @@ describe('request_grant carries the script an interpreter will run', () => {
     const root = checkout('print(1)\n');
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await requestGrant(
-      { kind: 'command', target: 'python3 -V', reason: 'x' },
+      { kind: 'command', target: 'python3 -V', purpose: 'x', reason: 'x' },
       { ...deps({ grantId: 'g', status: 'pending', auto: false }, ops), scriptRoots: [root] },
     );
     expect(ops[0]!.input.script).toBeUndefined();
@@ -500,7 +512,7 @@ describe('run_granted_command reports the Room boundary', () => {
     );
     expect(reply).toContain('read-only outside your scratch directory');
     expect(reply).toContain('open_corner');
-    expect(reply).toContain('request_grant(kind:command, target, reason)');
+    expect(reply).toContain('request_grant(kind:command, target, reason, purpose)');
     expect(reply).toContain('run_granted_command');
   });
 
@@ -520,7 +532,7 @@ describe('run_granted_command reports the Room boundary', () => {
     );
     expect(reply).toContain('sandbox failed before command start');
     expect(reply).not.toContain('exit 1');
-    expect(reply).toContain('request_grant(kind:command, target, reason)');
+    expect(reply).toContain('request_grant(kind:command, target, reason, purpose)');
     expect(reply).toContain('run_granted_command');
   });
 });

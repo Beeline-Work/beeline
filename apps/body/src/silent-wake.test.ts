@@ -33,11 +33,8 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   }
   await context.leave();
   await expect(callAgentTool('no_reply_needed', {}, 'silent-3')).rejects.toThrow('no active server command');
-  expect(fetch).toHaveBeenCalledTimes(6);
-  for (const [url, request] of fetch.mock.calls) {
-    expect(String(url)).toContain('/postAgentTurnReceipt');
-    expect(JSON.parse(request.body)).toMatchObject({ status: 'complete', completionKind: 'no-reply', requestId: 'turn' });
-  }
+  // R1: the helper must drain output before sending its terminal receipt.
+  expect(fetch).not.toHaveBeenCalled();
 });
 it('declares the exact Claude terminal tool in every new session, retaining existing names and isolated settings', () => {
   const meta = sessionToolScopeMeta('claude-agent-acp', 'other,other') as { claudeCode: { options: { env: Record<string, string>; settings: unknown } } };

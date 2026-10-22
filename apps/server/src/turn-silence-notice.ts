@@ -150,6 +150,12 @@ export async function noteFirstSilence(
     readonly stalled?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
+  // A reply can commit before a delayed watchdog or generation-free receipt.
+  // Check before reassignment too: answered work must not move to another agent.
+  if ((await database.query(`SELECT 1 FROM messages
+    WHERE room_id=$1 AND request_id=$2 AND author_id=$3
+      AND presentation='message' AND deleted_at IS NULL LIMIT 1`,
+    [input.roomId, input.requestId, input.agentId])).rowCount) return NO_RESTART;
   // Activity is an observation, not a request that owes an answer. Even a
   // harness failure or an old helper's empty-turn receipt stays silent.
   const activity = await database.query(
@@ -277,6 +283,10 @@ async function inscribeSilence(
   // or a successor owns the command, its delayed callback is stale and must
   // leave no failure line, turn transition, or retry behind.
   if (!command && input.generationId != null) return NO_RESTART;
+  if ((await database.query(`SELECT 1 FROM messages
+    WHERE room_id=$1 AND request_id=$2 AND author_id=$3
+      AND presentation='message' AND deleted_at IS NULL LIMIT 1`,
+    [input.roomId, input.requestId, input.agentId])).rowCount) return NO_RESTART;
   const canIncrement = command?.state === 'claimed';
   const attempt = canIncrement ? command!.hiccup_attempts + 1 : (command?.hiccup_attempts ?? 0);
   const restart = Boolean(
@@ -404,11 +414,12 @@ async function inscribeSilence(
     !updateRequeued &&
     classified.kind !== 'offline'
   ) {
+    const place = (await database.query<{ name: string }>('SELECT name FROM rooms WHERE id=$1', [input.roomId])).rows[0]!;
     const report = await reportToCommander(
       database,
       input.roomId,
       input.agentId,
-      `failed: ${reason || classified.fault || 'agent turn failed'}`,
+      `failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`,
       command,
       `failure:${command.id}:${attempt}`,
       { automatic: true },

@@ -1,4 +1,5 @@
 // Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
+// Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
 // Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
@@ -8,6 +9,7 @@
 // Ask normalizer in DaemonService.askRoomChoice and run-owner addressing in postWorkflowGate approved by lunchboxfortwo for PR #2660 (message da6d4a94fec1a6c13558d01d5a74d50559a10f38582cb06308ca50eaec2141db); wording unchanged.
 // Onboarding producers approved by lunchboxfortwo, DM bdf39511 (yes), relayed by Ruby; snapshot only.
 // Connection-install card wording for PR #2765 approved by lunchboxfortwo, DM e9967365 (yes), relayed by Ruby; three requestAgentGrant entries only.
+// Corner failure report wording approved by lunchboxfortwo (message 26355fa9), relayed by Ruby: failed: <corner name> (<corner id>): <reason>.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -3166,27 +3168,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:wrapper:8627c24c4fb3aba4",
-    "file": "apps/server/src/free-agents.ts",
-    "kind": "wrapper",
-    "template": "createFreeAgentInWorkspace(database, this.config, input)",
-    "literals": [],
-    "occurrences": 1
-  },
-  {
-    "id": "src/free-agents.ts:createFreeAgentInWorkspace:wrapper:c16d0ca4e2689d52",
-    "file": "apps/server/src/free-agents.ts",
-    "kind": "wrapper",
-    "template": "postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' })",
-    "literals": [
-      "'compressed'",
-      "'hex'",
-      "'repository'",
-      "'secp256k1'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:a3631ff7edcd4615",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
@@ -4123,17 +4104,6 @@
   },
   // redeemInvite wrapper approved by lunchboxfortwo, DM 82530d41 (yes), relayed by Ruby.
   {
-    "id": "src/phone-service.ts:PhoneService.redeemInvite:wrapper:c122a7fcc9c2c20b",
-    "file": "apps/server/src/phone-service.ts",
-    "kind": "wrapper",
-    "template": "postRepositoryOnboarding(database, this.github, {\n    roomId, agentId: existing.agent_id, requesterId: viewerId,\n    kind: existing.repository_name ? 'starters' : 'repository',\n})",
-    "literals": [
-      "'repository'",
-      "'starters'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/phone-service.ts:PhoneService.removeAgent:wrapper:066577f9ae1ad3ed",
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
@@ -4765,16 +4735,16 @@
     "occurrences": 1
   },
   {
-    "id": "src/turn-silence-notice.ts:inscribeSilence:wrapper:8988f5b358276876",
+    "id": "src/turn-silence-notice.ts:inscribeSilence:wrapper:d1f96d6950119753",
     "file": "apps/server/src/turn-silence-notice.ts",
     "kind": "wrapper",
-    "template": "reportToCommander(database, input.roomId, input.agentId, `failed: ${reason || classified.fault || 'agent turn failed'}`, command, `failure:${command.id}:${attempt}`, { automatic: true })",
+    "template": "reportToCommander(database, input.roomId, input.agentId, `failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`, command, `failure:${command.id}:${attempt}`, { automatic: true })",
     "literals": [
       "' '",
       "''",
       "'agent turn failed'",
       "'claimed'",
-      "`failed: ${reason || classified.fault || 'agent turn failed'}`",
+      "`failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`",
       "`failure:${command.id}:${attempt}`"
     ],
     "occurrences": 1
@@ -5608,6 +5578,22 @@
       "'status'",
       "'string'"
     ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/operator-system-dm.ts:flushOperatorSystemDms:wrapper:68025df2a8940f74",
+    "file": "apps/server/src/operator-system-dm.ts",
+    "kind": "wrapper",
+    "template": "sendSystemDirectMessage(db, row.workspace_id, row.recipient_id, row.text, createHash('sha256').update(`operator-system-dm:${row.send_id}:${row.recipient_id}`).digest('hex'))",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/system-line.ts:sendSystemDirectMessage:message-write:03f075af0303bf5d",
+    "file": "apps/server/src/system-line.ts",
+    "kind": "message-write",
+    "template": "INSERT messages text=text, author_id=SYSTEM_IDENTITY_ID",
+    "literals": [],
     "occurrences": 1
   }
 ]

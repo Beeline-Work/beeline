@@ -1,5 +1,7 @@
 import * as Sentry from '@sentry/node';
-import { privateErrorEvent } from '@beeline/api-contract/error-reporting';
+import { createErrorEventFilter } from '@beeline/api-contract/error-reporting';
+
+const filterErrorEvent = createErrorEventFilter();
 
 // The release builder supplies the public ingestion DSN. Runtime env can override or disable it.
 declare const BEELINE_BUILD_SENTRY_DSN: string | undefined;
@@ -20,7 +22,7 @@ if (dsn) {
     skipOpenTelemetrySetup: true,
     sampleRate: 1,
     maxBreadcrumbs: 0,
-    beforeSend: privateErrorEvent,
+    beforeSend: filterErrorEvent,
     initialScope: { tags: { surface: 'helper' } },
   }); } catch { /* Telemetry configuration must not prevent startup. */ }
 }

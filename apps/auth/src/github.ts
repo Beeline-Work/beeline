@@ -978,6 +978,38 @@ export class GitHubAppClient {
     }
   }
 
+  /** Read the provider's queue entry, including the combined commit under test. */
+  async readPullRequestQueue(accessToken: string, fullName: string, number: number) {
+    const [owner, name] = fullName.split('/');
+    const data = await this.queueGraphql(accessToken, `query($owner:String!,$name:String!,$number:Int!){
+      repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid
+        mergeQueueEntry{id headCommit{oid}}
+      }}
+    }`, { owner, name, number });
+    const repository = data.repository as Record<string, unknown> | undefined;
+    const pr = repository?.pullRequest as {
+      id?: string; headRefOid?: string; mergeQueueEntry?: { id: string; headCommit?: { oid: string } } | null;
+    } | undefined;
+    if (!pr?.id || !pr.headRefOid || !('mergeQueueEntry' in pr))
+      throw new Error('GitHub queue read returned no pull request or queue state');
+    return { id: pr.id, headSha: pr.headRefOid, entry: pr.mergeQueueEntry ?? null };
+  }
+
+  private async queueGraphql(token: string, query: string, variables: Record<string, unknown>) {
+    const response = await fetch(`${this.#config.apiBaseUrl}/graphql`, {
+      method: 'POST', headers: { ...githubHeaders(token), 'content-type': 'application/json' },
+      signal: AbortSignal.timeout(15_000), body: JSON.stringify({ query, variables }),
+    });
+    const body = await jsonObject(response, 'GitHub merge queue');
+    if (Array.isArray(body.errors) && body.errors.length) throw new Error('GitHub merge queue returned errors');
+    if (!body.data || typeof body.data !== 'object') throw new Error('GitHub merge queue returned no data');
+    return body.data as Record<string, unknown>;
+  }
+
+  async dequeuePullRequest(accessToken: string, id: string): Promise<void> {
+    await this.queueGraphql(accessToken, `mutation($id:ID!){dequeuePullRequest(input:{pullRequestId:$id}){clientMutationId}}`, { id });
+  }
+
   /** Squash-merge one PR using an exact-repository installation grant. */
   async mergePullRequest(
     installationId: number,
@@ -985,19 +1017,43 @@ export class GitHubAppClient {
     fullName: string,
     pullRequestNumber: number,
     expectedHeadSha: string,
-  ): Promise<void> {
+  ): Promise<'queued' | void> {
     const token = await this.installationToken(installationId, {
       repositoryIds: [repositoryId],
       // A squash that rewrites a workflow file needs workflows write, even when
       // the PR's own diff only matches what main already had.
       permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
     });
-    const repositoryPath = fullName
+    const pr = await this.readPullRequest(token.token, fullName, pullRequestNumber);
+    if (pr.headSha !== expectedHeadSha || !pr.baseRef) throw new Error('GitHub merge target moved');
+    const [owner, name] = fullName.split('/');
+    const configuration = await this.queueGraphql(token.token, `query($owner:String!,$name:String!,$branch:String!){
+      repository(owner:$owner,name:$name){mergeQueue(branch:$branch){id}}
+    }`, { owner, name, branch: pr.baseRef });
+    const repository = configuration.repository as { mergeQueue?: { id: string } | null } | undefined;
+    if (!repository || !('mergeQueue' in repository)) throw new Error('GitHub queue configuration unavailable');
+    if (repository.mergeQueue) {
+      const queue = await this.readPullRequestQueue(token.token, fullName, pullRequestNumber);
+      if (queue.headSha !== expectedHeadSha) throw new Error('GitHub queue target moved');
+      if (!queue.entry) {
+        try {
+          await this.queueGraphql(token.token, `mutation($id:ID!,$head:GitObjectID!){
+            enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{id}}
+          }`, { id: queue.id, head: expectedHeadSha });
+        } catch (error) {
+          // A lost response can conceal an accepted enqueue. Recovery must
+          // inspect GitHub before releasing the exact-head merge claim.
+          throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), { queueAttempted: true });
+        }
+      }
+      return 'queued';
+    }
+    const encodedRepositoryPath = fullName
       .split('/')
       .map((part) => encodeURIComponent(part))
       .join('/');
     const response = await fetch(
-      `${this.#config.apiBaseUrl}/repos/${repositoryPath}/pulls/${pullRequestNumber}/merge`,
+      `${this.#config.apiBaseUrl}/repos/${encodedRepositoryPath}/pulls/${pullRequestNumber}/merge`,
       {
         method: 'PUT',
         headers: { ...githubHeaders(token.token), 'content-type': 'application/json' },

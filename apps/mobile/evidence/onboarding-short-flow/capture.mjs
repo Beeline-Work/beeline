@@ -1,0 +1,33 @@
+import fs from 'node:fs';
+import path from 'node:path';
+const tabs=await(await fetch('http://127.0.0.1:9337/json')).json();
+const ws=new WebSocket(tabs.find(t=>t.type==='page').webSocketDebuggerUrl);
+await new Promise(r=>ws.onopen=r);let id=0;const pending=new Map(),errors=[];
+ws.onmessage=e=>{const x=JSON.parse(e.data);if(x.method==='Runtime.exceptionThrown')errors.push(x.params.exceptionDetails.exception?.description??x.params.exceptionDetails.text);if(x.id){const p=pending.get(x.id);pending.delete(x.id);x.error?p[1](x.error):p[0](x.result)}};
+const call=(method,params={})=>new Promise((r,j)=>{const n=++id;pending.set(n,[r,j]);ws.send(JSON.stringify({id:n,method,params}))});
+const evaluate=async expression=>{const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result?.value};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const until=async predicate=>{for(let i=0;i<60;i++){if(await evaluate(predicate).catch(()=>false))return;await wait(200)}throw new Error('Timed out: '+predicate+' '+await evaluate('document.body.innerText')+' '+errors.join('\n'))};
+await call('Page.enable');await call('Runtime.enable');
+const records=[];
+for(const device of ['web','desktop'])for(const theme of ['obsidian','bone'])for(const provider of ['google','github']){
+  errors.length=0;
+  const output=path.join(import.meta.dirname,device);fs.mkdirSync(output,{recursive:true});
+  await call('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
+  await call('Page.navigate',{url:`http://127.0.0.1:4197/?screen=sign-in&device=${device}&theme=${theme}`});
+  await until(`document.body.innerText.includes('Continue with Google')`);
+  const shoot=async stage=>{await evaluate('document.fonts.ready');await wait(150);const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});const file=`${provider}-${stage}-${theme}.png`;fs.writeFileSync(path.join(output,file),Buffer.from(image.data,'base64'));records.push({device,provider,theme,stage,file,text:await evaluate('document.body.innerText'),errors:[...errors]})};
+  await shoot('sign-in');
+  await evaluate(`[...document.querySelectorAll('[role="button"]')].find(n=>n.textContent.includes('Continue with ${provider==='google'?'Google':'GitHub'}')).click()`);
+  await until(`document.body.innerText.includes('Create Workspace') || document.body.innerText.includes('Create workspace')`);
+  await shoot('workspace');
+  await evaluate(`(()=>{const input=document.querySelector('input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'First workspace');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await wait(150);
+  await evaluate(`[...document.querySelectorAll('[role="button"]')].find(n=>/Create workspace/i.test(n.textContent)).click()`);
+  await until(`document.body.innerText.includes('Three things to know:')`);
+  await shoot('general');
+  const text=await evaluate('document.body.innerText');
+  if(!text.includes('Connect once, use everywhere.')||!text.includes('Big jobs get a corner.')||text.includes('Choose a repository')||!text.includes('What are you working on?'))throw new Error(text);
+  console.log(JSON.stringify({device,theme,provider,passed:true}));
+}
+fs.writeFileSync(path.join(import.meta.dirname,'results.json'),JSON.stringify(records,null,2));ws.close();

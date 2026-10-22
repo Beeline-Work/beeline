@@ -212,7 +212,7 @@ const unistylesTheme = vi.hoisted(() => ({
       hero: { fontSize: 22 },
       body: { fontSize: 16 },
       meta: { fontSize: 13 },
-      sectionHead: { fontSize: 10 },
+      sectionHead: { fontSize: 10 }, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 },
       machine: { fontSize: 13 },
     },
     agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
@@ -692,13 +692,13 @@ describe('Members workspace management', () => {
     expect(agents.props.accessibilityLabel).toBe('Add agents');
     {
       const box = people.props.style({ pressed: false })[0];
-      expect(box.height + people.props.hitSlop.top + people.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
-      expect(box.width + people.props.hitSlop.left + people.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.width).toBeGreaterThanOrEqual(44);
     }
     {
       const box = agents.props.style({ pressed: false })[0];
-      expect(box.height + agents.props.hitSlop.top + agents.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
-      expect(box.width + agents.props.hitSlop.left + agents.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.width).toBeGreaterThanOrEqual(44);
     }
   });
 

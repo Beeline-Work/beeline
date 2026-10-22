@@ -47,7 +47,7 @@ export async function recordSigninFunnelEvent(
       throw error;
     }
   }
-  if (source === 'client' && event.event === 'signed_in' && !identityId) return;
+  if (source === 'client' && ['signed_in', 'workspace_created', 'first_message_sent'].includes(event.event) && !identityId) return;
   let internal = false;
   if (identityId) {
     const row = (
@@ -222,6 +222,8 @@ export async function dashboardSigninFunnel(
     'callback_result',
     'signed_in',
     'signup',
+    'workspace_created',
+    'first_message_sent',
   ] as const;
   const slices = ['all', ...platforms];
   const totals = rows.filter(

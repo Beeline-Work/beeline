@@ -1,3 +1,4 @@
+import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { createECDH } from 'node:crypto';
@@ -174,17 +175,13 @@ describe('free starter agents', () => {
     expect(stored.soul.instructions).not.toContain('beeline:onboarding');
   });
 
-  it('onboarding-invite-1: an unlinked Room join receives a repository card without GitHub', async () => {
+  it('onboarding-invite-1: an unlinked Room join does not presume coding intent', async () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Existing unlinked workspace' }, OWNER) as { id: string; roomId: string };
     const agent = await freeAgentOf(id);
     const invite = await phone.execute('createInvite', { workspaceId: id }, OWNER);
     await phone.execute('redeemInvite', { token: invite.token }, FRIEND);
-    const cards = (await phone.readRoom(roomId, FRIEND))?.messages.filter(message => message.onboarding?.requesterId === FRIEND) ?? [];
-    expect(cards).toHaveLength(1);
-    expect(cards[0]?.onboarding).toMatchObject({ kind: 'repository', state: 'install_missing', requesterId: FRIEND, canLink: false });
-    await expect(phone.execute('actOnRepositoryCard', { roomId, cardId: cards[0]!.id, action: 'create' }, FRIEND)).rejects.toThrow();
+    expect((await phone.readRoom(roomId, FRIEND))?.messages.some(message => message.onboarding)).toBe(false);
     expect((await freeAgentOf(id)).agent_id).toBe(agent.agent_id);
-    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding)).toBe(true);
   });
 
   it('onboarding-invite-1: an eligible invitee selects a starter from an existing Beebee without repository-management rights', async () => {
@@ -197,11 +194,14 @@ describe('free starter agents', () => {
     await db.query(`UPDATE identities SET github_subject='296966200' WHERE id=$1`, [FRIEND]);
     const invite = await phone.execute('createInvite', { workspaceId: id }, OWNER);
     await phone.execute('redeemInvite', { token: invite.token }, FRIEND);
+    expect((await phone.readRoom(roomId, FRIEND))?.messages.some(message => message.onboarding)).toBe(false);
+    // A subsequent coding request can still offer the existing repository's starters.
+    await postRepositoryOnboarding(db, github, { roomId, agentId: agent.agent_id, requesterId: FRIEND, kind: 'starters' });
     const joined = await phone.readRoom(roomId, FRIEND);
     const card = joined?.messages.find(message => message.onboarding?.requesterId === FRIEND)?.onboarding;
     expect(card).toMatchObject({ kind: 'starters', requesterId: FRIEND, repository: 'tester/existing', canLink: false });
     expect(card?.starters).toHaveLength(3);
-    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding)).toBe(true);
+    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding)).toBe(false);
     await expect(phone.execute('actOnRepositoryCard', { roomId, cardId: card!.id, action: 'link', repositoryId: 42 }, FRIEND)).rejects.toThrow();
     await phone.execute('actOnRepositoryCard', { roomId, cardId: card!.id, action: 'starter', starterId: 'readme' }, FRIEND);
     const command = (await db.query<{ id: string; turn_request_id: string }>(
@@ -234,7 +234,7 @@ describe('free starter agents', () => {
       message.onboarding?.requesterId === OWNER && message.onboarding.status === 'open')).toHaveLength(1);
   });
 
-  it('E1: Google onboarding posts a real handle and repository card without configuration', async () => {
+  it('E1: Google onboarding posts a real handle and hello without a repository card', async () => {
     const auth = new TokenAuth(db, async () => { throw new Error('GitHub is not needed'); },
       () => new Date(), async () => ({ subject: 'google-new-owner', name: 'Alex Chen', email: 'alex.chen@gmail.com', audience: 'google-client' }));
     const google = await auth.exchangeGoogleOidc('verified-fixture-ticket');
@@ -249,7 +249,7 @@ describe('free starter agents', () => {
     expect(hello[0]!.text).not.toContain(google.identityId);
     const room = await phone.readRoom(workspace.roomId!, google.identityId);
     expect(room?.room.name).toBe('general');
-    expect(room?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(true);
+    expect(room?.messages.some(message => message.onboarding)).toBe(false);
     expect((await db.query('SELECT github_subject FROM identities WHERE id=$1', [google.identityId])).rows[0]?.github_subject).toBeNull();
   });
 
@@ -291,8 +291,15 @@ describe('free starter agents', () => {
     const hello = (await db.query<{ id: string; text: string }>(
       `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL`, [roomId, agent.agent_id],
     )).rows;
-    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Choose or create a repository on the card below, and I’ll suggest a starting task. If you don't want me here, open Members and remove me from the Workspace.`;
-    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(true);
+    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent. I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.
+
+Three things to know:
+- **Talk to me here.** Tag @beebee, or just type while I'm the only agent in this Room.
+- **Big jobs get a corner.** That's a side thread where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.
+- **Connect once, use everywhere.** Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.
+
+What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members.`;
+    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding)).toBe(false);
     expect(hello).toHaveLength(1);
     expect(hello[0]!.text).toBe(expected);
     expect(FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee')).toBe(expected);

@@ -10,7 +10,9 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 function shims(mobile: string): Record<string, string> {
   return {
     ...webProofShims(mobile),
-    'expo-router': `export const useLocalSearchParams = () => ({ roomId: '11111111-1111-4111-8111-111111111111' });
+    'expo-router': `import React from 'react';
+    export const useFocusEffect = effect => React.useEffect(effect, [effect]);
+    export const useLocalSearchParams = () => ({ roomId: '11111111-1111-4111-8111-111111111111' });
     export const router = { push: () => undefined, replace: () => undefined, back: () => undefined };`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async corners(_id, options) { return globalThis.cornerSectionsView(options); }

@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const controls = vi.hoisted(() => ({
   fetch: vi.fn(),
+  activation: vi.fn(),
   authorization: vi.fn(),
   identityListeners: new Set<() => void>(),
 }));
 const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
+
+vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: controls.activation }));
 
 vi.mock('react-native', () => ({
   AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
@@ -62,7 +65,7 @@ vi.mock('react-native-mmkv', () => ({
 import { MonolithRigTransport } from './monolith-rig-transport';
 import { resetSharedLiveConnection } from './live-connection';
 import { BuzzRigTransport } from './buzz-rig-transport';
-import { MonolithPhoneOperationError } from './monolith-operation';
+import { MonolithPhoneOperationError, monolithPhoneOperation } from './monolith-operation';
 import { clearMobileSurfaceStorage, createRoomOutbox } from '@/buzz/surface-storage';
 import { resetClientState } from '@/sync/client-reset';
 
@@ -826,4 +829,19 @@ describe('monolith Room send path', () => {
 
     await expect(transport.roomRepositoryRemove(ROOM)).resolves.toBeUndefined();
   });
+});
+
+it('measures accepted Workspace and message writes through either transport, excluding refused writes', async () => {
+  controls.activation.mockClear();
+  controls.fetch.mockResolvedValue(new Response('{}', { status: 200 }));
+  await monolithPhoneOperation('createWorkspace', { name: 'First workspace' });
+  await vi.waitFor(() => expect(controls.activation).toHaveBeenCalledWith('createWorkspace'));
+  controls.fetch.mockResolvedValue(new Response('{}', { status: 200 }));
+  await new MonolithRigTransport(identity).operation('sendRoomMessage', { roomId: ROOM, text: 'Hello' });
+  await vi.waitFor(() => expect(controls.activation).toHaveBeenCalledWith('sendRoomMessage'));
+  controls.activation.mockClear();
+  controls.fetch.mockResolvedValue(new Response('{"error":"refused"}', { status: 403 }));
+  await expect(monolithPhoneOperation('createWorkspace', { name: 'Refused' })).rejects.toThrow();
+  await expect(new MonolithRigTransport(identity).operation('sendRoomMessage', { roomId: ROOM, text: 'Refused' })).rejects.toThrow();
+  expect(controls.activation).not.toHaveBeenCalled();
 });

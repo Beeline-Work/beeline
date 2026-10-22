@@ -244,7 +244,7 @@ describe('one composer', () => {
     expect(input.props.value).toBe(value);
     expect(input.props.multiline).toBe(true);
     expect(input.props.numberOfLines).toBeUndefined();
-    expect(input.props.style).toHaveLength(6);
+    expect(input.props.style).toHaveLength(5);
     expect(input.props.style[0]).not.toHaveProperty('flex');
     expect(input.parent.parent.props.style).toMatchObject({ flex: 1, position: 'relative' });
     expect(input.props.style[1]).toBeUndefined();
@@ -406,7 +406,10 @@ describe('one composer', () => {
       flexDirection: 'row',
       alignItems: 'center',
     });
-    expect(f.renderer.root.findByType('TextInput').props.onKeyPress).toBe(f.onKeyPress);
+    // Every key but a Backspace that deletes a tag reaches the parent as it came.
+    const enter = { nativeEvent: { key: 'Enter' }, preventDefault: vi.fn() };
+    f.renderer.root.findByType('TextInput').props.onKeyPress(enter);
+    expect(f.onKeyPress).toHaveBeenCalledWith(enter);
     expect(desktopComposerKeyAction('web', 'Enter', false)).toBe('send');
     expect(desktopComposerKeyAction('web', 'Enter', true)).not.toBe('send');
     for (const file of [

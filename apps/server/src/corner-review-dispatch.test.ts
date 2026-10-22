@@ -762,7 +762,7 @@ describe('corner message attribution', () => {
     ).toEqual([{ head_sha: '2'.repeat(40) }]);
   });
 
-  it('wakes the implementer without a person push when failing checks outlast a fix with no push', async () => {
+  it('Reproduction R1: waits for new input after a completed fix with no push', async () => {
     await db.query(
       `INSERT INTO push_devices(token,identity_id,platform,environment)
        VALUES('human-device-token-123456789012345678902',$1,'android','physical')`,
@@ -805,17 +805,9 @@ describe('corner message attribution', () => {
       `UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`,
       [fix!.id],
     );
-    expect(await noteBlockedCornerChecks(db)).toBe(1);
     expect(await noteBlockedCornerChecks(db)).toBe(0);
-    const retry = (await commands(A, C)).find(command => command.reason === 'corner_check');
-    expect(retry?.source.body).toContain('checks still fail on Fix widget and the fix turn ended with nothing new pushed');
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='corner-checks-blocked'`, [C])).rowCount).toBe(0);
-    await push.runOnce();
-    expect(send).not.toHaveBeenCalled();
-    await claim(retry!);
-    // Hoots opened this corner, so Hoots, not the human, is its commander.
-    await expect(result(retry!, '@human please decide whether this check can be removed?'))
-      .rejects.toThrow('@human is not your direct commander');
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    expect((await commands(A, C)).filter(command => command.reason === 'corner_check')).toEqual([]);
     await push.runOnce();
     expect(send).not.toHaveBeenCalled();
     await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
@@ -1007,6 +999,7 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
         checks: 'failing',
         lifecycle: 'in-review',
         pr: { number: 31, url: 'https://github.com/acme/repo/pull/31', headSha: head },
+        checksSummary: { updatedAt: Math.floor(Date.now() / 1000) - 3660, checks: [{ name: 'Server suite', status: 'pending' }] },
       }),
     ]);
     const source = await systemLine(db, {

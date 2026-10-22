@@ -1,3 +1,4 @@
+import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
@@ -551,6 +552,8 @@ export class DaemonService {
       'assignWorkflowRole',
       'reportFeedback',
       'notifyFeedbackFixed',
+      'sendOperatorSystemDm',
+      'readOperatorSystemDm',
     ]);
     if (
       !this.commandTransaction &&
@@ -1885,7 +1888,7 @@ export class DaemonService {
       case 'setCornerHold': {
         const hold = input as Input<'setCornerHold'>;
         await this.access(hold.cornerId, authenticatedAgentId);
-        return (await this.database.transaction(async (db) => {
+        const result = await this.database.transaction(async (db) => {
           await lockCornerLifecycle(db, hold.cornerId);
           const command = await authorizeCommandOutput(
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
@@ -1898,7 +1901,11 @@ export class DaemonService {
           )).rows[0];
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
-        })) as Output<Name>;
+        });
+        const reconcile = async () => { await this.github?.reconcileQueuedCorners(hold.cornerId); };
+        if (this.afterCommit) this.afterCommit(reconcile);
+        else await reconcile();
+        return result as Output<Name>;
       }
       case 'orderCornerMerge': {
         const order = input as Input<'orderCornerMerge'>;
@@ -2006,6 +2013,12 @@ export class DaemonService {
           authenticatedAgentId,
           input as Input<'reportFeedback'>,
         )) as Output<Name>;
+      case 'sendOperatorSystemDm':
+        return (await sendOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
+          authenticatedAgentId, input as Input<'sendOperatorSystemDm'>)) as Output<Name>;
+      case 'readOperatorSystemDm':
+        return (await readOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
+          authenticatedAgentId, (input as Input<'readOperatorSystemDm'>).sendId)) as Output<Name>;
       case 'notifyFeedbackFixed':
         return (await notifyFeedbackFixed(
           this.database,
@@ -3603,7 +3616,7 @@ export class DaemonService {
     if (landed.status === 'not-attempted')
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
     if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
-    return { status: 'merge-started', headSha: corner.head_sha };
+    return { status: landed.status === 'queued' ? 'queued' : 'merge-started', headSha: corner.head_sha };
   }
 
   /**
@@ -4404,7 +4417,7 @@ export class DaemonService {
       [input.roomId, agentId],
     );
     if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
-      throw new Error('queued attachments exceed the size cap');
+      throw new CommandRefusalError('queued attachments exceed the size cap', 400);
     await this.database.query(
       `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -6143,6 +6156,12 @@ export class DaemonService {
    * require a person. Budget and repository asks are retired.
    */
   private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string, requireOwnerApproval = false) {
+    if (typeof input.purpose !== 'string' || !input.purpose.trim() || input.purpose.trim().length > 240)
+      throw new Error('grant purpose is required: explain what you want to do and why in 1–240 characters');
+    for (const field of ['touches', 'capabilities'] as const) {
+      if (input[field] !== undefined && (typeof input[field] !== 'string' || !input[field]!.trim() || input[field]!.trim().length > 240))
+        throw new Error(`grant ${field} must be 1–240 characters`);
+    }
     if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
     if (typeof input.target !== 'string' || !input.target.trim())
       throw new Error('grant target is required');
@@ -6194,6 +6213,7 @@ export class DaemonService {
         parent_id: string | null;
         owner_id: string;
         yolo_mode: boolean;
+        machine_name: string | null;
         agent_name: string;
         agent_handle: string | null;
         agent_avatar: string | null;
@@ -6201,7 +6221,7 @@ export class DaemonService {
         owner_handle: string | null;
         owner_avatar: string | null;
       }>(
-        `SELECT room.workspace_id,room.parent_id,a.owner_id,
+        `SELECT room.workspace_id,room.parent_id,a.owner_id,a.machine_name,
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 agent.name agent_name,agent.handle agent_handle,agent.avatar agent_avatar,
                 owner.name owner_name,owner.handle owner_handle,owner.avatar owner_avatar
@@ -6276,11 +6296,11 @@ export class DaemonService {
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
         `INSERT INTO agent_grants(
            id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,
-           decided_at,expires_at,auto,script,app_id
+           decided_at,expires_at,auto,script,app_id,purpose,touches,capabilities
          ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
            CASE WHEN $10::boolean THEN now() END,
            CASE WHEN $11::integer IS NULL THEN NULL ELSE now()+make_interval(secs=>$11::integer) END,
-           $10,$12::jsonb,$13::uuid)
+           $10,$12::jsonb,$13::uuid,$14,$15,$16)
          RETURNING created_at,expires_at`,
         [
           grantId,
@@ -6296,6 +6316,9 @@ export class DaemonService {
           input.ttlSeconds ?? null,
           script ? JSON.stringify(script) : null,
           appOwner ? input.appId : null,
+          input.purpose.trim(),
+          input.touches?.trim() ?? null,
+          input.capabilities?.trim() ?? null,
         ],
       );
       const row = inserted.rows[0]!;
@@ -6305,6 +6328,10 @@ export class DaemonService {
         target,
         ...(connectionInstall && appOwner ? { appName: appOwner.display_name } : {}),
         reason,
+        purpose: input.purpose.trim(),
+        ...(input.touches ? { touches: input.touches.trim() } : {}),
+        ...(input.capabilities ? { capabilities: input.capabilities.trim() } : {}),
+        ...(context.machine_name ? { machine: context.machine_name } : {}),
         status,
         requestedBy: requester,
         roomId: input.roomId,
@@ -6701,6 +6728,7 @@ export class DaemonService {
         kind,
         target,
         reason: 'use this resource',
+        purpose: `Use ${target} to complete the requested task`,
       },
       agentId,
     );
@@ -7190,12 +7218,14 @@ export class DaemonService {
       [context.owner.pubkey, target, ownAccount, appOwner?.owner_identity_id ?? context.owner.pubkey])).rows[0];
     if (ownAccount && consent?.status !== 'approved') {
       const approved = await this.requestAgentGrant({ ...input, kind: 'mcp', target, appId: outcome.appId,
+        purpose: `Connect ${outcome.app} through Trusty Squire for this request`,
         reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId);
       await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [approved.grantId, commandId]);
       consent = { id: approved.grantId, status: approved.status };
     }
     if (!consent || consent.status === 'revoked') {
       const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target, appId: outcome.appId,
+        purpose: `Connect ${outcome.app} through Trusty Squire for this request`,
         reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
       await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
       return { ...result, status: 'needs_approval', grantId: asked.grantId,
@@ -7434,6 +7464,7 @@ export class DaemonService {
       if (!grant) {
         const asked = await this.requestAgentGrant({ ...input, kind: 'mcp',
           target: appResourceTarget(row.app_key), appId: row.id,
+          purpose: `Use ${row.app_key} to complete the requested task`,
           reason: `use ${row.app_key} for this request` }, agentId);
         return { status: 'needs_permission' as const, grantId: asked.grantId };
       }
@@ -8370,7 +8401,10 @@ export class DaemonService {
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
-      stored: true, visible: true, receipt: 'Message stored and visible.' };
+      stored: true, visible: true, receipt: 'Message stored and visible.' +
+        (input.cornerId === command.room_id
+          ? '\nPosted to your current place. Your closing text here also publishes, so only write it if it adds something new; do not repeat this post.'
+          : '') };
   }
 
   /** Public posts accept Rooms and corners without broadening corner-only operations. */
@@ -8725,6 +8759,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   walletSignTypedData: true,
   reportFeedback: true,
   notifyFeedbackFixed: true,
+  sendOperatorSystemDm: true,
+  readOperatorSystemDm: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

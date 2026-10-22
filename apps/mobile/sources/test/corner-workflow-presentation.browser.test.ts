@@ -14,9 +14,9 @@ it('Reproduction C1: a plain corner has no workflow glyph or link; a saved workf
       import { useRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
       import { workflowRunHref } from '@/buzz/workflow-run-copy';
       function Corner({ roomId }) {
-        const { workflow, error, retry } = useRoomWorkflowRun(roomId);
+        const { workflow } = useRoomWorkflowRun(roomId);
         return <CornerObjectiveLine objective="Build the agreed change" workflow={workflow}
-          workflowError={error} onRetryWorkflow={retry} testID={roomId}
+          testID={roomId}
           onOpenWorkflow={() => { window.opened = workflowRunHref(workflow); }} />;
       }
       createRoot(document.getElementById('root')).render(<><Corner roomId="plain"/><Corner roomId="saved"/></>);

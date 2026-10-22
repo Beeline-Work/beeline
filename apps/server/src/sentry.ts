@@ -1,7 +1,9 @@
 import { ExpectedRefusalError } from './command-refusal.js';
 import { GitHubHttpError } from '@beeline/auth/github';
 import * as Sentry from '@sentry/node';
-import { privateErrorEvent } from '@beeline/api-contract/error-reporting';
+import { createErrorEventFilter } from '@beeline/api-contract/error-reporting';
+
+const filterErrorEvent = createErrorEventFilter();
 
 /** No HTTP/console instrumentation; existing request and background recovery owns handled failures. */
 if (process.env.SENTRY_DSN) {
@@ -17,7 +19,7 @@ if (process.env.SENTRY_DSN) {
     skipOpenTelemetrySetup: true,
     sampleRate: 1,
     maxBreadcrumbs: 0,
-    beforeSend: privateErrorEvent,
+    beforeSend: filterErrorEvent,
     initialScope: { tags: { surface: 'server' } },
   }); } catch { /* Telemetry configuration must not prevent startup. */ }
 }

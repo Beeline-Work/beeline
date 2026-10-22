@@ -1,3 +1,5 @@
+import { ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
+
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
 export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
@@ -974,6 +976,24 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     }
   },
   {
+    "name": "send_operator_system_dm",
+    "description": "Queue plain System DMs on the operator owner's explicit command. recipients: exact user id/handle, list, or all. Returns sendId and recipient/delivered/failed/pending counts. Delivery runs in durable background batches; use read_operator_system_dm for completion. Never retry a send merely because it is pending.",
+    "inputSchema": {
+      "type": "object", "properties": {
+        "recipients": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}, "minItems": 1}]},
+        "text": {"type": "string", "minLength": 1, "maxLength": 16000}
+      }, "required": ["recipients", "text"], "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_operator_system_dm",
+    "description": "Read the recipient, delivered, failed and pending counts for a queued System DM send. Requires the operator owner's human command.",
+    "inputSchema": {
+      "type": "object", "properties": {"sendId": {"type": "string", "format": "uuid"}},
+      "required": ["sendId"], "additionalProperties": false
+    }
+  },
+  {
     "name": "record_merge_yes",
     "description": "Record an authorized person’s explicit merge yes at address through command provenance. Does not land or release a hold.",
     "inputSchema": {
@@ -1054,27 +1074,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         },
         "mime": {
           "type": "string",
-          "enum": [
-            "text/html",
-            "image/svg+xml",
-            "application/pdf",
-            "text/markdown",
-            "image/png",
-            "image/jpeg",
-            "image/gif",
-            "image/webp",
-            "text/plain",
-            "application/json",
-            "text/csv",
-            "application/zip",
-            "video/mp4",
-            "video/quicktime",
-            "video/webm",
-            "audio/mpeg",
-            "audio/wav",
-            "audio/mp4",
-            "application/octet-stream"
-          ],
+          "enum": [...ARTIFACT_MIME_TYPES],
           "description": "The artifact mime type; it selects the validator and the viewer. Optional when posting by path (defaults to the file extension)."
         }
       },
@@ -1095,6 +1095,12 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "maxLength": 512,
           "description": "What you need: a repository, a path, a host, a secret name, a device, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config."
         },
+        "touches": { "type": "string", "minLength": 1, "maxLength": 240, "description": "Files or resources this command touches, in plain language. Omit when unknown." },
+        "capabilities": { "type": "string", "minLength": 1, "maxLength": 240, "description": "What this command can do, for example Delete files. Omit when unknown; never invent a scope." },
+        "purpose": {
+          "type": "string", "minLength": 1, "maxLength": 240,
+          "description": "Plain language: what you want to do and why. Example: Free about 5 GB of disk by deleting old build files in 3 finished corners, so the Android test build can finish."
+        },
         "reason": {
           "type": "string",
           "minLength": 1,
@@ -1110,7 +1116,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "required": ["action"],
       "additionalProperties": false,
       "anyOf": [
-        {"properties": {"action": {"const": "request"}}, "required": ["action", "kind", "target", "reason"]},
+        {"properties": {"action": {"const": "request"}}, "required": ["action", "kind", "target", "reason", "purpose"]},
         {"properties": {"action": {"const": "list"}}, "required": ["action"]}
       ]
     }

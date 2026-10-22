@@ -1762,8 +1762,19 @@ describe('corner close-request delivery', () => {
     console.info('Demonstrated ST-silent-corner: one empty completion, no message, complete receipt');
   });
 
-  it.each(['no-reply', 'repeated-tool-call'])('Reproduction TL-corner-terminal: %s completes silently', async (stopReason) => {
+  it.each(['no-reply', 'repeated-tool-call'])('Reproduction R1/TL-corner-terminal: %s completes silently', async (stopReason) => {
+    let pendingDrafts = 0;
+    let pendingActivities = 0;
     const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {
+      if (name === 'postAgentDraft' || name === 'postAgentActivity') {
+        if (name === 'postAgentDraft') pendingDrafts++; else pendingActivities++;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        if (name === 'postAgentDraft') pendingDrafts--; else pendingActivities--;
+      }
+      if (name === 'postAgentTurnReceipt' && _input.status === 'complete') {
+        expect(pendingDrafts).toBe(0);
+        expect(pendingActivities).toBe(0);
+      }
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
       if (name === 'getWorkspaceRoster') return { members: [] };
       if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false,
@@ -1775,9 +1786,12 @@ describe('corner close-request delivery', () => {
       return { id: 'write', createdAt: 1 };
     });
     const fixture = await cornerHarness(execute, 5, undefined, undefined, undefined, undefined, undefined, true);
-    vi.mocked(fixture.acp.sessionPrompt).mockResolvedValue({ stopReason,
-      updates: [{ sessionId: 'corner-session', update: { sessionUpdate: 'usage_update' } }],
-      agentText: '', toolCalls: [] });
+    vi.mocked(fixture.acp.sessionPrompt).mockImplementation(async (_session, _prompt, _timeout, onChunk, _activity, onTools) => {
+      onChunk?.('Checking', 'Checking', 'Checking');
+      const calls = [{ id: 'silent-tool', title: 'no_reply_needed', status: 'completed' }];
+      onTools?.(calls);
+      return { stopReason, updates: [], agentText: '', toolCalls: calls };
+    });
     const stopped = vi.spyOn(fixture.acp, 'stop').mockResolvedValue(undefined);
     await writeFile(join(fixture.root, 'unfinished.txt'), 'pending repository work');
     await fixture.loop.run();
@@ -1789,7 +1803,7 @@ describe('corner close-request delivery', () => {
     expect(receipts.filter(([, input]) => input.status === 'complete').map(([, input]) => input.requestId))
       .toEqual(['human-msg', 'queued-wake']);
     expect(receipts).toContainEqual(['postAgentTurnReceipt', expect.objectContaining({status: 'complete'})]);
-    expect(receipts.some(([, input]) => (input as { completionKind?: string })?.completionKind === 'no-reply')).toBe(false);
+    expect(receipts.some(([, input]) => (input as { completionKind?: string })?.completionKind === 'no-reply')).toBe(stopReason === 'no-reply');
     expect(execute.mock.calls.some(([name]) => name === 'postRoomMessage')).toBe(false);
     console.info(`Demonstrated TL-corner-terminal: ${stopReason}, two wakes completed, fresh session per wake, no message, complete receipts`);
   });

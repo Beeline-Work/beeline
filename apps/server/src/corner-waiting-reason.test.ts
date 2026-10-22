@@ -8,7 +8,7 @@ beforeAll(async () => {
     CREATE TABLE messages(id text,card_type text);
     CREATE TABLE memberships(room_id text,identity_id text,removed_at timestamp);
     CREATE TABLE effective_memberships(room_id text,identity_id text,removed_at timestamp);
-    CREATE TABLE identities(id text,kind text);
+    CREATE TABLE identities(id text,kind text,name text);
     CREATE TABLE corner_owed(corner_id text,message_id text,person_id text,created_at timestamp,blocking boolean,expires_at timestamp);
     CREATE TABLE corner_report_blockers(corner_id text,message_id text,report_id text,person_id text,created_at timestamp);
     CREATE TABLE corner_merge_holds(corner_id text,id text,actor_id text,set_at timestamp,released_at timestamp);
@@ -51,3 +51,32 @@ it.each(['done:', 'failed:', 'unreachable', 'addressed message'])(
       blocking: false, owed: true })).toEqual({ state: 'idle' });
   },
 );
+
+
+it('R1: holds and messageless reports keep selection IDs but never expose them as message targets', async () => {
+  await db.exec(`DELETE FROM corner_owed; DELETE FROM messages;
+    INSERT INTO identities VALUES('person','human','Lunchbox');
+    INSERT INTO effective_memberships VALUES('corner','person',NULL);
+    INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);
+    INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','person','2026-01-02');`);
+  const query = async (newest = false) => (await db.query<{
+    item_id: string; kind: 'message' | 'merge-hold' | 'report'; person_name: string;
+    person_id: string; reason: 'approve' | 'question';
+  }>(`SELECT blocker.* FROM rooms c ${cornerBlockerSql('true', newest)}`)).rows[0]!;
+  const project = (blocker: Awaited<ReturnType<typeof query>>) => cornerRowState({
+    archived_at: null, lifecycle: null, latest_turn_status: null, blocking: true,
+    waiting_item_id: blocker.item_id, waiting_reason: blocker.reason,
+    waiting_kind: blocker.kind, waiting_person_id: blocker.person_id,
+    waiting_person_name: blocker.person_name,
+  });
+  const oldest = await query();
+  expect(oldest.item_id).toBe('hold');
+  expect(project(oldest)).toEqual({ state: 'waiting', reason: 'approve',
+    blocker: { kind: 'merge-hold', personId: 'person', personName: 'Lunchbox' } });
+  const newest = await query(true);
+  expect(newest.item_id).toBe('report');
+  expect(project(newest)).toEqual({ state: 'waiting', reason: 'question',
+    blocker: { kind: 'report', personId: 'person', personName: 'Lunchbox' } });
+  await db.exec("UPDATE corner_report_blockers SET message_id='real-message'");
+  expect(project(await query(true))).toMatchObject({ itemId: 'real-message', blocker: { kind: 'message' } });
+});

@@ -10,11 +10,13 @@ vi.mock('react-native-svg', async () => {
   return {
     default: host('Svg'),
     Circle: host('Circle'),
+    Defs: host('Defs'), Mask: host('Mask'), Rect: host('Rect'),
     Polygon: host('Polygon'),
   };
 });
 
 import { chromeStrokeWidth, MEMBERS_GLYPH_STROKE_WIDTH, MembersGlyph } from './MembersGlyph';
+import { MembersAgentsGlyph } from './MembersAgentsGlyph';
 import { ROOM_GLYPH_STROKE_WIDTH } from './RoomGlyph';
 import brand from '@/buzz/brand.json';
 
@@ -151,5 +153,27 @@ describe('MembersGlyph', () => {
     expect(renderer.root.findByType('Circle' as never).props.strokeWidth).toBe(
       MEMBERS_GLYPH_STROKE_WIDTH,
     );
+  });
+});
+
+
+describe('MembersAgentsGlyph', () => {
+  it('keeps the person solid, the bot eyes legible and masks independent at header size', () => {
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(React.createElement(React.Fragment, null,
+      React.createElement(MembersAgentsGlyph, { size: 22 }),
+      React.createElement(MembersAgentsGlyph, { size: 22 })));
+    });
+    const masks = renderer.root.findAllByType('Mask' as never);
+    expect(masks[0].props.id).not.toBe(masks[1].props.id);
+    const circles = renderer.root.findAllByType('Circle' as never);
+    expect(circles).toHaveLength(2);
+    expect(circles[0].props.fill).toBe(brand.mark);
+    expect(circles[0].props.stroke).toBe('none');
+    const eyes = renderer.root.findAllByType('Rect' as never).filter((rect: any) => rect.props.width === 1.8);
+    expect(eyes).toHaveLength(4);
+    expect(eyes.every((eye: any) => eye.props.height > eye.props.width)).toBe(true);
+    expect(renderer.root.findAllByType('Svg' as never)[0].props.width).toBe(22);
+    act(() => renderer.unmount());
   });
 });

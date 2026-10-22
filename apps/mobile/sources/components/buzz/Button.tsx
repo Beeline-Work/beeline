@@ -18,6 +18,8 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   label: string;
   /** Existing drawn glyph for an icon-only control, with an accessibility label. */
   icon?: React.ReactNode;
+  /** Fixed 44-point target without label padding. */
+  iconOnly?: boolean;
   /**
    * `primary`: the filled action (one per surface).
    * `secondary`: outlined in `borderStrong`, for the alternative action.
@@ -43,6 +45,7 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
 export function Button({
   label,
   icon,
+  iconOnly = false,
   variant = 'primary',
   loading = false,
   fullWidth = false,
@@ -73,6 +76,7 @@ export function Button({
         pressed && !isDisabled && (filled ? styles.primaryPressed : styles.outlinedPressed),
         isDisabled && (filled ? styles.primaryDisabled : !borderless && styles.outlinedDisabled),
         fullWidth && styles.fullWidth,
+        iconOnly && styles.iconOnly,
         style,
       ]}
     >
@@ -117,6 +121,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       gap: buzz.space.sm,
     },
+    iconOnly: { width: 44, height: 44, paddingHorizontal: 0 },
     primary: { backgroundColor: buzz.buttonPrimaryFill, borderColor: buzz.buttonPrimaryFill },
     provider: { backgroundColor: buzz.buttonProviderFill, borderColor: buzz.buttonProviderFill },
     providerLabel: { color: buzz.buttonProviderText },

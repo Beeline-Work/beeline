@@ -130,7 +130,10 @@ above remains independent.
 
 `sentry_wake_issues` stores issue metadata keyed by issue id and event type;
 retries do not re-arm an acknowledged row, and a newer occurrence updates its
-metadata. `sentry_wake_state` serializes ingestion and dispatch across server
+metadata. A committed digest records its time and level per issue. Repeat alerts
+across event types are suppressed for six hours from that digest, except a new
+regression or changed level. Suppressed alerts still refresh metadata and do not
+extend the suppression window. `sentry_wake_state` serializes ingestion and dispatch across server
 machines. Every accepted issue, including handled errors, queues a private command
 for Jellybean in issues-triage immediately when no batch has committed in the
 previous five minutes. Later arrivals of any severity share that durable deadline
@@ -151,7 +154,9 @@ the recipient without code. Digests instruct Jellybean to investigate and open
 and own warranted fix corners, with Jellybean implementing and Speedy reviewing,
 linking the Sentry issue id and URL. Existing corner authority and merge gates
 still apply. Ruby receives only blocked or needs-decision reports, including
-exact authority refusals. No transcript or System message is created.
+exact authority refusals. The command itself stays private; Jellybean must post
+one short visible summary line per digest in issues-triage, naming the Sentry
+short IDs and each action (dismissed, existing corner, new corner).
 Sentry text is quoted as untrusted data. Receiver failures return 503 without recursive Sentry capture.
 
 Integration created 2026-10-18 UTC:
@@ -161,11 +166,26 @@ UUID `efa4fa03-8ba9-4433-b746-e1407ff79b9e`, installation UUID
 webhooks; only Created and Unresolved were selected. The client secret is vaulted
 as **Beeline triage webhook client secret** under `sentry-triage-webhook`.
 
-**No alert rule is needed:** the internal integration's `issue.created` and
-`issue.unresolved` webhooks provide the new-issue and unresolved deliveries regardless of substatus.
-Skip creating an alert workflow; the earlier HTTP 403 on alert creation is not
-a blocker. No new alert id exists or is required. Existing Telegram alert
-`6181673` stays independent.
+Issue subscriptions alone do not cover the owner's rule-driven notifications.
+The alertable **Beeline triage wake** integration must also be an action on every
+issue alert rule that sends email or Telegram, preserving its conditions and
+existing notification actions. No new rules are needed.
+
+Saved in Sentry on 2026-10-22 through the owner's signed-in browser:
+
+| Rule | Projects | Existing action retained | Added action |
+| --- | --- | --- | --- |
+| [Notify via Beeline Telegram (6181673)](https://beeline-bt.sentry.io/monitors/alerts/6181673/) | All projects, including server, helper, mobile | Beeline Telegram | Beeline triage wake |
+| [High priority issues (6181610)](https://beeline-bt.sentry.io/monitors/alerts/6181610/) | beeline-server | Suggested assignees / recently active members email | Beeline triage wake |
+| [High priority issues (6181619)](https://beeline-bt.sentry.io/monitors/alerts/6181619/) | beeline-helper | Suggested assignees / recently active members email | Beeline triage wake |
+| [High priority issues (6181622)](https://beeline-bt.sentry.io/monitors/alerts/6181622/) | beeline-mobile | Suggested assignees / recently active members email | Beeline triage wake |
+
+The all-projects inventory contained these four issue alert rules and a separate
+pull-request-ready email notification; the latter is not an issue alert and was
+left unchanged. Existing triggers, environments and action throttles were retained.
+The Telegram rule covers new issues and resolved issues that regress; the email
+rules cover new and existing high-priority issues. There were no separate
+frequency rules in this inventory.
 
 **Setup complete, pending deployment:** Ruby confirmed that the integration's
 client secret was rotated and its replacement stored in the existing

@@ -82,7 +82,12 @@ async function main() {
   assert(destination === merge.card.cornerId, 'corner destination');
   get(`notification-run-cell-url-${merge.id}`).click();
   assert(destination === merge.card.pullRequest?.url, 'PR destination');
-  assert(document.body.textContent?.includes('Corner opened'), 'corner marker missing');
+  const second = snapshot.runs[1][0].id;
+  get(`notification-run-expand-${second}`).click();
+  await pause();
+  assert(document.body.textContent?.includes('corner #'), 'unanchored corner row missing');
+  get(`notification-run-expand-${second}`).click();
+  await pause();
   assert(document.body.textContent?.includes('Decision stays visible'), 'agent decision folded');
   toggle.click();
   await pause();
@@ -92,7 +97,7 @@ async function main() {
   );
   assert(document.documentElement.scrollWidth <= innerWidth, 'horizontal overflow');
   document.getElementById('result')!.textContent =
-    'PASS EVENT-ROWS-V2: real Room events, mixed summary, collapsed, expanded, links, marker, decision boundary';
+    'PASS EVENT-ROWS-V2: real Room events, mixed summary, collapsed, expanded, links, unanchored corner row, decision boundary';
 }
 main().catch(
   (error) => (document.getElementById('result')!.textContent = `FAIL: ${error.message}`),

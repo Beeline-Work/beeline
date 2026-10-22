@@ -25,7 +25,6 @@
       "entry": [
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
-        "scripts/prove-env-aliases.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/check-acp-adapters.mjs",
@@ -120,6 +119,7 @@
         // Gradle bundles this native screenshot fixture through its entryFile override.
         "scripts/corner-pr-cards-native-proof.tsx",
         "scripts/transcript-events-native-proof.tsx",
+        "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",
         "scripts/tray-inline-native-proof.tsx",

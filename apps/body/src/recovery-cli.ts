@@ -108,7 +108,6 @@ async function main(): Promise<void> {
             installed: await readInstalledBundleIdentity(layout),
             activeRelease: await activeReleaseId(layout),
             releaseSelection: await readUpdateState(layout),
-            automaticUpdates: process.env.BEELINE_UPDATE_DISABLE !== '1',
             helper: helper ?? { state: 'not responding' },
             agents,
           },

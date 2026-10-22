@@ -202,19 +202,4 @@ describe('institutional context fetch', () => {
     });
     expect(execute).toHaveBeenCalledWith('getInstitutionalContext', { roomId: 'room-1' });
   });
-
-  it('is off only when the live host flag is explicitly false', async () => {
-    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'false');
-    try {
-      const execute = vi.fn();
-      const fetch = startInstitutionalContextFetch({ execute } as never, 'room-1');
-      await expect(awaitInstitutionalContext(fetch)).resolves.toEqual({
-        ...EMPTY_INSTITUTIONAL_CONTEXT,
-        outcome: 'empty',
-      });
-      expect(execute).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
 });

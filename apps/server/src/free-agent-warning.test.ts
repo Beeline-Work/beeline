@@ -57,7 +57,7 @@ describe('free agent owner warning', () => {
 
   it('warns at 2.4M settled tokens with the default 3M allowance', async () => {
     const config = freeAgentConfigFromEnv({
-      BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image',
+      BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image',
     }, 'https://server.test')!;
     await usage(DAY, 2_399_999);
     await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap);
@@ -115,7 +115,7 @@ it('pins trigger limits and the guide to the real Add agent command', async () =
   const pairing = {} as { agentPairingCommand: (code: string) => string };
   runInNewContext(transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText,
     { exports: pairing }, { timeout: 1000 });
-  const config = freeAgentConfigFromEnv({ BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' })!;
+  const config = freeAgentConfigFromEnv({ BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' })!;
   const instructions = freeAgentInstructions('Soul', 'Fern', config);
   expect(instructions).toContain(pairing.agentPairingCommand('<code>'));
   for (const text of ['Members -> Add agent', 'At most one unsolicited nudge per UTC day', 'When explicitly asked, help without this daily restriction', 'own files, apps, logins or local repository', 'job longer than your turn limit', 'Normal conversation is not a trigger', '80% warning counts', 'Claude Code, Codex or OpenCode', 'always-on machine', 'Never create, retrieve, request, repeat or post a pairing code', 'online without confirmation']) expect(instructions).toContain(text);

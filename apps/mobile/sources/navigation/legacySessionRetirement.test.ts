@@ -41,8 +41,8 @@ describe('legacy session retirement', () => {
     expect(sidebar).not.toContain("router.navigate('/new')");
   });
 
-  it('removes legacy session destinations from the command palette', () => {
-    const palette = source('components/CommandPalette/CommandPaletteProvider.tsx');
+  it('removes legacy session destinations from the keyboard shortcuts', () => {
+    const palette = source('components/KeyboardShortcutsProvider.tsx');
     expect(palette).toContain("router.navigate('/beeline/channels')");
     expect(palette).toContain("router.push('/beeline/settings')");
     expect(palette).not.toMatch(/navigateToSession|Recent Sessions|\/session\//);

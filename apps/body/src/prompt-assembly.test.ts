@@ -40,6 +40,33 @@ const repositoryBrief: CornerBrief = {
   spec: '## Intent\nFix the widget\n## Assigned files\napps/body/src/widget.ts',
 };
 
+
+describe('capability routes before other behavior rules', () => {
+  const rule = 'Never say you cannot act before trying every available tool, connected app, vault key, host command and browser session. If one fails, try the next. Report gaps only with each route tried and its result. Proactivity and following commands matter most. This never overrides authority rules or approval steps.';
+  it.each(PROMPT_SURFACES)('puts the complete rule immediately after identity on %s', (surface) => {
+    const context = { surface, agentName: 'Bee', soul, agentCommand: 'claude-agent-acp' };
+    const { systemPrompt } = assembleSessionPrompt(context);
+    const lines = systemPrompt.split('\n');
+    expect(lines[1]).toBe(rule);
+    expect(systemPrompt.split(rule)).toHaveLength(2);
+    expect(systemPrompt.indexOf(rule)).toBeLessThan(systemPrompt.indexOf('Soul ('));
+    for (const { section, text } of sessionSections(context)) {
+      if (section.id !== 'identity' && text) {
+        expect(systemPrompt.indexOf(rule)).toBeLessThan(systemPrompt.indexOf(text));
+      }
+    }
+  });
+  it.each(['room', 'dm'] as const)('keeps missing-shell guidance compatible on %s', (surface) => {
+    const { systemPrompt } = assembleSessionPrompt({
+      surface, agentName: 'Bee', shell: { available: false },
+    });
+    expect(systemPrompt).toContain(rule);
+    expect(systemPrompt).toContain('This session has no native shell tool');
+    expect(systemPrompt).not.toContain('a request that needs one cannot be run');
+  });
+
+});
+
 describe('R2594 repository setup guidance', () => {
   it('guides repository setup in a Room with no repository and unavailable shell', () => {
     const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',

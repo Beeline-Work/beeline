@@ -106,14 +106,18 @@ it('opens a sibling corner in the parent Room from a corner turn', async () => {
   ).rows[0];
   expect(room).toEqual({ parent_id: ROOM, repository_key: 'owner/widgets' });
 
-  // The open card lands in the parent Room, where the corner list lives.
+  // The Room keeps a neutral record; the calling corner gets its source marker.
   const cards = (
-    await db.query<{ room_id: string }>(
-      `SELECT room_id FROM messages WHERE card->>'type'='corner-open' AND card->>'cornerId'=$1`,
+    await db.query<{ room_id: string; card: { sourceMessageId?: string } }>(
+      `SELECT room_id,card FROM messages WHERE card->>'type'='corner-open' AND card->>'cornerId'=$1`,
       [second.cornerId],
     )
   ).rows;
-  expect(cards).toEqual([{ room_id: ROOM }]);
+  expect(cards).toHaveLength(2);
+  expect(cards.find((card) => card.room_id === ROOM)?.card).not.toHaveProperty('sourceMessageId');
+  expect(cards.find((card) => card.room_id === first.cornerId)?.card.sourceMessageId).toBe(
+    input.brief.approval.sourceMessageId,
+  );
 
   // The new corner's agent gets its objective as a pending command.
   const commands = (await daemon.execute('getAgentCommands', { roomId: second.cornerId }, AGENT))

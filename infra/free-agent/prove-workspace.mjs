@@ -84,7 +84,7 @@ try {
         const home = resolve(fixture, name); await mkdir(home);
         const env = { ...body.config.env, HOME: '/root', XDG_CONFIG_HOME: '/root/.config',
           XDG_STATE_HOME: '/root/.local/state', BUZZ_DEV_MCP_BIN: '/opt/proof/bin/mcp',
-          BEELINE_SHARED_ASSETS_ENABLED: '0', BEELINE_READONLY_MCP_BIN: '/opt/proof/bin/mcp' };
+          BEELINE_READONLY_MCP_BIN: '/opt/proof/bin/mcp' };
         docker('run', '-d', '--name', name, '--network', 'host', '--memory', '2048m', '--cpus', '1',
           '--security-opt', 'seccomp=unconfined', '--security-opt', 'apparmor=unconfined', '--cap-add', 'SYS_ADMIN',
           '-v', `${repo}:/opt/repo:ro`, '-v', `${fixture}:/opt/proof:ro`, '-v', `${home}:/root`,
@@ -107,10 +107,9 @@ try {
   const server = await runServer(['apps/server/dist/index.js'], { ...processEnv, PORT: String(port), HOST: '127.0.0.1', PUBLIC_ORIGIN: origin,
     NODE_ENV: 'test',
     BEELINE_AUTH_TENANTS_JSON: authTenantsJson,
-    BUZZY_AUTH_TENANTS_JSON: authTenantsJson,
     BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.invalid', BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.invalid/authorize',
     BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.invalid/token', BEELINE_AUTH_OIDC_JWKS_URI: 'https://accounts.invalid/jwks', BEELINE_AUTH_OIDC_CLIENT_ID: 'proof-only',
-    BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'local-seal-only',
+    BEELINE_FREE_AGENT_SEAL_KEY: 'local-seal-only',
     FLY_FREE_AGENT_API_TOKEN: 'local-machine-shim-only', FLY_FREE_AGENT_API_ORIGIN: `http://127.0.0.1:${machinesPort}`,
     FLY_FREE_AGENT_IMAGE: 'beeline-free-agent-pi:corner-d14835c5',
     BEELINE_FREE_AGENT_MODEL_KEY: 'deterministic-local-model-only', BEELINE_FREE_AGENT_MODEL_UPSTREAM: `http://127.0.0.1:${upstreamPort}`,

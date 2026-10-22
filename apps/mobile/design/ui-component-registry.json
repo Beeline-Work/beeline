@@ -249,7 +249,11 @@
     "components/buzz/PageHeader.tsx": ["PageHeader"],
     "components/buzz/PinGlyph.tsx": ["PinGlyph"],
     "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
-    "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard"],
+    "components/buzz/PrLifecycleCard.tsx": [
+      "NotificationLifecycleCard",
+      "RepositoryLifecycleRow",
+      "copy"
+    ],
     "components/buzz/ProfileActions.tsx": ["ProfileActions"],
     "components/buzz/ProfileIdentity.tsx": [
       "PROFILE_IDENTITY_PICTURE_SIZE",
@@ -374,22 +378,14 @@
       "WorkflowStepCircle"
     ],
     "components/buzz/WorkspaceActionsMenu.tsx": ["WorkspaceActionsMenu"],
-    "components/buzz/WorkspaceSettingsPanel.tsx": ["WorkspaceDeleteConfirmDialog", "WorkspaceSettings", "default"],
+    "components/buzz/WorkspaceSettingsPanel.tsx": [
+      "WorkspaceDeleteConfirmDialog",
+      "WorkspaceSettings",
+      "default"
+    ],
     "components/buzz/WritePermissionOutcome.tsx": ["WritePermissionOutcome"],
     "components/buzz/YouStep.tsx": ["YouStep"],
     "components/buzz/ZoomableArtifactImage.tsx": ["ZoomableArtifactImage"],
-    "components/CommandPalette/CommandPalette.tsx": ["CommandPalette"],
-    "components/CommandPalette/CommandPaletteInput.tsx": ["CommandPaletteInput"],
-    "components/CommandPalette/CommandPaletteItem.tsx": ["CommandPaletteItem"],
-    "components/CommandPalette/CommandPaletteModal.tsx": ["CommandPaletteModal"],
-    "components/CommandPalette/CommandPaletteProvider.tsx": ["CommandPaletteProvider"],
-    "components/CommandPalette/CommandPaletteResults.tsx": [
-      "CommandPaletteResults",
-      "categoryCommands"
-    ],
-    "components/CommandPalette/index.ts": ["CommandPalette", "CommandPaletteProvider"],
-    "components/CommandPalette/types.ts": [],
-    "components/CommandPalette/useCommandPalette.ts": [],
     "components/desktop-shell-policy.ts": [],
     "components/DesktopDeepLinkBridge.tsx": ["DesktopDeepLinkBridge"],
     "components/DesktopRoomInspector.tsx": [
@@ -409,6 +405,7 @@
     "components/markdown/parseMarkdown.ts": [],
     "components/markdown/parseMarkdownBlock.ts": [],
     "components/markdown/parseMarkdownSpans.ts": [],
+    "components/KeyboardShortcutsProvider.tsx": ["KeyboardShortcutsProvider"],
     "components/ShortcutHints.tsx": ["ShortcutHintsContext", "ShortcutHintsProvider"],
     "components/SidebarNavigator.tsx": ["PersistentHeader", "SidebarNavigator", "drawerContent"],
     "components/SidebarView.tsx": ["SidebarView"],
@@ -733,8 +730,8 @@
       "eaeb923b0085276bae85": 1
     },
     "components/buzz/CornerOpenedMarker.tsx": {
-      "4011a8f2fe1822032442": 1,
-      "ac8c8a97807df4ca5f99": 1
+      "12775da8a2a61206091d": 1,
+      "55afe612d13446c4c3fe": 1
     },
     "components/buzz/CornerOpenToast.tsx": {
       "29cd603bd2a48a1c4387": 1,
@@ -876,9 +873,18 @@
       "ad9e4adb819ece60552e": 1
     },
     "components/buzz/PrLifecycleCard.tsx": {
+      "111124ea33f966b77038": 1,
+      "4b14392dba206490d18c": 1,
+      "53e829b61a140dcbc29c": 1,
+      "57cfa3592b6d7a0efeee": 1,
+      "8ca568bcf01f6c76a821": 1,
+      "9f60c18bba476000fd59": 1,
+      "a874c267c11a8cd95c84": 1,
+      "c64c3f95598ffae3fafb": 1,
+      "cdd520c3d8d6c45733e1": 1,
       "df8758f3abc013cb902a": 1,
-      "e9b1d3a4ef316b6ae8d0": 1,
-      "eedfc1e7cb3c7541510a": 1
+      "f2e9b241e2be21530775": 1,
+      "f57ff243e013d987abfe": 1
     },
     "components/buzz/ProfileActions.tsx": {
       "c59917b6eb919e5e9ec0": 1
@@ -1059,10 +1065,6 @@
       "2a5b4de6a9a98eb8c1e8": 1,
       "f0438ed53deb61d8d486": 1,
       "fa0328f6402cbcf91fbd": 1
-    },
-    "components/CommandPalette/CommandPaletteItem.tsx": {
-      "3c9d558895768bc93ad5": 1,
-      "6692f1dc3bcab5fd776c": 1
     },
     "components/DesktopRoomInspector.tsx": {
       "26dfe00ea9b7f1c62f01": 1,

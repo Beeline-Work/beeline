@@ -84,6 +84,46 @@ function shims(mobile: string): Record<string, string> {
           message: 'Original instructions stay in details.', nextRunAt: 1790000000 + index, createdAt: 0, runCount: 0,
         }));
       }
+      if (new URLSearchParams(location.search).has('namelessSchedules')) {
+        work.subscriptions = [];
+        work.schedules = [
+          ['Post the daily launch report to the Room.', null],
+          ['Replay the nightly prompt log.', null],
+          ['Check the Play release downloads.', null],
+          ['Start the feedback-triage workflow.', 'feedback-triage']
+        ].map(([message, workflowSlug], index) => ({
+          id: 'nameless-' + index, workflowSlug,
+          workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1', creatorId: 'agent-1',
+          cadence: { kind: 'interval', everyMinutes: 1440 },
+          message, nextRunAt: 1790000000 + index, createdAt: 0, runCount: 0,
+        }));
+      }
+      if (new URLSearchParams(location.search).has('prodSchedules')) {
+        // The real #beeline rows read from prod on 2026-10-22, minus prompts.
+        work.subscriptions = [];
+        work.schedules = [
+          { id: '92803c2f', title: 'Feedback triage', workflowSlug: 'feedback-triage',
+            corner: { id: 'corner-triage', name: 'issues-triage' },
+            cadence: { kind: 'cron', expression: '0 10 * * *', timeZone: 'America/New_York' } },
+          { id: 'df2db89e', title: 'App speed test',
+            cadence: { kind: 'cron', expression: '0 3 * * 1', timeZone: 'America/New_York' } },
+          { id: 'ea5594a0', title: 'Prompt replay',
+            cadence: { kind: 'cron', expression: '0 4 * * 0', timeZone: 'America/New_York' } },
+          { id: '0487e469', title: 'Morning card',
+            cadence: { kind: 'cron', expression: '0 9 * * *', timeZone: 'America/New_York' } },
+          { id: '4e9f2390', title: 'Nightly release',
+            corner: { id: 'corner-release', name: 'release-corner' },
+            cadence: { kind: 'cron', expression: '0 2 * * *', timeZone: 'America/New_York' } },
+          { id: 'c669a112', title: 'Lock refresh check', maxRuns: 1,
+            cadence: { kind: 'cron', expression: '0 10 22 10 *', timeZone: 'America/New_York' } },
+          { id: '3350a944', title: 'Font turn check', maxRuns: 1,
+            cadence: { kind: 'cron', expression: '0 3 22 10 *', timeZone: 'America/New_York' } },
+        ].map((row, index) => ({
+          workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1', creatorId: 'agent-1',
+          message: 'not shown in the list', nextRunAt: 1790000000 + index, createdAt: index, runCount: 1,
+          ...row,
+        }));
+      }
       return { ...work, schedules: work.schedules.filter((item) => !gone.has(item.id)),
         subscriptions: work.subscriptions.filter((item) => !gone.has(item.id)) };
     };`,
@@ -221,6 +261,29 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
         'Play downloads check', 'Once', 'Feedback triage', 'Release']);
       expect(page.text.join(' ')).not.toMatch(/Every day|America|Original instructions|this Room/);
     }
+  }, 120_000);
+
+  it('Reproduction R-schedule-titles: nameless schedules read what they run', async () => {
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&namelessSchedules',
+      process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'R-schedule-titles.png') : undefined);
+    expect(page.text.slice(2)).toEqual([
+      'Post the daily launch',
+      'Replay the nightly prompt',
+      'Check the Play release',
+      'Feedback triage',
+    ]);
+    expect(page.text.join(' ')).not.toContain('Scheduled task');
+    for (const title of page.text.slice(2)) expect(title.split(' ').length).toBeLessThanOrEqual(4);
+  }, 120_000);
+
+  it('Reproduction R-schedule-titles: the real #beeline rows render their names', async () => {
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&prodSchedules',
+      process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'R-schedule-titles-prod.png') : undefined);
+    expect(page.text).toEqual(expect.arrayContaining([
+      'Feedback triage', 'App speed test', 'Prompt replay', 'Morning card',
+      'Nightly release', 'Lock refresh check', 'Font turn check',
+    ]));
+    expect(page.text.join(' ')).not.toContain('Scheduled task');
   }, 120_000);
 
   it('uses dark brass workflow marks on the light list', async () => {

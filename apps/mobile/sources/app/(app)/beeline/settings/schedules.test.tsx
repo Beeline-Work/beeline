@@ -7,7 +7,7 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 const room = vi.hoisted(() => vi.fn(async () => ({ room: { name: 'Room' }, viewer: { permissions: { manage: true } }, members: [{ identity: { kind: 'agent', pubkey: 'agent-1', name: 'Hoots' } }] })));
 const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) => name === 'readScheduledWork' ? { roomName: 'Room', agentNames: [['agent-1', 'Hoots']], schedules: [
-  { id: 'daily', title: 'Morning summary', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
+  { id: 'daily', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
   { id: 'video', title: 'Post youtube video', maxRuns: 1, roomId: 'corner-1', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Start the workflow', nextRunAt: 1790000000, runCount: 2, workflowSlug: 'post_youtube_video', corner: { id: 'corner-1', name: 'video' } },
 ], subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', prompt: 'Triage new issues.', firedCount: 3 }] } : {}));
 const params = vi.hoisted(() => ({ value: { roomId: 'room', workspaceId: 'ws' } as Record<string, string> }));
@@ -115,6 +115,8 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
   const tree = await render(<ScheduledWork />);
   try {
     const row = (testID: string) => tree.root.findByProps({ testID });
+    // 'daily' arrives with no title, the way a nameless agent schedule does;
+    // the row still reads what it runs from the prompt.
     expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', description: undefined, chevron: 'right' });
     expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', description: 'Once' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();

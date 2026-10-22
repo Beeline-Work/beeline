@@ -589,15 +589,8 @@ describe('computer session handoff', () => {
     expect((await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'trusted-body', upstreamUrl: 'body:',
     })).id).toBeTruthy();
-    const previous = process.env.BEELINE_COMPUTER_SHARE_HOSTS;
-    process.env.BEELINE_COMPUTER_SHARE_HOSTS = 'share.squire.example';
-    try {
-      expect(trustedComputerShareUpstream(new URL(`https://share.squire.example/s/${token}/`))).toBe(true);
-      expect(trustedComputerShareUpstream(new URL(`https://quiet-river-1.trycloudflare.com/s/${token}/`))).toBe(false);
-    } finally {
-      if (previous === undefined) delete process.env.BEELINE_COMPUTER_SHARE_HOSTS;
-      else process.env.BEELINE_COMPUTER_SHARE_HOSTS = previous;
-    }
+    expect(trustedComputerShareUpstream(new URL(`https://share.squire.example/s/${token}/`))).toBe(false);
+    expect(trustedComputerShareUpstream(new URL(`https://quiet-river-1.trycloudflare.com/s/${token}/`))).toBe(true);
     await database.query(`UPDATE computer_sessions SET status='ended' WHERE source_session_id IN ('trusted-tunnel','trusted-body')`);
   });
 

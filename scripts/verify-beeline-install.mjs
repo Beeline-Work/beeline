@@ -299,7 +299,6 @@ async function main() {
           HOME: env.HOME,
           PATH: '',
           BEELINE_HARNESS_PATH_AUGMENT: '0',
-          BEELINE_UPDATE_DISABLE: '1',
         },
       },
     );

@@ -60,7 +60,7 @@ export async function requirePushDeliveryCredentials(credential: Credential): Pr
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : '';
     throw new Error(
-      `PUSH_DELIVERY_ENABLED=true but Firebase credentials are unusable; set GOOGLE_APPLICATION_CREDENTIALS_JSON or configure Application Default Credentials${detail}`,
+      `Firebase credentials are unusable; set GOOGLE_APPLICATION_CREDENTIALS_JSON or configure Application Default Credentials${detail}`,
       { cause: error },
     );
   }

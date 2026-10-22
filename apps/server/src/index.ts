@@ -53,7 +53,7 @@ import { createWebPushSender } from './web-push.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
-import { institutionalMemoryShadowConfigFromEnv } from './institutional-memory-shadow.js';
+import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
 import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import {
   backfillInstitutionalMemoryEmbeddingsOnce,
@@ -207,7 +207,7 @@ async function main() {
       },
     },
   );
-  const institutionalMemory = institutionalMemoryShadowConfigFromEnv();
+  const institutionalMemory = INSTITUTIONAL_MEMORY_ON;
   github = githubClients
     ? new GitHubOperations(
         database,
@@ -250,7 +250,7 @@ async function main() {
         }
       : undefined;
   const pushSender =
-    process.env.PUSH_DELIVERY_ENABLED === 'true'
+    process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
       ? await createFirebasePushSender(process.env)
       : undefined;
   const apnsPushSender = createApnsPushSender(process.env);

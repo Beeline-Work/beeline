@@ -107,9 +107,6 @@ export interface AuthServerOptions {
   onFunnelAuth?: (input: FunnelAuthObservation) => Promise<void>;
   store: AuthStore;
   oidc: OidcClient;
-  googleSignInEnabled?: boolean;
-  googleSignInEveryone?: boolean;
-  googleSignInPreviewToken?: string;
   /** GitHub is the shipped sign-in and repository-access provider. */
   github?: {
     oauth: GitHubOAuthClient;

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate, migrateData } from './database.js';
 import {
   INSTITUTIONAL_CONTEXT_HEADER,
-  institutionalMemoryShadowConfigFromEnv,
   tombstoneInstitutionalMemoryForMessage,
 } from './institutional-memory-shadow.js';
 import { PgliteDatabase } from './test-support.js';
@@ -149,47 +148,6 @@ async function closeTurn(
 }
 
 describe('institutional memory phase-0 shadow capture', () => {
-  it('is on by default and off only when both flags are switched off', () => {
-    expect(institutionalMemoryShadowConfigFromEnv({})).toMatchObject({ enabled: true, live: true });
-    expect(
-      institutionalMemoryShadowConfigFromEnv({
-        BEELINE_INSTITUTIONAL_MEMORY_ENABLED: 'false',
-        BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED: 'false',
-      }),
-    ).toMatchObject({ enabled: false, live: false });
-  });
-
-  it('serves no live memory to a Workspace whose rollout is off', async () => {
-    await enrollLive();
-    const saveTurn = await openTurn('unenrolled-save');
-    await liveDaemon().execute(
-      'saveInstitutionalMemory',
-      {
-        ...saveTurn,
-        agentId: AGENT,
-        memoryKind: 'workspace_fact',
-        canonicalKey: 'deploy.release-marker-last',
-        body: 'The release migration writes its schema marker last.',
-        keywords: ['release', 'migration', 'marker'],
-        sourceMessageIds: [MESSAGE],
-        personAsked: false,
-        confidence: 0.95,
-      },
-      AGENT,
-    );
-    // The saved fact matches this request while the Workspace is live.
-    const served = await liveDaemon().execute('getInstitutionalContext', saveTurn, AGENT);
-    expect(served.text).toContain('schema marker last');
-
-    // Switching the rollout off leaves the live env flag on by itself.
-    await database.query(
-      `UPDATE institutional_memory_workspace_rollouts SET stage='off' WHERE workspace_id=$1`,
-      [WORKSPACE],
-    );
-    const context = await liveDaemon().execute('getInstitutionalContext', saveTurn, AGENT);
-    expect(context).toMatchObject({ text: '', itemIds: [], totalBytes: 0 });
-  });
-
   it('keeps DM facts out of shared memory but accepts the requester profile exception', async () => {
     await enrollLive();
     const turn = await openTurn('dm-request', DM_MESSAGE, AGENT, DM);

@@ -310,7 +310,7 @@ describe('private operator dashboard', () => {
   it('counts small web and desktop cohorts exactly and excludes review, proof and hidden identities', async () => {
     await seed();
     const proof = 'c2e54c45-cf58-4cc1-a620-89b196096e7b';
-    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Firstmate Proof')`, [proof]);
+    await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Firstmate Proof',true)`, [proof]);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Play Review')`, [
       REVIEW_IDENTITY_ID,
     ]);
@@ -704,7 +704,7 @@ it('counts addressed free-agent conversations and confirmed links within the sel
   await db.query(`INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$3),($2,$3)`,
     [human(1), human(7), workspace]);
   const fixture = 'bee11e00-0000-4000-8000-000000000105';
-  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Fixture')`, [fixture]);
+  await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Fixture',true)`, [fixture]);
   await db.query(`INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2),($3,$2)`,
     [human(1), fixture, human(3)]);
   const steps = async (filter = '') => (await (await get(filter)).json()).usage.people;

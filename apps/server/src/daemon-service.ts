@@ -8383,7 +8383,10 @@ export class DaemonService {
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
-      stored: true, visible: true, receipt: 'Message stored and visible.' };
+      stored: true, visible: true, receipt: 'Message stored and visible.' +
+        (input.cornerId === command.room_id
+          ? '\nPosted to your current place. Your closing text here also publishes, so only write it if it adds something new; do not repeat this post.'
+          : '') };
   }
 
   /** Public posts accept Rooms and corners without broadening corner-only operations. */

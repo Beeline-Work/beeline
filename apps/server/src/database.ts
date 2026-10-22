@@ -85,6 +85,8 @@ export function postgresPoolConfig(
   return {
     connectionString,
     max: maximumConnections,
+    // These latency-sensitive connections should not compile each complex read.
+    options: '-c jit=off',
     // Half-open TCP connections (peer/NAT dropped without FIN/RST) never emit
     // an error on their own; keepalive probes eventually fail and surface the
     // dead connection so the pool can reclaim it instead of wedging.
@@ -118,11 +120,11 @@ export function postgresPoolConfig(
           : mode === 'migration'
             ? {
                 connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
-                options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+                options: `-c jit=off -c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
               }
             : {
               statement_timeout: JOB_STATEMENT_TIMEOUT_MS,
-              options: `-c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
+              options: `-c jit=off -c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
             }),
   };
@@ -751,6 +753,16 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS allow_fix_sweep boolean NOT NULL DEFAULT true;
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS internal boolean NOT NULL DEFAULT false;
+-- Confirmed fixtures and the operator team's Workspace (verified by its Room ID).
+-- Classification is persisted; readers never infer it from names or membership.
+UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
+  'bee11e00-0000-4000-8000-000000000105',
+  'c2e54c45-cf58-4cc1-a620-89b196096e7b',
+  'b81a2815-924c-4bd9-bc04-d38bdee177bc',
+  '18e555f7-e191-452b-9b0f-b825f58ee4ba'
+);
+
 
 CREATE TABLE IF NOT EXISTS service_review_notice_deliveries (
   identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,

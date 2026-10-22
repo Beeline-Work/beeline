@@ -1256,7 +1256,7 @@ it('Reproduction unreported-order-false: a later report(done) closes the open or
 
 it('R1: a member posts a public message to a top-level Room', async () => {
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: ROOM, text: 'Room posting proof' }, RUBY);
-  expect(posted).toMatchObject({ address: ROOM, stored: true, visible: true });
+  expect(posted).toMatchObject({ address: ROOM, stored: true, visible: true, receipt: 'Message stored and visible.' });
   expect((await phone.readRoom(ROOM, HUMAN))?.messages.some(message => message.id === posted.id && message.text === 'Room posting proof')).toBe(true);
 });
 
@@ -1505,4 +1505,25 @@ it.each(['human', 'order'])('Reproduction R1: silent completion preserves fresh 
     .toMatchObject({ state: 'complete', generation_id: authority(next).generationId });
   expect(await commands(opened.cornerId, WORKER)).toEqual([]);
   expect((await commands(DM, RUBY)).filter(command => command.reason === 'report')).toEqual([]);
+});
+
+const currentPlaceReminder = 'Posted to your current place. Your closing text here also publishes, so only write it if it adds something new; do not repeat this post.';
+it.each(['dm', 'room', 'corner', 'parent-room'] as const)('post receipt identifies the actual current place: %s', async (place) => {
+  let command = order;
+  let agent = RUBY;
+  let target = DM;
+  if (place === 'room') {
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: randomBytes(32).toString('hex'), text: '@ruby Post here' }, HUMAN);
+    command = (await commands(ROOM, RUBY))[0]!;
+    await claim(command);
+    target = ROOM;
+  } else if (place === 'corner' || place === 'parent-room') {
+    const opened = await open();
+    command = await worker(opened.cornerId);
+    agent = WORKER;
+    target = place === 'corner' ? opened.cornerId : ROOM;
+  }
+  const posted = await daemon.execute('postCornerMessage', { ...authority(command), cornerId: target, text: 'Receipt path proof' }, agent);
+  expect(posted.receipt).toBe('Message stored and visible.' + (place === 'parent-room' ? '' : '\n' + currentPlaceReminder));
+  expect((await phone.readRoom(target, HUMAN))?.messages.some(message => message.id === posted.id && message.text === 'Receipt path proof')).toBe(true);
 });

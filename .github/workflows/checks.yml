@@ -80,6 +80,10 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect changes
@@ -574,6 +578,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+      - name: Prove server pools disable JIT on isolated PostgreSQL
+        run: npm test -w @beeline/server -- --run src/database-jit.test.ts --maxWorkers=1 --minWorkers=1
+        env:
+          BEELINE_JIT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - name: Prove release migration lock handoff on isolated PostgreSQL
         run: npm test -w @beeline/server -- --run src/migration-retry.test.ts --maxWorkers=1 --minWorkers=1
         env:

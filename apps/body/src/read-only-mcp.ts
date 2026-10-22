@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
-import { Check } from 'typebox/value';
+import { Check, Errors } from 'typebox/value';
 import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
 import { nonhumanSilentWake } from './silent-wake.js';
@@ -1758,7 +1758,7 @@ export async function createSchedule(
     (maxRuns !== undefined ? `, ${maxRuns} run${maxRuns === 1 ? '' : 's'}` : '') +
     `; the prompt runs as a mention to you in this Room.` +
     floorNote +
-    ' Use delete_schedule with this scheduleId to remove it.'
+    ' Use wake(action:delete, scheduleId) to remove it.'
   );
 }
 
@@ -2727,11 +2727,22 @@ function advertisedAgentTool(name: string): ToolDefinition {
   return tool;
 }
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
+  const requestedAction = args.action;
   if (!Check(tool.inputSchema, args)) {
     const required = tool.inputSchema.required as string[] | undefined;
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));
-    throw new Error(`${tool.name}: invalid arguments${missing?.length ? `; required: ${missing.join(', ')}` : ''}${extra.length ? `; unknown fields: ${extra.join(', ')}` : ''}; follow the advertised schema`);
+    const diagnosticSchema = tool.name === 'wake'
+      ? { ...tool.inputSchema, anyOf: (tool.inputSchema.anyOf as JsonObject[]).filter(schema => {
+        const action = asObject(schema.properties).action;
+        return !action || Check(action, requestedAction);
+      }) }
+      : tool.inputSchema;
+    const details = tool.name === 'wake'
+      ? Errors(diagnosticSchema, args).filter(error => error.keyword !== 'anyOf')
+        .map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
+      : '';
+    throw new Error(`${tool.name}: invalid arguments${details ? `; ${details}` : ''}${missing?.length ? `; required: ${missing.join(', ')}` : ''}${extra.length ? `; unknown fields: ${extra.join(', ')}` : ''}; follow the advertised schema`);
   }
 }
 
@@ -2848,6 +2859,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return execute(operation);
     }
     case 'wake': {
+      if (args.action === 'delete' && args.trigger === undefined && args.scheduleId !== undefined)
+        args = { ...args, trigger: 'schedule' };
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
       const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');

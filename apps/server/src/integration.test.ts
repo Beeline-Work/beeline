@@ -5003,7 +5003,7 @@ describe('monolith integration', () => {
   });
 
   it('manages agent tool schedules over daemon HTTP with agent scoping', async () => {
-    const created = await daemonOperation('createAgentSchedule', {
+    const created = await daemonOperation('createAgentSchedule', { title: 'Scheduled check',
       agentId: AGENT,
       roomId: ROOM,
       prompt: "message 'hello @bananaman614305'",
@@ -5022,7 +5022,7 @@ describe('monolith integration', () => {
     await expect(listed.json()).resolves.toEqual({
       schedules: [
         {
-          title: "message 'hello @bananaman614305'",
+          title: 'Scheduled check',
           scheduleId,
           agentId: AGENT,
           agentHandle: 'bee',
@@ -5035,7 +5035,7 @@ describe('monolith integration', () => {
       ],
     });
     // The daemon token's agent cannot be impersonated and cannot delete...
-    const foreignCreate = await daemonOperation('createAgentSchedule', {
+    const foreignCreate = await daemonOperation('createAgentSchedule', { title: 'Scheduled check',
       agentId: 'f'.repeat(64),
       roomId: ROOM,
       prompt: 'Impersonation.',

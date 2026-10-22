@@ -656,7 +656,7 @@ describe('triage corner: sibling fix corners and its daily schedule, with no set
     const turn = await triageTurn();
     const { scheduleId } = (await daemon().execute(
       'createAgentSchedule',
-      {
+      { title: 'Scheduled check',
         ...turn,
         prompt: 'Start the feedback-triage workflow.',
         cadence: { kind: 'cron', expression: '0 14 * * *', timeZone: 'UTC' },

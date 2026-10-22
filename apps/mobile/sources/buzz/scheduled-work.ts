@@ -78,17 +78,35 @@ export function scheduleTitle(schedule: RoomScheduleView): string {
   return promptTitle(schedule.message) || 'Scheduled task';
 }
 
+export function scheduleTrigger(schedule: RoomScheduleView, now = new Date()): string {
+  const next = new Date(schedule.nextRunAt * 1000);
+  if (schedule.maxRuns !== 1) return scheduleCadenceLabel(schedule.cadence, next);
+  const date = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric' });
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const day = date.format(next) === date.format(now) ? 'Today'
+    : date.format(next) === date.format(tomorrow) ? 'Tomorrow'
+    : new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' }).format(next);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(next);
+  const zone = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' })
+    .formatToParts(next).find(part => part.type === 'timeZoneName')?.value ?? '';
+  return `${day} at ${time} ${zone}`.trim();
+}
+
 /** The detail page's Runs row: the cadence and the next firing. */
 export function scheduleRuns(schedule: RoomScheduleView): string {
-  return `${schedule.maxRuns === 1 ? 'Once' : scheduleCadenceLabel(schedule.cadence)} · next ${NEXT_RUN.format(
+  return `${scheduleTrigger(schedule)} · next ${NEXT_RUN.format(
     new Date(schedule.nextRunAt * 1_000),
   )}`;
 }
 
 export function subscriptionTitle(subscription: RoomSubscriptionView): string {
+  if (subscription.title?.trim()) return subscription.title.trim();
   return subscription.workflowSlug
     ? workflowDisplayName(subscription.workflowSlug)
-    : promptLead(subscription.prompt ?? 'React to this event');
+    : promptLead(subscription.prompt ?? '') || 'React to this event';
 }
 
 export function subscriptionWhen(subscription: RoomSubscriptionView): string {

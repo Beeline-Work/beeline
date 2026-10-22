@@ -1,5 +1,4 @@
 import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
-import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { clearPendingGoogleSignIn, resumeGoogleSignIn, runGoogleSignIn } from '@/auth/google-auth-session';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -138,19 +137,6 @@ export default function BuzzOnboarding() {
   const [loadingAction, setLoadingAction] = useState<
     'google' | 'github' | 'bind' | 'recover' | 'name' | null
   >(null);
-  const [googleEnabled, setGoogleEnabled] = useState(false);
-  useEffect(() => {
-    const runtime = getBuzzRuntimeConfig();
-    let alive = true;
-    const refresh = () => {
-      void readAuthCapabilities(runtime.monolithUrl)
-        .then(capabilities => { if (alive) setGoogleEnabled(capabilities.google === true); })
-        .catch(() => undefined);
-    };
-    const unwatch = watchGooglePreview(refresh);
-    refresh();
-    return () => { alive = false; unwatch(); };
-  }, []);
   const [nameFocused, setNameFocused] = useState(false);
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
@@ -420,7 +406,7 @@ export default function BuzzOnboarding() {
   }, [canSignIn]);
 
   const handleGoogleSignIn = async () => {
-    if (!canSignIn || !googleEnabled || loading) return;
+    if (!canSignIn || loading) return;
     setLoadingAction('google');
     setStatus('opening_browser');
     clearOnboardingNotice();
@@ -723,7 +709,6 @@ export default function BuzzOnboarding() {
           />
         ) : canSignIn ? (
           <>
-            {!googleEnabled && repositoryOnboarding ? <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text> : null}
             <View>
               <Button
                 label={signInLabel}
@@ -734,18 +719,16 @@ export default function BuzzOnboarding() {
                 onPress={() => void handleSignIn()}
                 disabled={loading || status === 'checking_device' || status === 'binding'}
               />
-              {googleEnabled ? <Text style={styles.recommended}>Recommended</Text> : null}
+              <Text style={styles.recommended}>Recommended</Text>
             </View>
-            {googleEnabled ? (
-              <Button
-                label="Continue with Google"
-                variant="provider"
-                testID="onboarding-google-sign-in"
-                loading={loadingAction === 'google'}
-                disabled={loading || status === 'checking_device' || status === 'binding'}
-                onPress={() => void handleGoogleSignIn()}
-              />
-            ) : null}
+            <Button
+              label="Continue with Google"
+              variant="provider"
+              testID="onboarding-google-sign-in"
+              loading={loadingAction === 'google'}
+              disabled={loading || status === 'checking_device' || status === 'binding'}
+              onPress={() => void handleGoogleSignIn()}
+            />
           </>
         ) : null}
       </View>

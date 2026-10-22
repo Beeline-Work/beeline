@@ -153,19 +153,14 @@ export function computerSessionUrl(id: string): string {
 /**
  * The server fetches and tunnels to a share's upstream URL, so an agent must
  * not point it at Beeline's own network. Squire shares through Cloudflare
- * quick tunnels; BEELINE_COMPUTER_SHARE_HOSTS overrides the host list with
- * comma-separated exact hosts or "*.suffix" entries.
+ * quick tunnels, so only *.trycloudflare.com hosts are trusted.
  */
 export function trustedComputerShareUpstream(upstream: URL): boolean {
   if (upstream.protocol !== 'https:' || upstream.username || upstream.password) return false;
   const host = upstream.hostname.toLowerCase().replace(/\.$/, '');
   if (!host || isIP(host.replace(/^\[|\]$/g, '')) || host === 'localhost'
     || ['.localhost', '.internal', '.local'].some((suffix) => host.endsWith(suffix))) return false;
-  const allowed = (process.env.BEELINE_COMPUTER_SHARE_HOSTS ?? '*.trycloudflare.com')
-    .split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean);
-  return allowed.some((entry) => entry.startsWith('*.')
-    ? host.endsWith(entry.slice(1)) && host.length > entry.length - 1
-    : host === entry);
+  return host.endsWith('.trycloudflare.com') && host.length > '.trycloudflare.com'.length;
 }
 
 export async function createComputerSession(

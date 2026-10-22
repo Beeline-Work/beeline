@@ -236,6 +236,32 @@ it('a configured reviewer can record PASS from its DM without changing the revie
   await expect(daemon.execute('approveCornerMerge', { cornerId: opened.cornerId, headSha }, WORKER))
     .rejects.toThrow('configured reviewer');
 });
+it.each([false, true])('REPORT-RETURN-403: scheduled completion uses opening commander and enforces revocation=%s', async (revoked) => {
+  const opened = await open();
+  const initial = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
+  await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at)
+    VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":1}', 'Finish assigned work',1,now()-interval '1 minute')`,
+    [randomUUID(), WS, opened.cornerId, WORKER]);
+  expect(await new AgentScheduleLoop(db).runOnce()).toBe(1);
+  const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'schedule')!;
+  expect(wake).toBeDefined();
+  await claim(wake);
+  if (revoked) await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [DM, RUBY]);
+  const outcome = daemon.execute('report', { ...authority(wake), status: 'done', text: 'done: assigned work completed' }, WORKER);
+  if (revoked) {
+    await expect(outcome).rejects.toThrow('commander is no longer a member of the return address');
+    expect((await db.query(`SELECT id FROM agent_commands WHERE reason='report' AND private_payload->>'text'=$1`,
+      ['done: assigned work completed'])).rows).toEqual([]);
+  } else {
+    await expect(outcome).resolves.toMatchObject({ delivered: true });
+    const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ private: true, source: { authorId: WORKER, body: 'done: assigned work completed' } });
+    expect((await db.query(`SELECT id FROM messages WHERE text=$1 AND presentation='message'`,
+      ['done: assigned work completed'])).rows).toEqual([]);
+  }
+});
 it('schedules, check events and chatter in the corner never wake a watcher', async () => {
   const opened = await open();
   const before = (await commands(DM, RUBY)).map(c => c.id);

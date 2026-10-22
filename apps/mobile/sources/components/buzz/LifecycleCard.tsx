@@ -3,6 +3,7 @@ import React, { type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { RepositoryLifecycleRow, isRepositoryLifecycleItem } from './PrLifecycleCard';
 import { LifecycleRow } from './LifecycleRow';
 import { lifecycleCornerTitle, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
 import { ledgerStamp } from '@/buzz/relative-time';
@@ -60,6 +61,12 @@ export function LifecycleRecordCard({
   onOpenUrl(url: string): void;
 }) {
   const { theme } = useUnistyles();
+  if (isRepositoryLifecycleItem(item))
+    return (
+      <View testID={testID}>
+        <RepositoryLifecycleRow item={item} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
+      </View>
+    );
   const state = lifecycleDisplayState(item.state);
   const color = state.includes('failed')
     ? theme.buzz.diffRemoved
@@ -161,7 +168,7 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
       item={{
         id: message.id,
         title: event.title,
-        state: event.action,
+        state: event.type === 'issue' && event.action === 'opened' ? 'Filed' : event.action,
         kind: event.type === 'issue' ? 'issue' : 'pull-request',
         kindLine: `${subject}${number ? ` #${number}` : ''}`,
         actor: event.actor,
@@ -194,7 +201,9 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
       : undefined;
   const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
   // The NAME titles the card; the objective is its body.
-  const title = lifecycleCornerTitle(fact);
+  const title = landedCorner
+    ? fact.pullRequest?.title || lifecycleCornerTitle(fact)
+    : lifecycleCornerTitle(fact);
   const prNumber = fact.pullRequest?.number;
   const state =
     fact.type === 'corner-open'

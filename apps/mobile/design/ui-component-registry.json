@@ -231,7 +231,7 @@
     "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
     "components/buzz/LifecycleRow.tsx": ["LifecycleRow", "body"],
     "components/buzz/LifecycleCard.tsx": ["LifecycleCard", "LifecycleRecordCard", "GitHubEventCard", "DaemonFactCard"],
-    "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard"],
+    "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard", "RepositoryLifecycleRow", "copy"],
     "components/buzz/ProfileActions.tsx": ["ProfileActions"],
     "components/buzz/ProfileIdentity.tsx": [
       "PROFILE_IDENTITY_PICTURE_SIZE",
@@ -358,18 +358,6 @@
     "components/buzz/WritePermissionOutcome.tsx": ["WritePermissionOutcome"],
     "components/buzz/YouStep.tsx": ["YouStep"],
     "components/buzz/ZoomableArtifactImage.tsx": ["ZoomableArtifactImage"],
-    "components/CommandPalette/CommandPalette.tsx": ["CommandPalette"],
-    "components/CommandPalette/CommandPaletteInput.tsx": ["CommandPaletteInput"],
-    "components/CommandPalette/CommandPaletteItem.tsx": ["CommandPaletteItem"],
-    "components/CommandPalette/CommandPaletteModal.tsx": ["CommandPaletteModal"],
-    "components/CommandPalette/CommandPaletteProvider.tsx": ["CommandPaletteProvider"],
-    "components/CommandPalette/CommandPaletteResults.tsx": [
-      "CommandPaletteResults",
-      "categoryCommands"
-    ],
-    "components/CommandPalette/index.ts": ["CommandPalette", "CommandPaletteProvider"],
-    "components/CommandPalette/types.ts": [],
-    "components/CommandPalette/useCommandPalette.ts": [],
     "components/desktop-shell-policy.ts": [],
     "components/DesktopDeepLinkBridge.tsx": ["DesktopDeepLinkBridge"],
     "components/DesktopRoomInspector.tsx": [
@@ -392,6 +380,7 @@
     "components/markdown/parseMarkdown.ts": [],
     "components/markdown/parseMarkdownBlock.ts": [],
     "components/markdown/parseMarkdownSpans.ts": [],
+    "components/KeyboardShortcutsProvider.tsx": ["KeyboardShortcutsProvider"],
     "components/ShortcutHints.tsx": [
       "ShortcutHintsContext",
       "ShortcutHintsProvider"

@@ -387,6 +387,17 @@ describe('connect_app', () => {
     expect(provider.link).not.toHaveBeenCalled();
   });
 
+  it('Reproduction registry-down-1: a Registry outage still routes GitHub to its managed sign-in', async () => {
+    const registry = fakeRegistry([], true);
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'github');
+    const result = await daemonWith(registry.client, provider).execute('connect',
+      { ...turn, service: 'GitHub', reason: 'Link a repository' }, HELPER);
+    expect(registry.transport).toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
+    expect(result.next).not.toContain('Registry could not be checked');
+  });
+
   it('connect installs a no-sign-in Registry remote to ready with no owner card', async () => {
     const registry = fakeRegistry([{ ...linearServer, name: 'org.example/echo', title: 'Echo', websiteUrl: 'https://echo.test' }]);
     const daemon = daemonWith(registry.client);

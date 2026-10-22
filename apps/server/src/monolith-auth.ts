@@ -1,10 +1,6 @@
 import { observeFunnelAuth } from './signin-funnel.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import {
-  readEnv,
-  authTenantsFromEnvironment,
-  oidcClientFromEnvironment,
-} from '@beeline/auth/environment';
+import { authTenantsFromEnvironment, oidcClientFromEnvironment } from '@beeline/auth/environment';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import { verifyPhoneGitHubTicket } from '@beeline/auth/phone-github-ticket';
 import { createHash } from 'node:crypto';
@@ -13,7 +9,7 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import type { VerifyGitHubOidc, VerifyGoogleOidc } from './auth.js';
 import type { SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
-import { GoogleSignInError, type TokenAuth } from './auth.js';
+import type { TokenAuth } from './auth.js';
 
 export interface MonolithAuthMount {
   handle(request: IncomingMessage, response: ServerResponse): void;
@@ -45,7 +41,7 @@ export async function createMonolithAuth(
   const tenant = tenants.find((candidate) => candidate.host.toLowerCase() === publicHost);
   if (!tenant) {
     throw new Error(
-      `BEELINE_AUTH_TENANTS_JSON (BUZZY_AUTH_TENANTS_JSON still works) must include monolith Host ${publicHost}`,
+      `BEELINE_AUTH_TENANTS_JSON must include monolith Host ${publicHost}`,
     );
   }
 
@@ -53,28 +49,17 @@ export async function createMonolithAuth(
   // needs the same query/transaction contract and must not own or close the pool.
   // Its migrations run once in migrate-cli before any Machine is updated.
   const store = new AuthStore(database as unknown as TransactionalDatabase);
-  const googleSubjects = new Set(
-    (env.BEELINE_GOOGLE_SIGN_IN_SUBJECTS ?? '')
-      .split(',')
-      .map((value) => value.trim())
-      .filter(Boolean),
-  );
-  const googleSignInEveryone = env.BEELINE_GOOGLE_SIGN_IN_EVERYONE === '1';
-  const googleSignInEnabled = env.BEELINE_GOOGLE_SIGN_IN === '1';
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
     onFunnelAuth: (input) => observeFunnelAuth(database, input),
     completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
-    googleSignInEnabled,
-    googleSignInEveryone,
-    googleSignInPreviewToken: env.BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN,
     ...(github ? { github } : {}),
     tenants,
     secureCookies: env.NODE_ENV === 'production',
     webAppOrigins: options.webAppOrigins,
-    githubSetupToken: readEnv(env, 'AUTH_SETUP_TOKEN'),
+    githubSetupToken: env.BEELINE_AUTH_SETUP_TOKEN,
     logger: false,
     claimAgentPairingCode: async (input) => {
       return pairing.claimAgentConnectPairing(input, (agentId, transaction) =>
@@ -98,13 +83,6 @@ export async function createMonolithAuth(
     verifyGoogleTicket: async (ticket) => {
       if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) throw new Error('invalid Google ticket');
       const hash = createHash('sha256').update(ticket).digest('hex');
-      const proof = await store.findTicket(hash);
-      if (!googleSignInEnabled || !proof) {
-        throw new Error('Google sign-in is not enabled for this account');
-      }
-      if (!googleSignInEveryone && !googleSubjects.has(proof.subject)) {
-        throw new GoogleSignInError('This Google account is not on the preview test list.', 'preview_account_not_allowed');
-      }
       const result = await store.consumeTicketForPhone(
         hash,
         tenant.community,

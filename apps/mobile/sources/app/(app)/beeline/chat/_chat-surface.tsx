@@ -5895,11 +5895,6 @@ export function BuzzChatSurface({
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
-      if (item.daemonFact?.type === 'corner-open' || (item.daemonFact && item.systemEvent?.kind === 'corner-opened')) {
-        // Its source message is not resident, so the marker stands on its own row.
-        return renderCornerMarker(item);
-      }
-
       if (item.daemonFact) {
         return (
           <View>

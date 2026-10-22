@@ -135,7 +135,7 @@ vi.mock('@/app/(app)/beeline/chat/RoomMessageVariants', async () => {
   const ReactModule = await import('react');
   return {
     DaemonFactCard: (props: any) => ReactModule.createElement('DaemonFactCard', props),
-    NotificationLifecycleCard: () => null,
+    NotificationLifecycleCard: (props: any) => ReactModule.createElement('NotificationLifecycleCard', props),
     GitHubEventCard: (props: any) => ReactModule.createElement('GitHubEventCard', props),
     OrdinaryLedgerMessage: (props: any) =>
       ReactModule.createElement('OrdinaryLedgerMessage', props),
@@ -364,9 +364,16 @@ describe('DesktopRoomInspector work pane', () => {
           ...(sourceResident ? { sourceMessageId: 'source' } : {}) } }] } as any;
     const onOpenCorner = vi.fn();
     const tree = await render(props({ onOpenCorner, client: { room: vi.fn(async () => detail) } }));
-    const marker = tree.root.findByType('CornerOpenedMarker' as any);
-    expect(marker.props.title).toBe('Opened target');
-    act(() => marker.props.onOpen());
+    if (sourceResident) {
+      const marker = tree.root.findByType('CornerOpenedMarker' as any);
+      expect(marker.props.title).toBe('Opened target');
+      act(() => marker.props.onOpen());
+    } else {
+      expect(tree.root.findAllByType('CornerOpenedMarker' as any)).toHaveLength(0);
+      const row = tree.root.findByType('NotificationLifecycleCard' as any);
+      expect(row.props.message.notificationLifecycleRun.items[0]).toMatchObject({ state: 'Opened', kind: 'corner', cornerId: 'opened-target' });
+      act(() => row.props.onOpenCorner('opened-target'));
+    }
     expect(onOpenCorner).toHaveBeenCalledWith('opened-target');
     expect(tree.root.findAllByType('DaemonFactCard' as any)).toHaveLength(0);
     act(() => tree.unmount());

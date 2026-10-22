@@ -1,4 +1,3 @@
-import { readEnv } from './env.js';
 import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
 /**
  * Minimal ACP client over stdio for an ACP coding agent.
@@ -901,8 +900,7 @@ export class AcpClient extends EventEmitter {
     this.agentArgs = [...(opts.agentArgs ?? [])];
     this.agentEnv = opts.agentEnv;
     if (opts.agentCwd) this.agentCwd = opts.agentCwd;
-    this.inheritProcessEnv =
-      opts.inheritProcessEnv ?? readEnv(process.env, 'BODY_AGENT_ENV_INHERIT') === '1';
+    this.inheritProcessEnv = opts.inheritProcessEnv ?? false;
     this.autoApprove = opts.autoApprovePermissions ?? true;
     this.backgroundTasks = opts.backgroundTasks ?? false;
     this.osSandbox = opts.osSandbox ?? false;

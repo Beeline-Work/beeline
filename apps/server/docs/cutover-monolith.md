@@ -34,7 +34,7 @@ publish and mobile OTA promotion begin. The production runner already owns Fly
 credentials; if that changes, provision `FLY_API_TOKEN` as a repository Actions
 secret instead of putting credentials in the workflow.
 
-The Fly app must also have `PUSH_DELIVERY_ENABLED=true` and the complete Firebase
+The Fly app must also have the complete Firebase
 service-account document in the `GOOGLE_APPLICATION_CREDENTIALS_JSON` secret.
 `GOOGLE_CLOUD_PROJECT` may override the service account's project ID when needed.
 Do not add any of these secret values to the repository; release provisioning owns

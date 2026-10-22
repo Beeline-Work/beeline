@@ -42,7 +42,7 @@ import {
   SITUATIONAL_SKILL_NAMES,
 } from './beeline-skill.js';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
-const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
+const AGENT_PRIVATE_STATE_ENV = 'BEELINE_AGENT_PRIVATE_DIR';
 import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
 import { KNOWN_CREDENTIAL_MASK_PATHS } from './bwrap-sandbox.js';
 import { filterModelOptionsByCredentials } from './model-config.js';

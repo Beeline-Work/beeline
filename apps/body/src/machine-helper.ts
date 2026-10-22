@@ -362,7 +362,7 @@ async function serveMachineHelper(
       restartHelper('failed');
       return;
     }
-    update.notify(undefined, minimum, true);
+    update.notify(undefined, minimum);
   };
 
   const host: AgentRuntimeHost = {

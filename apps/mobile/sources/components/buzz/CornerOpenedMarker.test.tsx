@@ -13,9 +13,10 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { default: host('Svg'), Polygon: host('Polygon') };
+  return { default: host('Svg'), Polygon: host('Polygon'), Polyline: host('Polyline') };
 });
 vi.mock('react-native-unistyles', () => ({
+  useUnistyles: () => ({ theme: { buzz: { accent: '#E5A645' } } }),
   StyleSheet: {
     create: (factory: (theme: unknown) => unknown) =>
       factory({
@@ -81,7 +82,7 @@ describe('CornerOpenedMarker', () => {
     expect(target.props.testID).toBe('marker');
     expect(target.props.accessibilityRole).toBe('link');
     expect(target.props.accessibilityLabel).toBe('Open corner quiet amber corner');
-    expect(textOf(renderer)).toBe('Corner opened · quiet amber corner | Open →');
+    expect(textOf(renderer)).toBe('Corner opened · #quiet amber corner');
     // The drop-down mark leads the line.
     expect(renderer.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
 
@@ -94,7 +95,7 @@ describe('CornerOpenedMarker', () => {
     const renderer = render(
       <CornerOpenedMarker title="quiet amber corner" closed onOpen={onOpen} testID="marker" />,
     );
-    expect(textOf(renderer)).toBe('Corner closed · quiet amber corner | Open →');
+    expect(textOf(renderer)).toBe('Corner closed · #quiet amber corner');
     act(() => renderer.root.findByType('Pressable' as never).props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
   });

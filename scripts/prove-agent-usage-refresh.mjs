@@ -3,7 +3,7 @@
  */
 import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import WebSocket from 'ws';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/src/database.ts';
@@ -25,7 +25,8 @@ await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Gene
 await database.query(`INSERT INTO agents(agent_id,owner_id,harness) VALUES($1,$2,'cursor')`, [AGENT, OWNER]);
 for (const [id,role] of [[OWNER,'owner'],[AGENT,'member']])
   for (const room of [null,ROOM]) await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4)`,[WORKSPACE,room,id,role]);
-const baseline = JSON.parse(await readFile('.scratch/usage-refresh/cursor-live.json','utf8'));
+await mkdir('.scratch/usage-refresh', { recursive: true });
+const baseline = JSON.parse(await readFile(process.env.USAGE_PROOF_SNAPSHOT ?? 'apps/mobile/scripts/agent-usage-cursor.json','utf8'));
 await database.query(`UPDATE agents SET usage_snapshot=$2::jsonb WHERE agent_id=$1`, [AGENT, JSON.stringify(baseline)]);
 const live = new LiveHub();
 class ListenClient extends EventEmitter {

@@ -133,7 +133,7 @@ it('Reproduction SENTRY-R: start workflow with missing starter returns unchanged
   expect(captureException).not.toHaveBeenCalled();
 });
 
-it('R1 / SENTRY-B: close_corner with an open PR archives without refusal or Sentry capture', async () => {
+it('R1 / SENTRY-B: close_corner still archives when GitHub is not configured', async () => {
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
   vi.mocked(captureException).mockClear();
   const response = await fetch(`${origin}/v1/daemon/operations/archiveCorner`, {

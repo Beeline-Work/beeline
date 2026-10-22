@@ -1,0 +1,4 @@
+R1 Demonstrated: built phone HTTP close => 204; GitHub PR closed; corner archived; merge hold preserved.
+R1 Demonstrated: built phone HTTP close => 204; GitHub failure logged; corner archived; merge hold preserved.
+R1 Demonstrated: built daemon HTTP close => 200; GitHub PR closed; corner archived; merge hold preserved.
+R1 Demonstrated: built daemon HTTP close => 200; GitHub failure logged; corner archived; merge hold preserved.

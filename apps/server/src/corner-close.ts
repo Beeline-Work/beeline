@@ -64,6 +64,29 @@ export async function cancelArchivedCornerAssignments(database: SqlDatabase): Pr
   );
 }
 
+/** GitHub failure must never prevent a person or agent from closing a corner. */
+export async function closeCornerPullRequestBestEffort(
+  database: SqlDatabase,
+  cornerId: string,
+  closePullRequest?: (cornerId: string) => Promise<{ status: string; blocker?: string }>,
+): Promise<void> {
+  const pending = await database.query(
+    `SELECT 1 FROM corner_facts WHERE corner_id=$1
+       AND lifecycle->'pr'->>'number' IS NOT NULL
+       AND lifecycle->'pr'->>'mergedAt' IS NULL
+       AND workflow_state IS DISTINCT FROM 'landed'`,
+    [cornerId],
+  );
+  if (!pending.rowCount) return;
+  try {
+    if (!closePullRequest) throw new Error('GitHub is not configured on this server');
+    const result = await closePullRequest(cornerId);
+    if (result.status === 'blocked') throw new Error(result.blocker);
+  } catch (error) {
+    console.error(`[server] could not close pull request for corner ${cornerId}; closing corner anyway:`, error);
+  }
+}
+
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {
   await lockCornerLifecycle(database, cornerId);

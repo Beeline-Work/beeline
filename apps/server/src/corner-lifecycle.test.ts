@@ -549,7 +549,8 @@ describe('corner lock', () => {
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
     await github.reconcileMergedCorners();
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
-    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
     expect(await currentState(cornerId)).toBe('closed');
   });
 });
@@ -2390,15 +2391,39 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       AND status='working'`, [cornerId])).rowCount).toBe(0);
   });
 
-  it('R1 closes a corner with an open PR without closing the PR', async () => {
+  it.each(['agent', 'phone'] as const)('R1 %s close closes the PR and archives a held corner', async path => {
     const cornerId = await inReview();
-    const pr = (await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr;
-    await daemon.execute('archiveCorner', { cornerId }, A);
+    const hold = await phone.execute('setCornerHold', { cornerId }, H);
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, id => github.closeCornerPullRequest(id));
+    const wiredPhone = new PhoneService(db, 'http://test', github);
+    if (path === 'agent') await wiredDaemon.execute('archiveCorner', { cornerId }, A);
+    else await wiredPhone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect(githubApp.closePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7);
     expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
     expect(await currentState(cornerId)).toBe('closed');
-    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toEqual(pr);
-    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
-    console.log('R1 Demonstrated: close_corner archives with its PR still open.');
+    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
+    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).toBeNull();
+    console.log(`R1 Demonstrated: ${path} close closes the PR and archives the held corner.`);
+  });
+
+  it.each(['agent', 'phone'] as const)('R1 %s close still archives when GitHub fails', async path => {
+    const cornerId = await inReview();
+    githubApp.closePullRequest.mockRejectedValueOnce(new Error('GitHub unavailable'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+        undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+        undefined, undefined, undefined, undefined, id => github.closeCornerPullRequest(id));
+      if (path === 'agent') await wiredDaemon.execute('archiveCorner', { cornerId }, A);
+      else await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
+      expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
+      expect(await currentState(cornerId)).toBe('closed');
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('closing corner anyway'), expect.any(Error));
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('R1 closes a legacy archived corner PR without reopening the corner or waking work', async () => {
@@ -2433,16 +2458,6 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(githubApp.closePullRequest).not.toHaveBeenCalled();
     expect((await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle).toEqual(before);
     expect(await currentState(cornerId)).toBe('landed');
-  });
-
-  it('R1 phone close archives a held corner with an open PR', async () => {
-    const cornerId = await inReview();
-    const hold = await phone.execute('setCornerHold', { cornerId }, H);
-    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
-    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).not.toBeNull();
-    expect((await phone.readCorners(R, H))!.corners.some(row => row.corner.id === cornerId)).toBe(false);
-    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).toBeNull();
-    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
   });
 
   it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {

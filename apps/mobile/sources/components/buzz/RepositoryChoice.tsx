@@ -286,8 +286,6 @@ const styles = StyleSheet.create((theme) => {
     },
     repoBlock: {
       paddingVertical: hull.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
     },
     // A quiet switch on the sheet's own surface: no track fill. The selected
     // segment is marked the way the owner menu marks its pick; in dark the

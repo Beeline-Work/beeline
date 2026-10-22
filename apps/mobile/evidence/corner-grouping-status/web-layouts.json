@@ -1,0 +1,458 @@
+[
+  {
+    "slot": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 0,
+      "top": 822,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 70,
+      "top": 822,
+      "right": 412,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 412,
+      "height": 700,
+      "top": 122,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 412,
+    "theme": "bone",
+    "state": "idle"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 789,
+      "width": 412,
+      "height": 33,
+      "top": 789,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 70,
+      "top": 822,
+      "right": 412,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 412,
+      "height": 700,
+      "top": 122,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 412,
+    "theme": "bone",
+    "state": "settled"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 780,
+      "width": 412,
+      "height": 50,
+      "top": 780,
+      "right": 412,
+      "bottom": 830,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 70,
+      "top": 822,
+      "right": 412,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 412,
+      "height": 700,
+      "top": 122,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgb(243, 238, 228)",
+    "padding": "9px 0px 8px",
+    "transform": "matrix(1, 0, 0, 1, 0, 8)",
+    "width": 412,
+    "theme": "bone",
+    "state": "working"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 0,
+      "top": 822,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 70,
+      "top": 822,
+      "right": 412,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 412,
+      "height": 700,
+      "top": 122,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 412,
+    "theme": "obsidian",
+    "state": "idle"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 789,
+      "width": 412,
+      "height": 33,
+      "top": 789,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 70,
+      "top": 822,
+      "right": 412,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 412,
+      "height": 700,
+      "top": 122,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 412,
+    "theme": "obsidian",
+    "state": "settled"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 780,
+      "width": 412,
+      "height": 50,
+      "top": 780,
+      "right": 412,
+      "bottom": 830,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 412,
+      "height": 70,
+      "top": 822,
+      "right": 412,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 412,
+      "height": 700,
+      "top": 122,
+      "right": 412,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgb(20, 9, 26)",
+    "padding": "9px 0px 8px",
+    "transform": "matrix(1, 0, 0, 1, 0, 8)",
+    "width": 412,
+    "theme": "obsidian",
+    "state": "working"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 0,
+      "top": 822,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 70,
+      "top": 822,
+      "right": 1280,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 1280,
+      "height": 700,
+      "top": 122,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 1280,
+    "theme": "bone",
+    "state": "idle"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 789,
+      "width": 1280,
+      "height": 33,
+      "top": 789,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 70,
+      "top": 822,
+      "right": 1280,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 1280,
+      "height": 700,
+      "top": 122,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 1280,
+    "theme": "bone",
+    "state": "settled"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 780,
+      "width": 1280,
+      "height": 50,
+      "top": 780,
+      "right": 1280,
+      "bottom": 830,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 70,
+      "top": 822,
+      "right": 1280,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 1280,
+      "height": 700,
+      "top": 122,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgb(243, 238, 228)",
+    "padding": "9px 0px 8px",
+    "transform": "matrix(1, 0, 0, 1, 0, 8)",
+    "width": 1280,
+    "theme": "bone",
+    "state": "working"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 0,
+      "top": 822,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 70,
+      "top": 822,
+      "right": 1280,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 1280,
+      "height": 700,
+      "top": 122,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 1280,
+    "theme": "obsidian",
+    "state": "idle"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 789,
+      "width": 1280,
+      "height": 33,
+      "top": 789,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 70,
+      "top": 822,
+      "right": 1280,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 1280,
+      "height": 700,
+      "top": 122,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgba(0, 0, 0, 0)",
+    "padding": "0px",
+    "transform": "none",
+    "width": 1280,
+    "theme": "obsidian",
+    "state": "settled"
+  },
+  {
+    "slot": {
+      "x": 0,
+      "y": 780,
+      "width": 1280,
+      "height": 50,
+      "top": 780,
+      "right": 1280,
+      "bottom": 830,
+      "left": 0
+    },
+    "composer": {
+      "x": 0,
+      "y": 822,
+      "width": 1280,
+      "height": 70,
+      "top": 822,
+      "right": 1280,
+      "bottom": 892,
+      "left": 0
+    },
+    "transcript": {
+      "x": 0,
+      "y": 122,
+      "width": 1280,
+      "height": 700,
+      "top": 122,
+      "right": 1280,
+      "bottom": 822,
+      "left": 0
+    },
+    "background": "rgb(20, 9, 26)",
+    "padding": "9px 0px 8px",
+    "transform": "matrix(1, 0, 0, 1, 0, 8)",
+    "width": 1280,
+    "theme": "obsidian",
+    "state": "working"
+  }
+]

@@ -381,6 +381,8 @@ describe('GitHub-only account and repository access', () => {
           status: 201,
         }),
       )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ head: { sha: 'a'.repeat(40) }, base: { ref: 'main' } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { repository: { mergeQueue: null } } })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ merged: true }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
@@ -394,7 +396,7 @@ describe('GitHub-only account and repository access', () => {
         permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
       }),
     });
-    expect(fetchMock.mock.calls[1]).toEqual([
+    expect(fetchMock.mock.calls[3]).toEqual([
       'https://api.github.com/repos/acme/beeline/pulls/42/merge',
       expect.objectContaining({
         method: 'PUT',
@@ -1209,4 +1211,29 @@ it.each(['missing identity', 'listing error', 'invalid listing'])('release dispa
   const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
   await expect(app.dispatchProductionWorkflow('token', 'Beeline-Work/beeline', failure === 'missing identity' ? {} : { dispatched_by: 'audit' })).rejects.toThrow();
   expect(fetchMock).toHaveBeenCalledTimes(failure === 'missing identity' ? 0 : 1);
+});
+
+describe('merge queue provider boundary (R1)', () => {
+  it('enqueues the exact approved head when the base has a queue, without calling REST merge', async () => {
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    vi.spyOn(app, 'installationToken').mockResolvedValue({ token: 'test', expiresAt: '' });
+    const head = 'a'.repeat(40);
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      calls.push({ url, body });
+      if (url.endsWith('/pulls/7')) return new Response(JSON.stringify({ head: { sha: head }, base: { ref: 'main' } }));
+      if (url.endsWith('/graphql')) {
+        const query = String(body.query);
+        if (query.includes('mergeQueue(branch:')) return new Response(JSON.stringify({ data: { repository: { mergeQueue: { id: 'MQ' } } } }));
+        if (query.includes('enqueuePullRequest')) return new Response(JSON.stringify({ data: { enqueuePullRequest: { mergeQueueEntry: { id: 'ENTRY' } } } }));
+        return new Response(JSON.stringify({ data: { repository: { pullRequest: { id: 'PR', headRefOid: head, mergeQueueEntry: null } } } }));
+      }
+      throw new Error(`Unexpected provider write: ${url}`);
+    }));
+    expect(await app.mergePullRequest(77, 101, 'owner/widgets', 7, head)).toBe('queued');
+    expect(calls.some(call => call.url.endsWith('/merge'))).toBe(false);
+    expect(calls.find(call => String(call.body.query).includes('enqueuePullRequest'))?.body.variables)
+      .toEqual({ id: 'PR', head });
+  });
 });

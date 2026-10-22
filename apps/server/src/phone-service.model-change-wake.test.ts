@@ -289,3 +289,19 @@ describe('a model/effort selection change wakes the agent daemon', () => {
     }
   });
 });
+
+
+it('requests usage from only the owned agent without clearing its snapshot or starting a turn', async () => {
+  const database = await fixture();
+  try {
+    const recorder = new RecordingDatabase(database);
+    const service = new PhoneService(recorder, 'http://local.test');
+    await expect(service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OTHER)).rejects.toThrow();
+    expect(recorder.notifies).toHaveLength(0);
+    await service.execute('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
+    expect(recorder.notifies).toEqual([{ channel: POSTGRES_LIVE_CHANNEL, payload: {
+      table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: AGENT,
+    } }]);
+    expect((await database.query('SELECT id FROM agent_commands')).rows).toHaveLength(0);
+  } finally { await database.close(); }
+});

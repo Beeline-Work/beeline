@@ -96,7 +96,7 @@ describe('R-PROMPT-GRANTS recovery and outside context', () => {
   it('shows grant recovery in the assembled Room prompt', () => {
     const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
       agentCommand: 'claude-agent-acp', shell: { available: true } }).systemPrompt;
-    expect(prompt).toContain('request_grant(kind:command, target, reason)');
+    expect(prompt).toContain('request_grant(kind:command, target, reason, purpose)');
     expect(prompt).toContain('run_granted_command in a surface that permits it');
     expect(prompt).toContain('never call a host blocker unfixable before asking');
   });

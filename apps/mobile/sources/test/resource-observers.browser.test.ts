@@ -28,7 +28,7 @@ describe('resource observers in the desktop web renderer', () => {
         function App() {
           const [id, select] = React.useState('original'); globalThis.__select = select;
           const workflow = useRoomWorkflowRun('corner');
-          return <><CornerObjectiveLine objective="Observer proof" workflow={workflow.workflow} workflowError={workflow.error} onRetryWorkflow={workflow.retry} onOpenWorkflow={() => {}} />
+          return <><CornerObjectiveLine objective="Observer proof" workflow={workflow.workflow} onOpenWorkflow={() => {}} />
             <SignIn /><Installer /><DesktopRoomInspector room={room} client={client} content={{ kind: 'corner', cornerId: id }} onOpenCorner={() => {}} onOpenInMain={() => {}} onClose={() => {}} /></>;
         }
         createRoot(document.getElementById('root')).render(<App />);
@@ -123,11 +123,11 @@ describe('resource observers in the desktop web renderer', () => {
           globalThis.__invalidate?.({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'postgres:messages' } });
         }, 600);
         setTimeout(() => { globalThis.__failureText = document.getElementById('root').textContent; globalThis.__offline = false; globalThis.__done = true;
-          globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); }, 1000);
+          globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); }, 1800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           failureText: globalThis.__failureText, status: document.querySelector('[data-testid="workflow-run-status"]')?.textContent,
           reads: globalThis.__reads, errors: globalThis.__console });
-        }, 1600);`);
+        }, 2400);`);
       const detail = {
         run: { runId: 'run', workflowSlug: 'demo', description: 'Demo', roomId: 'corner', roomName: 'Corner', state: 'work', status: 'live', viewerHolds: false, startedAt: 1790000000, updatedAt: 1790000001, },
         contract: { slug: 'demo', description: 'Demo', initial: 'work', roles: {}, states: { work: { kind: 'terminal' } } }, history: [],
@@ -156,7 +156,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(JSON.parse(result.result).reads).toBe(6);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
-  it('Reproductions R9-OBS-06 and R12k: one inline workflow notice per failure streak, with Retry', async () => {
+  it('Reproductions R9-OBS-06 and R12k: workflow failures stay silent and recover on the next eligible event', async () => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
     try {
@@ -166,7 +166,7 @@ describe('resource observers in the desktop web renderer', () => {
         import { useRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
         function App() {
           const run = useRoomWorkflowRun('corner');
-          return <CornerObjectiveLine objective="Workflow proof" workflow={run.workflow} workflowError={run.error} onRetryWorkflow={run.retry} onOpenWorkflow={() => {}} />;
+          return <CornerObjectiveLine objective="Workflow proof" workflow={run.workflow} onOpenWorkflow={() => {}} />;
         }
         let visible = false, notices = 0;
         const errorLine = () => document.querySelector('[data-testid="corner-objective-line-workflow-error"]');
@@ -176,17 +176,18 @@ describe('resource observers in the desktop web renderer', () => {
         const push = () => globalThis.__listener({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'message' } });
         setTimeout(() => globalThis.__listener({ monolithLive: { type: 'subscribed', roomId: 'corner' } }), 150);
         for (let i = 1; i <= 5; i++) setTimeout(push, i * 200);
-        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; push(); }, 1200);
-        setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); }, 1400);
-        setTimeout(() => { globalThis.__recover = false; push(); }, 1500);
+        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; push(); }, 3200);
+        setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); }, 3400);
+        setTimeout(() => { globalThis.__recover = false; push(); }, 3500);
         setTimeout(() => { globalThis.__secondError = errorLine()?.textContent; globalThis.__noticesAfterSuccess = notices;
-          globalThis.__recover = true; document.querySelector('[data-testid="corner-objective-line-workflow-retry"]')?.click(); }, 1800);
+          globalThis.__recover = true; push(); }, 4800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           streakNotices: globalThis.__streakNotices, noticesAfterSuccess: globalThis.__noticesAfterSuccess,
           streakText: globalThis.__streakText, visibleError: globalThis.__secondError,
-          clearedAfterSuccess: globalThis.__clearedAfterSuccess, retryRecovered: !errorLine(), reads: globalThis.__reads }); }, 2100);`);
-      const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 2500, shims: {
+          clearedAfterSuccess: globalThis.__clearedAfterSuccess, retryRecovered: !errorLine(), reads: globalThis.__reads }); }, 5100);`);
+      const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 5500, shims: {
         ...webProofShims(mobile),
+        'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);`,
         '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__listener = listener; return () => {}; } });`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {
           globalThis.__reads = (globalThis.__reads ?? 0) + 1;
@@ -196,7 +197,7 @@ describe('resource observers in the desktop web renderer', () => {
       } });
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9-OBS-06 and R12k desktop web:', result.result);
-      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 1, noticesAfterSuccess: 2, reads: 9, clearedAfterSuccess: true, retryRecovered: true, streakText: 'offline 1Retry', visibleError: 'offline 8Retry' });
+      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 4, clearedAfterSuccess: true, retryRecovered: true });
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 

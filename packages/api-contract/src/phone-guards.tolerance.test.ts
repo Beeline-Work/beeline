@@ -292,6 +292,17 @@ const cases: Case[] = [
 ];
 
 describe('phone surface readers', () => {
+  it('preserves approval purpose and facts while tolerating old or malformed optional metadata', () => {
+    const facts = { purpose: 'Free space so the Android build can finish', machine: 'squire', touches: 'Archived build output', capabilities: 'Delete files' };
+    expect(readAgentGrantView({ ...grant, ...facts })).toMatchObject(facts);
+    expect(readAgentGrantView(grant)).not.toHaveProperty('purpose');
+    const invalid = readAgentGrantView({ ...grant, purpose: 'x'.repeat(241), touches: 42, capabilities: null });
+    expect(invalid).not.toBeNull();
+    expect(invalid).not.toHaveProperty('purpose');
+    expect(invalid).not.toHaveProperty('touches');
+    expect(invalid).not.toHaveProperty('capabilities');
+  });
+
   it('preserves connection app display names in grant cards', () => {
     expect(readAgentGrantView({ ...grant, kind: 'mcp', target: 'connection-install:github', appName: 'GitHub' })?.appName).toBe('GitHub');
   });
@@ -891,3 +902,13 @@ it.each(['approve', 'connect', 'question'] as const)(
     expect(legacy?.corners[0]?.reason).toBeUndefined();
   },
 );
+
+it('preserves validated merge-queue state in a corner response', () => {
+  const mergeQueue = { headSha: 'a'.repeat(40), combinedSha: 'b'.repeat(40) };
+  const corner = { corner: header, state: 'review', lifecycle: { lifecycle: 'in-review', checks: 'passing', mergeQueue } };
+  const response = readCornerListView({ room: header, corners: [corner], viewer, watchFilters: [] });
+  expect(response?.corners[0]?.lifecycle.mergeQueue).toEqual(mergeQueue);
+  const invalid = { ...corner, lifecycle: { ...corner.lifecycle, mergeQueue: { headSha: 'invalid' } } };
+  expect(readCornerListView({ room: header, corners: [invalid], viewer, watchFilters: [] })?.corners[0]?.lifecycle.mergeQueue)
+    .toBeUndefined();
+});

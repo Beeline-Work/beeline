@@ -155,25 +155,19 @@ function fireEvent(eventName: string, data?: any) {
 
 const renderers: any[] = [];
 
-/** The native input host, which holds the whole text as spans. */
+/** The input host, which holds the whole text. */
 function inputHost(root: any) {
   return root.findAll(
     (node: any) => node.props.testID === 'chat-input' && typeof node.type === 'string',
   )[0];
 }
 
-/** The text a native input holds: its tag spans, then the typed text. */
+/** The text the input holds. */
 function inputText(root: any): string {
-  return inputHost(root)
-    .findAll((node: any) => node.type === 'Text')
-    .map((node: any) => node.props.children)
-    .join('');
+  return inputHost(root).props.value;
 }
 
-/**
- * Every string the composer shows, read from `.props.children`. The input's
- * own spans do not count: under the waveform it is hidden.
- */
+/** Every string the composer shows, read from `.props.children`. */
 function renderedText(renderer: any): string {
   const parts: string[] = [];
   const collect = (node: any) => {
@@ -182,17 +176,14 @@ function renderedText(renderer: any): string {
     if (typeof node === 'object') return;
     parts.push(String(node));
   };
-  const inInput = new Set(inputHost(renderer.root).findAll((node: any) => node.type === 'Text'));
-  for (const text of renderer.root.findAllByType('Text')) {
-    if (!inInput.has(text)) collect(text.props.children);
-  }
+  for (const text of renderer.root.findAllByType('Text')) collect(text.props.children);
   return parts.join(' ');
 }
 
 function render(props: Record<string, any> = {}) {
   const onSend = vi.fn();
   const onChangeText = vi.fn();
-  const nativeInput = { setSelection: vi.fn(), blur: vi.fn() };
+  const nativeInput = { setSelection: vi.fn(), setSelectionRange: vi.fn(), blur: vi.fn() };
   let renderer: any;
   act(() => {
     renderer = create(
@@ -887,7 +878,7 @@ describe('stop button while a dictated message is sent', () => {
     await act(async () => fireEvent('end'));
   }
 
-  it('keeps Stop, the mark and the waveform while the message is sent; Stop drops it and keeps the chip', async () => {
+  it('keeps Stop, the mark and the waveform while the message is sent; Stop drops it and keeps the tag', async () => {
     const { renderer, sends } = renderSending();
     await dictateAndSend(renderer(), 'make it smaller');
 
@@ -904,7 +895,6 @@ describe('stop button while a dictated message is sent', () => {
 
     expect(sends[0].dictated.cancelled).toBe(true);
     expect(inputText(root)).toBe('@ruby ');
-    expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
     expect(root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
     expect(root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
     expect(root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
@@ -923,7 +913,6 @@ describe('stop button while a dictated message is sent', () => {
     const root = renderer().root;
     expect(sends).toHaveLength(0);
     expect(inputText(root)).toBe('@ruby ');
-    expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
   });
 
   it('turns Stop back into the mic once the message enters the Room', async () => {
@@ -943,122 +932,261 @@ describe('stop button while a dictated message is sent', () => {
   });
 });
 
-describe('recipient chips', () => {
-  const tagHandles = new Set(['ruby', 'sol']);
+describe('member tags', () => {
+  const tagHandles = new Set(['ruby', 'sol', 'speedy']);
 
-  it('shows a leading agent tag as a tinted word of the text, and keeps the mic', () => {
-    const { renderer } = render({ value: '@ruby ', tagHandles });
-    expect(inputText(renderer.root)).toBe('@ruby ');
-    const tag = renderer.root.findAll(
-      (node: any) => node.props.testID === 'chat-tag-ruby' && typeof node.type === 'string',
-    );
-    expect(tag).toHaveLength(1);
-    expect(tag[0].props.children).toBe('@ruby');
-    expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
-    expect(renderer.root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(true);
-  });
+  /** A composer whose parent keeps the text, as the Room does. */
+  function renderControlled(initial: string, onKeyPress = vi.fn()) {
+    const nativeInput = { setSelection: vi.fn(), setSelectionRange: vi.fn(), blur: vi.fn() };
+    const changes: string[] = [];
+    let renderer: any;
+    function ControlledComposer() {
+      const [value, setValue] = React.useState(initial);
+      return (
+        <ConversationComposer
+          value={value}
+          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
+          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
+          focused
+          disabled={false}
+          tagHandles={tagHandles}
+          onAttach={vi.fn()}
+          onBlur={vi.fn()}
+          onChangeText={(next) => {
+            changes.push(next);
+            setValue(next);
+          }}
+          onContentSizeChange={vi.fn()}
+          onFocus={vi.fn()}
+          onKeyPress={onKeyPress}
+          onSend={vi.fn()}
+        />
+      );
+    }
+    act(() => {
+      renderer = create(<ControlledComposer />, {
+        createNodeMock: (element: any) => (element.type === 'TextInput' ? nativeInput : null),
+      });
+    });
+    renderers.push(renderer);
+    const input = () => inputHost(renderer.root);
+    const select = (at: number, end = at) =>
+      act(() => input().props.onSelectionChange({ nativeEvent: { selection: { start: at, end } } }));
+    return { renderer, input, select, nativeInput, changes };
+  }
 
-  it('wraps typed text under the tags: they are spans of the input, with no column of their own', () => {
-    const { renderer } = render({ value: '@ruby @sol make it smaller', tagHandles });
-    const input = inputHost(renderer.root);
-    expect(input.props.value).toBeUndefined();
-    expect(
-      input.findAll((node: any) => node.type === 'Text').map((node: any) => node.props.children),
-    ).toEqual(['@ruby', ' ', '@sol', ' ', 'make it smaller']);
-    expect(renderer.root.findAllByProps({ testID: 'chat-tags' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-ruby-remove' })).toHaveLength(0);
-  });
+  /** A web Backspace with the cursor at `at`, as react-native-web reports it. */
+  function webBackspace(input: any, at: number, modifiers: Record<string, boolean> = {}) {
+    const event = {
+      nativeEvent: { key: 'Backspace', ...modifiers },
+      target: { selectionStart: at, selectionEnd: at },
+      preventDefault: vi.fn(),
+    };
+    act(() => input.props.onKeyPress(event));
+    return event;
+  }
 
-  it('leaves a person or unknown handle as typed text', () => {
-    const { renderer } = render({ value: '@lunchbox hi', tagHandles });
-    expect(inputText(renderer.root)).toBe('@lunchbox hi');
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-lunchbox' })).toHaveLength(0);
-  });
+  it.each(['android', 'ios', 'web'])(
+    'shows a leading tag on %s as plain text of the input, like a later tag',
+    (os) => {
+      platformSetter.setOS(os);
+      const { renderer } = render({ value: '@ruby hi @speedy', tagHandles });
+      const input = inputHost(renderer.root);
+      expect(input.props.value).toBe('@ruby hi @speedy');
+      // No span, overlay or indent: the input draws the text itself.
+      expect(input.findAll((node: any) => node.type === 'Text')).toHaveLength(0);
+      expect(
+        renderer.root.findAll((node: any) => String(node.props.testID ?? '').startsWith('chat-tag')),
+      ).toHaveLength(0);
+      const style = Object.assign({}, ...[input.props.style].flat(Infinity).filter(Boolean));
+      expect(style.textIndent).toBeUndefined();
+      expect(style.paddingTop).toBeUndefined();
+      // Tags alone are still not a message: the mic stays and Send waits.
+      act(() => renderer.update(<ConversationComposer {...renderer.root.findByType(ConversationComposer).props} value="@ruby " />));
+      expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
+      expect(renderer.root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(true);
+    },
+  );
 
-  it('writes typed text through whole, and reports the input\'s own cursor offsets', () => {
-    const onSelectionChange = vi.fn();
-    const { renderer, onChangeText } = render({ value: '@ruby ', tagHandles, onSelectionChange });
-    const input = renderer.root.findByProps({ testID: 'chat-input' });
-    act(() => input.props.onChangeText('@ruby hello'));
-    expect(onChangeText).toHaveBeenCalledWith('@ruby hello');
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 8, end: 8 } } }));
-    expect(onSelectionChange.mock.calls[0][0].nativeEvent.selection).toEqual({ start: 8, end: 8 });
-  });
-
-  it.each(['android', 'ios'])('preserves Select all and handle ranges through leading tags on %s', (os) => {
-    platformSetter.setOS(os);
-    const value = '@ruby @sol hello select all draft';
-    const onSelectionChange = vi.fn();
-    const onEditTags = vi.fn();
-    const { renderer, nativeInput } = render({ value, tagHandles, onSelectionChange, onEditTags });
-    const input = inputHost(renderer.root);
-    // Native Select all, a handle dragged into a tag, and a selected tag word
-    // must stay ranges, even immediately after touching the input.
-    for (const selection of [{ start: 0, end: value.length }, { start: 3, end: 18 }, { start: 0, end: 5 }]) {
-      act(() => input.props.onPressIn());
-      act(() => input.props.onSelectionChange({ nativeEvent: { selection } }));
+  it.each(['android', 'ios'])(
+    'reports the cursor on %s exactly where the person put it, with no tag menu',
+    (os) => {
+      platformSetter.setOS(os);
+      const onSelectionChange = vi.fn();
+      const { renderer, nativeInput } = render({ value: '@ruby @sol hi', tagHandles, onSelectionChange });
+      const input = inputHost(renderer.root);
+      for (const selection of [{ start: 3, end: 3 }, { start: 0, end: 13 }, { start: 0, end: 5 }]) {
+        act(() => input.props.onSelectionChange({ nativeEvent: { selection } }));
+        expect(onSelectionChange).toHaveBeenLastCalledWith({ nativeEvent: { selection } });
+      }
       expect(nativeInput.setSelection).not.toHaveBeenCalled();
       expect(nativeInput.blur).not.toHaveBeenCalled();
-      expect(onEditTags).not.toHaveBeenCalled();
-      expect(onSelectionChange).toHaveBeenLastCalledWith({ nativeEvent: { selection } });
-    }
-    // A collapsed caret still stays out of the tag prefix; tapping it opens
-    // the existing tag editor.
-    act(() => input.props.onPressIn());
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 3, end: 3 } } }));
-    expect(nativeInput.setSelection).toHaveBeenCalledWith(11, 11);
-    expect(nativeInput.blur).toHaveBeenCalledOnce();
-    expect(onEditTags).toHaveBeenCalledOnce();
+      expect(input.props.onPressIn).toBeUndefined();
+    },
+  );
+
+  describe.each(['android', 'ios'])('a native backspace read from the text on %s', (os) => {
+    beforeEach(() => platformSetter.setOS(os));
+
+    it('deletes a whole tag at the start, in the middle and at the end, and puts the cursor where it began', () => {
+      const start = renderControlled('@ruby make it smaller');
+      start.select(5);
+      act(() => start.input().props.onChangeText('@rub make it smaller'));
+      expect(start.changes).toEqual([' make it smaller']);
+      expect(start.nativeInput.setSelection).toHaveBeenLastCalledWith(0, 0);
+
+      const middle = renderControlled('ask @speedy and @sol now');
+      middle.select(11);
+      act(() => middle.input().props.onChangeText('ask @speed and @sol now'));
+      expect(middle.changes).toEqual(['ask  and @sol now']);
+      expect(middle.nativeInput.setSelection).toHaveBeenLastCalledWith(4, 4);
+
+      const end = renderControlled('thanks @sol');
+      end.select(11);
+      act(() => end.input().props.onChangeText('thanks @so'));
+      expect(end.changes).toEqual(['thanks ']);
+      expect(end.nativeInput.setSelection).toHaveBeenLastCalledWith(7, 7);
+    });
+
+    it('empties a field that holds only the tag', () => {
+      const only = renderControlled('@ruby');
+      only.select(5);
+      act(() => only.input().props.onChangeText('@rub'));
+      expect(only.changes).toEqual(['']);
+      expect(inputText(only.renderer.root)).toBe('');
+      expect(only.input().props.placeholder).toBeTruthy();
+    });
+
+    it('takes only the space after a tag, then the tag on the next press', () => {
+      const tagged = renderControlled('@ruby ');
+      tagged.select(6);
+      act(() => tagged.input().props.onChangeText('@ruby'));
+      expect(tagged.changes).toEqual(['@ruby']);
+      expect(tagged.nativeInput.setSelection).not.toHaveBeenCalled();
+      tagged.select(5);
+      act(() => tagged.input().props.onChangeText('@rub'));
+      expect(tagged.changes).toEqual(['@ruby', '']);
+    });
+
+    it('deletes one letter of a handle that is no Room member, and keeps other edits', () => {
+      const typing = renderControlled('@spee');
+      typing.select(5);
+      act(() => typing.input().props.onChangeText('@spe'));
+      act(() => typing.input().props.onChangeText('@spe hello'));
+      expect(typing.changes).toEqual(['@spe', '@spe hello']);
+
+      const cut = renderControlled('@ruby hi');
+      // A selected last letter that is cut is not a backspace.
+      cut.select(4, 5);
+      act(() => cut.input().props.onChangeText('@rub hi'));
+      expect(cut.changes).toEqual(['@rub hi']);
+      expect(cut.nativeInput.setSelection).not.toHaveBeenCalled();
+    });
+
+    it.each(['Delete', 'Backspace'])(
+      'deletes one letter on a forward delete inside a tag reported as %s',
+      (key) => {
+        // iOS reports a forward delete as Backspace; the cursor tells them apart.
+        const onKeyPress = vi.fn();
+        const forward = renderControlled('@ruby hi', onKeyPress);
+        forward.select(4);
+        act(() => forward.input().props.onKeyPress({ nativeEvent: { key } }));
+        act(() => forward.input().props.onChangeText('@rub hi'));
+        expect(onKeyPress).toHaveBeenCalledOnce();
+        expect(forward.changes).toEqual(['@rub hi']);
+        expect(forward.nativeInput.setSelection).not.toHaveBeenCalled();
+
+        const beforeSpace = renderControlled('@ruby hi', onKeyPress);
+        beforeSpace.select(5);
+        act(() => beforeSpace.input().props.onKeyPress({ nativeEvent: { key } }));
+        act(() => beforeSpace.input().props.onChangeText('@rubyhi'));
+        expect(beforeSpace.changes).toEqual(['@rubyhi']);
+      },
+    );
+
+    it('reads the next backspace from the cursor it set after deleting a tag', () => {
+      const pair = renderControlled('@ruby @sol');
+      pair.select(10);
+      act(() => pair.input().props.onChangeText('@ruby @so'));
+      expect(pair.changes).toEqual(['@ruby ']);
+      expect(pair.nativeInput.setSelection).toHaveBeenLastCalledWith(6, 6);
+      act(() => pair.input().props.onChangeText('@ruby'));
+      expect(pair.changes).toEqual(['@ruby ', '@ruby']);
+    });
   });
 
-  it('removes the whole tag a backspace reaches into, and keeps other edits', () => {
-    const { renderer, onChangeText } = render({ value: '@ruby @sol hi', tagHandles });
-    const input = renderer.root.findByProps({ testID: 'chat-input' });
-    // A backspace right after the tags takes the space behind @sol.
-    act(() => input.props.onChangeText('@ruby @solhi'));
-    expect(onChangeText).toHaveBeenLastCalledWith('@ruby hi');
-    act(() => input.props.onChangeText('@rub @sol hi'));
-    expect(onChangeText).toHaveBeenLastCalledWith('@sol hi');
-    act(() => input.props.onChangeText('@ruby @sol h'));
-    expect(onChangeText).toHaveBeenLastCalledWith('@ruby @sol h');
-    // A selection that runs past the tags deletes exactly what it covered.
-    act(() => input.props.onChangeText('@ruby @si'));
-    expect(onChangeText).toHaveBeenLastCalledWith('@ruby @si');
+  describe('a web backspace key', () => {
+    beforeEach(() => platformSetter.setOS('web'));
+
+    it('deletes a whole tag at the start, in the middle and at the end, and puts the cursor where it began', () => {
+      for (const [text, at, next, cursor] of [
+        ['@ruby make it smaller', 5, ' make it smaller', 0],
+        ['ask @speedy and @sol now', 11, 'ask  and @sol now', 4],
+        ['thanks @sol', 11, 'thanks ', 7],
+        ['@ruby', 5, '', 0],
+      ] as const) {
+        const onKeyPress = vi.fn();
+        const composer = renderControlled(text, onKeyPress);
+        const event = webBackspace(composer.input(), at);
+        expect(event.preventDefault).toHaveBeenCalledOnce();
+        expect(onKeyPress).not.toHaveBeenCalled();
+        expect(composer.changes).toEqual([next]);
+        expect(composer.nativeInput.setSelectionRange).toHaveBeenLastCalledWith(cursor, cursor);
+      }
+    });
+
+    it('leaves the space after a tag, a half-typed handle and a word delete to the browser', () => {
+      for (const [text, at, modifiers] of [
+        ['@ruby ', 6, {}],
+        ['@spee', 5, {}],
+        ['@ruby', 5, { altKey: true }],
+        ['@ruby', 5, { ctrlKey: true }],
+        ['@ruby', 5, { metaKey: true }],
+      ] as const) {
+        const onKeyPress = vi.fn();
+        const composer = renderControlled(text, onKeyPress);
+        const event = webBackspace(composer.input(), at, modifiers);
+        expect(event.preventDefault).not.toHaveBeenCalled();
+        expect(onKeyPress).toHaveBeenCalledOnce();
+        expect(composer.changes).toEqual([]);
+      }
+      // A selection is the browser's to delete.
+      const onKeyPress = vi.fn();
+      const selected = renderControlled('@ruby hi', onKeyPress);
+      const event = {
+        nativeEvent: { key: 'Backspace' },
+        target: { selectionStart: 1, selectionEnd: 5 },
+        preventDefault: vi.fn(),
+      };
+      act(() => selected.input().props.onKeyPress(event));
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(selected.changes).toEqual([]);
+    });
+
+    it('writes typed text through as it is, with no tag diffing', () => {
+      const composer = renderControlled('@ruby hi');
+      act(() => composer.input().props.onChangeText('@rub hi'));
+      expect(composer.changes).toEqual(['@rub hi']);
+    });
   });
 
-  it('opens the tag menu from a tap on a tag, but not from a caret the app moved', () => {
-    const onEditTags = vi.fn();
-    const { renderer } = render({ value: '@ruby @sol ', tagHandles, onEditTags });
-    const input = renderer.root.findByProps({ testID: 'chat-input' });
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 0, end: 0 } } }));
-    expect(onEditTags).not.toHaveBeenCalled();
-    act(() => input.props.onPressIn());
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 8, end: 8 } } }));
-    expect(onEditTags).toHaveBeenCalledOnce();
-    // A tap in the typed text only moves the caret.
-    act(() => input.props.onPressIn());
-    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 11, end: 11 } } }));
-    expect(onEditTags).toHaveBeenCalledOnce();
-  });
-
-  it('shows tags read-only while recording, and offers no empty @ tag', async () => {
-    const onEditTags = vi.fn();
-    const { renderer } = render({ value: '', tagHandles, onEditTags });
+  it('shows the leading tags as plain text while recording', async () => {
+    const { renderer } = render({ value: '', tagHandles });
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-empty' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'chat-dictation-tags' })).toHaveLength(0);
 
     const props = renderer.root.findByType(ConversationComposer).props;
-    act(() => renderer.update(<ConversationComposer {...props} value="@ruby " />));
-    const shown = renderer.root
-      .findAll((node: any) => node.props.testID === 'chat-tag-ruby' && typeof node.type === 'string')
-      .filter((node: any) => !inputHost(renderer.root).findAll(() => true).includes(node));
+    act(() => renderer.update(<ConversationComposer {...props} value="@ruby @sol " />));
+    const shown = renderer.root.findAll(
+      (node: any) => node.props.testID === 'chat-dictation-tags' && typeof node.type === 'string',
+    );
     expect(shown).toHaveLength(1);
+    expect(shown[0].props.children).toBe('@ruby @sol');
     expect(shown[0].props.onPress).toBeUndefined();
-    expect(renderer.root.findAllByProps({ testID: 'chat-tag-ruby-edit' })).toHaveLength(0);
   });
 
-  it('appends dictation after the chips with one space and sends it with the tag', async () => {
+  it('appends dictation after the tags with one space and sends it with the tag', async () => {
     let renderer: any;
     const sent = vi.fn();
     function ControlledComposer() {
@@ -1100,7 +1228,7 @@ describe('recipient chips', () => {
     expect(sent).toHaveBeenCalledWith('@ruby make it smaller');
   });
 
-  it('does not send a chip alone when the take caught nothing', async () => {
+  it('does not send a tag alone when the take caught nothing', async () => {
     const { renderer, onSend } = render({ value: '@ruby ', tagHandles });
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});

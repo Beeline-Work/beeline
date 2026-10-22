@@ -331,7 +331,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             !repository ? 'When code work comes up, say in your first reply: this Room has no linked repository; use Room header → Repository → Link or Create. Never send them to another Room. For quick snippets or single files, deliver an attachment; mention linking for ongoing code work. If gh is unavailable, consult beeline-connecting-services for repository and organization setup before proposing a personal GitHub connection.' : '',
             shellLine(shell),
             writableHomeLine(writableHome),
-            'To act outside the sandbox, ask with request_grant(kind:command, target, reason) and run the approved command with run_granted_command in a surface that permits it; never call a host blocker unfixable before asking.',
+            'To act outside the sandbox, ask with request_grant(kind:command, target, reason, purpose) and run the approved command with run_granted_command in a surface that permits it; never call a host blocker unfixable before asking.',
             shell?.available === false
               ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
               : 'If a shell command is refused, try another authorized route; read code with CodeGraph when available, then repository_io(action:search/read).',

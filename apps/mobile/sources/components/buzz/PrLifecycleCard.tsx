@@ -12,6 +12,8 @@ interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
   testID?: string;
   cornerId?: string;
+  /** Hang corner rows beneath their source message. */
+  anchored?: boolean;
   onOpenCorner(cornerId: string): void;
   onOpenUrl(url: string): void;
 }
@@ -20,6 +22,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   message,
   testID,
   cornerId,
+  anchored = false,
   onOpenCorner,
   onOpenUrl,
 }: NotificationLifecycleCardProps) {
@@ -36,7 +39,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   const repositoryRun = items.every(isRepositoryLifecycleItem);
   if (repositoryRun)
     return (
-      <View style={styles.run} testID={testID ?? `notification-run-${message.id}`}>
+      <View style={anchored ? undefined : styles.run} testID={testID ?? `notification-run-${message.id}`}>
         {items.length > 1 ? (
           <Pressable
             style={styles.header}
@@ -60,6 +63,8 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
               <RepositoryLifecycleRow
                 key={item.id}
                 item={item}
+                glyph={anchored}
+                testID={anchored ? `corner-opened-marker-${item.cornerId}` : undefined}
                 onOpenCorner={onOpenCorner}
                 onOpenUrl={onOpenUrl}
               />

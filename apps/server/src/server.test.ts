@@ -1104,6 +1104,14 @@ describe('daemon live command push', () => {
       const message = JSON.parse(raw.toString()) as Record<string, unknown>;
       if (message.type === 'agent-sign-in') frames.push(message);
     });
+    const usageFrames: unknown[] = [];
+    socket.on('message', (raw) => {
+      const frame = JSON.parse(raw.toString());
+      if (frame.type === 'usage-refresh') usageFrames.push(frame);
+    });
+    live.publish({ type: 'usage-refresh', roomId: '', agentId: 'other-agent' });
+    live.publish({ type: 'usage-refresh', roomId: '', agentId });
+    await vi.waitFor(() => expect(usageFrames).toEqual([{ type: 'usage-refresh' }]));
     const attemptId = '00000000-0000-4000-8000-000000000001';
     const base = { type: 'agent-sign-in', roomId: '', attemptId } as const;
     live.publish({ ...base, agentId: 'another-agent', step: 'start', cardId: 'c'.repeat(64) });

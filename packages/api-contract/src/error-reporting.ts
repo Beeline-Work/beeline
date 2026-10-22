@@ -50,3 +50,31 @@ export function privateErrorEvent<T>(input: T): T {
   // locals, attachments, arbitrary contexts/tags, session replay, or log payloads.
   return output as T;
 }
+
+const ERROR_REPORT_WINDOW_MS = 60 * 60 * 1000;
+const ERROR_REPORT_HOURLY_CEILING = 100;
+
+/** One instance per SDK/process. Admission happens after privacy filtering, including SDK fatal events. */
+export function createErrorEventFilter(now: () => number = Date.now): <T>(input: T) => T | null {
+  const reported = new Map<string, number>();
+  return <T>(input: T): T | null => {
+    const event = privateErrorEvent(input);
+    const time = now();
+    for (const [key, at] of reported) {
+      if (time - at >= ERROR_REPORT_WINDOW_MS) reported.delete(key);
+    }
+    const data = object(event);
+    const exceptions = object(data.exception).values;
+    const normalize = (value: unknown) => String(value ?? '').replace(/\d+/g, '#');
+    const fingerprint = JSON.stringify(Array.isArray(exceptions) && exceptions.length
+      ? exceptions.map(value => {
+        const exception = object(value);
+        return [String(exception.type ?? 'Error'), normalize(exception.value)];
+      })
+      : [['Message', normalize(data.message)]]);
+    // Only accepted fingerprints enter the map, bounding memory even in a novel-error loop.
+    if (reported.has(fingerprint) || reported.size >= ERROR_REPORT_HOURLY_CEILING) return null;
+    reported.set(fingerprint, time);
+    return event;
+  };
+}

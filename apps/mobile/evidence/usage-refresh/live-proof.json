@@ -1,0 +1,12 @@
+{
+  "requests": 1,
+  "helperFrames": 1,
+  "before": 1792702909.688,
+  "after": 1792703147.331,
+  "windows": [
+    "included usage",
+    "auto usage",
+    "API usage",
+    "Grok Bot"
+  ]
+}

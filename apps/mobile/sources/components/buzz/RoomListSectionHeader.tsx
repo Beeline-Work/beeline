@@ -61,6 +61,8 @@ export function RoomListSectionHeader({
         inset === 'row' && styles.rowInset,
         inset === 'sheet' && styles.sheetInset,
         surface === 'sheet' && styles.sheetSurface,
+        !tapLineHeight && styles.phoneSpacing,
+        onAction && !tapLineHeight && styles.actionSpacing,
         spacing === 'flush' && styles.flushSpacing,
       ]}
     >
@@ -94,8 +96,8 @@ export function RoomListSectionHeader({
             onPress={onAction}
             disabled={actionDisabled}
             accessibilityState={{ disabled: actionDisabled }}
-            hitSlop={ACTION_HIT_SLOP}
-            style={({ pressed }) => [styles.sectionHeaderAction, pressed && styles.pressed]}
+            hitSlop={tapLineHeight ? ACTION_HIT_SLOP : undefined}
+            style={({ pressed }) => [styles.sectionHeaderAction, tapLineHeight && styles.compactAction, pressed && styles.pressed]}
             testID={actionTestID}
           >
             <Ionicons name="add" size={ACTION_GLYPH} color={styles.sectionHeaderActionGlyph.color} />
@@ -106,10 +108,9 @@ export function RoomListSectionHeader({
   );
 }
 
-/** The +'s box is one label line tall, so it never makes the header taller;
- *  the slop carries the rest of its 44 px tap area. */
-const ACTION_GLYPH = 16;
-const LABEL_LINE = typeRoles.sectionHead.lineHeight;
+/** Phones use a full target; desktop keeps its compact mark and tap-line wrapper. */
+const ACTION_GLYPH = 22;
+const LABEL_LINE = typeRoles.sectionLabel.lineHeight;
 const ACTION_HIT_SLOP = {
   top: (44 - LABEL_LINE) / 2,
   bottom: (44 - LABEL_LINE) / 2,
@@ -130,6 +131,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: hull.space.md,
       backgroundColor: hull.bgTerminal,
     },
+    phoneSpacing: { paddingTop: hull.space.md },
+    actionSpacing: { paddingTop: 0, paddingBottom: 0, minHeight: 44 },
     contentInset: { paddingHorizontal: 0 },
     rowInset: { paddingHorizontal: hull.space.sm },
     sheetInset: { paddingHorizontal: HULL_SHEET_INSET },
@@ -137,31 +140,32 @@ const styles = StyleSheet.create((theme) => {
     flushSpacing: { paddingTop: 0 },
     sectionHeaderText: {
       ...Typography.default('semiBold'),
-      ...hull.type.sectionHead,
+      ...hull.type.sectionLabel,
+      lineHeight: hull.type.sectionCount.lineHeight,
       color: hull.textMuted,
       flex: 1,
     },
     tapLine: { minHeight: 44, justifyContent: 'center' },
     sectionHeaderAction: {
-      width: ACTION_GLYPH,
-      height: LABEL_LINE,
+      width: 44,
+      height: 44,
       marginLeft: hull.space.sm,
       alignItems: 'center',
       justifyContent: 'center',
     },
+    compactAction: { width: ACTION_GLYPH, height: LABEL_LINE },
     sectionHeaderActionGlyph: { color: hull.accent },
     pressed: { opacity: 0.7 },
     disabled: { opacity: 0.42 },
     wordAction: { marginLeft: hull.space.sm },
     wordActionText: {
       ...Typography.default('semiBold'),
-      ...hull.type.sectionHead,
+      ...hull.type.sectionLabel,
       color: hull.accent,
     },
     // Held to the label's line so the count never makes the header taller.
     sectionCount: {
-      ...hull.type.meta,
-      lineHeight: hull.type.sectionHead.lineHeight,
+      ...hull.type.sectionCount,
       color: hull.ledgerQuiet,
     },
   };

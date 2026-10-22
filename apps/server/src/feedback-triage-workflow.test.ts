@@ -140,6 +140,10 @@ describe('feedback-triage workflow', () => {
       await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
         VALUES($1,$2,$3,'Synthetic request','message')`,[`walk-${n}`,room,CREATOR]);
     }
+    // Reproduction walk-scope: the operator's internal traffic must never be reserved.
+    await database.query(`UPDATE workspaces SET internal=true WHERE id=$1`,[WORKSPACE]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+      SELECT 'internal-'||n,$1,$2,'Synthetic internal traffic','message' FROM generate_series(1,29650) n`,[ROOM,CREATOR]);
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('walk-start',$1,$2,'Start walk')`,[TRIAGE_CORNER,CREATOR]);
     const turn = cornerTurn('walk-start');
     await expect(saveWorkflow(database,turn,{contract:WORKSPACE_WALK_CONTRACT})).resolves.toMatchObject({slug:'workspace-walk'});
@@ -147,7 +151,9 @@ describe('feedback-triage workflow', () => {
     const { runId } = await startWorkflow(database,turn,{name:'workspace-walk',roleBindings:{triager:TRIAGER}});
     await handoff(database,turn,{runId,outcome:'started',contents:{}});
     const targets = await database.query<{workspace_id:string}>('SELECT * FROM service_review_targets($1,$2)',[TRIAGER,runId]);
-    expect(targets.rows.length).toBeGreaterThanOrEqual(7);
+    expect(targets.rows).toHaveLength(7);
+    expect(targets.rows.map(row=>row.workspace_id)).not.toContain(WORKSPACE);
+    expect((await readServiceReviewPage(database,TRIAGER,runId,WORKSPACE)).rows).toEqual([]);
     await expect(handoff(database,turn,{runId,outcome:'reviewed',attempt:1,contents:{receipts:[],findings:[]}}))
       .rejects.toThrow('receipt is required');
     const receipts = [];
@@ -174,8 +180,8 @@ describe('feedback-triage workflow', () => {
       .resolves.toMatchObject({state:'done',status:'done'});
     const completed = await database.query('SELECT * FROM service_review_visits WHERE run_id=$1 AND completed_at IS NOT NULL',[runId]);
     expect(completed.rows).toHaveLength(targets.rows.length);
-    console.log(`Demonstrated daily-workspace-walk: ${targets.rows.length} active workspaces fully read; incomplete receipts refused`);
-  });
+    console.log(`Demonstrated walk-scope: internal traffic excluded; ${targets.rows.length} active workspaces fully read; incomplete receipts refused`);
+  }, 60_000);
 
   it('does no seed or description writes on the second migration startup', async () => {
     // Model an upgrade: fixtures predate the newly introduced markers.

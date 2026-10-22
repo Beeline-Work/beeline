@@ -51,6 +51,7 @@ export type KnownMessageReference = {
 };
 
 export type CornerLifecycleView = {
+  readonly mergeQueue?: { readonly headSha: string; readonly combinedSha?: string };
   readonly lifecycle: 'working' | 'in-review' | 'unknown' | 'done';
   readonly branch?: string;
   readonly checks: 'pending' | 'passing' | 'failing' | 'unknown';
@@ -508,6 +509,10 @@ export type AgentGrantView = {
   readonly target: string;
   /** Product name for a connection-install permission; never an authority target. */
   readonly appName?: string;
+  readonly purpose?: string;
+  readonly touches?: string;
+  readonly capabilities?: string;
+  readonly machine?: string;
   readonly reason: string;
   readonly status: AgentGrantStatus;
   readonly requestedBy: RoomViewIdentity;

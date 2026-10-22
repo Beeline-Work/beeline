@@ -177,3 +177,29 @@ it('an account switch drops the old data and the old read, then shows the new ac
   await act(async () => releases.shift()!('second account'));
   expect(current.data).toBe('second account');
 });
+
+it('CR1: event cooldown grows to a cap without polling and resets after success', async () => {
+  vi.useFakeTimers();
+  const load = vi.fn().mockRejectedValue(new Error('offline'));
+  let current: any;
+  function Reader() {
+    current = useObservedResource('backoff', { load, retryBackoffMs: { initial: 1000, max: 30000 }, subscribe: observeRoomResource('backoff') });
+    return null;
+  }
+  const push = () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'backoff' } });
+  await act(async () => { mount(<Reader />); });
+  let reads = 1;
+  for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+    await act(async () => { vi.advanceTimersByTime(delay - 1); push(); });
+    expect(load).toHaveBeenCalledTimes(reads);
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(load).toHaveBeenCalledTimes(reads);
+    await act(async () => push());
+    expect(load).toHaveBeenCalledTimes(++reads);
+  }
+  load.mockResolvedValue('recovered');
+  await act(async () => { vi.advanceTimersByTime(30000); push(); });
+  expect(current.data).toBe('recovered');
+  await act(async () => push());
+  expect(load).toHaveBeenCalledTimes(reads + 2);
+});

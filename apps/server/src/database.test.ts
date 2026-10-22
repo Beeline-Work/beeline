@@ -415,7 +415,7 @@ describe('a terminated checked-out connection never wedges the pool', () => {
     });
     expect(postgresPoolConfig('postgres://app', 1, 'migration')).toMatchObject({
       application_name: 'beeline_migration',
-      options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+      options: `-c jit=off -c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
     });
   });
 
@@ -874,7 +874,7 @@ describe('PostgresDatabase reconnects', () => {
       application_name: 'beeline_enrichment',
     });
     expect(postgresPoolConfig('postgres://owner', 1, 'long-running')).toMatchObject({
-      statement_timeout: 2_000, options: '-c lock_timeout=500ms',
+      statement_timeout: 2_000, options: '-c jit=off -c lock_timeout=500ms',
     });
   });
 

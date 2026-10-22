@@ -2032,10 +2032,12 @@ export async function requestGrant(
   args: JsonObject,
   deps: AgentGrantDeps = agentGrantDepsFromEnv(),
 ): Promise<string> {
+  const purpose = stringArg(args, 'purpose')?.trim();
+  if (!purpose || purpose.length > 240) throw new Error('purpose is required: explain what you want to do and why in 1–240 characters');
   const kind = stringArg(args, 'kind');
   if (kind === 'shared_asset') {
     if (args.ttl !== undefined) throw new Error('shared asset isolation must be standing');
-    return requestSharedAssetIsolation({ category: args.target, reason: args.reason }, deps);
+    return requestSharedAssetIsolation({ category: args.target, reason: args.reason, purpose: args.purpose, touches: args.touches, capabilities: args.capabilities }, deps);
   }
   if (!isRequestableAgentGrantKind(kind)) {
     throw new Error(`kind must be one of ${REQUESTABLE_AGENT_GRANT_KINDS.join(', ')}`);
@@ -2075,6 +2077,9 @@ export async function requestGrant(
     kind,
     target,
     reason,
+    purpose,
+    ...(args.touches !== undefined ? { touches: stringArg(args, 'touches') } : {}),
+    ...(args.capabilities !== undefined ? { capabilities: stringArg(args, 'capabilities') } : {}),
     ...(ttl !== undefined ? { ttlSeconds: ttl } : {}),
     ...(script ? { script } : {}),
   });
@@ -2133,6 +2138,8 @@ export async function requestSharedAssetIsolation(
   args: JsonObject,
   deps: AgentGrantDeps = agentGrantDepsFromEnv(),
 ): Promise<string> {
+  const purpose = stringArg(args, 'purpose')?.trim();
+  if (!purpose || purpose.length > 240) throw new Error('purpose is required: explain what you want to do and why in 1–240 characters');
   const category = stringArg(args, 'category');
   if (!isSharedAssetCategory(category))
     throw new Error(`category must be one of ${SHARED_ASSET_CATEGORIES.join(', ')}`);
@@ -2140,7 +2147,9 @@ export async function requestSharedAssetIsolation(
   if (!reason || reason.length > AGENT_GRANT_REASON_MAX_LENGTH)
     throw new Error('reason must explain the failure in at most 1000 characters');
   const result = await deps.execute('requestAgentGrant', {
-    roomId: deps.roomId, kind: 'shared_asset', target: category, reason,
+    roomId: deps.roomId, kind: 'shared_asset', target: category, reason, purpose,
+    ...(args.touches !== undefined ? { touches: stringArg(args, 'touches') } : {}),
+    ...(args.capabilities !== undefined ? { capabilities: stringArg(args, 'capabilities') } : {}),
   });
   if (result.status !== 'pending' || result.auto !== false)
     throw new Error('shared asset isolation did not open a human approval');
@@ -2676,10 +2685,10 @@ export async function runGrantedCommand(
   const output = typeof result.output === 'string' && result.output ? result.output : '(no output)';
   const refused =
     result.writeRefused === true
-      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files; for host work there, ask with request_grant(kind:command, target, reason), then use run_granted_command.'
+      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files; for host work there, ask with request_grant(kind:command, target, reason, purpose), then use run_granted_command.'
       : '';
   const recovery = result.sandboxFailure === true
-    ? '\nFor host work, open a corner and ask with request_grant(kind:command, target, reason), then use run_granted_command.'
+    ? '\nFor host work, open a corner and ask with request_grant(kind:command, target, reason, purpose), then use run_granted_command.'
     : '';
   return `ran under grant ${grantId}: ${verdict}\n${output}${refused}${recovery}`;
 }
@@ -2802,7 +2811,9 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'report':
     case 'report_feedback':
-    case 'notify_feedback_fixed': return execute(name);
+    case 'notify_feedback_fixed':
+    case 'send_operator_system_dm':
+    case 'read_operator_system_dm': return execute(name);
     case 'dispatch_release': return execute(name);
     case 'approve_merge':
     case 'merge_corner':
@@ -3235,6 +3246,17 @@ async function executeAgentOperation(
           ...(args.releaseHoldId !== undefined ? { releaseHoldId: args.releaseHoldId } : {}),
         }),
       );
+    case 'send_operator_system_dm':
+      return JSON.stringify(await daemonExecute('sendOperatorSystemDm', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        recipients: args.recipients as string | string[], text: String(args.text ?? ''),
+      }));
+    case 'read_operator_system_dm':
+      return JSON.stringify(await daemonExecute('readOperatorSystemDm', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), sendId: String(args.sendId ?? ''),
+      }));
     case 'order_corner_merge':
       return JSON.stringify(
         await daemonExecute('orderCornerMerge', {
@@ -3483,8 +3505,7 @@ async function executeAgentOperation(
       );
     case 'post': {
       const cornerId = typeof args.cornerId === 'string' && args.cornerId
-        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-      if (!cornerId) throw new Error('address is required outside a corner');
+        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim() || requiredEnv('BEELINE_DAEMON_ROOM_ID');
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(

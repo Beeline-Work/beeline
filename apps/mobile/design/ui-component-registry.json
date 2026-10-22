@@ -3,7 +3,6 @@
   "fingerprintMode": "layout-shell-v2",
   "components": {
     "components/AnimatedOverlay.tsx": ["AnimatedBlurBackdrop"],
-    "components/BubblePressable.tsx": ["AnimatedPressable", "BubblePressable"],
     "components/bubblePressableFeedback.ts": [],
     "components/buzz/ActivityTimeline.tsx": [
       "ActivityTimeline",
@@ -12,6 +11,7 @@
       "TurnStepsLine",
       "row"
     ],
+    "components/buzz/GrantRequestCard.tsx": ["GrantRequestCard"],
     "components/buzz/AgentProfileView.tsx": ["AgentProfileView"],
     "components/buzz/AgentSignInCard.tsx": [
       "AgentSignInCard",
@@ -109,7 +109,7 @@
       "OtherWorkflowRuns",
       "WorkflowLine"
     ],
-    "components/buzz/CornerOpenedMarker.tsx": ["CornerOpenedMarker"],
+    "components/buzz/CornerOpenedMarker.tsx": ["CornerOpenedMarker", "CornerOpenedMarkers"],
     "components/buzz/CornerOpenToast.tsx": ["CornerOpenRow", "CornerOpenToast"],
     "components/buzz/CornerStatusLine.tsx": ["CornerStatusLine"],
     "components/buzz/CornerWaitingPulse.tsx": ["CornerWaitingPulse"],
@@ -173,7 +173,8 @@
     "components/buzz/HullMenuTrigger.tsx": ["HullMenuTrigger"],
     "components/buzz/HullSwitch.tsx": ["HullSwitch"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
-    "components/buzz/IndexRow.tsx": ["IndexRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron"],
+    "components/buzz/IndexRow.tsx": ["IndexRow",
+      "TranscriptFactRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron"],
     "components/buzz/Ledger.tsx": [
       "Byline",
       "Container",
@@ -572,9 +573,6 @@
     },
     "components/AnimatedOverlay.tsx": {
       "966fb974068f5f26b0db": 1
-    },
-    "components/BubblePressable.tsx": {
-      "686ddf35376800939e3b": 1
     },
     "components/buzz/ActivityTimeline.tsx": {
       "05b096611958b873d706": 1,

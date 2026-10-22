@@ -146,3 +146,16 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 });
+
+
+it('an explicit refresh bypasses the automatic interval and posts a new snapshot', async () => {
+  const run = vi.fn(async () => JSON.stringify(QUOTA_AXI_CODEX_CURSOR_REPORT));
+  const post = vi.fn(async () => undefined);
+  const reader = new HarnessQuotaReader({ agentId: 'manual', slots: new Map(), run, post, launch: () => ({ command: 'node', args: [] }) });
+  const env = { CODEX_HOME: '/agent/codex' };
+  await reader.publish('codex', env);
+  await reader.publish('codex', env);
+  await reader.publish('codex', env, true);
+  expect(run).toHaveBeenCalledTimes(2);
+  expect(post).toHaveBeenCalledTimes(2);
+});

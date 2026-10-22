@@ -12,6 +12,7 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 export function ShowMoreRow({
   accessibilityLabel,
   disabled = false,
+  expanded,
   inset = 'row',
   label,
   onPress,
@@ -19,6 +20,8 @@ export function ShowMoreRow({
 }: {
   accessibilityLabel?: string;
   disabled?: boolean;
+  /** When set, this row discloses optional detail in a transcript card. */
+  expanded?: boolean;
   /** `row` aligns with page rows; `sheet` with sheet rows; `none` is flush. */
   inset?: 'row' | 'sheet' | 'none';
   /** Sentence case, with the count when it is known: `Show 6 more`. */
@@ -30,7 +33,7 @@ export function ShowMoreRow({
     <Pressable
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      accessibilityState={{ disabled, ...(expanded !== undefined ? { expanded } : {}) }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -42,10 +45,10 @@ export function ShowMoreRow({
       ]}
       testID={testID}
     >
-      <Text numberOfLines={1} style={styles.label}>
+      <Text numberOfLines={1} style={[styles.label, expanded !== undefined && styles.disclosureLabel]}>
         {label}
       </Text>
-      <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
+      <ChevronGlyph color={expanded !== undefined ? styles.disclosureLabel.color : styles.chevron.color} direction={expanded === undefined ? 'right' : expanded ? 'up' : 'down'} size={CHEVRON_ROW_SIZE} />
     </Pressable>
   );
 }
@@ -65,6 +68,7 @@ const styles = StyleSheet.create((theme) => {
     pressed: { backgroundColor: hull.bgPressed },
     disabled: { opacity: 0.42 },
     label: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
+    disclosureLabel: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
     chevron: { color: hull.textMuted },
   };
 });

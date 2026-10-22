@@ -23,7 +23,7 @@ vi.mock('@livekit/rtc-node', () => ({
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class { constructor(readonly data: Int16Array) {} },
 }));
 import { VoiceRoomRuntime, spokenReport, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
-import { AuraSpeech, VoiceQuotaError } from './voice-providers.js';
+import { AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -189,6 +189,28 @@ function conversationService(humans = 2) {
   };
   return { service, speech };
 }
+
+it.each(['Ruby', 'Dr. Ruby', 'Ruby!', '🌻 Ruby'])('VOICE-LABEL-1: %s labels are removed before synthesis and transcript writes', async (name) => {
+  const { service, speech } = conversationService(1);
+  const outputs = [`${name} (@ruby) [#beeline/item/previous]: A small ceramic planter.`,
+    '[#beeline/item/previous]: Choose one with drainage.'];
+  const fetcher = vi.fn(async () => new Response(outputs.shift()!.match(/.{1,12}/gu)!.map(content =>
+    'data: ' + JSON.stringify({ choices: [{ delta: { content } }] }) + '\n\n').join('') + 'data: [DONE]\n\n'));
+  const brain = new OpenRouterVoiceBrain('test', fetcher as typeof fetch);
+  service.config.brain.answer.mockImplementation((...args) => brain.answer(...args));
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby, suggest a small gift.');
+    await runtime.utterance('human', 'Ruby, what should I look for?');
+    expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual([
+      'A small ceramic planter.', 'Choose one with drainage.',
+    ]);
+    expect(service.recordAnswer.mock.calls.map(call => call[2])).toEqual([
+      'A small ceramic planter.', 'Choose one with drainage.',
+    ]);
+    expect(state.audio.captureFrame).toHaveBeenCalledTimes(2);
+  } finally { await runtime.close(); }
+});
 
 it('routes unnamed solo speech to the last active agent despite the initial first-agent selection', async () => {
   const { service } = conversationService(1);

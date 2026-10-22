@@ -82,7 +82,7 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.turnRunning || facts.workerQueued) return { state: 'working' };
   if (facts.reviewerActive) return { state: 'review' };
   if (facts.blocker || facts.owed === true) return { state: 'waiting', ...facts.blocker };
-  if (facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
+  if (facts.lifecycle?.mergeQueue || facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
       facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending') ||
       checksNotReported(facts.lifecycle))
     return { state: 'review' };

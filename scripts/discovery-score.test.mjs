@@ -33,13 +33,38 @@ test('infrastructure failure never becomes model failure or an overall pass rate
 });
 test('cleanup action must follow creation', () => {
     const c = corpus.find((c) => c.id === 'schedule-cleanup');
-    const calls = [{ name: 'wake', args: { action: 'create', trigger: 'schedule', cadence: { everyMinutes: 10 } }, succeeded: true }, { name: 'wake', args: { action: 'delete', trigger: 'schedule', scheduleId: 'fixture' }, succeeded: true }];
+    const calls = [{ name: 'wake', args: { action: 'create', trigger: 'schedule', cadence: { everyMinutes: 10 } }, succeeded: true }, { name: 'wake', args: { action: 'delete', scheduleId: 'fixture' }, succeeded: true }];
     assert.equal(grade(c, { completed: true, calls, text: '', effects: { remainingSchedules: 0 } }).status, 'pass');
     assert.equal(grade(c, { completed: true, calls: [...calls].reverse(), text: '' }).status, 'partial');
+});
+test('a successful required action survives the harness deadline, but planned and refused calls do not', () => {
+    const timed = { ...observation, completed: false, error: 'Harness turn timed out' };
+    assert.equal(grade(usage, timed).status, 'pass');
+    assert.match(grade(usage, timed).reason, /turn incomplete/);
+    assert.equal(grade(usage, { ...timed, calls: [{ name: 'read', args: { facet: 'usage' }, succeeded: false }] }).status, 'incomplete');
+    assert.equal(grade(usage, { ...timed, calls: [] }).status, 'incomplete');
+    const meal = corpus.find(c => c.id === 'meal');
+    assert.equal(grade(meal, { ...timed, text: 'Vegetable stew' }).status, 'incomplete');
+    assert.equal(grade(meal, { ...timed, calls: [{ name: 'app_tool', args: { app: 'beeline:onboarding', tool: 'repository' }, succeeded: true }] }).status, 'fail');
+    const cleanup = corpus.find(c => c.id === 'schedule-cleanup');
+    const calls = [{ name: 'wake', args: { action: 'create', trigger: 'schedule', cadence: { everyMinutes: 10 } }, succeeded: true }, { name: 'wake', args: { action: 'delete', scheduleId: 'fixture' }, succeeded: true }];
+    assert.equal(grade(cleanup, { ...timed, calls }).status, 'incomplete');
+    assert.equal(grade(cleanup, { ...timed, calls, effects: { remainingSchedules: 0 } }).status, 'pass');
+    const artifact = corpus.find(c => c.id === 'text-file');
+    const posted = [{ name: 'post_artifact', args: { mime: 'text/plain' }, succeeded: true }];
+    assert.equal(grade(artifact, { completed: true, calls: posted, text: '' }).status, 'pass');
+    assert.equal(grade(artifact, { ...timed, calls: posted }).status, 'incomplete');
 });
 test('an intended safe action or a refused call never counts as performed', () => {
     assert.equal(grade(usage, { completed: true, calls: [{ name: 'read', args: { facet: 'usage' }, succeeded: false }], text: '' }).status, 'partial');
     assert.equal(grade(usage, { completed: true, calls: [{ name: 'read', args: { facet: 'usage' } }], text: '' }).status, 'partial');
+});
+test('fixture identifiers bind to real generated objects before grading', () => {
+    const c = corpus.find(c => c.id === 'earlier-file');
+    const bindings = { 'fixture-message': 'message-from-service', 'fixture-attachment': 'object-from-service' };
+    const calls = [{ name: 'read', args: { facet: 'attachment', messageId: bindings['fixture-message'], attachmentId: bindings['fixture-attachment'] }, succeeded: true }];
+    assert.equal(grade(c, { completed: true, calls, text: '', bindings }).status, 'pass');
+    assert.equal(grade(c, { completed: true, calls, text: '' }).status, 'partial');
 });
 test('wording needs a trace-bound judge and never overrides a forbidden action', () => {
     const c = corpus.find((c) => c.id === 'meal');

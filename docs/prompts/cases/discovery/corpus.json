@@ -894,7 +894,9 @@
               "call": "wake",
               "args": {
                 "action": "delete",
-                "trigger": "schedule"
+                "scheduleId": {
+                  "matches": ".+"
+                }
               }
             }
           ]

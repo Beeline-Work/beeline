@@ -65,8 +65,18 @@ per-case transcripts, intended calls, MCP success/refusal, effects and grades.
 Pass needs the right capability and next step/arguments. Partial means the
 capability is right but its next step is wrong. Forbidden behavior fails even
 if another rule passes. A refused or merely planned safe call cannot count as
-performed. Infrastructure failures and unrun cases remain incomplete; the
-overall rate is null until the entire cohort completes.
+performed. A harness deadline does not erase an already successful required
+action: its row can pass on recorded calls and effects while its turn stays
+incomplete. `turnsCompleted` counts finished turns separately from scored rows.
+Provider/startup failures, unproved actions and unrun cases remain incomplete;
+the overall rate is null until every case has a supported score.
+
+Output directories must sit outside every Git checkout. The runner rejects a
+nested path so the test agent cannot infer the implementing corner from its
+working directory. The local service has an empty, enabled memory store. The
+historical-file case uploads a real CSV attachment, and the workflow-read case
+starts a real paused workflow. Their template identifiers are replaced with
+service-generated IDs and retained as `bindings` alongside the observations.
 
 Tool/argument rules are deterministic. Text matchers are provisional screens.
 Use only the checked-in [wording judge prompt](cases/discovery/judge.md) for
@@ -79,12 +89,25 @@ The judge cannot override tool failures, forbidden actions, effects or cleanup.
 node --import tsx scripts/discovery-grade.mjs --run /path/result.json --judgments /path/judgments.json --out /path/judged.json
 ```
 
-This preserves the original run. Missing or stale judgments stay provisional,
+This preserves the original run and records the grading source hashes separately
+from the execution source hashes. Missing or stale judgments stay provisional,
 and the official rate remains null. Rank observed partial/fail cases by user
 impact and frequency; include the actual behavior, linked case/transcript, and
 specific missing skill/tool instruction. Send the gaps to Ruby, who opens fix
 corners. Each fix must pass its previously failing case without losing an
 existing pass. No skill fixes belong in this harness/corpus change.
+
+## Retained preliminary Cursor run
+
+The [first retained attempt table and ranked gaps](cases/discovery/cursor-baseline.md)
+and [per-case evidence](cases/discovery/cursor-baseline.json) cover the complete
+corpus attempt. They are preliminary: deadlines leave cases incomplete and the
+current wrapper intercepts safe local Room replies. The System DM member-case
+rule also rejects any post, including a harmless refusal in the fixture Room.
+Do not publish these counts as an official overall rate or as proof of a
+broadcast. The report records the harness corrections required before that rate
+is supported. The [Cursor smoke](cases/discovery/cursor-smoke-confirmed.json)
+separately proves usage and real schedule creation/deletion.
 
 ## Sunday replay
 

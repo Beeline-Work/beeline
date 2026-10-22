@@ -5,10 +5,12 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { getPublicKey } from '@beeline/nostr';
 import { migrate } from '../apps/server/src/database.ts';
-import { MemoryObjectStorage, PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { MemoryObjectStorage, PgliteDatabase, describedWorkflow } from '../apps/server/src/test-support.ts';
+import { createAgentCommand } from '../apps/server/src/agent-command.ts';
+import { saveWorkflow, startWorkflow } from '../apps/server/src/workflow-runs.ts';
 import { TokenAuth } from '../apps/server/src/auth.ts';
 import { PhoneService } from '../apps/server/src/phone-service.ts';
 import { DaemonService } from '../apps/server/src/daemon-service.ts';
@@ -44,24 +46,57 @@ export async function fixture(profile) {
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined, live);
     const storage = new MemoryObjectStorage();
     await storage.listen();
-    const daemon = new DaemonService(database, live);
-    const server = createBeelineServer({ database, auth, phone, daemon, live,
-        mediaMaximumBytes: 8 * 1024 * 1024, objectService: new ObjectService(database, storage.asStorage(), 'http://placeholder') });
+    await database.query(`INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live')`, [WORKSPACE]);
+    const daemon = new DaemonService(database, live, undefined, undefined, false, undefined, false, undefined, undefined, undefined, { enabled: true, live: true });
+    const serverOptions = { database, auth, phone, daemon, live, mediaMaximumBytes: 8 * 1024 * 1024 };
+    const server = createBeelineServer(serverOptions);
     await new Promise((done) => server.listen(0, '127.0.0.1', done));
     const origin = `http://127.0.0.1:${server.address().port}`;
+    const objects = new ObjectService(database, storage.asStorage(), origin);
+    serverOptions.objectService = objects;
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ exchangeToken: exchange.exchangeToken }) });
     const { daemonToken } = await exchanged.json();
     if (!daemonToken)
         throw new Error('Local daemon authentication failed');
-    return { database, phone, origin, daemonToken, daemon, async close() {
+    return { database, phone, origin, daemonToken, daemon, objects, async close() {
             server.closeAllConnections();
             await new Promise((done) => server.close(done));
             await storage.close();
             await database.close();
         } };
 }
+export async function assertIsolatedDiscoveryDirectory(directory) {
+    await mkdir(directory, { recursive: true });
+    const git = spawnSync('git', ['-C', directory, 'rev-parse', '--show-toplevel'], { stdio: 'ignore' });
+    if (git.status === 0)
+        throw new Error('Discovery must run outside every Git checkout; choose an output directory outside the repository');
+    if (git.error || git.status !== 128)
+        throw new Error('Unable to verify that the discovery directory has no repository');
+}
+export async function prepareCaseFixtures(f, testCase, room) {
+    const bindings = {};
+    if (testCase.id === 'earlier-file') {
+        const uploaded = await f.objects.uploadArtifact(HUMAN, Buffer.from('company,amount\nExample Supplies,42\n'), 'text/plain', 'invoice.csv');
+        const messageId = createHash('sha256').update(`${room}:fixture-attachment`).digest('hex');
+        await f.phone.execute('sendRoomMessage', { roomId: room, messageId, text: 'Spreadsheet for the attachment evaluation.', attachments: [{ url: uploaded.url, name: 'invoice.csv', mimeType: uploaded.mimeType, size: uploaded.size }] }, HUMAN);
+        bindings['fixture-message'] = messageId;
+        bindings['fixture-attachment'] = uploaded.objectId;
+    }
+    if (testCase.id === 'workflow-read') {
+        const messageId = createHash('sha256').update(`${room}:fixture-workflow`).digest('hex');
+        await f.phone.execute('sendRoomMessage', { roomId: room, messageId, text: 'Prepare the test workflow and pause for approval.' }, HUMAN);
+        const command = await createAgentCommand(f.database, { roomId: room, agentId: AGENT, sourceMessageId: messageId, reason: 'discovery-fixture' });
+        const contract = describedWorkflow({ version: 1, name: 'discovery-fixture', description: 'Wait for explicit fixture approval.', roles: ['operator'], start: 'approval', handoffs: { approval: { kind: 'gate', role: 'operator', requires: ['decision'], on: { approved: 'done', rejected: 'failed' } }, done: { kind: 'terminal', status: 'done' }, failed: { kind: 'terminal', status: 'failed' } } });
+        await saveWorkflow(f.database, command, { contract });
+        const run = await startWorkflow(f.database, command, { name: 'discovery-fixture', roleBindings: { operator: AGENT } });
+        await f.database.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
+        bindings['fixture-run'] = run.runId;
+    }
+    return bindings;
+}
 export async function runCase(f, testCase, directory, options = {}) {
+    await assertIsolatedDiscoveryDirectory(directory);
     const room = randomUUID();
     const root = join(directory, testCase.id);
     await mkdir(root, { recursive: true });
@@ -72,6 +107,7 @@ export async function runCase(f, testCase, directory, options = {}) {
     await f.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`, [room, WORKSPACE, testCase.id]);
     await f.database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`, [WORKSPACE, room, HUMAN, AGENT, MEMBER]);
+    const bindings = await prepareCaseFixtures(f, testCase, room);
     const operatorHome = options.operatorHome ?? '/home/lunchbox';
     const overlay = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'cursor', sharedSkills: [], grantedHostRoutes: [] });
     const runtime = { version: 2, communityId: WORKSPACE, pairedBy: HUMAN,
@@ -90,14 +126,15 @@ export async function runCase(f, testCase, directory, options = {}) {
     await writeFile(configPath, JSON.stringify(runtime), { mode: 0o600 });
     const core = new ThinDaemonCore(runtime, configPath, config, { daemonApi: new DaemonApiClient(f.origin, f.daemonToken, AGENT), reconcileHeartbeatMs: 60000 });
     const abort = new AbortController();
-    await f.phone.execute('sendRoomMessage', { roomId: room, messageId: createHash('sha256').update(`${room}:request`).digest('hex'), wakes: [AGENT], text: `@nerd ${testCase.request}` }, testCase.requesterRole === 'member' ? MEMBER : HUMAN);
+    const request = Object.entries(bindings).reduce((text, [placeholder, value]) => text.replaceAll(placeholder, value), testCase.request);
+    await f.phone.execute('sendRoomMessage', { roomId: room, messageId: createHash('sha256').update(`${room}:request`).digest('hex'), wakes: [AGENT], text: `@nerd ${request}` }, testCase.requesterRole === 'member' ? MEMBER : HUMAN);
     const queued = await f.database.query(`SELECT state FROM agent_commands WHERE room_id=$1`, [room]);
     if (!queued.rows.length)
         throw new Error('Fixture request did not create an agent command');
     const running = core.run({ pollMs: 100, signal: abort.signal });
     let coreError;
     running.catch((error) => { coreError = error; });
-    const observation = { id: testCase.id, room, completed: false, calls: [], text: '', execution: 'local-service' };
+    const observation = { id: testCase.id, room, completed: false, calls: [], text: '', execution: 'local-service', bindings };
     try {
         const readyDeadline = Date.now() + 60000;
         while (!core.activeRoomIds().includes(room)) {
@@ -148,6 +185,9 @@ export function validateNerdProfile(profile) {
         throw new Error('Profile must be the current Nerd configuration, not a model substitute');
     return profile;
 }
+export function isDiscoveryInfrastructureRefusal(error) {
+    return /auth|login|startup|not signed in|balance exhausted|payment required|API error.*(?:401|402|403|429)/i.test(error ?? '');
+}
 export async function runDiscovery({ out, only, operatorHome, timeoutMs, profilePath } = {}) {
     const profile = profilePath ? JSON.parse(await readFile(profilePath, 'utf8')) : undefined;
     validateNerdProfile(profile);
@@ -159,10 +199,13 @@ export async function runDiscovery({ out, only, operatorHome, timeoutMs, profile
     if (existsSync(join(directory, 'result.json')))
         throw new Error('Use a fresh output directory; existing evidence must not be overwritten');
     await mkdir(directory, { recursive: true });
+    await assertIsolatedDiscoveryDirectory(directory);
     const observations = [];
     const sourceHashes = Object.fromEntries(await Promise.all(['scripts/discovery-live.mjs', 'scripts/discovery-launch.mjs', 'scripts/discovery-mcp.mjs', 'scripts/discovery-score.mjs', 'docs/prompts/cases/discovery/corpus.json', 'apps/body/src/beeline-skill.ts', 'apps/body/src/prompt-assembly.ts', 'apps/body/src/minimal-tool-surface.ts', 'apps/body/dist/read-only-mcp.js'].map(async (path) => [path, createHash('sha256').update(await readFile(join(ROOT, path))).digest('hex')])));
     const metadata = { sourceHashes, configurationParity: profile ? { agentId: profile.agentId, profileSha256: createHash('sha256').update(JSON.stringify(profile)).digest('hex') } : 'unverified; smoke only', agent: 'nerd', model: 'grok-4.7-xhigh', effort: null, harness: 'cursor', harnessVersion: execFileSync('cursor-agent', ['--version'], { encoding: 'utf8' }).trim(), commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(), startedAt: new Date().toISOString() };
-    const f = await fixture(profile);
+    metadata.caseTimeoutMs = timeoutMs ?? 300000;
+    metadata.independentWorkspaces = true;
+    metadata.repositoryFreeWorkingDirectories = true;
     const save = async () => {
         const summary = summarize(selected, observations);
         const judgePrompt = await readFile(join(ROOT, 'docs/prompts/cases/discovery/judge.md'), 'utf8');
@@ -171,25 +214,25 @@ export async function runDiscovery({ out, only, operatorHome, timeoutMs, profile
         await writeFile(join(directory, 'result.json'), JSON.stringify(result, null, 2) + '\n');
         return result;
     };
-    try {
-        for (const testCase of selected) {
+    for (const testCase of selected) {
             let observed;
+            let f;
             try {
+                f = await fixture(profile);
                 observed = await runCase(f, testCase, directory, { operatorHome, timeoutMs });
             }
             catch (error) {
                 observed = { id: testCase.id, completed: false, calls: [], text: '', error: error.message };
             }
+            finally {
+                await f?.close();
+            }
             observations.push(observed);
             const result = await save();
             console.log(`${testCase.id}: ${result.rows.at(observations.length - 1).status}${observed.error ? ` (${observed.error})` : ''}`);
             // Authentication/startup failures are infrastructure gaps, not sixty model failures.
-            if (observed.error && (!observed.calls.length || /auth|login|startup/i.test(observed.error)))
+            if (isDiscoveryInfrastructureRefusal(observed.error))
                 break;
-        }
-    }
-    finally {
-        await f.close();
     }
     return save();
 }

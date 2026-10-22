@@ -1756,7 +1756,9 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
         subject: GITHUB_SUBJECT,
         verb: 'requested another check of',
         object: { text: pullRequest, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
-        consequence: `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`,
+        consequence: row.check_stuck
+          ? `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`
+          : `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
       });
       await advanceCorner(db, row.corner_id, {
         kind: 'checks', result: 'failing', sourceMessageId: line.id, followup: true,

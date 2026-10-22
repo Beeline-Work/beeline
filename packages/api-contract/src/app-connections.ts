@@ -114,7 +114,7 @@ export function builtinBeelineApp(input: string, context = ''): string | undefin
   const text = input.trim().toLowerCase();
   if (/^beeline:[a-z][a-z0-9_]*$/.test(text)) return text;
   const request = `${text} ${context.toLowerCase()}`;
-  if (/\b(?:repo|repository|repositories)\b/.test(request)
+  if (/\b(?:repo|repository|repositories|github)\b/.test(request)
     && /\b(?:link|connect|set[ -]up|choose|card)\b/.test(request)
     && !/\b(?:payment|wallet|stripe)\b/.test(request)) return 'beeline:onboarding';
   const key = text.replace(/[ _-]/g, '');

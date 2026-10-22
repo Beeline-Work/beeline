@@ -36,7 +36,7 @@ it('hides the new tools when server eligibility is absent', async () => {
 });
 
 it.each(['GitHub', 'link my repository', 'connect my repo', 'GitHub repository'])('R-REPO-CARD: routes %s to the repository card before connector search', async service => {
-  const result = JSON.parse(await callAgentTool('connect', {mode:'ensure', service, reason:'Connect the Room repository', continuation:'Show the repository card.'}, 'repo-connect'));
+  const result = JSON.parse(await callAgentTool('connect', {mode:'ensure', service, reason:`Connect ${service}`, continuation:`Connect my ${service} account.`}, 'repo-connect'));
   expect(result).toMatchObject({status:'ready', app:'beeline:onboarding'});
   await callAgentTool('app_tool', {app:result.app, tool:'repository', args:{}}, 'repo-card');
   expect(calls.some(call => call.name === 'postRepositoryOnboarding')).toBe(true);

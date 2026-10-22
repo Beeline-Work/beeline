@@ -57,10 +57,10 @@ try {
   const discovered = JSON.parse(await callAgentTool('connect', { mode: 'discover' }, 'discover'));
   assert.ok(discovered.capabilities.includes('beeline:onboarding'));
   for (const service of ['GitHub', 'link my repository', 'connect my repo']) {
-    const serverRoute = await daemon.execute('connect', {...authority,service,reason:'Connect repository',continuation:'Show the repository card.'}, agentId);
+    const serverRoute = await daemon.execute('connect', {...authority,service,reason:`Connect ${service}`,continuation:`Connect my ${service} account.`}, agentId);
     assert.equal(serverRoute.app, 'beeline:onboarding');
     const connected = JSON.parse(await callAgentTool('connect', { mode: 'ensure', service,
-      reason: 'Connect the Room repository', continuation: 'Show the repository card.' }, 'connect'));
+      reason: `Connect ${service}`, continuation: `Connect my ${service} account.` }, 'connect'));
     assert.equal(connected.app, 'beeline:onboarding');
     await callAgentTool('app_tool', { app: connected.app, tool: 'repository', args: {} }, 'card');
     const updated = await phone.readRoom(workspace.roomId, identityId);

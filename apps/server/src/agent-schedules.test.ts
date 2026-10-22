@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
@@ -65,6 +66,20 @@ describe('agent schedule cadence', () => {
 });
 
 describe('manager schedule phone operations', () => {
+  it('rejects missing and blank names before creating a schedule', async () => {
+    const database = await fixture();
+    try {
+      const daemon = new DaemonService(database, new LiveHub());
+      for (const title of [undefined, '', '   ']) {
+        await expect(daemon.execute('createAgentSchedule', {
+          title, roomId: ROOM, agentId: AGENT, prompt: 'Check work.',
+          cadence: { kind: 'interval', everyMinutes: 60 },
+        }, AGENT)).rejects.toThrow(/title/);
+      }
+      expect((await database.query('SELECT id FROM agent_schedules')).rowCount).toBe(0);
+    } finally { await database.close(); }
+  });
+
   it('lists and deletes an agent-created Room schedule', async () => {
     const database = await fixture();
     try {
@@ -73,7 +88,7 @@ describe('manager schedule phone operations', () => {
       const startsAt = Math.floor(Date.now() / 1_000) + 120;
       const created = await daemon.execute(
         'createAgentSchedule',
-        {
+        { title: 'Scheduled check',
           roomId: ROOM,
           agentId: AGENT,
           cadence: { kind: 'interval', everyMinutes: 15, startsAt },
@@ -113,16 +128,12 @@ describe('manager schedule phone operations', () => {
       const phone = new PhoneService(database, 'http://local.test');
       const daemon = new DaemonService(database, new LiveHub());
       const cadence = { kind: 'interval' as const, everyMinutes: 60 };
-      await daemon.execute(
-        'createAgentSchedule',
-        { roomId: ROOM, agentId: AGENT, cadence, prompt: 'Post the daily launch report to the Room.' },
-        AGENT,
-      );
-      await daemon.execute(
-        'createAgentSchedule',
-        { roomId: ROOM, agentId: AGENT, cadence, prompt: 'Replay the nightly prompt log.' },
-        AGENT,
-      );
+      for (const prompt of ['Post the daily launch report to the Room.', 'Replay the nightly prompt log.']) {
+        await database.query(
+          `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+           VALUES($1,$2,$3,$4,$4,$5::jsonb,$6,'2030-01-01')`,
+          [randomUUID(), WORKSPACE, ROOM, AGENT, JSON.stringify(cadence), prompt]);
+      }
       // A row that already stored the generic label before this derivation.
       await database.query(
         `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,title)
@@ -183,7 +194,7 @@ describe('manager schedule phone operations', () => {
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',
-        {
+        { title: 'Scheduled check',
           agentId: AGENT,
           roomId: CORNER,
           prompt: 'Check the launch candidate.',
@@ -227,7 +238,7 @@ describe('manager schedule phone operations', () => {
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',
-        {
+        { title: 'Scheduled check',
           roomId: ROOM,
           agentId: AGENT,
           cadence: { kind: 'interval', everyMinutes: 1 },
@@ -392,7 +403,7 @@ describe('agent schedule background posting', () => {
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',
-        {
+        { title: 'Scheduled check',
           agentId: AGENT,
           roomId: ROOM,
           prompt: 'Post exactly: hello @methoxine-debug',
@@ -524,7 +535,7 @@ describe('agent tool schedule daemon operations', () => {
           [elsewhere, JSON.stringify([OWNER, AGENT])]);
       }
       const daemon = new DaemonService(database, new LiveHub());
-      const create = (agentId: string, roomId: string) => daemon.execute('createAgentSchedule', {
+      const create = (agentId: string, roomId: string) => daemon.execute('createAgentSchedule', { title: 'Scheduled check',
         agentId, roomId, prompt: 'Audit velocity.',
         cadence: { kind: 'interval', everyMinutes: 60 },
       }, agentId);
@@ -588,7 +599,7 @@ describe('agent tool schedule daemon operations', () => {
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',
-        {
+        { title: 'Ping the Room',
           agentId: AGENT,
           roomId: ROOM,
           prompt: 'Ping the Room.',
@@ -644,7 +655,7 @@ describe('agent tool schedule daemon operations', () => {
       await expect(
         daemon.execute(
           'createAgentSchedule',
-          {
+          { title: 'Scheduled check',
             agentId: OTHER_AGENT,
             roomId: ROOM,
             prompt: 'Impersonation.',
@@ -664,7 +675,7 @@ describe('agent tool schedule daemon operations', () => {
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',
-        {
+        { title: 'Scheduled check',
           agentId: AGENT,
           roomId: ROOM,
           prompt: 'Ping the Room.',
@@ -761,7 +772,7 @@ describe('agent tool schedule daemon operations', () => {
       await expect(
         daemon.execute(
           'createAgentSchedule',
-          {
+          { title: 'Scheduled check',
             agentId: AGENT,
             roomId: ROOM,
             prompt: '   ',
@@ -773,7 +784,7 @@ describe('agent tool schedule daemon operations', () => {
       await expect(
         daemon.execute(
           'createAgentSchedule',
-          {
+          { title: 'Scheduled check',
             agentId: AGENT,
             roomId: ROOM,
             prompt: 'Ping.',
@@ -785,7 +796,7 @@ describe('agent tool schedule daemon operations', () => {
       await expect(
         daemon.execute(
           'createAgentSchedule',
-          {
+          { title: 'Scheduled check',
             agentId: AGENT,
             roomId: ROOM,
             prompt: 'Ping.',
@@ -798,7 +809,7 @@ describe('agent tool schedule daemon operations', () => {
       await expect(
         daemon.execute(
           'createAgentSchedule',
-          {
+          { title: 'Scheduled check',
             agentId: AGENT,
             roomId: ROOM,
             prompt: 'Ping.',

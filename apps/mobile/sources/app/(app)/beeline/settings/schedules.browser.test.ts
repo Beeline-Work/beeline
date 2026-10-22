@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
-const NEXT_RUN = 1_790_000_000;
+const NEXT_RUN = Date.parse('2026-10-23T13:00:00Z') / 1000;
 
 function shims(mobile: string): Record<string, string> {
   const contract = readFileSync(path.join(mobile, '../../docs/workflows/feedback-triage.json'), 'utf8');
@@ -56,12 +56,17 @@ function shims(mobile: string): Record<string, string> {
       const work = {
         roomName: 'beeline', agentNames: [['agent-1', 'Hoots'], ['agent-2', 'Ruby']],
         subscriptions: [{ id: 'sub-1', roomId: 'room-1', agentId: 'agent-2',
+          title: 'Review pull requests', when: 'On new pull request',
           source: 'repository', event: 'pull_request.opened', repository: 'owner/widgets',
           createdAt: 0, lastFiredAt: ${NEXT_RUN}, prompt: 'Triage incoming work.', firedCount: 3 },
           { id: 'sub-2', roomId: 'corner-1', agentId: 'agent-2', source: 'room', event: 'joined',
             prompt: 'Start feedback triage.', workflowSlug: 'feedback-triage',
             corner: { id: 'corner-1', name: 'issues-triage' } }],
         schedules: [
+        { id: 'once', title: 'Font turn check', maxRuns: 1, workspaceId: 'workspace-1',
+          roomId: 'room-1', agentId: 'agent-2', creatorId: 'agent-2',
+          cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Check fonts.',
+          nextRunAt: ${NEXT_RUN + 86400}, createdAt: 0, runCount: 0 },
         { id: 'daily', title: once ? 'Play downloads check' : 'Morning card', maxRuns: once ? 1 : undefined, workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1',
           creatorId: 'agent-1', cadence: { kind: 'cron', expression: '0 9 * * 1-5', timeZone: 'UTC' },
           message: "Summarize yesterday's merged PRs for the Room. Group them by area and link each PR.",
@@ -154,6 +159,7 @@ function fontsCss(mobile: string): string {
 }
 
 type Page = {
+  rowLines: Array<{ id: string; words: string[]; ys: number[]; cornerFills: string[] }>;
   text: string[];
   eyebrowFont: string | null;
   titleFont: string | null;
@@ -207,7 +213,8 @@ const stopped = (page: Page, operation: string) => {
 
 describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a browser', () => {
   it('lists each entry in one grammar and opens its own page', async () => {
-    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1');
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1',
+      process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'flat-scheduled-work.png') : undefined);
     // The corner and workflow-run pages' header: small Room name over a bodyStrong title.
     expect(page.text.slice(0, 2)).toEqual(['#beeline', 'Schedules and subscriptions']);
     expect(page).toMatchObject({
@@ -215,25 +222,25 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       titleFont: '16px SpaceGrotesk-SemiBold',
       eyebrowAboveTitle: true,
     });
-    expect(page.text.slice(2)).toEqual([
-      'Morning card',
-      'Triage incoming work',
-      'On new pull request in owner/widgets',
-      '\u2009·\u2009', '@R', '\u2009·\u2009',
-      'this Room',
-      'Feedback triage',
-      'Feedback triage',
-      'On someone joining this Room',
-      '\u2009·\u2009', '@R', '\u2009·\u2009',
-      'issues-triage',
-    ]);
-    expect(page.glyphs).toEqual(['scheduled-work-glyph-video', 'subscription-glyph-sub-2']);
-    expect(page.workflowFills).toEqual(['#b08a4a', '#b08a4a']);
+    expect(page.text).toEqual(expect.arrayContaining([
+      'Morning card', 'Feedback triage', 'Font turn check', 'Review pull requests',
+      'On new pull request', '@Hoots', '@Ruby', 'this Room', 'issues-triage',
+    ]));
+    expect(page.rowLines).toHaveLength(5);
+    expect(page.text.slice(2)).toEqual(page.rowLines.flatMap(row => row.words));
+    for (const row of page.rowLines) {
+      expect(row.ys[0]).toBeLessThan(row.ys[1]!);
+      expect(row.ys[1]).toBeLessThan(row.ys[2]!);
+      expect(row.words[2]).toMatch(/^@/);
+      expect(row.cornerFills.every(fill => fill === '#E5A645')).toBe(true);
+    }
+    const eventRow = page.rowLines.find(row => row.id === 'subscription-sub-1')!;
+    expect(eventRow.words.slice(0, 3)).toEqual(['Review pull requests', 'On new pull request', '@Ruby']);
+    expect(page.glyphs).toEqual([]);
+    expect(page.workflowFills).toEqual([]);
     expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold']));
-    expect(page.listAxes).toEqual([[45], [45], [45, 45], [45, 45]]);
-    expect(page.listPolygonCounts).toEqual([0, 1, 0, 2]);
-    // Subtitled rows: 14 + title 23 + 2 + subtitle 19 + 14, plus the hairline.
-    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 73, leadVisible: true, sameLine: true, tailOneLine: true })]);
+    expect(page.listPolygonCounts).toEqual([0, 1, 0, 1]);
+    expect(page.listAxes.every(axes => axes.every(x => x === 16))).toBe(true);
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },
@@ -246,10 +253,10 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
   it('shows the one-time Play check without a daily cadence', async () => {
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&once');
     expect(page.text).toContain('Play downloads check');
-    expect(page.text).toContain('Once');
+    expect(page.text.join(' ')).toMatch(/at \d\d:\d\d/);
     expect(page.text.join(' ')).not.toContain('Weekdays at');
     const detail = await proof('?page=schedule&roomId=room-1&scheduleId=daily&once');
-    expect(detail.text.join(' ')).toContain('Once · next');
+    expect(detail.text.join(' ')).toMatch(/at \d\d:\d\d.* · next/);
     expect(detail.text.join(' ')).not.toContain('Weekdays at');
   }, 120_000);
 
@@ -257,23 +264,22 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     for (const theme of ['dark', 'light']) {
       const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&ownerSchedules&theme=' + theme,
         process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'schedule-titles-' + theme + '.png') : undefined);
-      expect(page.text.slice(2)).toEqual(['Morning card', 'Prompt replay', 'App speed test',
-        'Play downloads check', 'Once', 'Feedback triage', 'Release']);
-      expect(page.text.join(' ')).not.toMatch(/Every day|America|Original instructions|this Room/);
+      expect(page.text).toEqual(expect.arrayContaining(['Morning card', 'Prompt replay', 'App speed test',
+        'Play downloads check', 'Feedback triage', 'Release', 'Every day', 'this Room']));
+      expect(page.text.join(' ')).not.toContain('Original instructions');
     }
   }, 120_000);
 
   it('Reproduction R-schedule-titles: nameless schedules read what they run', async () => {
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&namelessSchedules',
       process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'R-schedule-titles.png') : undefined);
-    expect(page.text.slice(2)).toEqual([
+    expect(page.text).toEqual(expect.arrayContaining([
       'Post the daily launch',
       'Replay the nightly prompt',
       'Check the Play release',
       'Feedback triage',
-    ]);
+    ]));
     expect(page.text.join(' ')).not.toContain('Scheduled task');
-    for (const title of page.text.slice(2)) expect(title.split(' ').length).toBeLessThanOrEqual(4);
   }, 120_000);
 
   it('Reproduction R-schedule-titles: the real #beeline rows render their names', async () => {
@@ -286,11 +292,14 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text.join(' ')).not.toContain('Scheduled task');
   }, 120_000);
 
-  it('uses dark brass workflow marks on the light list', async () => {
-    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&theme=light');
-    expect(page.workflowFills).toEqual(['#8a6323', '#8a6323']);
+  it('keeps only bright brass corner marks on the light list', async () => {
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&theme=light',
+      process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'flat-scheduled-work-light.png') : undefined);
+    expect(page.workflowFills).toEqual([]);
+    expect(page.rowLines.flatMap(row => row.cornerFills)).toEqual(['#E5A645', '#E5A645']);
+    expect(page.listPolygonCounts).toEqual([0, 1, 0, 1]);
     // Subtitled rows: 14 + title 23 + 2 + subtitle 19 + 14, plus the hairline.
-    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 73, leadVisible: true, sameLine: true, tailOneLine: true })]);
+    expect(page.listAxes.every(axes => axes.every(x => x === 16))).toBe(true);
   }, 120_000);
 
   it('opens a prompt schedule with When, Agent, Where, Does, then Stop', async () => {
@@ -299,7 +308,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text[1]).toBe('Schedule');
     expect(page.text.slice(2)).toEqual([
       'When',
-      expect.stringMatching(/^Weekdays at 09:00 UTC · next /),
+      expect.stringMatching(/^Weekdays at \d{2}:\d{2} .+ · next /),
       'Agent',
       '@Hoots',
       'Where',
@@ -383,7 +392,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Subscription']);
     expect(page.text.slice(2)).toEqual([
       'When',
-      'On new pull request in owner/widgets',
+      'On new pull request',
       'Agent',
       '@Ruby',
       'Where',

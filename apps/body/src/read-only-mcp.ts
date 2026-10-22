@@ -2805,17 +2805,11 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       if (args.action !== undefined && args.action !== 'request') throw new Error('action must be request or list');
       return execute(name);
     case 'connect': {
-      const query = String(args.query ?? '');
-      const repositoryDiscovery = args.mode === 'discover' && /\brepo(?:sitor(?:y|ies)|s)?\b/i.test(query) &&
-        /\b(?:link(?:ing)?|connect(?:ing)?|install(?:ing)?|card|setup)\b/i.test(query);
-      const builtin = builtinBeelineApp(String(args.service ?? args.query ?? '')) ??
-        (repositoryDiscovery ? 'beeline:onboarding' : undefined);
+      const builtin = builtinBeelineApp(String(args.service ?? args.query ?? ''));
       const capabilities = await availableCapabilities(builtin === 'beeline:onboarding');
       if (builtin && capabilities.includes(builtin) && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
         return JSON.stringify({ status: 'ready', app: builtin,
           next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` });
-      if (repositoryDiscovery) return JSON.stringify({status:'unavailable',app:'beeline:onboarding',capabilities,
-        next:'Repository cards are unavailable in this Room. Ask in a Workspace Room, or ask a Workspace owner to link its repository from the Room header.'});
       if (args.mode === 'status') return JSON.stringify({ readiness: await execute('connectors_status'), capabilities });
       if (args.mode === 'discover') return JSON.stringify({ integrations: args.query ? JSON.parse(await execute('find_connectors')) : [], capabilities });
       if (args.mode !== undefined && args.mode !== 'ensure') throw new Error('mode must be discover, status or ensure');

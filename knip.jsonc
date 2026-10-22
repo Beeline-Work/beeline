@@ -92,8 +92,6 @@
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
-        // Temporarily registered as the Expo root for the recorded Android walkthrough.
-        "scripts/onboarding-native-proof.tsx",
         "scripts/unread-dot-clear-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/reply-recovery-proof.mjs",

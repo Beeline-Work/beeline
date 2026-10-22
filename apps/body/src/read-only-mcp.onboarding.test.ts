@@ -34,23 +34,3 @@ it('hides the new tools when server eligibility is absent', async () => {
   const discovered = JSON.parse(await callAgentTool('connect',{mode:'discover'},'discover'));
   expect(discovered.capabilities).not.toContain('beeline:onboarding');
 });
-
-it.each(['repo linking card','connect a repository','repository setup card'])(
-  'R-onb-13/16: discovers the repository capability for %s without searching app connectors',async query=>{
-    const result=JSON.parse(await callAgentTool('connect',{mode:'discover',query},'discover'));
-    expect(result).toMatchObject({status:'ready',app:'beeline:onboarding'});
-    expect(calls.some(call=>call.name==='findConnectors')).toBe(false);
-  });
-
-it('R-onb-14: gives a recovery step when repository cards are unavailable',async()=>{
-  vi.stubGlobal('fetch',async()=>Response.json({resolution:'none'}));
-  const result=JSON.parse(await callAgentTool('connect',{mode:'discover',query:'repo linking card'},'discover'));
-  expect(result).toMatchObject({status:'unavailable',app:'beeline:onboarding'});
-  expect(result.next).toContain('Workspace owner');
-  expect(calls.some(call=>call.name==='findConnectors')).toBe(false);
-});
-
-it('keeps payment-wallet discovery on the app connector route',async()=>{
-  await callAgentTool('connect',{mode:'discover',query:'Link wallet'},'discover');
-  expect(calls.some(call=>call.name==='findConnectors')).toBe(true);
-});

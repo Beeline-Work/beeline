@@ -15,22 +15,6 @@ vi.mock('react-native-svg', async () => {
     ReactModule.createElement(name, props, props.children);
   return { default: host('Svg'), Polygon: host('Polygon'), Polyline: host('Polyline') };
 });
-vi.mock('react-native-unistyles', () => ({
-  useUnistyles: () => ({ theme: { buzz: { accent: '#E5A645' } } }),
-  StyleSheet: {
-    create: (factory: (theme: unknown) => unknown) =>
-      factory({
-        buzz: {
-          space: { xs: 4, sm: 8, md: 16 },
-          type: { meta: { fontSize: 13, lineHeight: 18 } },
-          proseRegular: 'SpaceGrotesk-Regular',
-          ledgerQuiet: '#8a8a93',
-          ledgerBody: '#e8e6e3',
-          accent: '#E5A645',
-        },
-      }),
-  },
-}));
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
 
 import { CORNER_BRANCH_POINTS, CornerBranchGlyph } from './CornerBranchGlyph';
@@ -72,17 +56,19 @@ function textOf(renderer: ReactTestRenderer): string {
   return lines.join(' | ');
 }
 
+const pressable = (renderer: ReactTestRenderer) =>
+  renderer.root.find((node: any) => node.type === 'Pressable' && node.props.testID === 'marker');
+
 describe('CornerOpenedMarker', () => {
   it('names the corner the message opened and opens it on tap', () => {
     const onOpen = vi.fn();
     const renderer = render(
       <CornerOpenedMarker title="quiet amber corner" onOpen={onOpen} testID="marker" />,
     );
-    const target = renderer.root.findByType('Pressable' as never);
-    expect(target.props.testID).toBe('marker');
+    const target = pressable(renderer);
     expect(target.props.accessibilityRole).toBe('link');
     expect(target.props.accessibilityLabel).toBe('Open corner quiet amber corner');
-    expect(textOf(renderer)).toBe('Corner opened · #quiet amber corner');
+    expect(textOf(renderer)).toBe('Opened corner #quiet amber corner');
     // The drop-down mark leads the line.
     expect(renderer.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
 
@@ -95,8 +81,8 @@ describe('CornerOpenedMarker', () => {
     const renderer = render(
       <CornerOpenedMarker title="quiet amber corner" closed onOpen={onOpen} testID="marker" />,
     );
-    expect(textOf(renderer)).toBe('Corner closed · #quiet amber corner');
-    act(() => renderer.root.findByType('Pressable' as never).props.onPress());
+    expect(textOf(renderer)).toBe('Closed corner #quiet amber corner');
+    act(() => pressable(renderer).props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });

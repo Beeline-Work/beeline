@@ -188,9 +188,59 @@ it('shares Space Grotesk across grouped rows, standalone adapters and source mar
   expect(families.length).toBeGreaterThan(5);
   for (const family of families) expect(family).toMatch(/^SpaceGrotesk-/);
   const titles = texts.filter((node: any) => node.props.numberOfLines === 2);
-  expect(titles).toHaveLength(3);
-  const marker = texts.find((node: any) => text(node).startsWith('Corner opened'));
-  expect(flatten(marker.props.style).fontFamily).toBe(theme.buzz.type.meta.fontFamily);
+  expect(titles).toHaveLength(4);
+  const marker = texts.find((node: any) => text(node).startsWith('Opened corner'));
+  expect(flatten(marker.props.style).fontFamily).toMatch(/^SpaceGrotesk-/);
   for (const title of titles)
     expect(flatten(title.props.style).fontFamily).toBe(flatten(marker.props.style).fontFamily);
+});
+
+it('draws the call-site corner line as the Room row with the branch mark in front', () => {
+  const fact: ChatDisplayMessage = {
+    id: 'open',
+    text: '',
+    timestamp: 1,
+    isUser: false,
+    daemonFact: {
+      type: 'corner-open',
+      cornerId: 'corner',
+      name: 'font-check-android',
+      objective: 'Check fonts',
+      sourceMessageId: 'dm-source',
+    },
+  };
+  const room = render(
+    foldPrLifecycleRuns(anchorCornerMarkers([fact]))[0].notificationLifecycleRun!.items as any,
+  );
+  let callSite: any;
+  act(() => {
+    callSite = create(<CornerOpenedMarker title="font-check-android" onOpen={() => undefined} />);
+  });
+  const flatten = (style: any): any =>
+    Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
+  // Words, then font family, size, weight and colour of every run of text.
+  const format = (tree: any) => {
+    const [line] = tree.root.findAll(
+      (node: any) => node.type === 'Text' && node.props.numberOfLines === 2,
+    );
+    return {
+      words: text(line),
+      runs: line
+        .findAll((node: any) => node.type === 'Text')
+        .map((node: any) => {
+          const style = flatten(node.props.style);
+          return [
+            style.fontFamily,
+            style.fontSize,
+            style.lineHeight,
+            style.fontWeight,
+            style.color,
+          ];
+        }),
+    };
+  };
+  expect(format(room.tree).words).toBe('Opened corner #font-check-android');
+  expect(format(callSite)).toEqual(format(room.tree));
+  expect(room.tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
+  expect(callSite.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
 });

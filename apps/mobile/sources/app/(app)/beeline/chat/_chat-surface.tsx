@@ -1665,8 +1665,6 @@ export function BuzzChatSurface({
   const {
     workflow: roomWorkflowRun,
     otherLiveRuns: roomOtherLiveRuns,
-    error: workflowError,
-    retry: retryWorkflow,
   } = useRoomWorkflowRun(isCorner ? decodedId : undefined);
   const openRoomWorkflowRun = useCallback((run: WorkflowRunSummaryView) => {
     router.push(workflowRunHref(run));
@@ -6388,8 +6386,6 @@ export function BuzzChatSurface({
                 onOpenWorkflow={openRoomWorkflowRun}
                 workflow={roomWorkflowRun}
                 otherLiveRuns={roomOtherLiveRuns}
-                workflowError={workflowError}
-                onRetryWorkflow={retryWorkflow}
               />
             )}
 

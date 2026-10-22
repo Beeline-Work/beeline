@@ -28,7 +28,7 @@ describe('OIDC and identity HTTP routes', () => {
       headers: { host: alphaTenant.host },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual({ github: true, oidc: true, repositoryOnboarding: true });
+    expect(response.json()).toEqual({ github: true, oidc: true, google: true, repositoryOnboarding: true });
   });
 
   it('E22: recovers only a live Google completion in its own tenant and burns it on cancel', async () => {

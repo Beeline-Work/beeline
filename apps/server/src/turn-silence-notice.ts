@@ -1,4 +1,5 @@
 import { reportToCommander } from './commander.js';
+import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import type { CommandRow } from './agent-command.js';
 /**
  * First silence after a delivered message: one durable Room line, and for a
@@ -120,6 +121,9 @@ export async function reclaimExpiredCommandLeases(
            AND generation_id IS NOT DISTINCT FROM $4`,
         [command.room_id, command.agent_id, command.turn_request_id, command.generation_id],
       );
+      await closeFreeAgentTurn(db, { roomId: command.room_id, agentId: command.agent_id,
+        requestId: command.turn_request_id, generationId: command.generation_id,
+        reason: 'the command lease expired with no live execution' });
       return true;
     });
     if (!completed) continue;
@@ -150,6 +154,7 @@ export async function noteFirstSilence(
     readonly stalled?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
+  if (await database.transaction(db => closeFreeAgentTurn(db, input))) return NO_RESTART;
   // A reply can commit before a delayed watchdog or generation-free receipt.
   // Check before reassignment too: answered work must not move to another agent.
   if ((await database.query(`SELECT 1 FROM messages

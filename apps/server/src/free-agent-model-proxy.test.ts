@@ -390,7 +390,10 @@ describe('free agent model proxy', () => {
     expect(upstream).toEqual([]);
     expect(
       (await db.query(`SELECT detail FROM free_agent_events WHERE kind='allowance_reached'`)).rows,
-    ).toEqual([{ detail: { limit: 'daily' } }, { detail: { limit: 'daily' } }]);
+    ).toEqual([
+      { detail: { limit: 'daily', roomId: ROOM, requestId: 'request' } },
+      { detail: { limit: 'daily', roomId: ROOM, requestId: 'request' } },
+    ]);
   });
 
   it('has no lifetime cap by default: an account past 3M lifetime tokens still spends within its daily cap', async () => {

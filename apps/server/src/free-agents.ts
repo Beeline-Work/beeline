@@ -1,4 +1,5 @@
 import { postRepositoryOnboarding } from './repository-onboarding.js';
+import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
@@ -210,6 +211,8 @@ When they accept, guide them one step at a time, waiting for the result of each 
 
 export const FREE_AGENT_REPOSITORY_GUIDE = `For any request to connect or link a repo, repository or GitHub, call app_tool(app:"beeline:onboarding", tool:"repository", args:{}). For other repository work, discover the repository and starters tools with app_tool(app:"beeline:onboarding"). If the card fails, explain the actual reason and the concrete next step to connect the repository. When a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path. Never explain corners during this onboarding flow.`;
 
+export const FREE_AGENT_TURN_GUIDE = `Before long work, call read(facet:"usage") to check your remaining allowance. If the job will not fit, deliver a smaller useful version or explain the limit up front. End every turn with the deliverable or a clear status explaining what is finished, what stopped, and the next step. Never end on a promise of more work: once your turn ends, no work continues until another message wakes you.`;
+
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
 
@@ -231,6 +234,8 @@ If several members left since your last note, name them all in that one note.
 Leaving the Workspace itself is silent in Beeline; you only hear about leaves and removals in #general.
 
 You have a free daily allowance of model tokens. If it runs out, say so plainly and tell them they can connect their own agent from the Members page to keep going.
+
+${FREE_AGENT_TURN_GUIDE}
 
 ${FREE_AGENT_CONNECT_GUIDE}`;
 }
@@ -805,34 +810,42 @@ export class FreeAgentService {
     }
     // The helper's idle timer is the normal path to sleep; this catches a
     // helper that crashed or never asked, so no Machine runs unattended.
-    const timedOut = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
-      `WITH cancelled AS (
-         UPDATE agent_commands command SET state='cancelled',completed_at=clock_timestamp(),
-           cancellation_reason='free-agent-time-limit'
-         FROM free_agents f WHERE f.removed_at IS NULL AND command.agent_id=f.agent_id AND command.state='claimed'
-           AND command.action IN ('input','resume')
-           AND COALESCE((SELECT turn.started_at FROM agent_turns turn
-             WHERE turn.agent_id=command.agent_id AND turn.room_id=command.room_id
-               AND turn.request_id=command.turn_request_id
-               AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'),command.claimed_at)
-             <clock_timestamp()-make_interval(secs => $1::double precision / 1000)
-         RETURNING command.agent_id,command.room_id,command.turn_request_id
-       ), turns AS (
-         UPDATE agent_turns turn SET status='cancelled',failure_reason='free-agent-time-limit'
-         FROM cancelled WHERE turn.agent_id=cancelled.agent_id AND turn.room_id=cancelled.room_id
-           AND turn.request_id=cancelled.turn_request_id AND turn.status='working'
-       )
-       UPDATE free_agents f SET state='stopped',updated_at=now()
-       WHERE f.removed_at IS NULL AND f.agent_id IN (SELECT agent_id FROM cancelled) AND f.fly_machine_id IS NOT NULL
-       RETURNING f.agent_id,f.fly_machine_id`,
-      [(this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs + 60_000],
-    );
+    const timedOut = await this.database.query<{
+      id: string; agent_id: string; room_id: string; turn_request_id: string; generation_id: string | null;
+    }>(`SELECT command.id,command.agent_id,command.room_id,command.turn_request_id,command.generation_id
+       FROM agent_commands command JOIN free_agents f ON f.agent_id=command.agent_id
+       WHERE f.removed_at IS NULL AND command.state='claimed' AND command.action IN ('input','resume')
+         AND COALESCE((SELECT turn.started_at FROM agent_turns turn
+           WHERE turn.agent_id=command.agent_id AND turn.room_id=command.room_id
+             AND turn.request_id=command.turn_request_id
+             AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'),command.claimed_at)
+           <clock_timestamp()-make_interval(secs => $1::double precision / 1000)
+       ORDER BY command.claimed_at LIMIT 100`,
+      [(this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs + 60_000]);
     for (const row of timedOut.rows) {
+      const stopped = await this.database.transaction(async db => {
+        // Use the same lock order as terminal receipts before changing the command.
+        await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
+          [`silence:${row.room_id}:${row.turn_request_id}:${row.agent_id}`]);
+        const cancelled = await db.query(`UPDATE agent_commands SET state='cancelled',
+          completed_at=clock_timestamp(),cancellation_reason='free-agent-time-limit'
+          WHERE id=$1 AND state='claimed' AND generation_id IS NOT DISTINCT FROM $2`, [row.id,row.generation_id]);
+        if (!cancelled.rowCount) return null;
+        await db.query(`UPDATE agent_turns SET status='cancelled',failure_reason='free-agent-time-limit'
+          WHERE agent_id=$1 AND room_id=$2 AND request_id=$3 AND status='working'`,
+          [row.agent_id,row.room_id,row.turn_request_id]);
+        const machine = (await db.query<{ fly_machine_id: string | null }>(
+          `UPDATE free_agents SET state='stopped',updated_at=now()
+           WHERE agent_id=$1 AND removed_at IS NULL RETURNING fly_machine_id`, [row.agent_id])).rows[0];
+        await closeFreeAgentTurn(db, { roomId: row.room_id, requestId: row.turn_request_id,
+          agentId: row.agent_id, reason: 'free-agent-time-limit' });
+        await recordFreeAgentEvent(db, row.agent_id, 'turn_time_limit');
+        return machine;
+      });
+      if (!stopped) continue;
       acted++;
-      await recordFreeAgentEvent(this.database, row.agent_id, 'turn_time_limit');
-      await this.machines.stop(row.fly_machine_id).catch(error =>
-        this.log(`stop ${row.agent_id.slice(0, 12)}: ${String(error)}`),
-      );
+      if (stopped.fly_machine_id) await this.machines.stop(stopped.fly_machine_id).catch(error =>
+        this.log(`stop ${row.agent_id.slice(0, 12)}: ${String(error)}`));
     }
     const idle = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
       `UPDATE free_agents f SET state='sleeping',updated_at=now()

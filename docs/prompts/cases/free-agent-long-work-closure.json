@@ -1,0 +1,49 @@
+{
+  "id": "free-agent-long-work-closure",
+  "section": "identity",
+  "summary": "A free starter agent checks allowance before a large task and ends with a deliverable or clear status.",
+  "place": "room",
+  "session": {
+    "agentName": "Beebee",
+    "soul": {
+      "name": "Beebee",
+      "instructions": "Before long work, call read(facet:\"usage\") to check your remaining allowance. If the job will not fit, deliver a smaller useful version or explain the limit up front. End every turn with the deliverable or a clear status explaining what is finished, what stopped, and the next step. Never end on a promise of more work: once your turn ends, no work continues until another message wakes you."
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "Build a much stronger browser game with caves, mobs and save/load.",
+      "commandReason": "human_tag"
+    }
+  },
+  "tools": [
+    "Bash"
+  ],
+  "toolResults": {
+    "read": "{\"remainingTokens\": 200, \"resetsAt\": \"midnight UTC\"}"
+  },
+  "pass": {
+    "all": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "usage"
+        }
+      },
+      {
+        "text": {
+          "matches": "smaller|allowance|limit|finished|delivered|continue",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "Now the real work|Writing the full engine|I.ll (?:start|build|write|keep working)",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

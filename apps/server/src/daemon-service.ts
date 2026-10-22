@@ -1,9 +1,10 @@
 import { approvalCardSource } from './approval-card-source.js';
+import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
-import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
+import { FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_TURN_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -3805,6 +3806,8 @@ export class DaemonService {
         `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
       )).rowCount > 0;
       const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
+      if (freeAgent && !row.soul.instructions.includes(FREE_AGENT_TURN_GUIDE))
+        row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_TURN_GUIDE}` };
       if (owner)
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
@@ -4574,6 +4577,8 @@ export class DaemonService {
           input.reasonKind,
         );
       } else if (input.status === 'complete') {
+        await closeFreeAgentTurn(database, { roomId: input.roomId, requestId: input.requestId,
+          agentId, generationId: input.generationId, normal: true });
         // A successful turn does not always post a durable message. A textless
         // Room turn that opened a corner settles through the server's corner
         // card alone, so the terminal receipt must own the same durable

@@ -77,6 +77,76 @@ describe('first-silence notice', () => {
     await database.close();
   });
 
+  describe('Reproduction free-turn-closure', () => {
+    beforeEach(async () => {
+      await database.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys)
+        VALUES($1,$2,$3,'test')`, [AGENT, WORKSPACE, HUMAN]);
+    });
+
+    it.each([
+      ['allowance', 'provider allowance is spent', 'allowance-spent', 'midnight UTC'],
+      ['timeout', 'free-agent-time-limit', 'hiccup', '15-minute limit'],
+      ['crash', 'runtime_exited: code=1', 'hiccup', 'runtime failure'],
+    ])('%s: receipt replay posts exactly one closing line', async (_, reason, reasonKind, expected) => {
+      const requestId = 'e'.repeat(64);
+      await ask(database, requestId);
+      const service = new DaemonService(database, new LiveHub());
+      const input = { roomId: ROOM, requestId, generationId: 'g1', status: 'failed' as const,
+        reason, reasonKind: reasonKind as 'hiccup' | 'allowance-spent' };
+      await service.execute('postAgentTurnReceipt', input, AGENT);
+      await noteFirstSilence(database, new LiveHub(), { ...input, agentId: AGENT });
+      const rows = await database.query(`SELECT text FROM messages WHERE card->>'freeAgentClosed'='true'`);
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0].text).toContain(expected);
+      expect(rows.rows[0].text).toMatch(/continue/);
+      expect((await commandState(database, (await database.query<{ id: string }>(
+        `SELECT id FROM agent_commands WHERE turn_request_id=$1`, [requestId])).rows[0].id))?.state).toBe('complete');
+    });
+
+    it('closes a textless end using the allowance refusal for that exact request', async () => {
+      const requestId = 'e'.repeat(64);
+      await ask(database, requestId);
+      await database.query(`INSERT INTO free_agent_events(agent_id,kind,detail)
+        VALUES($1,'allowance_reached',$2::jsonb)`, [AGENT,
+        JSON.stringify({ limit: 'daily', roomId: ROOM, requestId })]);
+      await new DaemonService(database, new LiveHub()).execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: 'g1', status: 'complete',
+      }, AGENT);
+      expect((await failureLine(database, requestId))?.text).toContain('midnight UTC');
+    });
+
+    it('normal final reply posts no closing line', async () => {
+      const requestId = 'e'.repeat(64);
+      await ask(database, requestId);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text,request_id)
+        VALUES($1,$2,$3,'Here is the finished game',$4)`, ['f'.repeat(64),ROOM,AGENT,requestId]);
+      await new DaemonService(database, new LiveHub()).execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: 'g1', status: 'complete',
+      }, AGENT);
+      expect(await failureLine(database, requestId)).toBeUndefined();
+    });
+
+    it('an empty complete receipt closes once with an honest status', async () => {
+      const requestId = 'e'.repeat(64);
+      await ask(database, requestId);
+      const service = new DaemonService(database, new LiveHub());
+      for (let i = 0; i < 2; i++) await service.execute('postAgentTurnReceipt', {
+        roomId: ROOM, requestId, generationId: 'g1', status: 'complete',
+      }, AGENT);
+      expect((await failureLine(database, requestId))?.text).toContain('ended without a reply');
+    });
+
+    it('a dead lease closes without a helper receipt', async () => {
+      const requestId = 'e'.repeat(64);
+      await ask(database, requestId);
+      await database.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '10 minutes'`);
+      await reclaimExpiredCommandLeases(database,new LiveHub());
+      await reclaimExpiredCommandLeases(database,new LiveHub());
+      expect((await failureLine(database,requestId))?.text).toContain('runtime failure');
+      expect((await database.query(`SELECT id FROM messages WHERE card->>'freeAgentClosed'='true'`)).rowCount).toBe(1);
+    });
+  });
+
   it('harness-node-missing-path: writes an actionable Room row from a failed daemon receipt', async () => {
     const requestId = 'f'.repeat(64);
     await ask(database, requestId);

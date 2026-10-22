@@ -952,7 +952,7 @@ describe('connect_app', () => {
           const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
             method: 'POST',
             headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
-            body: JSON.stringify({ ...turn, appId,
+            body: JSON.stringify({ ...turn, appId: 'github',
               ...(operation === 'executeAppTool' ? { tool: 'GITHUB_LIST_REPOSITORIES', arguments: {} } : {}) }),
           });
           const result = await response.json();
@@ -971,6 +971,68 @@ describe('connect_app', () => {
       }
       expect(provider.listTools).not.toHaveBeenCalled();
       expect(provider.execute).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('Reproduction R-APPKEY: connected keys discover and execute over daemon HTTP', async () => {
+    const ids = ['eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'ffffffff-ffff-4fff-8fff-ffffffffffff'];
+    for (const [index, key] of ['github', 'web'].entries()) {
+      await database.query(`INSERT INTO workspace_apps
+        (id,workspace_id,owner_identity_id,app_key,display_name,transport,route,composio_account_id)
+        VALUES($1,$2,$3,$4,$4,'composio','composio','account-fixture')`,
+        [ids[index], WORKSPACE, OWNER, key]);
+    }
+    const provider = fakeComposio();
+    await provider.completeAuth('session-fixture', OWNER);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const server = createBeelineServer({ database, phone: new PhoneService(database, 'http://placeholder'),
+      daemon, live: new LiveHub(), mediaMaximumBytes: 1,
+      auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const call = async (operation: string, args: Record<string, unknown>) => {
+      const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
+        body: JSON.stringify({ ...turn, ...args }),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    try {
+      const workbench = await call('readAgentWorkbench', {});
+      expect(workbench.status).toBe(200);
+      expect(workbench.body.apps).toEqual(expect.arrayContaining(
+        ['github', 'web'].map(appKey => expect.objectContaining({ appKey, status: 'connected' }))));
+      for (const appId of ['github', 'web', 'app:github', ...ids]) {
+        const listed = await call('listAppTools', { appId });
+        expect(listed.status).toBe(200);
+        expect(listed.body.tools).toHaveLength(1);
+        expect(await call('executeAppTool', { appId, tool: 'SLACK_POST_MESSAGE', arguments: { text: 'fixture' } }))
+          .toEqual({ status: 200, body: { status: 'executed', data: { ok: true } } });
+      }
+      for (const operation of ['listAppTools', 'executeAppTool']) {
+        const unknown = await call(operation, { appId: 'unknown-key', tool: 'SLACK_POST_MESSAGE', arguments: {} });
+        expect(unknown.body).toEqual({ error: 'Connected app is unavailable in this Room' });
+      }
+      const other = 'c'.repeat(64);
+      const duplicate = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+      await database.query(`INSERT INTO workspace_apps
+        (id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
+        VALUES($1,$2,$3,'github','GitHub','composio','composio')`, [duplicate, WORKSPACE, other]);
+      // An inaccessible matching key must not make the owner's connection ambiguous.
+      expect((await call('listAppTools', { appId: 'github' })).status).toBe(200);
+      await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+        VALUES($1,NULL,$2,'member')`, [WORKSPACE, other]);
+      for (const operation of ['listAppTools', 'executeAppTool']) {
+        const ambiguous = await call(operation, { appId: 'github', tool: 'SLACK_POST_MESSAGE', arguments: {} });
+        expect(ambiguous.status).toBe(400);
+        expect(ambiguous.body).toEqual({ error:
+          `Connected app key is ambiguous; use an exact app id: ${duplicate}, ${ids[0]}` });
+      }
+      expect((await call('listAppTools', { appId: ids[0] })).status).toBe(200);
+      console.log('Reproduction R-APPKEY: workbench keys github/web discover and execute over HTTP; unknown and ambiguous keys refused');
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }

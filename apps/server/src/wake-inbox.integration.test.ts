@@ -89,7 +89,7 @@ it('demonstrates one digest covering system, subscription, lifecycle, order, rep
   await daemon.execute('report', { ...authority(workerOrder), status: 'blocked', text: 'blocked: report-proof' }, WORKER);
   // An order to this agent also enters the same Room's pending window.
   await daemon.execute('order', { ...authority(workerOrder), address: ROOM, agent: 'inbox', text: 'order-proof' }, WORKER);
-  const schedule = await daemon.execute('createAgentSchedule', { roomId: ROOM, agentId: AGENT,
+  const schedule = await daemon.execute('createAgentSchedule', { title: 'Scheduled check', roomId: ROOM, agentId: AGENT,
     cadence: { kind: 'interval', everyMinutes: 10 }, prompt: 'scheduler-proof' }, AGENT);
   await db.query("UPDATE agent_schedules SET next_run_at=now()-interval '1 second' WHERE id=$1", [schedule.scheduleId]);
   expect(await new AgentScheduleLoop(db).runOnce(new Date())).toBe(1);

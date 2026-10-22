@@ -38,6 +38,28 @@ async function fixture() {
 }
 
 describe('agent subscriptions', () => {
+  it('requires a name and a trigger phrase, and returns saved words to the phone', async () => {
+    const db = await fixture();
+    try {
+      const input = { roomId: ROOM, source: 'room' as const, event: 'joined', prompt: 'Welcome members.' };
+      for (const title of [undefined, '', '   ']) {
+        await expect(createAgentSubscription(db, AGENT, { ...input, title, when: 'On someone joining' }))
+          .rejects.toThrow(/title/);
+      }
+      for (const when of [undefined, '', '  ', 'On a new person joining this Room']) {
+        await expect(createAgentSubscription(db, AGENT, { ...input, title: 'Welcome members', when }))
+          .rejects.toThrow(/when.*one to five words/);
+      }
+      expect((await db.query('SELECT id FROM agent_subscriptions')).rowCount).toBe(0);
+      const saved = await createAgentSubscription(db, AGENT, {
+        ...input, title: 'Welcome members', when: 'On someone joining',
+      });
+      expect(saved).toMatchObject({ title: 'Welcome members', when: 'On someone joining' });
+      expect((await listRoomSubscriptions(db, ROOM)).subscriptions).toContainEqual(
+        expect.objectContaining({ id: saved.id, title: saved.title, when: saved.when }));
+    } finally { await db.close(); }
+  });
+
   it('lists and deletes both corner subscription forms using only parent membership', async () => {
     const raw = await fixture();
     const db = new CornerAccessDatabase(raw);
@@ -54,7 +76,7 @@ describe('agent subscriptions', () => {
       await raw.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
       await deleteAgentSubscription(db, corner, AGENT, legacy.id);
       expect((await listAgentSubscriptions(db, corner, AGENT)).subscriptions).toEqual([]);
-      const stored = await createAgentSubscription(db, AGENT, {
+      const stored = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: corner, source: 'room', event: 'joined', prompt: 'Watch joins.',
       });
       expect((await listAgentSubscriptions(db, corner, AGENT)).subscriptions.map(row => row.id)).toEqual([stored.id]);
@@ -82,7 +104,7 @@ describe('agent subscriptions', () => {
       expect((await listServiceSubscriptionEvents(db, ROOM, AGENT)).events).toEqual([
         { service: 'Slack', event: 'new_message', label: 'new message in a Slack channel' },
       ]);
-      const subscription = await createAgentSubscription(db, AGENT, {
+      const subscription = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'service', event: 'new_message', channelId: 'C123ABC',
         channelName: 'general', prompt: 'Summarize this message.',
       }, { composio: provider, receiverUrl: 'https://beeline.test/v1/connectors/events/composio' });
@@ -121,7 +143,7 @@ describe('agent subscriptions', () => {
       await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [anotherAgent]);
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
         VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, anotherAgent]);
-      const second = await createAgentSubscription(db, anotherAgent, {
+      const second = await createAgentSubscription(db, anotherAgent, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'service', event: 'new_message', channelId: 'C123ABC',
         channelName: 'general', prompt: 'Watch this channel.',
       }, { composio: provider, receiverUrl: 'https://beeline.test/v1/connectors/events/composio' });
@@ -134,7 +156,7 @@ describe('agent subscriptions', () => {
   it('wakes on a Room event and shows older event subscriptions with the same stop control', async () => {
     const db = await fixture();
     try {
-      await createAgentSubscription(db, AGENT, { roomId: ROOM, source: 'room', event: 'joined', prompt: 'Welcome new members.' });
+      await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received', roomId: ROOM, source: 'room', event: 'joined', prompt: 'Welcome new members.' });
       await ensureSystemIdentity(db);
       await systemLine(db, {
         roomId: ROOM, authorId: SYSTEM_IDENTITY_ID,
@@ -163,18 +185,18 @@ describe('agent subscriptions', () => {
   it('creates and removes Room and covered repository subscriptions without an approval', async () => {
     const db = await fixture();
     try {
-      const room = await createAgentSubscription(db, AGENT, { roomId: ROOM, source: 'room', event: 'joined', prompt: 'Welcome new members.' });
-      const repo = await createAgentSubscription(db, AGENT, {
+      const room = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received', roomId: ROOM, source: 'room', event: 'joined', prompt: 'Welcome new members.' });
+      const repo = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'repository', event: 'issue.opened', repository: 'owner/repo',
         prompt: 'Start the feedback-triage workflow for this issue.', workflowName: 'feedback-triage',
       });
       expect(repo).toMatchObject({ prompt: 'Start the feedback-triage workflow for this issue.', workflowSlug: 'feedback-triage', firedCount: 0 });
       expect((await listAgentSubscriptions(db, ROOM, AGENT)).subscriptions.map((item) => item.id)).toEqual([room.id, repo.id]);
       expect((await listRoomSubscriptions(db, ROOM)).subscriptions).toHaveLength(2);
-      await expect(createAgentSubscription(db, AGENT, {
+      await expect(createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'room', event: 'merged', prompt: '  ',
       })).rejects.toThrow('prompt must be');
-      await expect(createAgentSubscription(db, AGENT, {
+      await expect(createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'repository', event: 'issue.opened', repository: 'other/repo', prompt: 'Triage new issues.',
       })).rejects.toThrow('not covered');
       await deleteAgentSubscription(db, ROOM, AGENT, repo.id);
@@ -186,7 +208,7 @@ describe('agent subscriptions', () => {
   it('wakes exactly once per verified delivery and quotes outside payload', async () => {
     const db = await fixture();
     try {
-      const subscription = await createAgentSubscription(db, AGENT, {
+      const subscription = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'repository', event: 'issue.opened', repository: 'owner/repo',
         prompt: 'Start the feedback-triage workflow for this issue.', workflowName: 'feedback-triage',
       });
@@ -218,7 +240,7 @@ describe('agent subscriptions', () => {
   it('receives a repository event through the existing app processor', async () => {
     const db = await fixture();
     try {
-      await createAgentSubscription(db, AGENT, {
+      await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'repository', event: 'star.created', repository: 'owner/repo', prompt: 'Celebrate stars.',
       });
       const operations = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 'secret');

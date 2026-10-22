@@ -130,7 +130,7 @@ describe('Reproduction workflow-timer-mutations-1', () => {
     expect(await getWorkflowRun(db, ROOM, runId)).toEqual(run);
     const ordinary = await daemon.execute(
       'createAgentSchedule',
-      {
+      { title: 'Scheduled check',
         roomId: surfaceId,
         agentId: AGENT,
         prompt: 'Ordinary task',
@@ -201,7 +201,7 @@ describe('Reproduction workflow-timer-mutations-1', () => {
 async function schedule(prompt: string, explicit = false) {
   const created = await daemon.execute(
     'createAgentSchedule',
-    {
+    { title: 'Scheduled check',
       roomId: ROOM,
       agentId: AGENT,
       prompt,
@@ -330,6 +330,7 @@ it('Reproduction schedules-12: resolves Start the daily workflow with… and ski
 
 it('Reproduction schedules-13: Room admin lists and deletes only their Room schedules', async () => {
   const input = {
+    title: 'Run daily',
     roomId: ROOM,
     agentId: AGENT,
     prompt: 'Run daily',
@@ -446,7 +447,7 @@ it('backfills with the same resolver and preserves already resolved workflows', 
 it('Reproduction R1: answers a stop of an already-deleted schedule with its own 404 code', async () => {
   const created = await daemon.execute(
     'createAgentSchedule',
-    { roomId: ROOM, agentId: AGENT, prompt: 'Run daily', cadence: { kind: 'interval', everyMinutes: 1 } },
+    { title: 'Scheduled check', roomId: ROOM, agentId: AGENT, prompt: 'Run daily', cadence: { kind: 'interval', everyMinutes: 1 } },
     AGENT,
   );
   const server = createBeelineServer({

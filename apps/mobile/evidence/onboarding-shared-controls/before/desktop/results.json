@@ -1,0 +1,598 @@
+[
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "sign-in",
+    "theme": "obsidian",
+    "textLength": 93,
+    "errors": [],
+    "file": "sign-in-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "sign-in-error",
+    "theme": "obsidian",
+    "textLength": 139,
+    "errors": [],
+    "file": "sign-in-error-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "profile",
+    "theme": "obsidian",
+    "textLength": 26,
+    "errors": [],
+    "file": "profile-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=0",
+    "theme": "obsidian",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-0-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=1",
+    "theme": "obsidian",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-1-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=2",
+    "theme": "obsidian",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-2-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=3",
+    "theme": "obsidian",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-3-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "github",
+    "theme": "obsidian",
+    "textLength": 50,
+    "errors": [],
+    "file": "github-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository",
+    "theme": "obsidian",
+    "textLength": 141,
+    "errors": [],
+    "file": "repository-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "starters",
+    "theme": "obsidian",
+    "textLength": 130,
+    "errors": [],
+    "file": "starters-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=none",
+    "theme": "obsidian",
+    "textLength": 27,
+    "errors": [],
+    "file": "repository-choice-mode-none-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=link",
+    "theme": "obsidian",
+    "textLength": 46,
+    "errors": [],
+    "file": "repository-choice-mode-link-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=create",
+    "theme": "obsidian",
+    "textLength": 78,
+    "errors": [],
+    "file": "repository-choice-mode-create-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=link&connected=0",
+    "theme": "obsidian",
+    "textLength": 49,
+    "errors": [],
+    "file": "repository-choice-mode-link-connected-0-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repo-picker",
+    "theme": "obsidian",
+    "textLength": 92,
+    "errors": [],
+    "file": "repo-picker-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-pending",
+    "theme": "obsidian",
+    "textLength": 225,
+    "errors": [],
+    "file": "agent-pending-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-wait",
+    "theme": "obsidian",
+    "textLength": 85,
+    "errors": [],
+    "file": "agent-wait-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-failed",
+    "theme": "obsidian",
+    "textLength": 224,
+    "errors": [],
+    "file": "agent-failed-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-key",
+    "theme": "obsidian",
+    "textLength": 165,
+    "errors": [],
+    "file": "agent-key-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "empty-room",
+    "theme": "obsidian",
+    "textLength": 148,
+    "errors": [],
+    "file": "empty-room-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "workspace",
+    "theme": "obsidian",
+    "textLength": 162,
+    "errors": [],
+    "file": "workspace-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "workspace&join=1",
+    "theme": "obsidian",
+    "textLength": 177,
+    "errors": [],
+    "file": "workspace-join-1-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "create-workspace",
+    "theme": "obsidian",
+    "textLength": 106,
+    "errors": [],
+    "file": "create-workspace-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "invite",
+    "theme": "obsidian",
+    "textLength": 163,
+    "errors": [],
+    "file": "invite-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "invite-offline",
+    "theme": "obsidian",
+    "textLength": 172,
+    "errors": [],
+    "file": "invite-offline-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "invite-unavailable",
+    "theme": "obsidian",
+    "textLength": 157,
+    "errors": [],
+    "file": "invite-unavailable-obsidian.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "sign-in",
+    "theme": "bone",
+    "textLength": 93,
+    "errors": [],
+    "file": "sign-in-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "sign-in-error",
+    "theme": "bone",
+    "textLength": 139,
+    "errors": [],
+    "file": "sign-in-error-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "profile",
+    "theme": "bone",
+    "textLength": 26,
+    "errors": [],
+    "file": "profile-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=0",
+    "theme": "bone",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-0-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=1",
+    "theme": "bone",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-1-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=2",
+    "theme": "bone",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-2-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "welcome&step=3",
+    "theme": "bone",
+    "textLength": 0,
+    "errors": [],
+    "file": "welcome-step-3-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "github",
+    "theme": "bone",
+    "textLength": 50,
+    "errors": [],
+    "file": "github-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository",
+    "theme": "bone",
+    "textLength": 141,
+    "errors": [],
+    "file": "repository-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "starters",
+    "theme": "bone",
+    "textLength": 130,
+    "errors": [],
+    "file": "starters-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=none",
+    "theme": "bone",
+    "textLength": 27,
+    "errors": [],
+    "file": "repository-choice-mode-none-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=link",
+    "theme": "bone",
+    "textLength": 46,
+    "errors": [],
+    "file": "repository-choice-mode-link-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=create",
+    "theme": "bone",
+    "textLength": 78,
+    "errors": [],
+    "file": "repository-choice-mode-create-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repository-choice&mode=link&connected=0",
+    "theme": "bone",
+    "textLength": 49,
+    "errors": [],
+    "file": "repository-choice-mode-link-connected-0-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "repo-picker",
+    "theme": "bone",
+    "textLength": 92,
+    "errors": [],
+    "file": "repo-picker-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-pending",
+    "theme": "bone",
+    "textLength": 225,
+    "errors": [],
+    "file": "agent-pending-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-wait",
+    "theme": "bone",
+    "textLength": 85,
+    "errors": [],
+    "file": "agent-wait-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-failed",
+    "theme": "bone",
+    "textLength": 224,
+    "errors": [],
+    "file": "agent-failed-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "agent-key",
+    "theme": "bone",
+    "textLength": 165,
+    "errors": [],
+    "file": "agent-key-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "empty-room",
+    "theme": "bone",
+    "textLength": 148,
+    "errors": [],
+    "file": "empty-room-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "workspace",
+    "theme": "bone",
+    "textLength": 162,
+    "errors": [],
+    "file": "workspace-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "workspace&join=1",
+    "theme": "bone",
+    "textLength": 177,
+    "errors": [],
+    "file": "workspace-join-1-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "create-workspace",
+    "theme": "bone",
+    "textLength": 106,
+    "errors": [],
+    "file": "create-workspace-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "invite",
+    "theme": "bone",
+    "textLength": 163,
+    "errors": [],
+    "file": "invite-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "invite-offline",
+    "theme": "bone",
+    "textLength": 172,
+    "errors": [],
+    "file": "invite-offline-bone.png"
+  },
+  {
+    "phase": "before",
+    "device": "desktop",
+    "screen": "invite-unavailable",
+    "theme": "bone",
+    "textLength": 157,
+    "errors": [],
+    "file": "invite-unavailable-bone.png"
+  },
+  {
+    "screen": "new-room",
+    "theme": "obsidian",
+    "text": "New Room\nRepository\nNone\nPublic\nCancel\nCreate Room",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Repository None, change",
+        "width": 410,
+        "height": 52
+      },
+      {
+        "label": "Cancel",
+        "width": 86.28125,
+        "height": 44
+      },
+      {
+        "label": "Create Room",
+        "width": 132.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-obsidian.png"
+  },
+  {
+    "screen": "new-room-picker",
+    "theme": "obsidian",
+    "text": "Choose a repo\nNORTHSTAR\nplanning\nBack",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Northstar/planning",
+        "width": 410,
+        "height": 52
+      },
+      {
+        "label": "Back",
+        "width": 71.9375,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-picker-obsidian.png"
+  },
+  {
+    "screen": "repo-empty",
+    "theme": "obsidian",
+    "text": "No repos match.",
+    "overflow": false,
+    "buttons": [],
+    "errors": [],
+    "file": "repo-empty-obsidian.png"
+  },
+  {
+    "screen": "new-room",
+    "theme": "bone",
+    "text": "New Room\nRepository\nNone\nPublic\nCancel\nCreate Room",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Repository None, change",
+        "width": 410,
+        "height": 52
+      },
+      {
+        "label": "Cancel",
+        "width": 86.28125,
+        "height": 44
+      },
+      {
+        "label": "Create Room",
+        "width": 132.203125,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-bone.png"
+  },
+  {
+    "screen": "new-room-picker",
+    "theme": "bone",
+    "text": "Choose a repo\nNORTHSTAR\nplanning\nBack",
+    "overflow": false,
+    "buttons": [
+      {
+        "label": "Close action sheet",
+        "width": 1280,
+        "height": 900
+      },
+      {
+        "label": "Northstar/planning",
+        "width": 410,
+        "height": 52
+      },
+      {
+        "label": "Back",
+        "width": 71.9375,
+        "height": 44
+      }
+    ],
+    "errors": [],
+    "file": "new-room-picker-bone.png"
+  },
+  {
+    "screen": "repo-empty",
+    "theme": "bone",
+    "text": "No repos match.",
+    "overflow": false,
+    "buttons": [],
+    "errors": [],
+    "file": "repo-empty-bone.png"
+  }
+]

@@ -1,6 +1,9 @@
+import { IndexRow, InlineRow } from '@/components/buzz/IndexRow';
+import { EmptyState } from '@/components/buzz/EmptyState';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useURL } from 'expo-linking';
@@ -159,10 +162,10 @@ export default function CommunityInviteJoin() {
           </View>
         ) : preview ? (
           <>
-            <View style={styles.badge}>
+            <InlineRow style={styles.badge}>
               <View style={styles.badgeDot} />
               <Text style={styles.badgeText}>INVITE VERIFIED</Text>
-            </View>
+            </InlineRow>
             <IdentityMark
               avatarUrl={preview.avatar}
               kind="workspace"
@@ -177,26 +180,11 @@ export default function CommunityInviteJoin() {
               {inviteSummary(preview)}
             </Text>
             {preview.inviter ? (
-              <View style={styles.inviter} testID="invite-inviter">
-                <IdentityMark
-                  face={preview.inviter.face}
-                  kind="human"
-                  name={preview.inviter.name}
-                  seed={preview.inviter.handle ?? preview.inviter.name}
-                  size={42}
-                />
-                <View style={styles.inviterCopy}>
-                  <Text style={styles.inviterName}>{preview.inviter.name}</Text>
-                  <Text style={styles.meta}>
-                    {[
-                      preview.inviter.handle ? `@${preview.inviter.handle}` : null,
-                      inviterRoleLabel(preview.inviter.role),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </Text>
-                </View>
-              </View>
+              <IndexRow title={preview.inviter.name} testID="invite-inviter"
+                leading={<IdentityMark face={preview.inviter.face} kind="human" name={preview.inviter.name}
+                  seed={preview.inviter.handle ?? preview.inviter.name} size={42} />}
+                description={[preview.inviter.handle ? `@${preview.inviter.handle}` : null,
+                  inviterRoleLabel(preview.inviter.role)].filter(Boolean).join(' · ')} />
             ) : null}
             <Button
               disabled={joining}
@@ -206,29 +194,15 @@ export default function CommunityInviteJoin() {
               style={styles.primary}
               testID="confirm-community-join"
             />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void otherWay()}
-              style={styles.quiet}
-              testID="invite-not-mine"
-            >
-              <Text style={styles.quietText}>This isn’t my invite</Text>
-            </Pressable>
+            <Button variant="quiet" label="This isn’t my invite" onPress={() => void otherWay()} testID="invite-not-mine" />
             {error ? (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {error}
-              </Text>
+              <ErrorBanner title={error} />
             ) : null}
           </>
         ) : failure === 'unreachable' ? (
           <View style={styles.failureBlock} testID="invite-unreachable">
-            <Text accessibilityRole="header" style={styles.title}>
-              Couldn’t reach Beeline
-            </Text>
-            <Text style={styles.body}>
-              Your invite may still be fine — we could not ask the server about it. Check your
-              connection and try again.
-            </Text>
+            <ErrorBanner title="Couldn’t reach Beeline"
+              description="Your invite may still be fine — we could not ask the server about it. Check your connection and try again." />
             {error ? <Text style={styles.meta}>{error}</Text> : null}
             <Button
               label="Retry"
@@ -237,30 +211,13 @@ export default function CommunityInviteJoin() {
               testID="invite-retry"
               variant="secondary"
             />
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void otherWay()}
-              style={styles.quiet}
-              testID="invite-other-way"
-            >
-              <Text style={styles.quietText}>Choose another way in</Text>
-            </Pressable>
+            <Button variant="quiet" label="Choose another way in" onPress={() => void otherWay()} testID="invite-other-way" />
           </View>
         ) : (
           <View style={styles.failureBlock} testID="invite-unavailable">
-            <Text accessibilityRole="header" style={styles.title}>
-              This invite doesn’t work anymore
-            </Text>
-            <Text style={styles.body}>
-              It may have expired, been used up, or been withdrawn. Ask for a new link, or start
-              your own {WORKSPACE_LABEL.toLowerCase()}.
-            </Text>
-            <Button
-              label="Choose another way in"
-              onPress={() => void otherWay()}
-              style={styles.primary}
-              testID="invite-other-way"
-            />
+            <EmptyState title="This invite doesn’t work anymore"
+              description={`It may have expired, been used up, or been withdrawn. Ask for a new link, or start your own ${WORKSPACE_LABEL.toLowerCase()}.`}
+              action={{label:'Choose another way in', onPress:()=>void otherWay(), testID:'invite-other-way'}} />
           </View>
         )}
       </View>
@@ -283,21 +240,7 @@ const styles = StyleSheet.create((theme) => {
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     body: { ...Typography.default(), ...hull.type.body, color: hull.textSecondary },
     meta: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
-    inviter: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-      padding: hull.space.md,
-      borderRadius: hull.radius,
-      borderWidth: 1,
-      borderColor: hull.border,
-    },
-    inviterCopy: { flex: 1, gap: hull.space.xs },
-    inviterName: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
     primary: { marginTop: hull.space.sm },
-    quiet: { minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-    quietText: { ...Typography.default(), ...hull.type.body, color: hull.ledgerQuiet },
-    error: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
     failureBlock: { gap: hull.space.md },
   };
 });

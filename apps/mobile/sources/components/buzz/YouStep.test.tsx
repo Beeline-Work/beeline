@@ -129,17 +129,17 @@ describe('YouStep', () => {
     for (const face of FACE_IDS) host(tree, `onboarding-face-${face}`);
     const grid = host(tree, 'onboarding-face-grid');
     expect(grid.children).toHaveLength(3);
-    expect(grid.children.map((row: any) => row.findAll((node: any) => node.type === 'Pressable').length)).toEqual([4, 4, 4]);
+    expect(grid.children.map((row: any) => row.findAll((node: any) => node.type === 'Button').length)).toEqual([4, 4, 4]);
     const tileIDs = new Set(FACE_IDS.map((face) => `onboarding-face-${face}`));
     const tiles = tree.root.findAll(
-      (node: any) => node.type === 'Pressable' && tileIDs.has(node.props?.testID),
+      (node: any) => node.type === 'Button' && tileIDs.has(node.props?.testID),
     );
     expect(tiles.map((tile: any) => tile.props.testID)).toEqual(
       FACE_IDS.map((face) => `onboarding-face-${face}`),
     );
     // Every tile draws its animal for the person's own seed, never a stock face.
     for (const tile of tiles) {
-      expect(tile.children[0].props).toMatchObject({ kind: 'human', seed: SEED });
+      expect(tile.props.icon.props).toMatchObject({ kind: 'human', seed: SEED });
     }
     expect(host(tree, 'onboarding-face-confirm').props.label).toBe('Continue');
   });
@@ -167,21 +167,19 @@ describe('YouStep', () => {
   it('pre-selects the seed default so one tap also works', async () => {
     const { tree } = await render();
     const preset = defaultFaceForSeed(SEED);
-    expect(flat(host(tree, `onboarding-face-${preset}`).props.style).borderColor).toBe(theme.textPrimary);
+    expect(host(tree, `onboarding-face-${preset}`).props.accessibilityState.selected).toBe(true);
     expect(host(tree, 'onboarding-face-confirm').props.disabled).toBe(false);
   });
 
   it('prefers a face already on record over the seed default', async () => {
     const { tree } = await render({ currentFace: 'whale' });
-    expect(flat(host(tree, 'onboarding-face-whale').props.style).borderColor).toBe(theme.textPrimary);
+    expect(host(tree, 'onboarding-face-whale').props.accessibilityState.selected).toBe(true);
   });
 
-  it('flips only the border colour on selection; width and layout never change', async () => {
+  it('selects a shared button without changing the grid geometry', async () => {
     const { tree } = await render({ initialSelection: null });
     const before = FACE_IDS.map((face) => flat(host(tree, `onboarding-face-${face}`).props.style));
     for (const style of before) {
-      expect(style.borderColor).toBe(theme.faint);
-      expect(style.borderWidth).toBe(2);
       expect(style.width).toBe(79.5);
       expect(style.height).toBe(79.5);
     }
@@ -189,7 +187,7 @@ describe('YouStep', () => {
     const after = FACE_IDS.map((face) => flat(host(tree, `onboarding-face-${face}`).props.style));
     after.forEach((style, index) => {
       const face = FACE_IDS[index];
-      expect(style.borderColor).toBe(face === 'owl' ? theme.textPrimary : theme.faint);
+      expect(host(tree, `onboarding-face-${face}`).props.variant).toBe(face === 'owl' ? 'brass' : 'secondary');
       const { borderColor: _a, ...rest } = style;
       const { borderColor: _b, ...restBefore } = before[index]!;
       expect(rest).toEqual(restBefore);

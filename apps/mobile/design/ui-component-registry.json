@@ -459,14 +459,6 @@
       "e19f6b8c7f954b22b756": 1,
       "e7448b61a3b921485b1f": 1
     },
-    "app/(app)/beeline/community.tsx": {
-      "90955f5a00cd90038e4c": 1,
-      "d9b71faffba9301a497d": 1,
-      "e5b9e66ae085599ee5ea": 1
-    },
-    "app/(app)/beeline/create-workspace.tsx": {
-      "07607ba79adf09831762": 1
-    },
     "app/(app)/beeline/human-profile.tsx": {
       "2b8d08688a213e76ff17": 1,
       "b73dd9850ee8b18dceaf": 1,
@@ -484,14 +476,6 @@
       "d46c0ae73107e3ddf7a2": 1,
       "f90c109d36708421dc14": 1,
       "fc49483f9f6ca47afaa7": 1
-    },
-    "app/(app)/beeline/onboarding.tsx": {
-      "30ddc6202b9f0c6435b8": 1,
-      "778764b6aef071b18d1a": 1,
-      "9a5a89e24b43849b7cf2": 1,
-      "b2f837cc7e0432700e9d": 1,
-      "cc6a84eb85fad8ab59a0": 1,
-      "f0b9fa51f41f5080ff3a": 1
     },
     "app/(app)/beeline/settings/identity.tsx": {
       "d20f584784d242470756": 1
@@ -572,12 +556,6 @@
     "app/(app)/beeline/workflow.tsx": {
       "71636cd0b37d1ece3c39": 1
     },
-    "app/(app)/join/[token].tsx": {
-      "021d64f7276e914cc3b7": 1,
-      "b1bbfc478a4ae0d26cc8": 1,
-      "b26cab1da78b5be72728": 1,
-      "eae0aa03d3ce036fbfe6": 1
-    },
     "app/(app)/text-selection.tsx": {
       "f1639d7ced986b4c56f9": 1
     },
@@ -609,14 +587,6 @@
       "06fbd0f8620950c79081": 1,
       "328207522807f328252f": 1,
       "616b89b40f752abac8c4": 1
-    },
-    "components/buzz/AgentSignInCard.tsx": {
-      "2631393d81cdacf0567c": 1,
-      "49d853e879486f6a298c": 1,
-      "7406c313bad39a2a5ca6": 1,
-      "9028fdfc85e59eb32030": 1,
-      "ee4348efcedc404e55d7": 3,
-      "f797ee549f7256b59bc9": 1
     },
     "components/buzz/AgentUsageSection.tsx": {
       "5102d26e524ed6ec9656": 1
@@ -781,14 +751,6 @@
     "components/buzz/DictationWaveform.tsx": {
       "5e0a83836c3666c967fa": 1
     },
-    "components/buzz/EmptyLedgerState.tsx": {
-      "0f7cc42b38554ef23605": 1,
-      "ebf599fcf206dd831a5d": 1
-    },
-    "components/buzz/FaceGrid.tsx": {
-      "83272ab901756ad29955": 1,
-      "8bf2dc03fbd5e22dd290": 1
-    },
     "components/buzz/HeaderLadder.tsx": {
       "3c72f081223ee16ff97d": 1
     },
@@ -860,11 +822,6 @@
       "8d3bdc37c19ac68bc5e5": 1,
       "c2f35f2b261f6df78b5a": 1
     },
-    "components/buzz/NewRoomDialog.tsx": {
-      "3df567bb3834c79883b1": 1,
-      "7415fa0d95dc372f32cd": 1,
-      "99ecf43de666660e0f42": 1
-    },
     "components/buzz/NoMatchingConversationsEmpty.tsx": {
       "645bf8ab3c560d741c2d": 1,
       "6fb72711b26a8a3fb186": 1
@@ -893,29 +850,6 @@
     "components/buzz/ProfileIdentity.tsx": {
       "b188e906092f1f0116ca": 1,
       "b21e1c3e4f0177611c3b": 1
-    },
-    "components/buzz/RepoPicker.tsx": {
-      "2e93d12a8c532628647e": 1,
-      "4746314930bcbf6f988c": 1,
-      "d20f99df95b3d1bb2d2f": 1,
-      "d27f4c4e1c9baa3c38ab": 1
-    },
-    "components/buzz/RepositoryChoice.tsx": {
-      "05ca19c7108071705f3d": 1,
-      "0bfd0f95fd02483515d8": 1,
-      "2d27a9bca2b9502b1ce7": 1,
-      "380c5723f1fc458c3f7a": 1,
-      "3b3e0d74f923024e49ce": 1,
-      "47d0c04b555992d91410": 1,
-      "521b7670ad446f4bc3a8": 1,
-      "6e933d230debcf4897c9": 1,
-      "734ad4993e94a1a907fa": 1,
-      "88d4a132ad2bc876ce88": 1,
-      "9b6647d054eec89a6955": 1,
-      "bd7b229c6cdc9b4f6f32": 1,
-      "cb2e6b928c41ed9f4740": 1,
-      "cdc9d2565ac22ecb445e": 1,
-      "d582b75a6e55971acaa0": 1
     },
     "components/buzz/RoomContextPreamble.tsx": {
       "14935f2c8458994b43e1": 1,
@@ -1023,19 +957,6 @@
     "components/buzz/WalletQr.tsx": {
       "795a06a3c8214f8ee29d": 1,
       "d616ecd7fa0ad087c13a": 1
-    },
-    "components/buzz/WelcomeCards.tsx": {
-      "04e101cd2024d98e6d34": 1,
-      "1e95c80677e9c8ff368e": 1,
-      "2c755eaf0d0387ad9e86": 1,
-      "49c57652aa2a14578132": 1,
-      "6ff19e480da6c2f908d3": 1,
-      "79b944a315f7e0129bcb": 1,
-      "987acf023569aa1acc68": 1,
-      "9dd2efd27102476facf1": 1,
-      "ca0bbf83ae3b61939db5": 1,
-      "d37e792970ff50a02e56": 1,
-      "e7dbc7e2a24743b23130": 1
     },
     "components/buzz/WorkflowRunLine.tsx": {
       "42408c394befb67a97a4": 1,

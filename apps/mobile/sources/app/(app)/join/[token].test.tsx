@@ -45,12 +45,12 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: {
-    create: (factory: any) => factory({ buzz: new Proxy({}, { get: () => '#000' }) }),
-  },
-  useUnistyles: () => ({ theme: { buzz: { dim: '#000', space: { xxl: 48 } } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { beelineThemes } = await import('@/buzz/groknight');
+  const theme = { buzz: beelineThemes.obsidian };
+  return { StyleSheet: {create:(factory:any)=>factory(theme),hairlineWidth:1},
+    useUnistyles:()=>({theme}) };
+});
 vi.mock('expo-router', () => ({
   router: { back: vi.fn(), push: vi.fn(), replace: controls.replace },
   useLocalSearchParams: () => ({ token: TOKEN }),

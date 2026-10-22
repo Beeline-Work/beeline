@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { clearPendingGoogleSignIn, resumeGoogleSignIn, runGoogleSignIn } from '@/auth/google-auth-session';
@@ -7,7 +8,7 @@ import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, Text, TextInput, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -645,10 +646,7 @@ export default function BuzzOnboarding() {
             {normalized ? `@${normalized}` : "3–30 · a–z · 0–9 · dash"}
           </Text>
           {notice && (
-        <View accessibilityRole="alert" style={styles.noticePanel}>
-          <Text style={styles.statusLabel}>◇ {notice.title}</Text>
-          <Text style={styles.noticeText}>{notice.message}</Text>
-        </View>
+        <ErrorBanner title={`◇ ${notice.title}`} description={notice.message} />
       )}
           <Button
             disabled={!normalized || loading}
@@ -678,10 +676,7 @@ export default function BuzzOnboarding() {
       </View>
 
       {notice && (
-        <View accessibilityRole="alert" style={styles.noticePanel}>
-          <Text style={styles.statusLabel}>◇ {notice.title}</Text>
-          <Text style={styles.noticeText}>{notice.message}</Text>
-        </View>
+        <ErrorBanner title={`◇ ${notice.title}`} description={notice.message} />
       )}
 
       <View style={styles.actions}>
@@ -791,26 +786,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textSecondary,
       textAlign: 'center',
     },
-    noticePanel: {
-      width: '100%',
-      maxWidth: 440,
-      alignSelf: 'center',
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-      padding: groknight.space.md,
-      marginBottom: 16,
-    },
-    statusLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
-      marginBottom: 4,
-    },
-    noticeText: {
-      ...theme.buzz.type.body,
-      color: groknight.textSecondary,
-    },
     inputFocused: {
       borderWidth: INPUT_FOCUSED_BORDER_WIDTH,
       borderColor: groknight.focus,
@@ -856,12 +831,6 @@ const styles = StyleSheet.create((theme) => {
       fontFamily: groknight.monoSemibold,
       marginTop: 8,
       marginBottom: groknight.space.md,
-      color: groknight.textMuted,
-      textAlign: 'center',
-    },
-  custodyNote: {
-      ...theme.buzz.type.meta,
-      marginTop: groknight.space.md,
       color: groknight.textMuted,
       textAlign: 'center',
     },

@@ -167,28 +167,34 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
  */
 export function TurnBandSlot({
   children,
+  thinking = false,
   onTopInset,
   testID,
 }: {
+  /** Paint only while the active thinking line is mounted. */
+  thinking?: boolean;
   onTopInset?: (height: number) => void;
   children?: React.ReactNode;
   testID?: string;
 }) {
   const hasLine = React.Children.toArray(children).length > 0;
+  const paintThinking = thinking && hasLine;
   // The slot is absolute (`room-bottom-chrome`), anchored on the composer.
-  // Coverage paints the full air above the ink and overlaps the composer
+  // Only thinking coverage paints the air above the ink and overlaps the composer
   // padding below it. It takes no room in the column, so the list's
   // height is identical whether or not the line is showing. It reserves
   // nothing and has no height of its own for the transcript to move by.
   return (
     <View
       pointerEvents="box-none"
-      style={[styles.slot, hasLine && styles.coverage]}
+      style={[styles.slot, paintThinking && styles.coverage]}
       testID={testID}
       onLayout={(event) =>
         onTopInset?.(
           // Layout excludes the paint translation into the composer.
-          hasLine ? Math.max(0, event.nativeEvent.layout.height - TURN_CHROME_COMPOSER_OVERLAP) : 0,
+          hasLine
+            ? Math.max(0, event.nativeEvent.layout.height - (paintThinking ? TURN_CHROME_COMPOSER_OVERLAP : 0))
+            : 0,
         )
       }
     >

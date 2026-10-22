@@ -83,14 +83,14 @@ export function roomBottomChromeStyles(hull: { bgTerminal: string; border: strin
       left: 0,
       right: 0,
       bottom: '100%',
-      backgroundColor: hull.bgTerminal,
     },
     // The original 33px slot left 9px of the intended 42px band unpainted
     // above the row. Scrolling text could occupy that air. Extend the canvas
-    // upward to own it, and downward into the composer to eliminate an
+    // upward only while thinking, and downward into the composer to eliminate an
     // independently rounded join. Padding + translation cancel below the
     // row, preserving the ink's original position and the list's viewport.
     turnChromeCoverage: {
+      backgroundColor: hull.bgTerminal,
       paddingTop: TURN_LINE_BAR_MARGIN_BOTTOM,
       paddingBottom: TURN_CHROME_COMPOSER_OVERLAP,
       transform: overlapTransform,

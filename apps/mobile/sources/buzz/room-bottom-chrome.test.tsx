@@ -144,7 +144,7 @@ function slotInFlowHeight({ lineShown }: { lineShown: boolean }): number {
   const tree = (show: boolean) =>
     React.createElement(
       TurnBandSlot,
-      { testID: 'slot' },
+      { testID: 'slot', thinking: show },
       show
         ? React.createElement(TurnProgressLine, { label: 'nerd thinking…', testID: 'band' })
         : null,
@@ -178,12 +178,10 @@ function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): numb
 }
 
 describe('the Room turn line paints the transcript margin', () => {
-  it.each(['working', 'settled'] as const)('paints the whole %s band through the composer join', (state) => {
-    const line = state === 'working'
-      ? React.createElement(TurnProgressLine, { label: 'Ruby working…' })
-      : React.createElement(TurnSettledLine, { line: 'Ruby finished' });
+  it('paints the whole thinking band through the composer join', () => {
+    const line = React.createElement(TurnProgressLine, { label: 'Ruby working…' });
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, line)); });
+    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot', thinking: true }, line)); });
     const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
     const translation = style.transform?.[0]?.translateY ?? 0;
     const paintedHeight = TURN_LINE_BOX_HEIGHT + px(style.paddingTop) + px(style.paddingBottom);
@@ -202,9 +200,27 @@ describe('the Room turn line paints the transcript margin', () => {
     let renderer!: ReactTestRenderer;
     act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, [[], null])); });
     const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    expect(style.backgroundColor).toBeUndefined();
     expect(style.paddingTop).toBeUndefined();
     expect(style.paddingBottom).toBeUndefined();
     expect(style.transform).toBeUndefined();
+    act(() => renderer.unmount());
+  });
+
+  it('does not paint or extend coverage for a settled line after thinking stops', () => {
+    let renderer!: ReactTestRenderer;
+    const tree = (thinking: boolean) => React.createElement(TurnBandSlot, { testID: 'slot', thinking },
+      thinking ? React.createElement(TurnProgressLine, { label: 'Ruby thinking…' })
+        : React.createElement(TurnSettledLine, { line: 'Ruby finished' }));
+    act(() => { renderer = create(tree(true)); });
+    expect(Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style)).backgroundColor).toBeTruthy();
+    act(() => renderer.update(tree(false)));
+    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    expect(style.backgroundColor).toBeUndefined();
+    expect(style.paddingTop).toBeUndefined();
+    expect(style.paddingBottom).toBeUndefined();
+    expect(style.transform).toBeUndefined();
+    expect(style.position).toBe('absolute');
     act(() => renderer.unmount());
   });
 
@@ -213,7 +229,8 @@ describe('the Room turn line paints the transcript margin', () => {
     const styles = roomBottomChromeStyles(theme);
     expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopWidth');
     expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopColor');
-    expect(styles.hangingTurnChrome.backgroundColor).toBe(theme.bgTerminal);
+    expect(styles.hangingTurnChrome).not.toHaveProperty('backgroundColor');
+    expect(styles.turnChromeCoverage.backgroundColor).toBe(theme.bgTerminal);
     expect(styles.stack).toMatchObject({ backgroundColor: theme.bgTerminal, zIndex: 1 });
     expect(styles.composerRow.backgroundColor).toBe(theme.bgTerminal);
     // The edge is canvas-colored, preserving the Room-open reserve and the
@@ -297,7 +314,7 @@ describe('jump disc follows native status measurements', () => {
       return React.createElement(React.Fragment, null,
         React.createElement(RoomUnreadControls, {corner: false, badgeCount: 0,
           discVisible: true, bottomInset: inset, onJumpToNewest: jumped}),
-        React.createElement(TurnBandSlot, {testID: 'measured-slot', onTopInset: setInset},
+        React.createElement(TurnBandSlot, {testID: 'measured-slot', thinking: line, onTopInset: setInset},
           line ? React.createElement(TurnProgressLine, {label: 'Ruby Mulling…'}) : null));
     }
     let renderer!: ReactTestRenderer;

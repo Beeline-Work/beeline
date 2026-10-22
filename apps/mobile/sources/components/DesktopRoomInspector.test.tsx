@@ -118,7 +118,7 @@ vi.mock('@/components/buzz/HullActionSheet', async () => {
 });
 vi.mock('@/components/buzz/CornerOpenedMarker', async () => {
   const ReactModule = await import('react');
-  return { CornerOpenedMarker: (props: any) => ReactModule.createElement('CornerOpenedMarker', props) };
+  return { CornerOpenedMarkers: (props: any) => ReactModule.createElement('CornerOpenedMarkers', props) };
 });
 vi.mock('@/components/buzz/Ledger', async () => {
   const ReactModule = await import('react');
@@ -365,11 +365,11 @@ describe('DesktopRoomInspector work pane', () => {
     const onOpenCorner = vi.fn();
     const tree = await render(props({ onOpenCorner, client: { room: vi.fn(async () => detail) } }));
     if (sourceResident) {
-      const marker = tree.root.findByType('CornerOpenedMarker' as any);
-      expect(marker.props.title).toBe('Opened target');
-      act(() => marker.props.onOpen());
+      const marker = tree.root.findByType('CornerOpenedMarkers' as any);
+      expect(marker.props.message.cornerMarkers[0].daemonFact.name).toBe('Opened target');
+      act(() => marker.props.onOpenCorner('opened-target'));
     } else {
-      expect(tree.root.findAllByType('CornerOpenedMarker' as any)).toHaveLength(0);
+      expect(tree.root.findAllByType('CornerOpenedMarkers' as any)).toHaveLength(0);
       const row = tree.root.findByType('NotificationLifecycleCard' as any);
       expect(row.props.message.notificationLifecycleRun.items[0]).toMatchObject({ state: 'Opened', kind: 'corner', cornerId: 'opened-target' });
       act(() => row.props.onOpenCorner('opened-target'));

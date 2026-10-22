@@ -397,7 +397,7 @@ import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
 import { AttachmentPickerSheet } from '@/components/buzz/AttachmentPickerSheet';
 import { ForwardMessagePickerSheet } from '@/components/buzz/ForwardMessagePickerSheet';
 import { ForwardCornerSheet } from '@/components/buzz/ForwardCornerSheet';
-import { CornerOpenedMarker } from '@/components/buzz/CornerOpenedMarker';
+import { CornerOpenedMarkers } from '@/components/buzz/CornerOpenedMarker';
 import { MessageReactionStrip } from '@/components/buzz/MessageReactionStrip';
 import {
   HULL_SHEET_INSET,
@@ -5341,24 +5341,6 @@ export function BuzzChatSurface({
     [decodedId, desktopExperience, openDesktopCorner],
   );
 
-  // The line beneath a message a corner was opened from; its Open goes
-  // straight into that corner.
-  const renderCornerMarker = useCallback(
-    (marker: ChatDisplayMessage) => {
-      const fact = marker.daemonFact!;
-      return (
-        <View key={marker.id}>
-          <CornerOpenedMarker
-            title={cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId)}
-            onOpen={() => openCorner(fact.cornerId)}
-            testID={`corner-opened-marker-${fact.cornerId}`}
-          />
-        </View>
-      );
-    },
-    [openCorner],
-  );
-
   const closeDesktopWorkPane = useCallback(() => {
     commitDesktopWorkPane({ type: 'close' });
   }, [commitDesktopWorkPane]);
@@ -6003,14 +5985,14 @@ export function BuzzChatSurface({
       return item.cornerMarkers?.length ? (
         <View>
           {ledgerMessage}
-          {item.cornerMarkers.map(renderCornerMarker)}
+          <CornerOpenedMarkers message={item} onOpenCorner={openCorner} />
         </View>
       ) : (
         ledgerMessage
       );
     },
     [
-      renderCornerMarker,
+      openCorner,
       hintMessageIds,
       voice.call,
       voice.connecting,
@@ -6650,7 +6632,7 @@ export function BuzzChatSurface({
                 lets the transcript keep every touch the line is not using.
                 Desktop keeps the slot inside inputBar. */}
                 {!desktopExperience && (
-                  <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
+                  <TurnBandSlot thinking={Boolean(composerAck)} testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
                     {composerAck ? (
                       <TurnProgressLine
                         label={composerAck.label}

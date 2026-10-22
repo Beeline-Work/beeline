@@ -109,7 +109,7 @@
       "OtherWorkflowRuns",
       "WorkflowLine"
     ],
-    "components/buzz/CornerOpenedMarker.tsx": ["CornerOpenedMarker"],
+    "components/buzz/CornerOpenedMarker.tsx": ["CornerOpenedMarker", "CornerOpenedMarkers"],
     "components/buzz/CornerOpenToast.tsx": ["CornerOpenRow", "CornerOpenToast"],
     "components/buzz/CornerStatusLine.tsx": ["CornerStatusLine"],
     "components/buzz/CornerWaitingPulse.tsx": ["CornerWaitingPulse"],

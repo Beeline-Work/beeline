@@ -1,3 +1,4 @@
+import { ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -65,6 +66,39 @@ afterEach(() => {
 });
 
 describe('minimal agent surface', () => {
+  it('advertises every shared artifact MIME, including runnable games', () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'post_artifact')!.inputSchema;
+    const properties = schema.properties as Record<string, { enum: string[] }>;
+    expect(properties.mime.enum).toEqual(ARTIFACT_MIME_TYPES);
+    for (const mime of ARTIFACT_MIME_TYPES) {
+      expect(Check(schema as never, { path: '.artifacts/voxel-island.html', mime })).toBe(true);
+    }
+  });
+
+  it('posts a game path through the advertised tool and queues its runnable MIME', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'game-artifact-'));
+    const path = join(root, 'voxel-island.html');
+    const html = '<canvas></canvas><script>game()</script>';
+    writeFileSync(path, html);
+    vi.stubEnv('BEELINE_ATTACH_ROOT', root);
+    const requests: { path: string; body: unknown; mime: string | null }[] = [];
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      const upload = url.pathname === '/v1/daemon/artifacts';
+      requests.push({ path: url.pathname, body: upload ? init.body : JSON.parse(String(init.body)),
+        mime: new Headers(init.headers).get('content-type') });
+      return Response.json(upload ? { url: '/v1/media/game-proof' } : { ok: true });
+    });
+    await callAgentTool('post_artifact', { path, mime: 'application/vnd.beeline.game+html' });
+    expect(requests).toEqual([
+      { path: '/v1/daemon/artifacts', body: Buffer.from(html), mime: 'application/vnd.beeline.game+html' },
+      { path: '/v1/daemon/operations/postAgentAttachment', mime: 'application/json', body: {
+        roomId: 'corner', requestId: 'request', generationId: 'generation',
+        attachment: { url: '/v1/media/game-proof', name: 'voxel-island.html',
+          mimeType: 'application/vnd.beeline.game+html', size: Buffer.byteLength(html) },
+      } },
+    ]);
+  });
+
   it('dispatches release recovery inputs with active corner authority and no grant runner', async () => {
     await callAgentTool('dispatch_release', { inputs: { release_version: 'v0.1.94' } });
     expect(calls).toEqual([{ operation: 'dispatchRoomWorkflow', input: {

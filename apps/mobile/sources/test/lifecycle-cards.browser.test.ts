@@ -54,11 +54,16 @@ async function main() {
       assert(destination.startsWith('corner:') || destination.startsWith('https://github.com/'), name + ': wrong destination');
     }
     const headers = [...section.querySelectorAll('[data-testid$="-title"]')];
-    assert(headers.length === 1 && /^(PR|Corner|Issue|Check|Activity) · /.test(headers[0].textContent), name + ': header');
-    assert(!headers[0].textContent.includes('@'), name + ': header author');
+    const checks = name === 'corner-checks-failing';
+    assert(headers.length === (checks ? 1 : 0), name + ': only checks retain a header');
+    if (checks) {
+      assert(/^(PR|Corner|Issue|Check|Activity) · /.test(headers[0].textContent), name + ': check header');
+      assert(!headers[0].textContent.includes('@'), name + ': header author');
+    }
+    else assert([...section.querySelectorAll('[data-testid^="notification-run-cell-"] *')].some(node => getComputedStyle(node).fontFamily.includes('SpaceGrotesk')), name + ': sans lifecycle row');
     const rows = section.querySelectorAll('[data-testid^="notification-run-cell-"]');
     assert(rows.length >= 1, name + ': row');
-    results.push({name, actions: actions.length, header: headers[0].textContent});
+    results.push({name, actions: actions.length, header: headers[0]?.textContent ?? null});
   }
   assert(document.documentElement.scrollWidth <= innerWidth, 'horizontal overflow');
   document.getElementById('result').textContent = JSON.stringify({source:'local built production components', variants:results});
@@ -73,6 +78,7 @@ main().catch(error=>document.getElementById('result').textContent = 'FAIL: '+err
         ...(output ? { screenshotPath: path.resolve(output, `web-local-${theme}.png`) } : {}),
       });
       expect(proof.status, proof.stderr).toBe(0);
+      expect(proof.result).not.toMatch(/^FAIL:/);
       const result = JSON.parse(proof.result);
       expect(result.variants.length).toBeGreaterThan(0);
       if (output) await writeFile(path.join(output, `web-local-${theme}-results.json`), JSON.stringify(result, null, 2));

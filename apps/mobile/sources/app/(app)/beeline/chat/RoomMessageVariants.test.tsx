@@ -519,24 +519,24 @@ describe('Room message variant components', () => {
         action: 'merged' as const,
         actor: 'Ada',
         title: 'Ship it',
-        url: 'https://github.test/pr',
+        url: 'https://github.test/pull/42',
       },
       {
         type: 'issue' as const,
         action: 'opened' as const,
         actor: 'Lin',
         title: 'Bug',
-        url: 'https://github.test/issue',
+        url: 'https://github.test/issues/43',
       },
     ]) {
       const renderer = render(
         <GitHubEventCard message={message({ githubEvent })} onOpenUrl={onOpenUrl} />,
       );
-      expect(renderer.root.findByProps({ testID: `github-event-card-${githubEvent.type}-${githubEvent.action}-title` }).props.numberOfLines).toBeUndefined();
+      expect(renderer.root.findAllByType('Text').find((node: ReactTestInstance) => node.props.numberOfLines === 2)).toBeDefined();
       act(() =>
         renderer.root
           .findByProps({
-            testID: `github-event-card-${githubEvent.type}-${githubEvent.action}-primary-action`,
+            testID: 'notification-run-cell-url-message',
           })
           .props.onPress(),
       );
@@ -564,7 +564,7 @@ describe('Room message variant components', () => {
     }
   });
 
-  it('makes the internal corner action primary and the external PR action secondary', () => {
+  it('keeps the corner chevron separate from the linked PR number', () => {
     const onOpenCorner = vi.fn();
     const onOpenUrl = vi.fn();
     const renderer = render(
@@ -595,36 +595,29 @@ describe('Room message variant components', () => {
       />,
     );
     const primaryAction = renderer.root.findByProps({
-      testID: 'corner-summary-card-primary-action',
+      testID: 'notification-run-cell-corner-message',
     });
-    expect(primaryAction.props.accessibilityLabel).toBe('Corner →');
+    expect(primaryAction.props.accessibilityLabel).toBe('Open corner Ship the archived transcript card');
     act(() => primaryAction.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     const secondaryAction = renderer.root.findByProps({
-      testID: 'corner-summary-card-secondary-action',
+      testID: 'notification-run-cell-url-message',
     });
-    expect(secondaryAction.props.accessibilityLabel).toBe('View ↗');
+    expect(secondaryAction.props.accessibilityLabel).toBe('Open corner · PR #42');
     act(() => secondaryAction.props.onPress());
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
-    // A legacy card carries no name, so the title is the first three words of
-    // its objective; the body still carries the objective whole (C89).
-    expect(JSON.stringify(renderer.toJSON())).toContain('PR · 1 merged');
-    // The landed card names the corner AUTHOR, not the Room reviewer — the
-    // reviewer is a per-Room setting, so it carries no per-card information.
     const json = JSON.stringify(renderer.toJSON());
-    expect(json).toContain('by ');
-    expect(json).toContain('@beebee');
-    expect(json).not.toContain('@echo');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Awaiting @echo');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Approved by @echo');
-    expect(JSON.stringify(renderer.toJSON())).toContain('Ship fact cards');
-    expect(JSON.stringify(renderer.toJSON())).toContain('View ↗');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Open the archived transcript');
+    expect(json).toContain('Merged');
+    expect(json).toContain('#42');
+    expect(json).toContain('Ship the archived transcript card');
+    expect(json).not.toContain('@beebee');
+    expect(json).not.toContain('View ↗');
+    expect(json).not.toContain('Open the archived transcript');
   });
 
-  it('titles the corner-open card with the name and keeps the objective as its body', () => {
+  it('shows the corner name with a chevron and omits the objective', () => {
     const onOpenCorner = vi.fn();
     const renderer = render(
       <DaemonFactCard
@@ -641,13 +634,10 @@ describe('Room message variant components', () => {
       />,
     );
     const card = renderer.root.findByProps({
-      testID: 'daemon-fact-card-corner-open-primary-action',
+      testID: 'notification-run-cell-corner-message',
     });
-    const texts = renderer.root
-      .findAllByType('Text')
-      .map((node: ReactTestInstance) => node.props.children);
-    expect(texts).toContain('flaky auth');
-    expect(texts).toContain('Fix the flaky auth test so the suite stops failing at random');
+    expect(JSON.stringify(renderer.toJSON())).toContain('corner #flaky auth');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test so the suite stops failing at random');
     act(() => card.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
@@ -672,18 +662,16 @@ describe('Room message variant components', () => {
         onOpenUrl={() => undefined}
       />,
     );
-    expect(JSON.stringify(renderer.toJSON())).toContain('closed');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Closed');
     const action = renderer.root.findByProps({
-      testID: `daemon-fact-card-${fact.type}-primary-action`,
+      testID: 'notification-run-cell-corner-message',
     });
-    expect(JSON.stringify(renderer.toJSON())).toContain('Corner →');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Corner →');
     act(() => action.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
 
-  it('names the agent that OPENED the corner, never one that owns it', () => {
-    // Any member agent can be addressed in a corner and carry its branch on,
-    // so the card records who started the work rather than who holds it.
+  it('keeps the Room corner-open row free of author and objective details', () => {
     const renderer = render(
       <DaemonFactCard
         message={message({
@@ -699,12 +687,9 @@ describe('Room message variant components', () => {
         onOpenUrl={() => undefined}
       />,
     );
-    const texts = renderer.root
-      .findAllByType('Text')
-      .map((node: ReactTestInstance) => node.props.children);
-    expect(JSON.stringify(renderer.toJSON())).toContain('corner · opened by ');
-    expect(JSON.stringify(renderer.toJSON())).toContain('@Beebee');
-    expect(texts).toContain('Fix the flaky auth test');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('corner · opened by ');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('@Beebee');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test');
   });
 
   it('titles a legacy corner-open card by the first three words of its objective', () => {
@@ -721,11 +706,8 @@ describe('Room message variant components', () => {
         onOpenUrl={() => undefined}
       />,
     );
-    const texts = renderer.root
-      .findAllByType('Text')
-      .map((node: ReactTestInstance) => node.props.children);
-    expect(texts).toContain('Fix the flaky');
-    expect(texts).toContain('Fix the flaky auth test so the suite stops failing at random');
+    expect(JSON.stringify(renderer.toJSON())).toContain('corner #Fix the flaky');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test so the suite stops failing at random');
   });
 
   it('memoizes ordinary rows across unrelated working changes and updates the affected speaker', () => {
@@ -3917,7 +3899,7 @@ it('links a corner-local PR notice to the current corner when the note has no co
   }] } });
   const renderer = render(<NotificationLifecycleCard message={item} cornerId="current-corner"
     onOpenCorner={onOpenCorner} onOpenUrl={() => undefined} />);
-  act(() => renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress());
+  expect(renderer.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(0);
   act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-local-pr' }).props.onPress());
   expect(onOpenCorner).toHaveBeenCalledWith('current-corner');
 });

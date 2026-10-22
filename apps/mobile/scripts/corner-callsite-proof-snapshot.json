@@ -1,0 +1,190 @@
+{
+  "dm": {
+    "messages": [
+      {
+        "id": "2f0372321d7eac192f91ac620a38fd2507590a3322b653e4c09851d2d49c8b0b",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792624668,
+        "createdAtMs": 1792624668519,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "33333333-3333-4333-8333-333333333333",
+          "eventId": "2f0372321d7eac192f91ac620a38fd2507590a3322b653e4c09851d2d49c8b0b",
+          "rootId": "2f0372321d7eac192f91ac620a38fd2507590a3322b653e4c09851d2d49c8b0b"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "c9b701e76625b850e3ddc557f208a0809d05c3ff44fd6a08237127eb56825919",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792624669,
+        "createdAtMs": 1792624669519,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "945a30b6-5922-4049-98c8-2564cfad3a7e",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "945a30b6-5922-4049-98c8-2564cfad3a7e",
+          "objective": "Build the requested work",
+          "sourceMessageId": "2f0372321d7eac192f91ac620a38fd2507590a3322b653e4c09851d2d49c8b0b"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "eb8d9332f857d47c9eaf50300951f9a45e89f12817bfb12d6df77fb3e58f26c4",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792624668,
+        "createdAtMs": 1792624668617,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "945a30b6-5922-4049-98c8-2564cfad3a7e",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "945a30b6-5922-4049-98c8-2564cfad3a7e",
+          "objective": "Build the requested work"
+        }
+      }
+    ]
+  },
+  "parent": {
+    "messages": [
+      {
+        "id": "f62333598b2d32f0a2baf844532b3acb9ab579bbed5f2bf22cbab6598a4cfbb1",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792624669,
+        "createdAtMs": 1792624669056,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "7afdc659-ddbb-4263-aca2-929b42bb64ee",
+          "eventId": "f62333598b2d32f0a2baf844532b3acb9ab579bbed5f2bf22cbab6598a4cfbb1",
+          "rootId": "f62333598b2d32f0a2baf844532b3acb9ab579bbed5f2bf22cbab6598a4cfbb1"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "c705ff6b611f5f21a4d138ea5c9d81934e9f0476662b8b9b94419786993a3755",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792624670,
+        "createdAtMs": 1792624670056,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "485a6e88-b1e4-45ca-b434-a37a58eb4eae",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "485a6e88-b1e4-45ca-b434-a37a58eb4eae",
+          "objective": "Build the requested work",
+          "sourceMessageId": "f62333598b2d32f0a2baf844532b3acb9ab579bbed5f2bf22cbab6598a4cfbb1"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "90a5271ed783e3dd18117cefb94d14d763621b7fc7a5ae84052794905d8b1df4",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792624669,
+        "createdAtMs": 1792624669129,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "485a6e88-b1e4-45ca-b434-a37a58eb4eae",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "485a6e88-b1e4-45ca-b434-a37a58eb4eae",
+          "objective": "Build the requested work"
+        }
+      }
+    ]
+  }
+}

@@ -24,7 +24,7 @@ import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
-import { MembersGlyph } from '@/components/buzz/MembersGlyph';
+import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -182,7 +182,7 @@ export default function WorkspaceChoice() {
             <ChoiceCard
               description="Paste the link someone sent you."
               expanded={joinOpen}
-              glyph={<MembersGlyph color={theme.buzz.accent} size={20} />}
+              glyph={<MembersAgentsGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => {
                 setJoinOpen((open) => !open);
                 setError(null);

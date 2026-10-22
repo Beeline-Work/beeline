@@ -4,7 +4,8 @@ import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
 import { CommunityRail, CommunitySwitcherTrigger } from '../sources/components/buzz/CommunityRail';
 import { DesktopWorkspaceRail } from '../sources/components/buzz/DesktopWorkspaceRail';
-import WorkspaceSettings from '../sources/app/(app)/beeline/settings/workspace';
+import { IdentityMark } from '../sources/components/buzz/IdentityMark';
+import { SETTINGS_SCOPE_PICTURE_SIZE, SettingsScopeTabs } from '../sources/components/buzz/SettingsScopeTabs';
 
 // A loud full-bleed square so the picture's own corners are unmistakable
 // against the tile plate: white field, black corner blocks.
@@ -122,12 +123,25 @@ async function read() {
           />
         </View>
         <View style={{ flex: 1 } as const}>
-          <WorkspaceSettings />
+          <SettingsScopeTabs
+            scope="workspace"
+            onScopeChange={() => undefined}
+            you={{ accessibilityLabel: 'You', label: 'You', picture: null, testID: 'settings-you-tab' }}
+            workspace={{
+              accessibilityLabel: 'Alpha',
+              label: 'Alpha',
+              picture: (
+                <IdentityMark kind="workspace" seed="alpha" avatarUrl={PICTURE} name="Alpha"
+                  size={SETTINGS_SCOPE_PICTURE_SIZE} testID="workspace-picture-mark" />
+              ),
+              testID: 'settings-workspace-tab',
+              tileTestID: 'workspace-picture-change',
+            }}
+          />
         </View>
       </View>
     </View>,
   );
-  // The settings screen loads its Workspace before it can paint the picture.
   await pause();
   await pause();
 

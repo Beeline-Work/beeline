@@ -40,7 +40,7 @@ export function identitySettingsProofShims(mobile: string): Record<string, strin
     '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ relayUrl: 'https://relay.test' });`,
     '@/buzz/connectors-model': `export const workbenchSummary = () => ({ value: '0 connected' });`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
-    '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false;`,
+    '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false; export const markRoomOpen = () => undefined;`,
     '@/sync/appConfig': `export const loadAppConfig = () => ({ releaseVersion: 'development', releaseSha: null });`,
     '@/sync/storage': `export const useLocalSettingMutable = (name) => [name === 'appearance' ? 'dark' : 'medium', () => undefined];`,
     '@/unistyles': `export const applyAppearanceChoice = () => undefined;

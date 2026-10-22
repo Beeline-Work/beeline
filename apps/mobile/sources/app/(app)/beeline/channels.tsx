@@ -1,3 +1,4 @@
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -46,7 +47,6 @@ import { Button } from '@/components/buzz/Button';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
-  RoomDeckComposeMenu,
   type RoomDeckComposeAction,
 } from '@/components/buzz/RoomDeckComposeMenu';
 import { RoomDeckLoadingView } from '@/components/buzz/RoomDeckLoadingView';
@@ -56,7 +56,7 @@ import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { readGitHubAccess, updateGitHubAccess, useGitHubAccess } from '@/buzz/github-access-surface';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
-import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -287,7 +287,7 @@ export default function BuzzChannels() {
     ),
   );
   const chatSections = useMemo(
-    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned)),
+    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned), !query.trim() && filter === 'all'),
     [chatList?.chats, query, filter, pinned],
   );
   const searchClient = useMemo(
@@ -893,30 +893,12 @@ export default function BuzzChannels() {
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
-              <WorkspaceActionsMenu
-                onMembers={() =>
-                  router.push({
-                    pathname: '/beeline/members',
-                    params: { communityId: activeCommunityId },
-                  } as never)
-                }
-                onSettings={
-                  canManageWorkspace
-                    ? () =>
-                        router.push({
-                          pathname: '/beeline/settings/workspace',
-                          params: { communityId: activeCommunityId },
-                        } as never)
-                    : undefined
-                }
-              />
-              {!viewerIsAgent && (
-                <RoomDeckComposeMenu
-                  header
-                  canManageWorkspace={canManageWorkspace}
-                  onSelect={compose}
-                />
-              )}
+              <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+                icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
+                onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
+                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
+                  testID="workspace-tray" needsYouCount={needsYouCount} filled={false}
+                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' } } as never)} />
             </View>
           )}
         </View>
@@ -927,16 +909,7 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-            needsYouCount={needsYouCount}
-            onTray={
-              activeCommunityId
-                ? () =>
-                    router.push({
-                      pathname: '/beeline/tray',
-                      params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' },
-                    } as never)
-                : undefined
-            }
+
           />
         )}
         {pinError && (
@@ -1042,7 +1015,10 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title} />
+                  <RoomListSectionHeader title={section.title}
+                    count={section.data.length}
+                    actionAccessibilityLabel={section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'}
+                    onAction={viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace) ? undefined : () => compose(section.kind === 'rooms' ? 'room' : 'message')} />
                 ) : null
               }
               ListFooterComponent={
@@ -1233,6 +1209,8 @@ const styles = StyleSheet.create((theme) => {
     },
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
     // and they touch, so their centres stay one complete touch target apart.
+    membersGlyph: { color: hull.ledgerQuiet },
+    trayGlyph: { color: hull.accent, backgroundColor: hull.bgBase },
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',

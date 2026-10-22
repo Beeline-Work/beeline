@@ -31,7 +31,7 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'members', file: 'app/(app)/beeline/members.tsx', treatment: 'glyph' },
   {
     id: 'workspace-settings',
-    file: 'app/(app)/beeline/settings/workspace.tsx',
+    file: 'components/buzz/WorkspaceSettingsPanel.tsx',
     treatment: 'glyph',
   },
   { id: 'community', file: 'app/(app)/beeline/community.tsx', treatment: 'glyph' },
@@ -60,6 +60,13 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
     treatment: 'exception',
     reason:
       'Button compact busy sits on a labeled 44pt control; a release-loop glyph would crowd the plate and flash on sub-100ms submits.',
+  },
+  {
+    id: 'choice-plate-busy',
+    file: 'components/buzz/ChoicePlate.tsx',
+    treatment: 'exception',
+    reason:
+      'A tapped choice option shows the same compact busy as a Button while its answer sends; not a page load gate.',
   },
   {
     id: 'ota-check-busy',

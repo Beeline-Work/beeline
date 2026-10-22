@@ -1,0 +1,11 @@
+{
+  "unchangedBounds": {
+    "Workspace menu": "[807,159][923,275]",
+    "Open compose menu, +": "[923,159][1038,275]",
+    "all conversations": "[42,299][126,414]",
+    "unread conversations": "[147,299][296,414]",
+    "pinned conversations": "[317,299][464,414]",
+    "Search conversations": "[828,299][944,414]",
+    "Beeline, workspace": "[74,183][142,251]"
+  }
+}

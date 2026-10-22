@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import TrayScreen from '../sources/app/(app)/beeline/tray';
-import { RoomListToolbar } from '../sources/components/buzz/RoomListToolbar';
+import { TrayGlyph } from '../sources/components/buzz/TrayGlyph';
 import { useNeedsYouCount } from '../sources/buzz/needs-you-store';
 
 /**
@@ -34,8 +34,7 @@ let setTrayOpen: (open: boolean) => void = () => undefined;
 function Badge() {
   const count = useNeedsYouCount('workspace-1', 'surface-1');
   return (
-    <RoomListToolbar desktop filter="all" onFilter={() => undefined} query="" onQuery={() => undefined}
-      needsYouCount={count} onTray={() => undefined} />
+    <TrayGlyph size={22} needsYouCount={count} onPress={() => undefined} />
   );
 }
 

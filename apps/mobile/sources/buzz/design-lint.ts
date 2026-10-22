@@ -29,6 +29,7 @@ export const DESIGN_ALLOWLIST: Readonly<Record<DesignRule, Readonly<Record<strin
     'buzz/faces/animals.tsx': 'Identity faces: per-identity colours are the identity, not chrome.',
     'buzz/faces/face-tile.tsx': 'Identity faces: per-identity colours are the identity, not chrome.',
     'components/buzz/AppMark.tsx': 'Third-party app marks carry their own brand colours.',
+    'components/buzz/MembersAgentsGlyph.tsx': 'SVG mask luminance uses black and white to cut transparency; visible strokes use the caller header colour.',
     'components/buzz/WalletQr.tsx': 'A QR code must be black on white to scan in either theme.',
     'components/buzz/ArtifactPdfView.tsx': 'The PDF page is paper: it renders white in both themes.',
     'components/buzz/DesktopArtifactPane.tsx': 'The PDF page is paper: it renders white in both themes.',
@@ -36,6 +37,8 @@ export const DESIGN_ALLOWLIST: Readonly<Record<DesignRule, Readonly<Record<strin
     'components/AnimatedOverlay.tsx': 'The modal scrim is black at an opacity in both themes.',
   },
   spacing: {
+    'components/buzz/SettingsRow.tsx':
+      'Owner-approved subtitle row metrics: 14 above and below, 2 between title and subtitle, so two lines of text clear both hairlines.',
     'buzz/room-bottom-chrome.ts':
       'The status canvas covers the remaining 9px of the existing 42px ink-and-air budget; this paint extent preserves the label position and seals scrolled text out of the band.',
   },

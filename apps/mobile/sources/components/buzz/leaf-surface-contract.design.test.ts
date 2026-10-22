@@ -11,7 +11,7 @@ const sources = {
   'SettingsRow.tsx': readFileSync(new URL('./SettingsRow.tsx', import.meta.url), 'utf8'),
   'EmptyLedgerState.tsx': readFileSync(new URL('./EmptyLedgerState.tsx', import.meta.url), 'utf8'),
   'workspace.tsx': readFileSync(
-    new URL('../../app/(app)/beeline/settings/workspace.tsx', import.meta.url),
+    new URL('./WorkspaceSettingsPanel.tsx', import.meta.url),
     'utf8',
   ),
   '[channelId].tsx': readFileSync(

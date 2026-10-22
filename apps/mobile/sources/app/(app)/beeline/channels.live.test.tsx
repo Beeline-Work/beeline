@@ -103,6 +103,7 @@ vi.mock('@/components/buzz/CornerGlyph', () => ({ CORNER_META_SIZE: 12, CornerGl
 vi.mock('@/components/buzz/CornerWorkingPulse', () => hostModule('CornerWorkingPulse'));
 vi.mock('@/components/buzz/DirectMessagePickerSheet', () => hostModule('DirectMessagePickerSheet'));
 vi.mock('@/components/buzz/ExitGlyph', () => hostModule('ExitGlyph'));
+vi.mock('@/components/buzz/MemberRosterRow', () => hostModule('MemberRosterRow'));
 vi.mock('@/components/buzz/MemberPickerSheet', () => hostModule('MemberPickerSheet'));
 vi.mock('@/components/buzz/MembersGlyph', () => hostModule('MembersGlyph'));
 vi.mock('@/components/buzz/Button', () => hostModule('Button'));
@@ -1080,7 +1081,7 @@ describe('Room deck live path', () => {
 });
 
 vi.mock('@/components/buzz/WorkspaceActionsMenu', () => hostModule('WorkspaceActionsMenu'));
-vi.mock('@/components/buzz/RoomListToolbar', () => hostModule('RoomListToolbar'));
+vi.mock('@/components/buzz/RoomListToolbar', () => hostModule('RoomListToolbar', 'RoomListTrayAction'));
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: async (key: string) =>

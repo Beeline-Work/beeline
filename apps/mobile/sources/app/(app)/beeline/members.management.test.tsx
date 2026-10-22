@@ -690,8 +690,16 @@ describe('Members workspace management', () => {
     const agents = renderer.root.findByProps({ testID: 'members-add-agents' });
     expect(people.props.accessibilityLabel).toBe('Add people');
     expect(agents.props.accessibilityLabel).toBe('Add agents');
-    expect(people.props.style({ pressed: false })[0].minHeight).toBeGreaterThanOrEqual(44);
-    expect(agents.props.style({ pressed: false })[0].minHeight).toBeGreaterThanOrEqual(44);
+    {
+      const box = people.props.style({ pressed: false })[0];
+      expect(box.height + people.props.hitSlop.top + people.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
+      expect(box.width + people.props.hitSlop.left + people.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+    }
+    {
+      const box = agents.props.style({ pressed: false })[0];
+      expect(box.height + agents.props.hitSlop.top + agents.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
+      expect(box.width + agents.props.hitSlop.left + agents.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+    }
   });
 
   it('shows People and Agents without a count when the server omits totals', async () => {

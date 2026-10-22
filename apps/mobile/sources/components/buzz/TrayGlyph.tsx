@@ -1,4 +1,8 @@
 import React from 'react';
+import { Text, View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { Button } from './Button';
+import { compactNeedsYouCount } from '@/buzz/needs-you';
 import Svg, { Path } from 'react-native-svg';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import brand from '@/buzz/brand.json';
@@ -19,16 +23,20 @@ export function TrayGlyph({
   filled = false,
   size = 24,
   testID,
+  onPress,
+  needsYouCount = 0,
 }: {
   color?: string;
   cutColor?: string;
   filled?: boolean;
   size?: number;
   testID?: string;
+  onPress?: () => void;
+  needsYouCount?: number;
 }) {
   const strokeWidth = chromeStrokeWidth(size);
-  return (
-    <Svg {...DECORATIVE_GLYPH_PROPS} height={size} testID={testID} viewBox="0 0 24 24" width={size}>
+  const glyph = (
+    <Svg {...DECORATIVE_GLYPH_PROPS} height={size} testID={onPress ? undefined : testID} viewBox="0 0 24 24" width={size}>
       <Path
         d={BOX}
         fill={filled && cutColor ? color : 'none'}
@@ -45,4 +53,38 @@ export function TrayGlyph({
       />
     </Svg>
   );
+  return onPress ? (
+    <Button label="" variant="quiet" testID={testID}
+      accessibilityLabel={needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'}
+      accessibilityState={{ selected: filled }} onPress={onPress}
+      icon={<>{glyph}{needsYouCount > 0 ? (
+        <View style={styles.needsCount} testID="tray-needs-you-count">
+          <Text style={styles.needsCountText}>{compactNeedsYouCount(needsYouCount)}</Text>
+        </View>
+      ) : null}</>} />
+  ) : glyph;
 }
+
+const NEEDS_COUNT_SIZE = 17;
+const styles = StyleSheet.create((theme) => ({
+  needsCount: {
+    position: 'absolute',
+    top: 8,
+    right: 7,
+    minWidth: NEEDS_COUNT_SIZE,
+    height: NEEDS_COUNT_SIZE,
+    paddingHorizontal: 4,
+    borderRadius: NEEDS_COUNT_SIZE / 2,
+    borderWidth: 1,
+    borderColor: theme.buzz.bgBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.buzz.accent,
+  },
+  needsCountText: {
+    ...theme.buzz.type.sectionHead,
+    letterSpacing: 0,
+    color: theme.buzz.textInverted,
+    fontVariant: ['tabular-nums'],
+  },
+}));

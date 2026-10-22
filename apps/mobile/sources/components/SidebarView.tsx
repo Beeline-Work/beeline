@@ -1,3 +1,4 @@
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -7,7 +8,6 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { saveActiveCommunityId, subscribeActiveCommunityId } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom, roomCornersHref } from '@/buzz/corner-navigation';
 import { desktopWorkspaceRoute } from '@/buzz/desktop-workbench-state';
-import { runRoomDeckComposeAction } from '@/buzz/room-deck-compose-actions';
 import {
   filterConversations,
   roomListCounts,
@@ -35,7 +35,7 @@ import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { WorkspaceActionsMenu } from '@/components/buzz/WorkspaceActionsMenu';
+import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { useHeaderHeight, useIsDesktop } from '@/utils/responsive';
@@ -141,6 +141,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
   desktopWorkspaceHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  membersGlyph: { color: theme.buzz.ledgerQuiet },
+  trayGlyph: { color: theme.buzz.accent, backgroundColor: theme.buzz.bgBase },
   desktopWorkspaceHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -355,8 +357,8 @@ export const SidebarView = React.memo(function SidebarView() {
     query,
   );
   const filteredChatSections = React.useMemo(
-    () => roomListSections(filteredChats),
-    [filteredChats],
+    () => roomListSections(filteredChats, !query.trim() && filter === 'all'),
+    [filteredChats, query, filter],
   );
   const activeWorkspace = workspaces.find((workspace) => workspace.id === workspaceId) ?? null;
   // ChatListView carries workspace.role; the server's viewer.permissions.manage
@@ -365,11 +367,10 @@ export const SidebarView = React.memo(function SidebarView() {
   const viewerIsAgent = surface?.viewer.kind === 'agent';
   const canCreateRoom = !viewerIsAgent && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
-  const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
   const traySelected = pathname.startsWith('/beeline/tray');
   const needsYouCount = useNeedsYouCount(workspaceId, surface);
   const profileSettingsSelected =
-    pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
+    pathname.startsWith('/beeline/settings') && !workbenchSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string) => {
@@ -494,61 +495,14 @@ export const SidebarView = React.memo(function SidebarView() {
               />
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
-                  <WorkspaceActionsMenu
-                    traySelected={traySelected}
-                    canManageWorkspace={canManageWorkspace}
-                    onTray={() =>
-                      router.push({
-                        pathname: '/beeline/tray',
-                        params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' },
-                      } as Href)
-                    }
-                    onMembers={() =>
-                      router.push({
-                        pathname: '/beeline/members',
-                        params: { communityId: workspaceId },
-                      } as Href)
-                    }
-                    onSettings={
-                      canManageWorkspace
-                        ? () =>
-                            router.push({
-                              pathname: '/beeline/settings/workspace',
-                              params: { communityId: workspaceId },
-                            } as Href)
-                        : undefined
-                    }
-                    onCompose={
-                      viewerIsAgent
-                        ? undefined
-                        : (action) =>
-                            runRoomDeckComposeAction(action, {
-                              communityId: workspaceId,
-                              openMessagePicker: () =>
-                                router.push({
-                                  pathname: '/beeline/channels',
-                                  params: {
-                                    communityId: workspaceId,
-                                    newDirectMessage: String(Date.now()),
-                                  },
-                                } as Href),
-                              openRoomCreator: () =>
-                                router.push({
-                                  pathname: '/beeline/channels',
-                                  params: {
-                                    communityId: workspaceId,
-                                    newRoom: String(Date.now()),
-                                  },
-                                } as Href),
-                              invitePerson: () =>
-                                router.push({
-                                  pathname: '/beeline/members',
-                                  params: { communityId: workspaceId, action: 'invite' },
-                                } as Href),
-                              navigate: (target) => router.push(target as Href),
-                            })
-                    }
-                  />
+                  <>
+                  <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+                    icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
+                    onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
+                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
+                  testID="desktop-tray" needsYouCount={needsYouCount} filled={traySelected}
+                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' } } as never)} />
+                  </>
                 )}
               </View>
             </View>
@@ -593,18 +547,8 @@ export const SidebarView = React.memo(function SidebarView() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
-            traySelected={traySelected}
             counts={counts}
-            needsYouCount={needsYouCount}
-            onTray={
-              workspaceId
-                ? () =>
-                    router.push({
-                      pathname: '/beeline/tray',
-                      params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' },
-                    } as Href)
-                : undefined
-            }
+
           />
           {pinError && (
             <Text accessibilityRole="alert" style={styles.empty}>
@@ -622,7 +566,7 @@ export const SidebarView = React.memo(function SidebarView() {
                   onPress={() => setRefreshNonce((value) => value + 1)}
                 />
               </View>
-            ) : !filteredChats.length ? (
+            ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (
                   <PinnedConversationsEmpty desktop onShowAll={() => setFilter('all')} />
@@ -647,7 +591,8 @@ export const SidebarView = React.memo(function SidebarView() {
                   {!query.trim() && (
                     <RoomListSectionHeader
                       title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                      count={section.kind === 'rooms' ? section.data.length : undefined}
+                      count={section.data.length}
+                      tapLineHeight
                       actionTestID={
                         section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'
                       }

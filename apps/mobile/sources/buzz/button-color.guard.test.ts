@@ -32,7 +32,7 @@ const decorativeAccentFills = new Set([
   'components/buzz/RoomUnreadControls.tsx:badge',
   'components/buzz/RoomListToolbar.tsx:selectedRule',
   // The offline band under a Room header; its Retry is text, not a plate.
-  'components/buzz/RoomListToolbar.tsx:needsCount',
+  'components/buzz/TrayGlyph.tsx:needsCount',
   'components/buzz/StateDot.tsx:pulse',
   'components/buzz/TranscriptCard.tsx:initialValues',
   // The arrival halo's three glow layers (the theme brass at falling opacity).
@@ -40,9 +40,9 @@ const decorativeAccentFills = new Set([
   'components/buzz/TranscriptCard.tsx:haloMid',
   'components/buzz/TranscriptCard.tsx:haloFar',
   'components/buzz/TranscriptCard.tsx:rowRule',
-  'components/buzz/TranscriptCard.tsx:choiceWash',
-  'components/buzz/TranscriptCard.tsx:choiceWashLeader',
-  'components/buzz/TranscriptCard.tsx:choiceLetterSelected',
+  'components/buzz/ChoicePlate.tsx:choiceWash',
+  'components/buzz/ChoicePlate.tsx:choiceWashLeader',
+  'components/buzz/ChoicePlate.tsx:choiceLetterSelected',
   'components/buzz/TranscriptScrubber.tsx:handle',
   // The center point of the outlined attention glyph, not the button plate.
   // The running call's status dot; Join uses a separate neutral plate.

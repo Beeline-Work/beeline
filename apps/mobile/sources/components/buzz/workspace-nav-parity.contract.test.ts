@@ -20,7 +20,7 @@ function surfaceSource(relativePath: string): string {
 
 const rail = surfaceSource('./CommunityRail.tsx');
 const desktopRail = surfaceSource('./DesktopWorkspaceRail.tsx');
-const workspaceSettings = surfaceSource('../../app/(app)/beeline/settings/workspace.tsx');
+const workspaceSettings = surfaceSource('./SettingsScopeTabs.tsx');
 
 describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
   it('draws the mobile drawer tile with the desktop radius and brass bezel', () => {
@@ -76,13 +76,13 @@ describe('workspace nav parity (mobile drawer ↔ desktop rail)', () => {
       ['mobile drawer', rail, 'TILE_SEAT'],
       ['room-list header plate', rail, 'HEADER_PLATE_SEAT'],
       ['desktop rail', desktopRail, 'TILE_SEAT'],
-      ['workspace settings', workspaceSettings, 'PICTURE_SEAT'],
+      ['Settings workspace tab', workspaceSettings, 'seat'],
     ];
     for (const [, source, seat] of seats) {
       expect(source).toContain("from '@/buzz/workspace-tile'");
       expect(source).toContain(`const ${seat} = workspacePictureSeat(`);
       expect(source).toContain(`borderRadius: ${seat}.pictureRadius`);
-      expect(source).toContain(`size={${seat}.pictureSize}`);
+      expect(source).toContain(`${seat}.pictureSize`);
       expect(source).toContain("overflow: 'hidden'");
     }
     // The old treatment cropped the picture against the bezel itself: the

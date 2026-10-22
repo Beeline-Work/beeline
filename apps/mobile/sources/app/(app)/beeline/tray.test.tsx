@@ -84,6 +84,8 @@ const theme = vi.hoisted(() => ({
     brassWash: 'rgba(176,138,74,0.18)',
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     type: { body: {}, bodyStrong: {}, meta: {}, sectionHead: {} },
+    // Choice options reuse the transcript card's plate, which sizes from these metrics.
+    transcriptCard: new Proxy({}, { get: () => 0 }),
   },
 }));
 vi.mock('react-native-unistyles', () => ({

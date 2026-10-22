@@ -39,12 +39,9 @@ vi.mock('@expo/vector-icons', async () => {
   const ReactModule = await import('react');
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
-vi.mock('./TrayGlyph', async () => {
-  const ReactModule = await import('react');
-  return { TrayGlyph: (props: any) => ReactModule.createElement('TrayGlyph', props) };
-});
-
-import { RoomListToolbar } from './RoomListToolbar';
+vi.mock('react-native-svg', async () => { const R = await import('react'); const h = (p: any) => R.createElement('Svg', p, p.children); return { default: h, Path: h }; });
+vi.mock('./Button', async () => { const R = await import('react'); return { Button: (p: any) => R.createElement('Button', p, p.icon) }; });
+import { TrayGlyph } from './TrayGlyph';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -59,20 +56,9 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-function render(props: Partial<React.ComponentProps<typeof RoomListToolbar>> = {}) {
+function render({ desktop = false, onTray = () => undefined, ...props }: { desktop?: boolean; onTray?: () => void; needsYouCount?: number } = {}) {
   let tree!: ReactTestRenderer;
-  act(() => {
-    tree = create(
-      <RoomListToolbar
-        filter="all"
-        onFilter={() => undefined}
-        query=""
-        onQuery={() => undefined}
-        onTray={() => undefined}
-        {...props}
-      />,
-    );
-  });
+  act(() => { tree = create(<TrayGlyph size={22} onPress={onTray} testID={desktop ? 'desktop-tray' : 'workspace-tray'} {...props} />); });
   return tree;
 }
 
@@ -82,11 +68,11 @@ function badge(tree: ReactTestRenderer): string | null {
   return found[0]!.findByType('Text' as never).props.children;
 }
 
-describe('RoomListToolbar tray action', () => {
+describe('TrayGlyph primary-row action', () => {
   it('carries no badge while nothing needs the viewer', () => {
     const tree = render({ needsYouCount: 0 });
     expect(badge(tree)).toBeNull();
-    expect(tree.root.findByProps({ testID: 'workspace-tray' }).props.accessibilityLabel).toBe(
+    expect(tree.root.findByType('Button' as never).props.accessibilityLabel).toBe(
       'Tray',
     );
   });
@@ -95,7 +81,7 @@ describe('RoomListToolbar tray action', () => {
     expect(badge(render({ needsYouCount: 5 }))).toBe('5');
     const busy = render({ needsYouCount: 12 });
     expect(badge(busy)).toBe('9+');
-    expect(busy.root.findByProps({ testID: 'workspace-tray' }).props.accessibilityLabel).toBe(
+    expect(busy.root.findByType('Button' as never).props.accessibilityLabel).toBe(
       'Tray, 12 need you',
     );
   });

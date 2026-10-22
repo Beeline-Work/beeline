@@ -209,7 +209,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-import WorkspaceSettings from './workspace';
+import WorkspaceSettings, { type WorkspaceSettingsHandle } from '@/components/buzz/WorkspaceSettingsPanel';
 import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
 
 const originalConsoleError = console.error;
@@ -325,10 +325,12 @@ function chatListView(chats: ReturnType<typeof room>[] = []) {
   };
 }
 
-async function render(): Promise<ReactTestRenderer> {
+async function render(
+  props: { workspaceId?: string; ref?: React.Ref<WorkspaceSettingsHandle> } = {},
+): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(React.createElement(WorkspaceSettings));
+    renderer = create(React.createElement(WorkspaceSettings, { workspaceId: 'workspace-1', ...props }));
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -336,12 +338,19 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('Workspace Settings authority', () => {
-  it('shows no admin-only actions to a normal member', async () => {
+  it('shows a normal member the same tab read-only', async () => {
     roomViews.workspace.mockResolvedValue(workspaceView('member'));
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: 'workspace-settings-denied' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'workspace-overview-settings' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'workspace-settings-read-only' })).toBeDefined();
+    const name = renderer.root.findByProps({ testID: 'workspace-name-row' });
+    const visibility = renderer.root.findByProps({ testID: 'workspace-visibility-row' });
+    expect([name.props.value, name.props.onPress, name.props.chevron]).toEqual(['Hull', undefined, undefined]);
+    expect([visibility.props.value, visibility.props.onPress, visibility.props.chevron])
+      .toEqual(['Invite-only', undefined, undefined]);
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.description).toBeUndefined();
+    for (const testID of ['workspace-fix-sweep', 'channel-visibility-settings', 'workspace-delete-row', 'workspace-picture-clear'])
+      expect(renderer.root.findAllByProps({ testID })).toHaveLength(0);
   });
 
   it('still renders owner settings when the server omits peopleTotal and agentTotal', async () => {
@@ -352,9 +361,6 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
     expect(renderer.root.findAllByProps({ testID: 'workspace-settings-denied' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBeUndefined();
-    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
-      '0 rooms',
-    );
   });
 
   it('does not treat a failed workspace read as a permission denial', async () => {
@@ -383,7 +389,7 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
   });
 
-  it('loads every scoped settings section for a Workspace owner', async () => {
+  it('loads every owner section', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
@@ -399,16 +405,17 @@ describe('Workspace Settings authority', () => {
     client.setCommunityAvatar.mockImplementation(async () => {
       roomViews.workspace.mockResolvedValue(workspaceView('owner', pictureUrl));
     });
-    const renderer = await render();
+    const handle = React.createRef<WorkspaceSettingsHandle>();
+    const renderer = await render({ ref: handle });
 
+    // The Settings header's selected workspace tile asks the tab to change it.
     await act(async () => {
-      renderer.root.findByProps({ testID: 'workspace-picture-change' }).props.onPress();
+      handle.current?.changePicture();
       await Promise.resolve();
     });
 
     expect(avatarUpload.pickAndUploadAvatar).toHaveBeenCalledWith(client);
     expect(client.setCommunityAvatar).toHaveBeenCalledWith('workspace-1', pictureUrl);
-    expect(renderer.root.findByType('IdentityMark').props.avatarUrl).toBe(pictureUrl);
     expect(renderer.root.findByProps({ testID: 'workspace-picture-clear' })).toBeDefined();
   });
 
@@ -427,7 +434,6 @@ describe('Workspace Settings authority', () => {
     });
 
     expect(client.setCommunityAvatar).toHaveBeenCalledWith('workspace-1', '');
-    expect(renderer.root.findByType('IdentityMark').props.avatarUrl).toBeUndefined();
     expect(renderer.root.findAllByProps({ testID: 'workspace-picture-clear' })).toHaveLength(0);
   });
 
@@ -435,10 +441,13 @@ describe('Workspace Settings authority', () => {
     roomViews.workspace.mockResolvedValue(
       workspaceView('member', 'https://example.test/media/hull.png'),
     );
-    const renderer = await render();
+    const handle = React.createRef<WorkspaceSettingsHandle>();
+    const renderer = await render({ ref: handle });
+    await act(async () => {
+      handle.current?.changePicture();
+      await Promise.resolve();
+    });
 
-    expect(renderer.root.findByProps({ testID: 'workspace-settings-denied' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'workspace-picture-change' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ testID: 'workspace-picture-clear' })).toHaveLength(0);
     expect(avatarUpload.pickAndUploadAvatar).not.toHaveBeenCalled();
     expect(client.setCommunityAvatar).not.toHaveBeenCalled();
@@ -505,9 +514,7 @@ describe('Workspace Settings authority', () => {
     });
 
     expect(renderer.root.findByProps({ testID: 'workspace-name-row' }).props.value).toBe('Atlas');
-    expect(renderer.root.findByType('IdentityMark').props.avatarUrl).toBe(
-      'https://example.test/media/atlas.png',
-    );
+    expect(renderer.root.findByProps({ testID: 'workspace-picture-clear' })).toBeDefined();
     expect(roomViews.workspace).toHaveBeenCalledTimes(reads);
   });
 
@@ -620,12 +627,12 @@ describe('Workspace Settings authority', () => {
     );
   });
 
-  it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {
+  it.each([false, true])('opens duplicate Room Details when embedded=%s', async (embedded) => {
     roomViews.chats.mockResolvedValue(
       chatListView([room('11111111-room', 'beeline', 1), room('22222222-room', 'beeline', 2)]),
     );
 
-    const renderer = await render();
+    const renderer = await render({ embedded, workspaceId: 'workspace-1' });
     const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
 
     expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:01 UTC');
@@ -887,11 +894,11 @@ describe('Workspace Settings authority', () => {
     expect(navigation.replace).not.toHaveBeenCalledWith('/beeline/channels');
   });
 
-  it('shows the member count on the Members row and a quiet census at the foot', async () => {
+  it('shows the member count on the Members row', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('3');
-    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
-      '0 rooms · 3 members',
+    expect(renderer.root.findByProps({ testID: 'open-members' }).props.description).toBe(
+      'Invite people and agents, set roles',
     );
   });
 
@@ -907,9 +914,6 @@ describe('Workspace Settings authority', () => {
     });
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'open-members' }).props.value).toBe('45');
-    expect(renderer.root.findByProps({ testID: 'workspace-census' }).props.children).toBe(
-      '0 rooms · 45 members',
-    );
   });
 
   it('retires the Picture row and Danger zone heading', async () => {
@@ -921,7 +925,6 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
       'Danger zone',
     );
-    expect(renderer.root.findByProps({ testID: 'workspace-picture-change' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'workspace-delete-row' }).props.tone).toBe(
       'destructive',
     );
@@ -950,15 +953,17 @@ describe('public Workspace join links', () => {
     const renderer = await render();
     expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
     const copy = renderer.root.findByProps({ testID: 'workspace-public-join-copy' });
-    expect(copy.props.description).toBe(`https://usebeeline.app/join/${token}`);
+    expect([copy.props.title, copy.props.description, copy.props.action])
+      .toEqual(['Public join link', 'Anyone with the link can join', 'Copy']);
     await act(async () => copy.props.onPress());
     expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
     expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-rotate' })).toHaveLength(0);
     expect(phoneOperation).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({ testID: 'workspace-public-join-copy' }).props.action).toBe('Copied');
     console.log(`PUBLIC-LINK-1 (${os} renderer stand-in): open public Workspace Settings → Copy public join link → clipboard keeps original URL; Rotate row absent.`);
     await act(async () => renderer.unmount());
   });
-  it('hides permanent links in private Workspaces and from regular members', async () => {
+  it('hides the link in private Workspaces and lets a regular member copy a public one', async () => {
     let renderer = await render();
     expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-setting' })).toHaveLength(0);
     expect(phoneOperation).not.toHaveBeenCalled();
@@ -966,9 +971,12 @@ describe('public Workspace join links', () => {
     const view = workspaceView('member');
     view.workspace.visibility = 'public';
     roomViews.workspace.mockResolvedValue(view);
+    const token = `inv_${'e'.repeat(64)}`;
+    phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 });
     renderer = await render();
-    expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-setting' })).toHaveLength(0);
-    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
+    await act(async () => renderer.root.findByProps({ testID: 'workspace-public-join-copy' }).props.onPress());
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
     await act(async () => renderer.unmount());
   });
 });

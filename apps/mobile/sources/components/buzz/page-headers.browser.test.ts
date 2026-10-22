@@ -110,7 +110,7 @@ describe.skipIf(!existsSync(CHROME))('section page headers in a browser', () => 
       eyebrowAboveTitle: true,
     });
     const { eyebrowFont: _font, eyebrowAboveTitle: _above, ...frame } = corners;
-    for (const page of ['tray', 'workbench', 'workspace', 'changelog']) {
+    for (const page of ['tray', 'workbench', 'changelog']) {
       const { page: _page, ...header } = await measure(page);
       if (page === 'changelog') console.log("Demonstrated English changelog: What's New title and Back accessibility label rendered");
       // Pages without an eyebrow or trailing text share everything else.

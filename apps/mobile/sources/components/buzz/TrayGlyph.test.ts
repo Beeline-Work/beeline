@@ -3,6 +3,14 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+vi.mock('react-native', async () => {
+  const ReactModule = await import('react');
+  const host = (name: string) => (props: Record<string, unknown>) =>
+    ReactModule.createElement(name, props, props.children as React.ReactNode);
+  return { Text: host('Text'), View: host('View') };
+});
+vi.mock('./Button', () => ({ Button: 'Button' }));
+
 vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: Record<string, unknown>) =>

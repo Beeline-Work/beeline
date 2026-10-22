@@ -33,17 +33,17 @@ describe('desktop layout mode', () => {
     expect(channels).toContain('chatList.chats.length === 0 ? (');
     expect(channels).toContain('<EmptyRoomActions');
     expect(channels).toContain('!isDesktop && activeCommunityId');
-    expect(channels).toContain('!viewerIsAgent && (');
+    expect(channels).toContain("viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace)");
   });
 
   it('groups the desktop index with the mobile section primitive and ordering', () => {
     const sidebar = source('components/SidebarView.tsx');
     const channels = source('app/(app)/beeline/channels.tsx');
 
-    expect(sidebar).toContain('roomListSections(filteredChats)');
+    expect(sidebar).toMatch(/roomListSections\(filteredChats(?:,|\))/);
     expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
     expect(sidebar).toContain('<RoomListSectionHeader');
-    expect(channels).toMatch(/<RoomListSectionHeader title=\{section.title\}[^>]*\/>/);
+    expect(channels).toContain('<RoomListSectionHeader title={section.title}');
   });
 
   it('keeps section-head creation controls above the conversation sections', () => {

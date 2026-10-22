@@ -71,7 +71,7 @@ describe.skipIf(!existsSync(CHROME))('onboarding account settings', () => {
       expect(proof.overflow).toEqual([]);
       expect(proof.providers.map((p:any)=>p.provider)).toEqual(conflict?['google']:['google','github']);
       expect(proof.recoveryText).toContain('Retry notifications');
-      expect(proof.recoveryText).toContain('network error reaching the push gateway');
+      expect(proof.recoveryText).toContain('Network error reaching the push gateway');
     } finally {await rm(directory,{recursive:true,force:true});}
   }, 120_000);
 });

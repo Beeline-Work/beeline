@@ -27,6 +27,7 @@
     "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
     "identity-mark:proof": "node scripts/render-identity-axis-proof.mjs",
     "turn-band:proof": "node scripts/turn-band-hold-proof.mjs",
+    "corner-grouping:proof": "node scripts/corner-grouping-status-proof.mjs",
     "emoji-clip:proof": "node scripts/render-emoji-clip-proof.mjs",
     "workspace-picture-clip:proof": "node scripts/render-workspace-picture-clip-proof.mjs",
     "transcript-scrubber:proof": "node scripts/transcript-scrubber-proof.mjs",

@@ -1,3 +1,4 @@
+import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
@@ -2185,6 +2186,21 @@ ALTER TABLE github_repositories ADD COLUMN IF NOT EXISTS allow_auto_merge boolea
 
 DROP TABLE IF EXISTS github_head_checks;
 
+-- First confirmed link per person and Workspace, without repository or message content.
+-- Keeping Workspace scope prevents a fixture success masking a later real success.
+CREATE TABLE IF NOT EXISTS repository_link_successes (
+  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  first_linked_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (identity_id, workspace_id)
+);
+CREATE INDEX IF NOT EXISTS repository_link_successes_workspace_idx ON repository_link_successes(workspace_id);
+CREATE TABLE IF NOT EXISTS operator_metric_epochs (
+  metric text PRIMARY KEY,
+  started_at timestamptz NOT NULL DEFAULT now()
+);
+INSERT INTO operator_metric_epochs(metric) VALUES('repository_link') ON CONFLICT DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS github_user_tokens (
   subject text PRIMARY KEY,
   encrypted_token text NOT NULL,
@@ -3083,6 +3099,7 @@ export async function migrate(
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
+  await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);
   await ddl('retire room webhooks', `
     DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
       room_webhook_deliveries, room_webhook_requests, room_webhooks;

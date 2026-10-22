@@ -1,0 +1,4 @@
+Final fixture: BUILD SUCCESSFUL in 3m 11s
+Baseline fixture: BUILD SUCCESSFUL in 47s
+Both builds: assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --max-workers=2
+Full native project generated locally; fixture entry and OTA disabled only in ignored Android output.

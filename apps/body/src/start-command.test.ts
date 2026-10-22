@@ -155,6 +155,18 @@ describe('stale pid recovery (gone vs recycled birth)', () => {
     expect(process.kill(process.pid, 0)).toBe(true);
   });
 
+  it.skipIf(process.platform !== 'linux').each(['legacy', 'previous boot'])(
+    'reclaims a matching start tick from %s without accepting an unrelated owner', async (mode) => {
+      root = mkdtempSync(resolve(tmpdir(), 'beeline-start-reboot-'));
+      const configPath = resolve(root, 'runtime.json');
+      const ticks = processBirthIdentity(process.pid)!;
+      writeFileSync(resolve(root, 'daemon.pid'), `${process.pid}\n`);
+      writeFileSync(resolve(root, 'daemon.birth'), mode === 'legacy' ? `${ticks}\n` : `old-boot:${ticks}\n`);
+      expect(await runtimeDaemonPid(configPath)).toBeNull();
+      expect(process.kill(process.pid, 0)).toBe(true);
+    },
+  );
+
   it('starts only the selected agent when its stale pid now belongs to another runtime', async () => {
     root = mkdtempSync(resolve(tmpdir(), 'beeline-start-selected-stale-'));
     const selected = 'aa'.repeat(32);

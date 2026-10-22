@@ -2802,7 +2802,9 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'report':
     case 'report_feedback':
-    case 'notify_feedback_fixed': return execute(name);
+    case 'notify_feedback_fixed':
+    case 'send_operator_system_dm':
+    case 'read_operator_system_dm': return execute(name);
     case 'dispatch_release': return execute(name);
     case 'approve_merge':
     case 'merge_corner':
@@ -3235,6 +3237,17 @@ async function executeAgentOperation(
           ...(args.releaseHoldId !== undefined ? { releaseHoldId: args.releaseHoldId } : {}),
         }),
       );
+    case 'send_operator_system_dm':
+      return JSON.stringify(await daemonExecute('sendOperatorSystemDm', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
+        recipients: args.recipients as string | string[], text: String(args.text ?? ''),
+      }));
+    case 'read_operator_system_dm':
+      return JSON.stringify(await daemonExecute('readOperatorSystemDm', {
+        ...await activeCommandContext(),
+        agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'), sendId: String(args.sendId ?? ''),
+      }));
     case 'order_corner_merge':
       return JSON.stringify(
         await daemonExecute('orderCornerMerge', {
@@ -3267,7 +3280,8 @@ async function executeAgentOperation(
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
       if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake');
-      await daemonExecute('postAgentTurnReceipt', { status: 'complete', completionKind: 'no-reply' });
+      // The helper drains in-flight activity and drafts before its terminal receipt.
+      // Completing here revokes authority while those writes are still running.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
       const context = await readTurnContextFile();
       writeFileSync(path, JSON.stringify({ ...context, terminalReason: 'no-reply' }), { mode: 0o600 });

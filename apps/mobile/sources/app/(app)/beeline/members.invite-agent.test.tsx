@@ -71,7 +71,7 @@ const unistylesTheme = vi.hoisted(() => ({
       hero: { fontSize: 22 },
       body: { fontSize: 16 },
       meta: { fontSize: 13 },
-      sectionHead: { fontSize: 10 },
+      sectionHead: { fontSize: 10 }, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 },
       machine: { fontSize: 13 },
     },
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },

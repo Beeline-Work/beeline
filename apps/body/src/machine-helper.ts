@@ -1,4 +1,4 @@
-import { captureHelperError } from './sentry.js';
+import { captureHelperError, flushHelperErrors } from './sentry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { MachineControl, machineControlPath } from './machine-control.js';
 import { withKernelLock } from './kernel-lock.js';
@@ -110,6 +110,8 @@ async function serveMachineHelper(
      */
     freeAgentIdle?: {
       idleMs: number;
+      /** Bounded startup; tests may shorten the production five-minute deadline. */
+      startupTimeoutMs?: number;
       requestSleep: (options: { refresh: boolean }) => Promise<boolean>;
     };
   } = {},
@@ -136,6 +138,23 @@ async function serveMachineHelper(
   const notifier = new SystemdNotifier();
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
+  // Free-agent Machines have no native manager to stop a pre-socket retry loop.
+  // Exit 78 tells their entrypoint to leave this boot stopped for inspection.
+  const inheritedDeadline = Number(env.BEELINE_FREE_AGENT_START_DEADLINE) * 1_000;
+  const startupBudget = Number.isFinite(inheritedDeadline) && inheritedDeadline > 0
+    ? Math.max(1, inheritedDeadline - Date.now()) : 5 * 60_000;
+  const startupAlreadyServed = options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE &&
+    await stat(env.BEELINE_FREE_AGENT_READY_FILE).then(() => true, () => false);
+  const startupDeadline = options.freeAgentIdle && !startupAlreadyServed ? setTimeout(() => {
+    const error = new Error('free agent did not serve within its startup deadline; stopping this boot');
+    captureHelperError(error);
+    console.error('[helper]', error.message);
+    void flushHelperErrors().finally(() => {
+      lifecycle.stop('failed');
+      (options.exitProcess ?? process.exit)(78);
+    });
+  }, options.freeAgentIdle.startupTimeoutMs ?? startupBudget) : undefined;
+  startupDeadline?.unref();
   const links = new Map<string, MachineLink>();
   const archiveStoragePending = new Map<string, import('./helper-storage.js').StorageRoomState>();
   let archiveStorageRunning = false;
@@ -214,6 +233,7 @@ async function serveMachineHelper(
   };
 
   const finish = async (reason: HelperExitReason) => {
+    clearTimeout(startupDeadline);
     disposeSignals();
     stopReserveMonitor();
     await notifier.stopping(stoppingStatus).catch(() => undefined);
@@ -436,6 +456,10 @@ async function serveMachineHelper(
     established: (agentId) => {
       const slot = [...slots.values()].find((candidate) => candidate.agentId === agentId);
       if (!slot) return;
+      clearTimeout(startupDeadline);
+      if (options.freeAgentIdle && env.BEELINE_FREE_AGENT_READY_FILE)
+        void writeFile(env.BEELINE_FREE_AGENT_READY_FILE, 'ready\n', { mode: 0o600 })
+          .catch(error => console.warn('[helper] could not record startup readiness:', error));
       slot.established = true;
       if (slot.state === 'starting' || slot.state === 'restarting') setState(slot, 'serving');
     },

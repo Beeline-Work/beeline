@@ -496,7 +496,7 @@ export const SidebarView = React.memo(function SidebarView() {
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
                   <>
-                  <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+                  <Button label="" iconOnly variant="quiet" accessibilityLabel="Members" testID="workspace-members"
                     icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
                     onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
                 <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}

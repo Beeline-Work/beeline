@@ -3,6 +3,9 @@
 name: Publish the Expo web app
 description: Export the release app, deploy it to EAS Hosting production, and verify the canonical custom domain
 inputs:
+  sentry_auth_token:
+    description: Sentry release upload token; required before hosting promotion
+    required: true
   expo_token:
     description: Expo access token
     required: true
@@ -26,7 +29,14 @@ runs:
         EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
         EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
         NODE_ENV: production
-      run: npx expo export --platform web --output-dir dist
+      run: npx expo export --platform web --source-maps --output-dir dist
+    - name: Upload private source maps and remove them from the hosting export
+      shell: bash
+      working-directory: apps/mobile
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry_auth_token }}
+        RELEASE_SHA: ${{ inputs.release_sha }}
+      run: node scripts/prepare-web-sourcemaps.mjs dist "$RELEASE_SHA"
     - name: Verify the push worker is in the export
       shell: bash
       run: cmp apps/mobile/public/push-sw.js apps/mobile/dist/push-sw.js

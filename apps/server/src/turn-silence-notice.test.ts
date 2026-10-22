@@ -911,6 +911,18 @@ describe('silence detector ownership', () => {
     });
   });
 
+  it('Reproduction posted-reply: a committed answer suppresses a generation-free stall', async () => {
+    const requestId = '7'.repeat(63) + 'a';
+    const command = await ask(database, requestId);
+    await new DaemonService(database, new LiveHub()).execute('postRoomMessage',
+      { roomId: ROOM, requestId, generationId: 'g1', text: 'Already answered.' }, AGENT);
+    await noteFirstSilence(database, new LiveHub(), {
+      roomId: ROOM, requestId, agentId: AGENT, reason: 'the turn stalled', reasonKind: 'hiccup', stalled: true,
+    });
+    expect(await failureLine(database, requestId)).toBeUndefined();
+    expect(await commandState(database, command.id)).toMatchObject({ state: 'complete', hiccup_attempts: 0 });
+  });
+
   it('does not reopen a completed command when a stale stall detector finishes', async () => {
     const requestId = '1'.repeat(63) + 'a';
     const command = await ask(database, requestId);

@@ -893,7 +893,7 @@ export default function BuzzChannels() {
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
-              <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+              <Button label="" iconOnly variant="quiet" accessibilityLabel="Members" testID="workspace-members"
                 icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
                 onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
                 <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}

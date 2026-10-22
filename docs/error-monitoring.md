@@ -64,7 +64,12 @@ activates them. Merging alone does not deploy this receiver.
   Do not enable native Sentry or remove those exclusions without a deliberate
   native runtime/store release.
 
-Capture samples all errors. Tracing, profiling, logs, replay, screenshots,
+Each SDK applies a process-local rolling-hour cap after privacy filtering: one
+report per error type and message (numeric runs normalized), with a hard ceiling
+of 100 reports across fingerprints. Repeated attempts do not extend the window.
+Restarting a process resets its cap; this is not an installation-wide quota.
+
+Capture samples admitted errors. Tracing, profiling, logs, replay, screenshots,
 view hierarchies, breadcrumbs and session tracking are not enabled. The shared
 `packages/api-contract/src/error-reporting.ts` filter allowlists event fields,
 redacts common credential/URL/email/home-path patterns, strips request/user/
@@ -125,7 +130,10 @@ above remains independent.
 
 `sentry_wake_issues` stores issue metadata keyed by issue id and event type;
 retries do not re-arm an acknowledged row, and a newer occurrence updates its
-metadata. `sentry_wake_state` serializes ingestion and dispatch across server
+metadata. A committed digest records its time and level per issue. Repeat alerts
+across event types are suppressed for six hours from that digest, except a new
+regression or changed level. Suppressed alerts still refresh metadata and do not
+extend the suppression window. `sentry_wake_state` serializes ingestion and dispatch across server
 machines. Every accepted issue, including handled errors, queues a private command
 for Jellybean in issues-triage immediately when no batch has committed in the
 previous five minutes. Later arrivals of any severity share that durable deadline
@@ -146,7 +154,9 @@ the recipient without code. Digests instruct Jellybean to investigate and open
 and own warranted fix corners, with Jellybean implementing and Speedy reviewing,
 linking the Sentry issue id and URL. Existing corner authority and merge gates
 still apply. Ruby receives only blocked or needs-decision reports, including
-exact authority refusals. No transcript or System message is created.
+exact authority refusals. The command itself stays private; Jellybean must post
+one short visible summary line per digest in issues-triage, naming the Sentry
+short IDs and each action (dismissed, existing corner, new corner).
 Sentry text is quoted as untrusted data. Receiver failures return 503 without recursive Sentry capture.
 
 Integration created 2026-10-18 UTC:
@@ -156,11 +166,26 @@ UUID `efa4fa03-8ba9-4433-b746-e1407ff79b9e`, installation UUID
 webhooks; only Created and Unresolved were selected. The client secret is vaulted
 as **Beeline triage webhook client secret** under `sentry-triage-webhook`.
 
-**No alert rule is needed:** the internal integration's `issue.created` and
-`issue.unresolved` webhooks provide the new-issue and unresolved deliveries regardless of substatus.
-Skip creating an alert workflow; the earlier HTTP 403 on alert creation is not
-a blocker. No new alert id exists or is required. Existing Telegram alert
-`6181673` stays independent.
+Issue subscriptions alone do not cover the owner's rule-driven notifications.
+The alertable **Beeline triage wake** integration must also be an action on every
+issue alert rule that sends email or Telegram, preserving its conditions and
+existing notification actions. No new rules are needed.
+
+Saved in Sentry on 2026-10-22 through the owner's signed-in browser:
+
+| Rule | Projects | Existing action retained | Added action |
+| --- | --- | --- | --- |
+| [Notify via Beeline Telegram (6181673)](https://beeline-bt.sentry.io/monitors/alerts/6181673/) | All projects, including server, helper, mobile | Beeline Telegram | Beeline triage wake |
+| [High priority issues (6181610)](https://beeline-bt.sentry.io/monitors/alerts/6181610/) | beeline-server | Suggested assignees / recently active members email | Beeline triage wake |
+| [High priority issues (6181619)](https://beeline-bt.sentry.io/monitors/alerts/6181619/) | beeline-helper | Suggested assignees / recently active members email | Beeline triage wake |
+| [High priority issues (6181622)](https://beeline-bt.sentry.io/monitors/alerts/6181622/) | beeline-mobile | Suggested assignees / recently active members email | Beeline triage wake |
+
+The all-projects inventory contained these four issue alert rules and a separate
+pull-request-ready email notification; the latter is not an issue alert and was
+left unchanged. Existing triggers, environments and action throttles were retained.
+The Telegram rule covers new issues and resolved issues that regress; the email
+rules cover new and existing high-priority issues. There were no separate
+frequency rules in this inventory.
 
 **Setup complete, pending deployment:** Ruby confirmed that the integration's
 client secret was rotated and its replacement stored in the existing
@@ -200,3 +225,34 @@ org:ci)** into repository Actions secret `SENTRY_AUTH_TOKEN`. The personal
 GitHub connection needs repository Actions secrets access. Do not print or
 copy the token through an agent prompt. Only the secret name is wired here; secure provisioning and a live
 symbolicated Android event remain pending.
+
+## Web source maps
+
+Reproduction `missing-sourcemap`: the production web HTML references
+`index-90db1025ae81559600056833506ddeb2.js`, the exact bundle from
+BEELINE-MOBILE-F. The web export path omitted `--source-maps` and had no upload
+step. The OTA uploader does not handle EAS Hosting exports.
+
+The unified release's `web-app-leg` exports with `--source-maps`, then runs
+`apps/mobile/scripts/prepare-web-sourcemaps.mjs` before EAS Hosting deployment.
+Every generated web JavaScript chunk must have a matching map and debug ID.
+The existing uploader normalizes Expo's `debugId` to Sentry's `debug_id`, uploads
+bundle/map pairs to `beeline-bt/beeline-mobile` under the full release SHA, and
+waits for server processing. Missing credentials, invalid maps, timeout or upload
+failure abort the website job before promotion. The web path uses the existing
+Actions secret `SENTRY_AUTH_TOKEN`, backed by the vaulted org:ci release token.
+The token is present only in the upload step, never in the export environment.
+
+After successful upload, the preparation script deletes every `.map` file from
+the hosting export. JavaScript bytes, including their debug IDs, remain unchanged.
+Source maps must never be deployed publicly. OTA and embedded-native behavior
+are unchanged by this web-path fix.
+
+For the next nightly release (do not dispatch a release from this fix corner),
+record a generated bundle's debug ID and query through the vaulted release token:
+`GET /api/0/projects/beeline-bt/beeline-mobile/files/artifact-bundles/?query=<debug-id>`.
+Require HTTP 200 and a non-empty list. Check a new event's resolved frames or run
+`sentry-cli sourcemaps explain <event-id>` with an appropriately scoped token.
+Old events are not reprocessed after maps arrive. Leave BEELINE-MOBILE-F unresolved.
+The original missing-map query is confirmed; the new production artifact and
+resolved-frame proof remain pending that release.

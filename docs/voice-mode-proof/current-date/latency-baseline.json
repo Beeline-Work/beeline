@@ -1,0 +1,18 @@
+{
+  "mode": "baseline",
+  "samplesMs": [
+    23.984323000000586,
+    20.13732699999855,
+    21.294183000001794,
+    23.216702999998233,
+    21.052298000002338,
+    19.77773000000161,
+    20.655869000001985,
+    22.19674700000178,
+    22.843810000002122,
+    21.54651300000114
+  ],
+  "medianMs": 21.420348000001468,
+  "warmups": 4,
+  "measurement": "Runtime utterance through disposable PGlite, OpenRouterVoiceBrain prompt assembly, controlled SSE and Aura PCM, native LiveKit first-audio signal. External providers and microphone are stand-ins."
+}

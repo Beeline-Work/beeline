@@ -27,6 +27,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 - Wallet settlement and push authority: [wallet tools](wallet-tools.md), `wallet-notices.ts`, `wallet-webhooks.ts`. Indexed incoming receipts stay in `wallet_transactions` without a System DM. Outgoing transactions, failures, refusals, pending notices and webhook receipts without a history row retain their notices.
 - Agent feedback accepts up to 50 new reports per agent per UTC day (`FEEDBACK_AGENT_DAILY_CAP`); existing duplicate handling remains in `feedback.ts`.
+- Operator System DMs require lunchboxfortwo's human-rooted command, configured System-sender authority, and their own agent. Durable batches, audit and tool counts: [operator System DMs](operator-system-dms.md), `operator-system-dm.ts` and `operator-system-dm.test.ts`.
 - Feedback resolves silently through `notify_feedback_fixed` with a merged PR in `BEELINE_FEEDBACK_REPOSITORY`; `notify: true` sends Fixed notices only for an explicitly ordered notice in a configured System sender’s human-rooted turn; storage and policy: `apps/server/src/feedback.ts`, [triage workflow](workflows/feedback-triage.json).
 - The GitHub star card acts only on the person's own tap and never gates anything (`github-star-prompt.ts`, `StarPromptCard.tsx`).
 - Corner Apps are installed data, never downloaded code; permission manifest: `packages/api-contract/src/corner-apps.ts`.

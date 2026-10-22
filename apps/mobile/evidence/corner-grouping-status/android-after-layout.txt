@@ -1,0 +1,28 @@
+--------- beginning of main
+10-22 12:41:20.647  5843  5898 I ReactNativeJS: Running "main" with {"rootTag":1,"initialProps":{},"fabric":true}
+10-22 12:41:21.819  5843  5898 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"working","height":41.90472412109375,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%","backgroundColor":"#F3EEE4"},"coverage":{"paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:41:21.995  5843  5898 I ReactNativeJS: 'STATUS_PROOF_COMPOSER', '{"x":0,"y":777.5238037109375,"width":411.4285583496094,"height":84.952392578125,"canvas":"#F3EEE4"}'
+10-22 12:42:28.226  6061  6122 I ReactNativeJS: Running "main" with {"rootTag":1,"initialProps":{},"fabric":true}
+10-22 12:42:28.929  6061  6122 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"working","height":41.90472412109375,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%","backgroundColor":"#F3EEE4"},"coverage":{"paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:42:29.035  6061  6122 I ReactNativeJS: 'STATUS_PROOF_COMPOSER', '{"x":0,"y":777.5238037109375,"width":411.4285583496094,"height":84.952392578125,"canvas":"#F3EEE4"}'
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: Cannot connect to Expo CLI.
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: 
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: Try the following to fix the issue:
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: - Ensure that Expo dev server is running and available on the same network
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: - Ensure that your device/emulator is connected to your machine and has USB debugging enabled - run 'adb devices' to see a list of connected devices
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: - If you're on a physical device connected to the same machine, run 'adb reverse tcp:8081 tcp:8081' to forward requests from your device
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: 
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: URL: 127.0.0.1:8081
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: 
+10-22 12:42:31.308  6061  6122 W ReactNativeJS: Error: undefined
+10-22 12:43:02.128  6159  6221 I ReactNativeJS: Running "main" with {"rootTag":1,"initialProps":{},"fabric":true}
+10-22 12:43:02.969  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"working","height":41.90472412109375,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#F3EEE4","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:43:03.142  6159  6221 I ReactNativeJS: 'STATUS_PROOF_COMPOSER', '{"x":0,"y":777.5238037109375,"width":411.4285583496094,"height":84.952392578125,"canvas":"#F3EEE4"}'
+10-22 12:43:28.064  6159  6221 I ReactNativeJS: 'CORNER_PROOF_OPEN', 'corner-0'
+10-22 12:43:31.886  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"settled","height":33.142822265625,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#F3EEE4","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:43:32.485  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"idle","height":0,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#F3EEE4","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:43:33.133  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"working","height":41.90472412109375,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#F3EEE4","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:43:34.874  6159  6221 I ReactNativeJS: 'CORNER_PROOF_OPEN', 'corner-0'
+10-22 12:43:38.507  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"settled","height":33.142822265625,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#14091A","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:43:39.162  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"idle","height":0,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#14091A","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'
+10-22 12:43:39.875  6159  6221 I ReactNativeJS: 'STATUS_PROOF_SLOT', '{"state":"working","height":41.90472412109375,"base":{"position":"absolute","left":0,"right":0,"bottom":"100%"},"coverage":{"backgroundColor":"#14091A","paddingTop":9,"paddingBottom":8,"transform":[{"translateY":8}]}}'

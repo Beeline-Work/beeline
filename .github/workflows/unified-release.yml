@@ -836,6 +836,7 @@ jobs:
           manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: ./.github/actions/web-app-leg
         with:
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}

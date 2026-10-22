@@ -54,7 +54,7 @@ const shared = {
 /**
  * Borrowing Calm — the type roles (design note 2026-09-03, DESIGN.md → Type).
  *
- * Four sizes, one mono role. A screen sets text through one of these
+ * Five sizes, one mono role. A screen sets text through one of these
  * roles, never a raw `fontSize`/`letterSpacing`; `calm-lint.design.test.ts`
  * holds every file to its baseline count of raw values. Line height is 1.45×
  * the size, rounded.
@@ -110,6 +110,13 @@ export const typeRoles = {
     lineHeight: calmLineHeight(10),
     letterSpacing: 2,
     textTransform: 'uppercase',
+  },
+  /** Shared section header label and count, aligned on one line. */
+  sectionLabel: {
+    fontFamily: sans.medium, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 2,
+  },
+  sectionCount: {
+    fontFamily: sans.regular, fontSize: 15, lineHeight: calmLineHeight(15), letterSpacing: 0,
   },
   /** Literal machine output: commands, paths, hashes, code, tool rows, their timestamps. */
   machine: { fontFamily: mono, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 0 },

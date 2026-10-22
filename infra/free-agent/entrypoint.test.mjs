@@ -6,8 +6,8 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-for (const outdated of [false, true])
-  test(`cold boot ${outdated ? 'refreshes a refused helper' : 'starts the baked helper without download'}`, async () => {
+for (const outdated of [false, true, 'offline'])
+  test(`cold boot reconciles installed helper (${outdated})`, async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-entrypoint-'));
     let child;
     try {
@@ -16,7 +16,7 @@ for (const outdated of [false, true])
       const waitingHelper = '#!/bin/sh\necho ready\nexec sleep 60\n';
       await writeFile(
         launcher,
-        outdated ? '#!/bin/sh\necho required-newer-helper\nexit 1\n' : waitingHelper,
+        outdated === true ? '#!/bin/sh\necho required-newer-helper\nexit 1\n' : waitingHelper,
         { mode: 0o755 },
       );
       const replacement = resolve(root, 'replacement');
@@ -24,7 +24,7 @@ for (const outdated of [false, true])
       const installer = resolve(root, 'install.sh');
       await writeFile(
         installer,
-        '#!/bin/sh\necho download\ncp "$HOME/replacement" "$HOME/.local/bin/beeline"\n',
+        outdated === 'offline' ? '#!/bin/sh\necho download\nexit 1\n' : '#!/bin/sh\necho download\ncp "$HOME/replacement" "$HOME/.local/bin/beeline"\n',
       );
       const source = await readFile(new URL('./entrypoint.sh', import.meta.url), 'utf8');
       const script = resolve(root, 'entrypoint.sh');
@@ -45,8 +45,8 @@ for (const outdated of [false, true])
           }
         });
       });
-      assert.equal(output.includes('download'), outdated);
-      if (outdated) assert.ok(output.indexOf('required-newer-helper') < output.indexOf('download'));
+      assert.ok(output.indexOf('download') < output.indexOf('ready'));
+      assert.equal(output.includes('required-newer-helper'), false);
     } finally {
       if (child) {
         child.kill('SIGTERM');
@@ -55,3 +55,55 @@ for (const outdated of [false, true])
       await rm(root, { recursive: true, force: true });
     }
   });
+
+test('startup watchdog exit stops this boot without refreshing or retrying', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-entrypoint-deadline-'));
+  try {
+    await mkdir(resolve(root, '.local/bin'), { recursive: true });
+    await writeFile(resolve(root, '.local/bin/beeline'), '#!/bin/sh\necho attempted\nexit 78\n', { mode: 0o755 });
+    const installer = resolve(root, 'install.sh');
+    await writeFile(installer, '#!/bin/sh\necho refresh\n');
+    const source = await readFile(new URL('./entrypoint.sh', import.meta.url), 'utf8');
+    const script = resolve(root, 'entrypoint.sh');
+    await writeFile(script, source.replaceAll('/opt/beeline/install.sh', installer));
+    const child = spawn('/bin/sh', [script], { env: { ...process.env, HOME: root } });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 78);
+    assert.equal(output, 'refresh\nattempted\n');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const scenario of ['old helper', 'installer', 'repeated exits', 'serving']) {
+  test(`boot deadline handles ${scenario}`, { timeout: 8_000 }, async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-entrypoint-budget-'));
+    let child;
+    try {
+      await mkdir(resolve(root, '.local/bin'), { recursive: true });
+      await writeFile(resolve(root, '.local/bin/beeline'), scenario === 'repeated exits'
+        ? '#!/bin/sh\nexit 1\n'
+        : `#!/bin/sh\n${scenario === 'serving' ? 'touch "$BEELINE_FREE_AGENT_READY_FILE"\n' : ''}exec sleep 60\n`, { mode: 0o755 });
+      const installer = resolve(root, 'install.sh');
+      await writeFile(installer, scenario === 'installer' ? '#!/bin/sh\nexec sleep 60\n' : '#!/bin/sh\nexit 1\n');
+      const source = await readFile(new URL('./entrypoint.sh', import.meta.url), 'utf8');
+      const script = resolve(root, 'entrypoint.sh');
+      await writeFile(script, source.replaceAll('/opt/beeline/install.sh', installer)
+        .replace('+ 300', '+ 1').replace('START_DEADLINE + 10', 'START_DEADLINE + 1'));
+      child = spawn('/bin/sh', [script], { env: { ...process.env, HOME: root } });
+      let errors = '';
+      child.stderr.on('data', chunk => { errors += chunk; });
+      if (scenario === 'serving') {
+        await new Promise(done => setTimeout(done, 3_000));
+        assert.equal(child.exitCode, null);
+      } else {
+        const [code] = await once(child, 'exit');
+        assert.equal(code, 78);
+        assert.equal((errors.match(/stopping this boot/g) ?? []).length, 1);
+      }
+    } finally {
+      if (child && child.exitCode === null) { child.kill('SIGTERM'); await once(child, 'exit'); }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}

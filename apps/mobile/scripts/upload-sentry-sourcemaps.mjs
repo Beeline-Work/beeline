@@ -7,7 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 const require = createRequire(import.meta.url);
 
 /** Upload only the artifacts produced by this export. Diagnostics never gate OTA. */
-export function uploadSentrySourcemaps(directory, release, { run = spawnSync, warn = console.warn } = {}) {
+export function uploadSentrySourcemaps(directory, release, { run = spawnSync, warn = console.warn, required = false } = {}) {
   try {
     if (!/^[a-f0-9]{40}$/.test(release ?? '')) throw new Error('full release SHA required');
     if (!process.env.SENTRY_AUTH_TOKEN) throw new Error('SENTRY_AUTH_TOKEN is unavailable');
@@ -29,13 +29,15 @@ export function uploadSentrySourcemaps(directory, release, { run = spawnSync, wa
       return [bundle, file];
     });
     const result = run(process.execPath, [require.resolve('@sentry/cli/bin/sentry-cli'),
-      'sourcemaps', 'upload', '--release', release, '--debug-id-reference', '--strict', ...artifacts], {
+      'sourcemaps', 'upload', '--release', release, '--debug-id-reference', '--strict',
+      ...(required ? ['--wait'] : []), ...artifacts], {
       env: { ...process.env, SENTRY_ORG: 'beeline-bt', SENTRY_PROJECT: 'beeline-mobile' },
       stdio: 'ignore', timeout: 120_000,
     });
     if (result.status !== 0) throw new Error('sentry-cli upload failed');
     return true;
   } catch (error) {
+    if (required) throw new Error(`Required Sentry source map upload failed: ${error.message}`);
     warn(`::warning::Mobile Sentry source maps were not uploaded: ${error.message}`);
     return false;
   }

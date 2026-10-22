@@ -290,10 +290,7 @@ export function daemonBirthPath(configPath: string): string {
   return resolve(dirname(configPath), 'daemon.birth');
 }
 
-/**
- * Linux process birth (`/proc/<pid>/stat` starttime). Same field Squire's
- * profile lock uses to tell a live pid from a recycled one.
- */
+/** Linux process start ticks; callers needing cross-boot identity must add the boot id. */
 export function processBirthIdentity(pid: number): string | undefined {
   try {
     const statText = readFileSync(`/proc/${pid}/stat`, 'utf8');
@@ -304,11 +301,22 @@ export function processBirthIdentity(pid: number): string | undefined {
   }
 }
 
+/** Start ticks can repeat after reboot on a persistent filesystem. */
+function runtimeOwnerIdentity(pid: number): string | undefined {
+  try {
+    const birth = processBirthIdentity(pid);
+    const boot = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    return birth && boot ? `${boot}:${birth}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function writeDaemonPidRecord(configPath: string, pid: number): Promise<void> {
   const directory = dirname(configPath);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await writeFile(daemonPidPath(configPath), `${pid}\n`, { mode: 0o600 });
-  const birth = processBirthIdentity(pid);
+  const birth = runtimeOwnerIdentity(pid);
   if (birth) await writeFile(daemonBirthPath(configPath), `${birth}\n`, { mode: 0o600 });
 }
 
@@ -434,13 +442,17 @@ export async function runtimeDaemonPid(configPath: string): Promise<number | nul
       return null;
     }
     const recordedBirth = (await readFile(daemonBirthPath(configPath), 'utf8').catch(() => '')).trim();
-    const liveBirth = processBirthIdentity(pid);
-    if (recordedBirth && liveBirth && recordedBirth !== liveBirth) {
+    const liveBirth = runtimeOwnerIdentity(pid);
+    // Legacy records contain only ticks since boot. They cannot prove identity
+    // across reboots, so require command-line ownership for their migration.
+    const legacyBirth = recordedBirth && !recordedBirth.includes(':');
+    const comparableBirth = legacyBirth ? processBirthIdentity(pid) : liveBirth;
+    if (recordedBirth && comparableBirth && recordedBirth !== comparableBirth) {
       await reclaimStaleDaemonRecord(configPath);
       return null;
     }
     if (await daemonIsThisRuntime(pid, configPath)) return pid;
-    if (recordedBirth && liveBirth && recordedBirth === liveBirth) return pid;
+    if (!legacyBirth && recordedBirth && liveBirth && recordedBirth === liveBirth) return pid;
     await reclaimStaleDaemonRecord(configPath);
     return null;
   } catch {

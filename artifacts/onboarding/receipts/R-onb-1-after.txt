@@ -1,0 +1,14 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/c2dab82d-4b74-4946-bf15-9abd16402d48/apps/mobile
+
+stdout | sources/test/onboarding-google.browser.test.ts > Google browser handoff recovery > R-onb-1: completes the same attempt after interrupted reads instead of showing offline
+{"recovered":true,"reads":4}
+
+ ✓ sources/test/onboarding-google.browser.test.ts (1 test) 483ms
+   ✓ Google browser handoff recovery > R-onb-1: completes the same attempt after interrupted reads instead of showing offline  483ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  20:41:07
+   Duration  799ms (transform 69ms, setup 58ms, collect 26ms, tests 483ms, environment 0ms, prepare 62ms)
+

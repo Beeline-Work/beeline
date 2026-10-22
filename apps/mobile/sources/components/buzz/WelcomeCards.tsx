@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Text, View, useWindowDimensions } from 'react-native';
+import { StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import { SvgXml } from 'react-native-svg';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { LedgerEntry } from './Ledger';
 import { IdentityMark } from './IdentityMark';
@@ -127,7 +127,7 @@ function RoomScene() {
           seed={'3'.repeat(64)}
         />
       </View>
-      <View style={scene.composer}>
+      <View style={scene.composer} testID="welcome-composer">
         <Text style={scene.placeholder}>Message</Text>
       </View>
     </View>
@@ -225,6 +225,14 @@ function ToolsScene() {
 }
 
 export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: () => void }) {
+  return <HullModal visible={visible} animationType="fade" onRequestClose={() => undefined}
+    dismissOnBackdrop={false} keyboardAvoiding={false} placement="fill">
+    <SafeAreaProvider><WelcomeCardsContent onDone={onDone} /></SafeAreaProvider>
+  </HullModal>;
+}
+
+function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
+  const { theme } = useUnistyles();
   const [index, setIndex] = useState(0);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,13 +240,13 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
   const insets = useSafeAreaInsets();
   const desktop = width >= 1024;
   const wideCanvas = width >= 768;
-  const sceneHeight = desktop
-    ? 572
-    : wideCanvas
-      ? index < 2
-        ? 610
-        : 430
-      : Math.min(index < 2 ? 480 : 430, Math.max(270, height * 0.57));
+  // Reserve the longest title and paragraph on every slide, including at
+  // narrow widths and the selected text scale. The remaining space is art.
+  const copyHeight = theme.buzz.type.hero.lineHeight * (width < 360 ? 3 : 2)
+    + theme.buzz.type.body.lineHeight * 5 + space.sm;
+  const sceneHeight = desktop ? 572 : Math.min(480,
+    Math.max(0, height - Math.max(insets.top, space.xl) - Math.max(insets.bottom, space.xl)
+      - copyHeight - 44 - space.lg * 3));
   const next = async () => {
     if (index < 3) {
       setIndex(index + 1);
@@ -267,7 +275,7 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
       <ToolsScene />
     );
   const footer = (
-    <View style={card.footer}>
+    <View style={card.footer} testID="welcome-footer">
       <View style={card.steps}>
         {COPY.map((_, i) => (
           <View key={i} style={[card.step, i === index && card.stepActive]} />
@@ -284,14 +292,6 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
     </View>
   );
   return (
-    <HullModal
-      visible={visible}
-      animationType="fade"
-      onRequestClose={() => undefined}
-      dismissOnBackdrop={false}
-      keyboardAvoiding={false}
-      placement="fill"
-    >
       <View
         style={[
           card.page,
@@ -303,15 +303,19 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
         ]}
         testID="welcome-cards"
       >
+        <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
         <View
           style={[
             card.content,
             { maxWidth: desktop ? 960 : wideCanvas ? 600 : Math.min(390, width) },
-            desktop ? card.desktopContent : wideCanvas && { justifyContent: 'center' },
+            desktop && card.desktopContent,
           ]}
         >
-          <View style={[{ height: sceneHeight }, desktop && card.desktopScene]}>
-            {illustration}
+          <View style={[card.sceneViewport, { height: sceneHeight }, desktop && card.desktopScene]} testID="welcome-scene-viewport">
+            <View style={{ height: desktop ? 572 : 480, width: '100%', flexShrink: 0,
+              transform: [{ scale: desktop ? 1 : Math.min(1, sceneHeight / 480) }] }}>
+              {illustration}
+            </View>
           </View>
           {desktop ? (
             <View style={card.desktopRight}>
@@ -319,24 +323,25 @@ export function WelcomeCards({ visible, onDone }: { visible: boolean; onDone: ()
                 <Text style={card.title}>{COPY[index].title}</Text>
                 <Text style={card.body}>{COPY[index].body}</Text>
               </View>
-              <View style={{ flex: 1 }} />
-              {error && <Text style={card.error}>{error}</Text>}
+              <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+                {error && <Text style={card.error}>{error}</Text>}
+              </View>
               {footer}
             </View>
           ) : (
             <>
-              <View style={card.copy}>
+              <View style={[card.copy, { minHeight: copyHeight }]}>
                 <Text style={card.title}>{COPY[index].title}</Text>
                 <Text style={card.body}>{COPY[index].body}</Text>
               </View>
-              {!wideCanvas && <View style={{ flex: 1 }} />}
-              {error && <Text style={card.error}>{error}</Text>}
+              <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+                {error && <Text style={card.error}>{error}</Text>}
+              </View>
               {footer}
             </>
           )}
         </View>
       </View>
-    </HullModal>
   );
 }
 
@@ -366,6 +371,7 @@ const card = StyleSheet.create((theme) => ({
     backgroundColor: theme.buzz.bgRaised,
   },
   desktopScene: { width: 480 },
+  sceneViewport: { flexShrink: 0, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   desktopRight: { width: 398, paddingTop: theme.buzz.space.md, paddingBottom: theme.buzz.space.md },
   copy: { gap: theme.buzz.space.sm },
   title: { ...theme.buzz.type.hero, color: theme.buzz.textPrimary },
@@ -410,10 +416,13 @@ const scene = StyleSheet.create((theme) => ({
   accent: { color: theme.buzz.accent },
   transcript: {
     flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
     paddingHorizontal: theme.buzz.space.md,
     paddingTop: theme.buzz.space.md,
   },
   composer: {
+    flexShrink: 0,
     margin: theme.buzz.space.md,
     minHeight: 40,
     borderWidth: 1,

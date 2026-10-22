@@ -172,8 +172,6 @@ describe('free starter agents', () => {
     const read = () => daemon.execute('getAgentConfiguration', { roomId }, agent.agent_id);
     expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
     vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','1');
-    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
-    await db.query(`UPDATE identities SET github_subject='296966200' WHERE id=$1`,[OWNER]);
     expect((await read()).soul?.instructions).toContain('beeline:onboarding');
     vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','0');
     expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
@@ -183,7 +181,7 @@ describe('free starter agents', () => {
 
   it.each([
     { flag: '0', eligible: true, expected: false },
-    { flag: '1', eligible: false, expected: false },
+    { flag: '1', eligible: false, expected: true },
     { flag: '1', eligible: true, expected: true },
   ])('onboarding-invite-1: unlinked Room join respects $flag / eligibility $eligible', async ({ flag, eligible, expected }) => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Existing unlinked workspace' }, OWNER) as { id: string; roomId: string };
@@ -238,9 +236,10 @@ describe('free starter agents', () => {
       sourceMessageId: ownerMessageId, reason: 'human_tag', turnRequestId: 'owner-request' }))!;
     await claimAgentCommand(db, roomId, agent.agent_id, ownerCommand.id, 'owner-generation');
     const ownerContext = { roomId, requestId: ownerCommand.turn_request_id, generationId: 'owner-generation' };
-    expect((await daemon.execute('getAgentConfiguration', ownerContext as never, agent.agent_id)).soul?.instructions).not.toContain('beeline:onboarding');
-    expect(await daemon.execute('getRoomRepositoryState', ownerContext as never, agent.agent_id)).not.toHaveProperty('repositoryOnboarding');
-    await expect(daemon.execute('postRepositoryOnboarding', { ...ownerContext, kind: 'repository' } as never, agent.agent_id)).rejects.toThrow('unavailable');
+    expect((await daemon.execute('getAgentConfiguration', ownerContext as never, agent.agent_id)).soul?.instructions).toContain('beeline:onboarding');
+    expect(await daemon.execute('getRoomRepositoryState', ownerContext as never, agent.agent_id)).toMatchObject({repositoryOnboarding:true});
+    expect(await daemon.execute('postRepositoryOnboarding', { ...ownerContext, kind: 'repository' } as never, agent.agent_id))
+      .toMatchObject({requesterId:OWNER,canLink:true});
     vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
     expect((await phone.readRoom(roomId, FRIEND))?.messages.some(message => message.onboarding)).toBe(false);
     expect((await daemon.execute('getAgentConfiguration', context as never, agent.agent_id)).soul?.instructions).not.toContain('beeline:onboarding');
@@ -252,7 +251,6 @@ describe('free starter agents', () => {
       () => new Date(), async () => ({ subject: 'google-new-owner', name: 'Alex Chen', email: 'alex.chen@gmail.com', audience: 'google-client' }));
     const google = await auth.exchangeGoogleOidc('verified-fixture-ticket');
     vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', flag);
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', google.identityId);
     const workspace = await phone.execute('createWorkspace', { name: 'Google onboarding' }, google.identityId);
     const beebee = await freeAgentOf(workspace.id);
     const hello = (await db.query<{ text: string }>(
@@ -266,6 +264,38 @@ describe('free starter agents', () => {
     expect(room?.room.name).toBe('general');
     expect(room?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(flag === '1');
     expect((await db.query('SELECT github_subject FROM identities WHERE id=$1', [google.identityId])).rows[0]?.github_subject).toBeNull();
+  });
+
+  it('R-onb-12/13/15/16: a fresh Google Workspace gets a card and can request another without duplicate replies', async () => {
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','1');
+    const auth = new TokenAuth(db,async()=>{throw new Error('No GitHub link is needed');},()=>new Date(),
+      async()=>({subject:'fresh-google-onboarding',name:'Google Person',email:'fresh.google@example.test',audience:'fixture'}));
+    const owner = (await auth.exchangeGoogleOidc('verified-google-proof')).identityId;
+    const workspace = await phone.execute('createWorkspace',{name:'Fresh Google onboarding'},owner);
+    const agent = await freeAgentOf(workspace.id);
+    const initial = (await phone.readRoom(workspace.roomId!,owner))!.messages;
+    expect(initial.filter(message=>message.onboarding)).toHaveLength(1);
+    expect(initial.find(message=>message.onboarding)?.onboarding).toMatchObject({state:'install_missing',githubLinked:false});
+    const daemon = new DaemonService(db,live);
+    const messageId = 'd'.repeat(64);
+    await phone.execute('sendRoomMessage',{roomId:workspace.roomId!,messageId,text:'@beebee Show a repo linking card'},owner);
+    const command = (await daemon.execute('getAgentCommands',{roomId:workspace.roomId!},agent.agent_id)).commands
+      .find(command=>command.sourceMessageId===messageId)!;
+    expect(command).toBeDefined();
+    await daemon.execute('claimAgentCommand',{roomId:workspace.roomId!,commandId:command.id,generationId:'new-user-proof'},agent.agent_id);
+    const authority = {roomId:workspace.roomId!,requestId:command.turnRequestId,generationId:'new-user-proof'};
+    expect(await daemon.execute('connect',{...authority,service:'Link',reason:'Show the repo linking card'},agent.agent_id))
+      .toMatchObject({status:'ready',app:'beeline:onboarding'});
+    await daemon.execute('postCornerMessage',{...authority,cornerId:workspace.roomId!,text:'The repository card is up. Choose a repository.'},agent.agent_id);
+    const final = 'The repository card is in this Room now. Choose or create your repo there.';
+    await daemon.execute('postRoomMessage',{...authority,text:final},agent.agent_id);
+    const room = (await phone.readRoom(workspace.roomId!,owner))!;
+    expect(room.messages.filter(message=>message.onboarding?.status==='open')).toHaveLength(1);
+    expect(room.messages.filter(message=>message.onboarding)).toHaveLength(2);
+    const replies = (await db.query<{text:string}>(`SELECT text FROM messages WHERE room_id=$1 AND request_id=$2 AND presentation='message'`,
+      [workspace.roomId,command.turnRequestId])).rows;
+    expect(replies).toEqual([{text:final}]);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`,[workspace.roomId])).rowCount).toBe(0);
   });
 
   it('posts the exact hello and notifies the owner without a model turn or Machine boot', async () => {

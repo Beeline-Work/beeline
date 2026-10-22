@@ -473,13 +473,16 @@ export default function BuzzIdentitySettings() {
                 value={managedProjection?.pushLevel ?? pushLevel}
               />
               {pushRegistrationFailed ? (
+                <View style={styles.pushRecovery}>
+                <Text style={styles.pushRecoveryText}>{buzzPushPhaseDetail(pushRegistration!.phase)}</Text>
                 <Button
-                  label={pushWorking ? 'Retrying…' : 'Retry'}
+                  label={pushWorking ? 'Retrying notifications…' : 'Retry notifications'}
                   variant="secondary"
                   disabled={pushWorking}
                   onPress={() => void retryPushRegistration()}
                   testID="push-retry-registration"
                 />
+                </View>
               ) : null}
             </View>
           ) : null}
@@ -654,6 +657,8 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     section: {},
+    pushRecovery: { paddingHorizontal: hull.space.md, gap: hull.space.sm },
+    pushRecoveryText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
     disabled: { opacity: 0.42 },
     notice: {
       ...Typography.default(),

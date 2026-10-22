@@ -12,10 +12,12 @@ vi.mock('react-native', () => {
     Pressable: host('Pressable'),
     Text: host('Text'),
     View: host('View'),
+    StatusBar: host('StatusBar'),
     useWindowDimensions: () => ({ width: 390, height: 844 }),
   };
 });
 vi.mock('react-native-safe-area-context', () => ({
+  SafeAreaProvider: (props: any) => React.createElement('SafeAreaProvider', props, props.children),
   useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
 }));
 vi.mock('react-native-svg', () => ({ SvgXml: () => null }));

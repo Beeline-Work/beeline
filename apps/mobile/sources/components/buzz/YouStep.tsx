@@ -6,6 +6,7 @@ import { defaultFaceForSeed, type FaceId } from '@/buzz/faces';
 import { FaceGrid } from './FaceGrid';
 import { Button } from './Button';
 import { HullDialogInput } from './HullDialog';
+import { useAutoFitText } from '@/buzz/use-autofit-text';
 
 /** The one canvas crossfade in the app: the You step into the app. */
 export const FACE_CEREMONY_CROSSFADE_MS = 240;
@@ -41,14 +42,15 @@ export function YouStep({
   name,
   currentFace,
   editableIdentity = false,
-  provider = 'github',
   onConfirm,
   onEntered,
   initialSelection,
 }: YouStepProps) {
   const { theme } = useUnistyles();
   const { width } = useWindowDimensions();
-  const tileSize = Math.min(78, Math.floor((width - theme.buzz.space.md * 2 - 30) / 4));
+  const [contentWidth, setContentWidth] = useState(Math.min(width, 460));
+  const handleRef = useAutoFitText(handle || name || 'You');
+  const tileSize = (contentWidth - theme.buzz.space.lg * 2 - theme.buzz.space.sm * 3) / 4;
   const [selected, setSelected] = useState<string | null>(
     initialSelection === undefined ? (currentFace ?? defaultFaceForSeed(seed)) : initialSelection,
   );
@@ -91,6 +93,9 @@ export function YouStep({
     <View style={styles.root} testID="onboarding-you-step">
       <Animated.View style={[styles.fill, { opacity: contentOpacity }]}>
         <ScrollView
+          onLayout={({ nativeEvent }) => {
+            if (nativeEvent.layout.width > 0) setContentWidth(Math.min(nativeEvent.layout.width, 460));
+          }}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           style={styles.fill}
@@ -100,6 +105,7 @@ export function YouStep({
               You are
             </Text>
             <Text
+              ref={handleRef}
               adjustsFontSizeToFit
               numberOfLines={1}
               style={styles.handleLine}
@@ -159,9 +165,6 @@ export function YouStep({
               onPress={() => void confirm()}
               testID="onboarding-face-confirm"
             />
-            <Text style={styles.hint} testID="onboarding-you-source">
-              {`From ${provider === 'google' ? 'Google' : 'GitHub'} · change either later in Settings`}
-            </Text>
           </View>
         </ScrollView>
       </Animated.View>
@@ -190,7 +193,7 @@ const styles = StyleSheet.create((theme) => {
       width: '100%',
       maxWidth: 460,
       alignSelf: 'center',
-      paddingHorizontal: hull.space.md,
+      paddingHorizontal: hull.space.lg,
       paddingVertical: hull.space.lg,
     },
     choices: { paddingTop: hull.space.xl },
@@ -200,13 +203,6 @@ const styles = StyleSheet.create((theme) => {
     at: { color: hull.accent },
     handle: { color: hull.textPrimary },
     period: { color: hull.textPrimary },
-    hint: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.ledgerQuiet,
-      textAlign: 'center',
-      marginTop: hull.space.md,
-    },
     gridSlot: { alignItems: 'center', marginTop: hull.space.xxl },
     footer: { paddingBottom: hull.space.sm },
     error: {

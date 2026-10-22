@@ -1,0 +1,49 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/c2dab82d-4b74-4946-bf15-9abd16402d48/apps/mobile
+
+▲ [WARNING] Import "getInitialURL" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:16:40:
+      16 │   if (!isDesktopShell()) return Linking.getInitialURL();
+         ╵                                         ~~~~~~~~~~~~~
+
+▲ [WARNING] Import "addEventListener" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:53:19:
+      53 │     return Linking.addEventListener('url', ({ url }) => listener(u...
+         ╵                    ~~~~~~~~~~~~~~~~
+
+stdout | sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: explains notification recovery and opens GitHub from a Google profile
+{"began":0,"refreshed":false,"recoveryText":"NotificationsAttention (default)Retry","error":true,"providers":[{"provider":"google","login":"qa@example.test","reconnect":false}]}
+
+ ❯ sources/test/onboarding-settings.browser.test.ts (1 test | 1 failed) 713ms
+   × onboarding account settings > R-onb-10/11: explains notification recovery and opens GitHub from a Google profile 712ms
+     → expected +0 to be 1 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: explains notification recovery and opens GitHub from a Google profile
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ sources/test/onboarding-settings.browser.test.ts:65:27
+     63|       const proof = JSON.parse(result.result);
+     64|       console.log(JSON.stringify(proof));
+     65|       expect(proof.began).toBe(1);
+       |                           ^
+     66|       expect(proof.refreshed).toBe(true);
+     67|       expect(proof.error).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  20:33:40
+   Duration  1.06s (transform 84ms, setup 67ms, collect 34ms, tests 713ms, environment 0ms, prepare 85ms)
+

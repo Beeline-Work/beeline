@@ -1,0 +1,72 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/c2dab82d-4b74-4946-bf15-9abd16402d48/apps/mobile
+
+(node:31220) PromiseRejectionHandledWarning: Promise rejection was handled asynchronously (rejection id: 4)
+(Use `node --trace-warnings ...` to show where the warning was created)
+ ❯ sources/auth/google-auth-session.test.ts (5 tests | 1 failed | 4 skipped) 12ms
+   ↓ Google sign-in continuation > recovers a lost callback with the persisted secret, then clears it after exchange
+   ↓ Google sign-in continuation > rejects a mismatched callback before polling or spending a ticket
+   ↓ Google sign-in continuation > waits on an unfinished flow and expires damaged or old local state
+   ↓ Google sign-in continuation > opens a state-bound OAuth flow and completes through recovery when the browser stays open
+   × Google sign-in continuation > R-onb-1: recovers on the first attempt after a browser handoff interrupts completion reads 11ms
+     → promise rejected "OidcBindError: No network connection. Try… { …(3) }" instead of resolving
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/auth/google-auth-session.test.ts > Google sign-in continuation > R-onb-1: recovers on the first attempt after a browser handoff interrupts completion reads
+AssertionError: promise rejected "OidcBindError: No network connection. Try… { …(3) }" instead of resolving
+ ❯ sources/auth/google-auth-session.test.ts:75:38
+     73|         subscribeToUrls: () => ({ remove() {} }),
+     74|       });
+     75|       const assertion = expect(result).resolves.toBe(recoveryToken);
+       |                                      ^
+     76|       await vi.runAllTimersAsync();
+     77|       await assertion;
+
+Caused by: OidcBindError: No network connection. Try again.
+ ❯ Module.runGoogleSignIn sources/auth/google-auth-session.ts:106:57
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'offline', status: undefined, details: undefined, retryable: true }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯
+
+Vitest caught 1 unhandled error during the test run.
+This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.
+
+⎯⎯⎯⎯ Unhandled Rejection ⎯⎯⎯⎯⎯
+AssertionError: promise rejected "OidcBindError: No network connection. Try… { …(3) }" instead of resolving
+ ❯ _Assertion.__VITEST_RESOLVES__ node_modules/@vitest/expect/dist/index.js:1577:17
+ ❯ _Assertion.propertyGetter node_modules/chai/index.js:1557:27
+ ❯ Object.proxyGetter [as get] node_modules/chai/index.js:1645:22
+ ❯ sources/auth/google-auth-session.test.ts:75:38
+     73|         subscribeToUrls: () => ({ remove() {} }),
+     74|       });
+     75|       const assertion = expect(result).resolves.toBe(recoveryToken);
+       |                                      ^
+     76|       await vi.runAllTimersAsync();
+     77|       await assertion;
+ ❯ node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+ ❯ node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+ ❯ node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+ ❯ runWithTimeout node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10
+
+This error originated in "sources/auth/google-auth-session.test.ts" test file. It doesn't mean the error was thrown inside the file itself, but while it was running.
+The latest test that might've caused the error is "R-onb-1: recovers on the first attempt after a browser handoff interrupts completion reads". It might mean one of the following:
+- The error was thrown, while Vitest was running this test.
+- If the error occurred after the test had been completed, this was the last documented test before it was thrown.
+Caused by: OidcBindError: No network connection. Try again.
+ ❯ Module.runGoogleSignIn sources/auth/google-auth-session.ts:106:57
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'offline', status: undefined, details: undefined, retryable: true }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+     Errors  1 error
+   Start at  20:38:54
+   Duration  643ms (transform 224ms, setup 68ms, collect 287ms, tests 12ms, environment 0ms, prepare 62ms)
+

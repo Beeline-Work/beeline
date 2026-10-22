@@ -1758,19 +1758,7 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postRepositoryOnboarding': {
-        const request = input as Input<'postRepositoryOnboarding'>;
-        await this.access(request.roomId, authenticatedAgentId);
-        const requester = await this.grantRequester();
-        const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
-          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
-        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
-        if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
-        if (request.kind === 'repository') await this.github?.refresh(owner);
-        const card = await postRepositoryOnboarding(this.database, this.github, {
-          roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,
-        });
-        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: authenticatedAgentId });
-        return card as Output<Name>;
+        return await this.postRepositoryCard(input as Input<'postRepositoryOnboarding'>, authenticatedAgentId) as Output<Name>;
       }
       case 'askRoomChoice':
         return (await this.askRoomChoice(
@@ -3933,8 +3921,8 @@ export class DaemonService {
     // committed this answer. Keep the terminal row for receipts, replay and
     // tool activity, but remove repeated prose from the conversation surface.
     const earlier = input.requestId && input.presentation !== 'card'
-      ? (await this.database.query<{ text: string }>(
-          `SELECT text FROM messages
+      ? (await this.database.query<{ id: string; text: string }>(
+          `SELECT id,text FROM messages
            WHERE room_id=$1 AND author_id=$2 AND request_id=$3
              AND presentation='message' AND deleted_at IS NULL
              AND legacy_event->>'turnGenerationId'=$4
@@ -3942,13 +3930,19 @@ export class DaemonService {
           [input.roomId, agentId, input.requestId, input.generationId],
         )).rows
       : [];
+    const supersedesPosts = Boolean(this.commandTransaction && earlier.length &&
+      (await this.database.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND removed_at IS NULL`, [agentId])).rowCount);
     const matches = earlier.map(row => turnMessageRepetition(input.text, row.text));
-    const same = matches.includes('same');
-    const similar = matches.includes('similar') && (input.steps?.length ?? 0) < MAX_REPLY_STEPS;
+    const same = !supersedesPosts && matches.includes('same');
+    const similar = !supersedesPosts && matches.includes('similar') && (input.steps?.length ?? 0) < MAX_REPLY_STEPS;
     const repeated = same || similar;
     if (!same && similar) steps = replySteps([
       ...(input.steps ?? []), { kind: 'note', title: 'Turn summary', text: input.text },
     ]);
+    if (supersedesPosts) steps = replySteps([
+      ...(input.steps ?? []),
+      ...[...earlier].reverse().map(row => ({kind: 'note' as const,title: 'Earlier update',text: row.text})),
+    ].slice(0, MAX_REPLY_STEPS));
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -4292,6 +4286,19 @@ export class DaemonService {
       if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);
+    }
+    if (supersedesPosts && saved.presentation === 'message') {
+      // Free agents sometimes post an answer explicitly and then paraphrase it
+      // at settle. Keep the final answer visible, retaining the earlier prose
+      // in activity instead of trying to infer semantic equality.
+      const demoted = await this.database.query<{id:string}>(
+        `UPDATE messages SET presentation='activity' WHERE id=ANY($1::text[])
+         AND room_id=$2 AND author_id=$3 AND request_id=$4
+         AND legacy_event->>'turnGenerationId'=$5 AND presentation='message' AND deleted_at IS NULL
+         RETURNING id`,
+        [earlier.map(row=>row.id),input.roomId,agentId,input.requestId,input.generationId]);
+      for (const row of demoted.rows) this.live.publish({type:'invalidate',roomId:input.roomId,
+        reason:'message',agentId,messageId:row.id});
     }
     if (repeated && this.commandTransaction && saved.presentation === 'message' && !saved.attachments.length) {
       // This is still inside the authorized command transaction. System/card
@@ -6526,6 +6533,23 @@ export class DaemonService {
     };
   }
 
+  private async postRepositoryCard(request: Input<'postRepositoryOnboarding'>, agentId: string) {
+    await this.access(request.roomId, agentId);
+    const requester = await this.grantRequester();
+    const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
+      `SELECT owner_id FROM agents WHERE agent_id=$1`, [agentId])).rows[0]?.owner_id;
+    if (!owner || !await onboardingEnabledForViewer(this.database, owner))
+      throw new Error('repository onboarding unavailable: repository cards are disabled on this server. Ask a Workspace owner to link a repository from the Room header.');
+    if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
+    // A setup card reads the committed catalog; displaying it must not need
+    // a live provider connection. Its refresh action owns provider refreshes.
+    const card = await postRepositoryOnboarding(this.database, this.github, {
+      roomId: request.roomId, agentId, requesterId: owner, kind: request.kind,
+    });
+    this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId });
+    return card;
+  }
+
   private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
     if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
     const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
@@ -6970,6 +6994,16 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('service and reason are required');
+    const setup = `${reason} ${typeof input.continuation === 'string' ? input.continuation : ''}`;
+    const repositoryService = ['github','link','stripelink'].includes(appIdentity(service)?.key ?? '') || /^stripe link(?:\s|$)/i.test(service);
+    if (repositoryService &&
+        /\brepo(?:sitor(?:y|ies)|s)?\b/i.test(setup) &&
+        /\b(?:link(?:ing)?|connect(?:ing)?|install(?:ing)?|creat(?:e|ing)|choos(?:e|ing)|switch(?:ing)?|card)\b/i.test(setup) &&
+        !/\b(?:payment|wallet|purchase|buy|checkout|billing|credit|debit|stripe|api|token)\b/i.test(setup)) {
+      await this.postRepositoryCard({ ...input, kind: 'repository' }, agentId);
+      return { status: 'ready', app: 'beeline:onboarding',
+        next: 'The repository card is in this Room. Use it to connect GitHub and choose or create a repository. This does not use the app connector or Registry.' };
+    }
     const builtin = builtinBeelineApp(service);
     if (builtin) {
       await this.access(input.roomId, agentId);

@@ -150,7 +150,7 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
-    scroll: { flexGrow: 1, paddingHorizontal: hull.space.md, paddingTop: hull.space.lg },
+    scroll: { flexGrow: 1, paddingHorizontal: hull.space.lg, paddingTop: hull.space.lg },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.sm },
     backButton: {
       width: 44,

@@ -263,3 +263,20 @@ into a Workspace generation. Rooms and corners use the installed host
 harness directly, without cloning it into a Workspace generation. Free-agent
 images allocate the normal 128 MiB recovery reserve during construction, so a
 matching image needs no reserve allocation on its first turn.
+
+## Repository onboarding and replies
+
+When `BEELINE_REPOSITORY_ONBOARDING=1`, signed-in users can receive first-party
+Room repository cards even before linking GitHub. Workspace creation posts the
+initial card with Beebee's hello. A later repository setup request reposts it;
+this path bypasses generic app discovery, payment Link and the MCP Registry.
+The requester alone receives their personal repository choices through Room
+reads and live deltas. Installation and repository changes retain their existing
+authorization checks. The pre-sign-in install-first preview keeps its separate
+eligibility rules.
+
+For free agents, an explicit public post followed by a terminal answer in the
+same command generation leaves the terminal answer visible. Earlier updates
+remain in activity and as reply notes; regular agents keep their conservative
+text repetition rules. Regression coverage lives in `free-agents.test.ts`,
+`commander.integration.test.ts` and `repository-onboarding.test.ts`.

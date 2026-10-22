@@ -1116,7 +1116,9 @@ export class PhoneService {
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
-    if (committed.row.card_type === 'repository-onboarding' && (!viewerId || !await onboardingEnabledForViewer(this.database, viewerId))) return null;
+    if (committed.row.card_type === 'repository-onboarding' && (!viewerId ||
+      readRepositoryOnboardingCard(committed.row.card)?.requesterId !== viewerId ||
+      !await onboardingEnabledForViewer(this.database, viewerId))) return null;
     const message = (await this.decorateCornerOpenCards(roomId, [
       projectedMessage(committed.row, this.publicOrigin, viewerId),
     ]))[0]!;
@@ -1308,7 +1310,8 @@ export class PhoneService {
           }
         : null;
     for (const viewer of row.authorized_viewers) {
-      if (row.card_type === 'repository-onboarding' && !await onboardingEnabledForViewer(this.database, viewer)) continue;
+      if (row.card_type === 'repository-onboarding' &&
+        (readRepositoryOnboardingCard(row.card)?.requesterId !== viewer || !await onboardingEnabledForViewer(this.database, viewer))) continue;
       const message = { ...projectedMessage(row, this.publicOrigin, viewer),
         ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}) };
       deltas.set(viewer, {
@@ -8973,8 +8976,11 @@ export class PhoneService {
   }
 
   private async decorateMessageCards(roomId: string, messages: RoomViewMessage[], viewerId: string): Promise<RoomViewMessage[]> {
-    if (messages.some(message => message.onboarding) && !await onboardingEnabledForViewer(this.database, viewerId))
-      messages = messages.filter(message => !message.onboarding);
+    if (messages.some(message => message.onboarding)) {
+      const enabled = await onboardingEnabledForViewer(this.database, viewerId);
+      messages = messages.filter(message => !message.onboarding ||
+        (enabled && message.onboarding.requesterId === viewerId));
+    }
     return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
   }
 

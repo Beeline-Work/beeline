@@ -11,7 +11,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import { PixelLoader } from './MonoHull';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'brass' | 'quiet' | 'destructive';
+export type ButtonVariant = 'primary' | 'secondary' | 'provider' | 'brass' | 'quiet' | 'destructive';
 
 export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   /** Sentence-case verb shown on the button. */
@@ -21,6 +21,7 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   /**
    * `primary`: the filled action (one per surface).
    * `secondary`: outlined in `borderStrong`, for the alternative action.
+   * `provider`: white surface for account sign-in providers in either theme.
    * `brass`: outlined in the accent, for a highlighted secondary action.
    */
   variant?: ButtonVariant;
@@ -54,6 +55,7 @@ export function Button({
 }: ButtonProps) {
   const isDisabled = Boolean(disabled || loading);
   const primary = variant === 'primary';
+  const filled = primary || variant === 'provider';
   const borderless = variant === 'quiet' || variant === 'destructive';
   return (
     <Pressable
@@ -68,8 +70,8 @@ export function Button({
       style={({ pressed }) => [
         styles.frame,
         primary ? styles.primary : styles[variant],
-        pressed && !isDisabled && (primary ? styles.primaryPressed : styles.outlinedPressed),
-        isDisabled && (primary ? styles.primaryDisabled : !borderless && styles.outlinedDisabled),
+        pressed && !isDisabled && (filled ? styles.primaryPressed : styles.outlinedPressed),
+        isDisabled && (filled ? styles.primaryDisabled : !borderless && styles.outlinedDisabled),
         fullWidth && styles.fullWidth,
         style,
       ]}
@@ -84,12 +86,14 @@ export function Button({
             labelStyle,
             primary
               ? styles.primaryLabel
+              : variant === 'provider'
+                ? styles.providerLabel
               : variant === 'brass'
                 ? styles.brassLabel
                 : variant === 'destructive'
                   ? styles.destructiveLabel
                   : styles.secondaryLabel,
-            isDisabled && styles.disabledLabel,
+            isDisabled && !primary && variant !== 'provider' && styles.disabledLabel,
           ]}
         >
           {label}
@@ -114,6 +118,8 @@ const styles = StyleSheet.create((theme) => {
       gap: buzz.space.sm,
     },
     primary: { backgroundColor: buzz.buttonPrimaryFill, borderColor: buzz.buttonPrimaryFill },
+    provider: { backgroundColor: buzz.buttonProviderFill, borderColor: buzz.buttonProviderFill },
+    providerLabel: { color: buzz.buttonProviderText },
     secondary: { backgroundColor: 'transparent', borderColor: buzz.borderStrong },
     brass: { backgroundColor: 'transparent', borderColor: buzz.accent },
     quiet: { backgroundColor: 'transparent', borderColor: 'transparent' },
@@ -121,7 +127,7 @@ const styles = StyleSheet.create((theme) => {
     destructiveLabel: { color: buzz.dialogDanger },
     primaryPressed: { opacity: 0.85 },
     outlinedPressed: { backgroundColor: buzz.bgPressed },
-    primaryDisabled: { backgroundColor: buzz.bgRaised, borderColor: buzz.bgRaised },
+    primaryDisabled: { opacity: 0.4 },
     outlinedDisabled: { borderColor: buzz.border },
     fullWidth: { alignSelf: 'stretch' },
     label: { ...buzz.type.body, fontFamily: buzz.proseMedium },

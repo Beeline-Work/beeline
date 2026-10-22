@@ -34,7 +34,6 @@ beforeEach(async () => {
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, member]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [workspaceId, agent, roomId]);
   vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', `${owner},${member}`);
 });
 afterEach(async () => { vi.unstubAllEnvs(); installationToken.mockClear(); await db.close(); });
 

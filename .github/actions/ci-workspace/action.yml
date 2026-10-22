@@ -1,0 +1,46 @@
+name: Reuse CI workspace
+description: Restore dependencies by lockfile and workspace builds by exact commit
+inputs:
+  mobile:
+    description: Install the isolated mobile dependency tree
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+    - uses: actions/cache@v4
+      id: root
+      with:
+        path: |
+          node_modules
+          apps/*/node_modules
+          packages/*/node_modules
+          !apps/mobile/node_modules
+        key: ci-root-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'package.json', 'apps/*/package.json', 'packages/*/package.json', '.npmrc') }}
+    - if: steps.root.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci --no-audit --no-fund
+    - uses: actions/cache@v4
+      id: builds
+      with:
+        path: |
+          packages/*/dist
+          apps/*/dist
+          .turbo
+        key: ci-build-v1-${{ runner.os }}-node22-${{ github.sha }}
+    - if: steps.builds.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm run build
+    - uses: actions/cache@v4
+      if: inputs.mobile == 'true'
+      id: mobile
+      with:
+        path: |
+          apps/mobile/node_modules
+          apps/mobile/public/canvaskit.wasm
+        key: ci-mobile-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/package.json', 'apps/mobile/patches/**', 'apps/mobile/scripts/patch-livekit-abort.cjs') }}
+    - if: inputs.mobile == 'true' && steps.mobile.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci --prefix apps/mobile --no-audit --no-fund

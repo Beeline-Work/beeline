@@ -22,7 +22,7 @@ function workflow(name) {
   );
   const decide = steps.find((step) => step.id === 'decide');
   assert.ok(decide?.run, `${name} has a decide script`);
-  return { name, filters, decide };
+  return { name, filters, decide, jobs: doc.jobs };
 }
 
 function patternsOf(entry) {
@@ -211,14 +211,10 @@ test('a mapped tree opens only its own suites', () => {
   }
 });
 
-test('packages and a path outside the four app trees still open every path-filtered suite', () => {
+test('packages and unknown executable paths still open every path-filtered suite', () => {
   const cases = [
     { label: 'packages-only', files: ['packages/api-contract/src/index.ts'] },
-    { label: 'docs-only', files: ['docs/foo.md'] },
-    {
-      label: 'mobile-plus-docs',
-      files: ['apps/mobile/sources/scrubber.ts', 'docs/foo.md'],
-    },
+    { label: 'unmapped-script', files: ['scripts/new-proof.mjs'] },
   ];
   for (const item of cases) {
     const { checks, desktop } = evaluate(item.files);
@@ -244,6 +240,50 @@ test('packages and a path outside the four app trees still open every path-filte
     ]) {
       assert.equal(checks.gates[name], 'true', `${item.label} ${name}`);
     }
+  }
+});
+
+test('documentation does not fan out Checks suites', () => {
+  for (const files of [['docs/foo.md'], ['AGENTS.md'], ['docs/foo.md', 'docs/bar.md']]) {
+    const { checks } = evaluate(files);
+    assert.equal(checks.runEverything, 'false');
+    assert.ok(Object.values(checks.gates).every((value) => value === 'false'));
+  }
+  const mobile = evaluate(['apps/mobile/sources/scrubber.ts']).checks;
+  const withDocs = evaluate(['apps/mobile/sources/scrubber.ts', 'docs/foo.md']).checks;
+  assert.deepEqual(withDocs, mobile);
+  assert.deepEqual(
+    evaluate(['apps/server/src/index.ts', 'docs/foo.md']).checks,
+    evaluate(['apps/server/src/index.ts']).checks,
+  );
+  const readme = evaluate(['README.md']).checks;
+  assert.equal(readme.gates.readme, 'true');
+  assert.equal(readme.gates.serverSuite, 'false');
+  assert.equal(readme.gates.mobileSuite, 'false');
+});
+
+test('representative PRs request fewer hosted runners without hiding check contexts', () => {
+  const examples = [
+    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 13 },
+    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 8 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 17 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 15 },
+    { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
+  ];
+  for (const example of examples) {
+    const { gates } = evaluate(example.files).checks;
+    const needs = Object.fromEntries(Object.keys(checksWorkflow.jobs).map((name) => [name, { result: 'success', outputs: gates }]));
+    let runners = 0;
+    for (const job of Object.values(checksWorkflow.jobs)) {
+      const expression = String(job.if ?? 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+        .replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']");
+      const enabled = new Function('needs', 'github', 'inputs', 'cancelled', `return (${expression});`)(
+        needs, { event_name: 'pull_request' }, { suite: '' }, () => false,
+      );
+      if (enabled) runners += job.strategy?.matrix?.shard?.length ?? 1;
+    }
+    console.log(`${example.name}: baseline=${example.before} current=${runners} runner jobs (skipped checks excluded)`);
+    assert.equal(runners, example.after, example.name);
   }
 });
 
@@ -277,4 +317,17 @@ test('a merge-group diff failure runs every suite instead of pruning from missin
   assert.equal(checks.runEverything, 'true');
   assert.ok(Object.values(checks.gates).every(value => value === 'true'));
   assert.equal(desktop.gates.desktop, 'true');
+});
+
+test('merge groups execute both consolidated server shard steps', () => {
+  const job = checksWorkflow.jobs['server-suite-shard'];
+  const steps = job.steps.filter(step => step.name?.startsWith('Run '));
+  assert.equal(steps.length, 2);
+  for (const step of steps) {
+    const expression = String(step.if).replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+    const enabled = new Function('github', 'inputs', 'cancelled', `return (${expression});`)(
+      { event_name: 'merge_group' }, { suite: '' }, () => false,
+    );
+    assert.equal(enabled, true, step.name);
+  }
 });

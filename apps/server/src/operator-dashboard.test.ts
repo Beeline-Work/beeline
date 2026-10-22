@@ -704,7 +704,7 @@ it('counts addressed free-agent conversations and confirmed links within the sel
   await db.query(`INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$3),($2,$3)`,
     [human(1), human(7), workspace]);
   const fixture = 'bee11e00-0000-4000-8000-000000000105';
-  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Fixture')`, [fixture]);
+  await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Fixture',true)`, [fixture]);
   await db.query(`INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2),($3,$2)`,
     [human(1), fixture, human(3)]);
   const steps = async (filter = '') => (await (await get(filter)).json()).usage.people;

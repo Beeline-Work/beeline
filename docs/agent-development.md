@@ -9,6 +9,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 - Resolve merges as one batch: list every textual conflict and semantic overlap, resolve them in one pass, then run one integration matrix.
 - **`TYPECHECK` (root `npm run typecheck` = turbo + `apps/mobile` + `tsconfig.scripts.json`) and `SHARED PACKAGE TESTS` run on every PR.** Two green PRs can still merge into a red `main`; after changing a shared row type, merge `origin/main` and re-run typecheck.
 - **In `checks.yml` a job `name:` is a required check context.** Never rename one; skip only with a job-level `if:`; every gate must execute something. Heavy suites filter by module path; `packages/**` runs everything. `npm run lint:workflow-paths` fails a workflow naming a test path nothing matches.
+- **Checks preparation is shared across hosted Linux jobs.** `.github/actions/ci-workspace` caches installed dependencies by lockfiles and manifests, and compiled workspace outputs by exact commit; never restore another commit's build. Four server runners use measured file durations from `apps/server/scripts/ci-test-timings.json`, then each runs two of the original eight integration batches in separate processes. `run-ci-shard.mjs` discovers tests dynamically so new files cannot disappear from the suite. Root Markdown and `docs/` changes do not trigger heavy Checks suites; unknown executable paths still fail closed. The always-on typecheck and shared-package checks remain mandatory.
 
 ## Dead code and lifecycle proofs
 

@@ -16,6 +16,7 @@ import type { FreeAgentMachines, FreeAgentMachineSpec } from './fly-machines.js'
 import {
   addFreeAgentToWorkspace,
   FREE_AGENT_EXIT_NOTE,
+  FREE_AGENT_TURN_GUIDE,
   FREE_AGENT_HELLO,
   FREE_AGENT_JOIN_GREETING,
   FreeAgentService,
@@ -169,8 +170,11 @@ describe('free starter agents', () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Always on' }, OWNER) as { id:string;roomId:string };
     const agent = await freeAgentOf(id);
     const daemon = new DaemonService(db, live);
+    await db.query(`UPDATE agents SET soul=jsonb_set(soul,'{instructions}','"Original soul"'::jsonb)
+      WHERE agent_id=$1`, [agent.agent_id]);
     const configuration = await daemon.execute('getAgentConfiguration', { roomId }, agent.agent_id);
     expect(configuration.soul?.instructions).toContain('beeline:onboarding');
+    expect(configuration.soul?.instructions).toContain(FREE_AGENT_TURN_GUIDE);
     const stored=(await db.query<{soul:{instructions:string}}>(`SELECT soul FROM agents WHERE agent_id=$1`,[agent.agent_id])).rows[0]!;
     expect(stored.soul.instructions).not.toContain('beeline:onboarding');
   });
@@ -213,6 +217,7 @@ describe('free starter agents', () => {
     const context = { roomId, requestId: command.turn_request_id, generationId: 'invite-generation' };
     const configuration = await daemon.execute('getAgentConfiguration', context as never, agent.agent_id);
     expect(configuration.soul?.instructions).toContain('beeline:onboarding');
+    expect(configuration.soul?.instructions).toContain(FREE_AGENT_TURN_GUIDE);
     expect(await daemon.execute('getRoomRepositoryState', context as never, agent.agent_id)).toMatchObject({ repositoryOnboarding: true });
     expect(await daemon.execute('postRepositoryOnboarding', { ...context, kind: 'repository' } as never, agent.agent_id))
       .toMatchObject({ requesterId: FRIEND, canLink: false });
@@ -631,6 +636,11 @@ What are you working on? Tell me, and I'll take the first step with you. If you'
     machines.calls.length = 0;
     await freeAgents.sweep();
     expect(machines.calls).toContain('stop m1');
+    const closed = await db.query(`SELECT text FROM messages WHERE card->>'freeAgentClosed'='true'`);
+    expect(closed.rows).toHaveLength(1);
+    expect(closed.rows[0].text).toContain('15-minute limit');
+    await freeAgents.sweep();
+    expect((await db.query(`SELECT id FROM messages WHERE card->>'freeAgentClosed'='true'`)).rowCount).toBe(1);
     expect((await db.query(`SELECT state,cancellation_reason FROM agent_commands WHERE agent_id=$1`, [agent.agent_id])).rows)
       .toEqual([{ state: 'cancelled', cancellation_reason: 'free-agent-time-limit' }]);
   });

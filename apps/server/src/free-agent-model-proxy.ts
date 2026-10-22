@@ -413,8 +413,8 @@ export async function handleFreeAgentModelRequest(
   }
   const now = options.now?.() ?? new Date();
   const limits = options.config.limits ?? DEFAULT_FREE_AGENT_LIMITS;
-  const turn = (await options.database.query<{ started: Date | string }>(
-    `SELECT COALESCE(turn.started_at,command.claimed_at) started FROM agent_commands command LEFT JOIN agent_turns turn
+  const turn = (await options.database.query<{ started: Date | string; room_id: string; turn_request_id: string }>(
+    `SELECT command.room_id,command.turn_request_id,COALESCE(turn.started_at,command.claimed_at) started FROM agent_commands command LEFT JOIN agent_turns turn
        ON turn.agent_id=command.agent_id AND turn.room_id=command.room_id
          AND turn.request_id=command.turn_request_id
        WHERE command.agent_id=$1 AND command.state='claimed'
@@ -459,7 +459,9 @@ export async function handleFreeAgentModelRequest(
       sendAssistantText(response, stream, options.config.model, FREE_AGENT_BUDGET_MESSAGE);
       return true;
     }
-    await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', { limit: reservation.limit });
+    await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', {
+      limit: reservation.limit, roomId: turn.room_id, requestId: turn.turn_request_id,
+    });
     sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, options.config));
     return true;
   }

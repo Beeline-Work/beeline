@@ -5530,6 +5530,97 @@
     "occurrences": 1
   },
   {
+    "id": "src/daemon-service.ts:DaemonService.turnReceipt:wrapper:15fe79cc708a0f8a",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "closeFreeAgentTurn(database, { roomId: input.roomId, requestId: input.requestId,\n    agentId, generationId: input.generationId, normal: true })",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agent-turn-close.ts:closeFreeAgentTurn:restateSystemLine:1f91ed16b1e6a607",
+    "file": "apps/server/src/free-agent-turn-close.ts",
+    "kind": "restateSystemLine",
+    "template": "restateSystemLine(database, previous.id, phrase, card)",
+    "literals": [
+      "''",
+      "'agent'",
+      "'allowance-spent'",
+      "'computer-session-activity'",
+      "'connect your own agent from Members to continue'",
+      "'daily'",
+      "'ended without a reply'",
+      "'free-agent-time-limit'",
+      "'hit the 15-minute limit'",
+      "'it resets at midnight UTC; ask to continue then'",
+      "'kind'",
+      "'lifetime'",
+      "'limit'",
+      "'ran out of free allowance mid-task'",
+      "'say \"continue\" to pick up where work stopped'",
+      "'stopped after a runtime failure'",
+      "'stopped before replying'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agent-turn-close.ts:closeFreeAgentTurn:systemLine:92ed107aa3030765",
+    "file": "apps/server/src/free-agent-turn-close.ts",
+    "kind": "systemLine",
+    "template": "systemLine(database, { roomId: input.roomId, ...phrase, cardType: 'turn-failed',\n    card, afterMessageId: input.requestId })",
+    "literals": [
+      "''",
+      "'agent'",
+      "'allowance-spent'",
+      "'computer-session-activity'",
+      "'connect your own agent from Members to continue'",
+      "'daily'",
+      "'ended without a reply'",
+      "'failed'",
+      "'free-agent-time-limit'",
+      "'hiccup'",
+      "'hit the 15-minute limit'",
+      "'it resets at midnight UTC; ask to continue then'",
+      "'kind'",
+      "'lifetime'",
+      "'limit'",
+      "'ran out of free allowance mid-task'",
+      "'say \"continue\" to pick up where work stopped'",
+      "'stopped after a runtime failure'",
+      "'stopped before replying'",
+      "'turn-failed'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agents.ts:FreeAgentService.sweep:wrapper:69145f290145cb8e",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "wrapper",
+    "template": "closeFreeAgentTurn(db, { roomId: row.room_id, requestId: row.turn_request_id,\n    agentId: row.agent_id, reason: 'free-agent-time-limit' })",
+    "literals": [
+      "'free-agent-time-limit'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/turn-silence-notice.ts:noteFirstSilence:wrapper:3874d4110f16179e",
+    "file": "apps/server/src/turn-silence-notice.ts",
+    "kind": "wrapper",
+    "template": "closeFreeAgentTurn(db, input)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/turn-silence-notice.ts:reclaimExpiredCommandLeases:wrapper:842bb9abe0c6e1c8",
+    "file": "apps/server/src/turn-silence-notice.ts",
+    "kind": "wrapper",
+    "template": "closeFreeAgentTurn(db, { roomId: command.room_id, agentId: command.agent_id,\n    requestId: command.turn_request_id, generationId: command.generation_id,\n    reason: 'the command lease expired with no live execution' })",
+    "literals": [
+      "'the command lease expired with no live execution'"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/operator-system-dm.ts:flushOperatorSystemDms:wrapper:68025df2a8940f74",
     "file": "apps/server/src/operator-system-dm.ts",
     "kind": "wrapper",

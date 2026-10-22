@@ -39,7 +39,7 @@ describe('scheduled Agent work', () => {
   it('draws each entry as a settings row in one grammar, with no timestamp log', () => {
     expect(screen).toContain('<SettingsRow');
     expect(screen).toContain('chevron="right"');
-    expect(screen).toContain('<WorkflowGlyph');
+    expect(screen).not.toContain('<WorkflowGlyph');
     expect(screen).not.toMatch(/LAST |NEVER FIRED|deliveries/);
     expect(subscription).not.toContain('deliveries');
     expect(layout).toMatch(/name="beeline\/settings\/schedule"\s*options=\{\{\s*headerShown: false/);
@@ -57,7 +57,7 @@ describe('scheduled Agent work', () => {
   });
 
   it('says a cadence in words, never as a raw cron expression', () => {
-    expect(work).toContain('scheduleCadenceLabel(schedule.cadence)');
+    expect(work).toContain('scheduleCadenceLabel(schedule.cadence, next)');
     expect(screen).not.toContain('cadence.expression');
     expect(work).not.toContain('cadence.expression');
   });

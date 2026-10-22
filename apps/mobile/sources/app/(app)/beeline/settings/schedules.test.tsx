@@ -71,6 +71,7 @@ vi.mock('@/buzz/surface-storage', () => {
 });
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { resetClientState } from '@/sync/client-reset';
+import { scheduleTrigger, subscriptionTitle, subscriptionWhen } from '@/buzz/scheduled-work';
 import ScheduledWork, { orderScheduledWork } from './schedules';
 import PromptSchedule from './schedule';
 import Subscription from './subscription';
@@ -94,7 +95,7 @@ async function render(element: React.ReactElement) {
   return tree;
 }
 
-it('orders this Room first, then each corner with schedules by next run before subscriptions', () => {
+it('orders timers soonest first across all call sites, then subscriptions', () => {
   const cornerA = { id: 'a', name: 'A corner' };
   const cornerB = { id: 'b', name: 'B corner' };
   const schedule = (id: string, nextRunAt: number, corner?: typeof cornerA) =>
@@ -106,7 +107,7 @@ it('orders this Room first, then each corner with schedules by next run before s
     [subscription('b-sub', cornerB), subscription('room-sub'), subscription('a-sub', cornerA)],
   );
   expect(ordered.map((entry) => entry.value.id)).toEqual([
-    'room-early', 'room-late', 'room-sub', 'a', 'a-sub', 'b-early', 'b-late', 'b-sub',
+    'b-early', 'room-early', 'a', 'room-late', 'b-late', 'b-sub', 'room-sub', 'a-sub',
   ]);
 });
 
@@ -117,12 +118,12 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
     const row = (testID: string) => tree.root.findByProps({ testID });
     // 'daily' arrives with no title, the way a nameless agent schedule does;
     // the row still reads what it runs from the prompt.
-    expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', description: undefined, chevron: 'right' });
-    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', description: 'Once' });
-    expect(row('scheduled-work-video').props.leading).toBeTruthy();
-    expect(row('scheduled-work-daily').props.leading).toBeTruthy();
-    expect(row('subscription-sub').props.leading).toBeTruthy();
-    expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues', descriptionLead: 'On new issue in owner/widgets', description: '· @Hoots · this Room' });
+    expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', chevron: 'right' });
+    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video' });
+    expect(row('scheduled-work-video').props.leading).toBeUndefined();
+    expect(row('scheduled-work-daily').props.leading).toBeUndefined();
+    expect(row('subscription-sub').props.leading).toBeUndefined();
+    expect(row('subscription-sub').props).toMatchObject({ title: 'Triage new issues', description: 'On new issue in owner/widgets', descriptionDetail: '@Hoots · this Room' });
     act(() => row('scheduled-work-daily').props.onPress());
     act(() => row('scheduled-work-video').props.onPress());
     act(() => row('subscription-sub').props.onPress());
@@ -261,11 +262,21 @@ it('names empty and legacy corner names through the shared title grammar (J40)',
   try {
     const tree = await render(<ScheduledWork />);
     const row = (testID: string) => tree.root.findByProps({ testID });
-    expect(row('scheduled-work-unnamed').props.description).toBeUndefined();
-    expect(row('scheduled-work-legacy').props.description).toBeUndefined();
-    expect(row('subscription-sub').props.description).toBe('· @Hoots · corner triage');
+    expect(row('scheduled-work-unnamed').props.descriptionDetail).toContain('corner');
+    expect(row('scheduled-work-legacy').props.descriptionDetail).toContain('corner');
+    expect(row('subscription-sub').props.descriptionDetail).toContain('@Hoots · corner triage');
     tree.unmount();
   } finally {
     operation.mockImplementation(original);
   }
+});
+
+it('keeps old subscription rows named and dates a one-time wake in local time', () => {
+  expect(subscriptionTitle({ prompt: '   ' } as any)).toBe('React to this event');
+  expect(subscriptionWhen({ source: 'room', event: 'check-failed' } as any))
+    .toBe('On corner checks failing');
+  const now = new Date(2026, 9, 22, 12);
+  const next = new Date(2026, 9, 23, 10);
+  expect(scheduleTrigger({ maxRuns: 1, nextRunAt: next.getTime() / 1000 } as any, now))
+    .toMatch(/^Tomorrow at 10:00 /);
 });

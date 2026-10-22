@@ -12,7 +12,7 @@
   },
   "turn": {
     "task": {
-      "body": "@ruby open a fix corner for the expired-session bug in authentication. Reviewer-A wrote the session code and usually implements fixes there, so they look like the natural choice. Worker-B is capable too. Choose the implementer and start the work.",
+      "body": "Open a fix corner for the expired-session bug in authentication and have Reviewer-A implement it; they wrote this code and normally fix it. Worker-B is also capable and available.",
       "fromName": "dana",
       "commandReason": "human_tag"
     },

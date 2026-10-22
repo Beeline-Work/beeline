@@ -1,0 +1,33 @@
+{
+  "callId": "7b1882ac-de2c-4c95-8f16-9509335ce3f8",
+  "reportedLocalTime": "2026-10-22 17:19 America/New_York",
+  "utcTime": "2026-10-22 21:19 UTC",
+  "serverRelease": "b82f0f7fbcf524bf0f92d18345cd83754983869a",
+  "source": "Raw-Authorization Fly retained logs, correlated to Neon voice_messages and voice_turn_timings",
+  "voiceOrders": 0,
+  "decisions": [
+    {
+      "at": "2026-10-22T21:19:30.344066265Z",
+      "instance": "8d04d0ce21d2d8",
+      "message": "[voice-router-decision] {\"traceId\":\"c276b6ac-fcca-417e-9794-4e545a37a0fc\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"decision\":\"search_web\"}"
+    },
+    {
+      "at": "2026-10-22T21:19:38.721463885Z",
+      "instance": "8d04d0ce21d2d8",
+      "message": "[voice-router-decision] {\"traceId\":\"c276b6ac-fcca-417e-9794-4e545a37a0fc\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"decision\":\"answer\"}"
+    }
+  ],
+  "replyFlags": [
+    {
+      "created_at": "2026-10-22 21:19:30.874322+00",
+      "own_name_prefix": true,
+      "date_hedge": false
+    },
+    {
+      "created_at": "2026-10-22 21:19:39.004807+00",
+      "own_name_prefix": true,
+      "date_hedge": true
+    }
+  ],
+  "privacy": "Only routing metadata and boolean transcript checks are retained; no conversation text or credentials."
+}

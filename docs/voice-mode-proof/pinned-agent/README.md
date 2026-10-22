@@ -1,11 +1,20 @@
 # Voice reply and private pin proof
 
 Reproductions R1, R2 and R3 use the approved stand-ins from brief revision 3.
-The reported production call was not replayed. Its routing decision and serving
-build could not be confirmed: the Fly retained-log REST request returned 401,
-the Machines log route returned 404, and GraphQL exposed no App logs field.
-Reconnecting Fly returned the same connection. Investigation stopped as directed.
-Both quick and heavy prompt paths are fixed.
+The reported call was recovered after correcting the Fly request header to use
+the vaulted token directly. The original `Bearer` header caused the REST 401;
+the Machines log route returned 404 and GraphQL exposed no App logs field.
+The corrected retained-log route returns 200 and reaches the reported call.
+
+The matching market question occurred at **21:19 UTC / 17:19 Eastern**, rather
+than 17:19 UTC. Retained logs show **quick `search_web` followed by `answer`**
+for trace `c276b6ac-fcca-417e-9794-4e545a37a0fc`; no heavy order was recorded
+for this call. Database checks confirm an own-name prefix on the acknowledgement
+and answer, and the date hedge on the answer committed at 21:19:39 UTC.
+Timing rows identify serving build `b82f0f7fbcf524bf0f92d18345cd83754983869a`.
+Both quick and heavy paths remain fixed and tested as directed.
+[Redacted production correlation](production-path.json) contains only routing
+metadata and boolean transcript checks, without conversation text.
 
 ## Reproduced
 

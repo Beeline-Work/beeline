@@ -451,7 +451,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     render: ({ squireAvailable }) =>
       paragraphs(
         "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
-        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For supported GitHub API work, check connect(mode:status) and prefer personal GitHub over the repository App.',
+        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For GitHub work, check connect(mode:status). In Room, corner and DM sessions, use the Beeline GitHub App for linked-repository code, branch and PR writes; without an App checkout, use a corner of the linked Room. Personal GitHub serves general lookups, repositories without App access and person-scoped actions.',
         squireAvailable === true &&
           'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
         `${SKILL_FALLBACK_LINE} Skills: ${SITUATIONAL_SKILL_NAMES.join(', ')}.`,

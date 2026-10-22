@@ -34,6 +34,14 @@ const roomPrompt = (context: Partial<SessionPromptContext> = {}) =>
 const dmPrompt = (context: Partial<SessionPromptContext> = {}) =>
   sessionPrompt({ surface: 'dm', ...context }).systemPrompt;
 
+describe('GitHub routing across sessions', () => {
+  it.each(PROMPT_SURFACES)('keeps linked-repository writes on the App in %s', (surface) => {
+    const prompt = sessionPrompt({ surface }).systemPrompt;
+    expect(prompt).toContain('use the Beeline GitHub App for linked-repository code, branch and PR writes');
+    expect(prompt).not.toContain('prefer personal GitHub over the repository App');
+  });
+});
+
 describe('Room guidance', () => {
   it('describes Room mentions and the mounted corner action', () => {
     const files = beelineFilesSkillMarkdown('test-release');

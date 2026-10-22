@@ -1199,8 +1199,10 @@ function SwipeToReply({
       // `ALIVE_RING_PAD` outside that tile. The clip box is outset by the ring
       // gutter and the children padded back by the same amount, so the copy
       // column never moves and the whole tile, ring included, stays visible.
-      containerStyle={styles.replySwipeContainer}
-      childrenContainerStyle={styles.replySwipeChildren}
+      // These third-party style props need plain values: Unistyles web styles
+      // hide their properties until a supported host style prop resolves them.
+      containerStyle={{ marginHorizontal: -ALIVE_RING_PAD }}
+      childrenContainerStyle={{ paddingHorizontal: ALIVE_RING_PAD }}
       dragOffsetFromRightEdge={18}
       friction={1.35}
       onSwipeableOpen={(direction) => {
@@ -1949,8 +1951,6 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.monoSemibold,
     color: theme.buzz.textPrimary,
   },
-  replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
-  replySwipeChildren: { paddingHorizontal: ALIVE_RING_PAD },
   replyDesktopRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
   replyDesktopMessage: { flex: 1, minWidth: 0 },
   replyDesktopActions: {

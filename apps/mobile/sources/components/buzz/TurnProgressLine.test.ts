@@ -247,13 +247,11 @@ describe('the per-turn progress indicator', () => {
       .findAllByType('View')
       .find((node) => node.props.testID === 'turn-progress-line');
     const pulse = renderer.root.findByType('AnimatedView');
-    const glyph = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
     const label = renderer.root.findAllByType('Text')[0];
     const stop = renderer.root.findByProps({ testID: 'turn-progress-line-stop' });
 
     expect(bar?.props.pointerEvents).toBeUndefined();
     expect(pulse.props.pointerEvents).toBeUndefined();
-    expect(glyph.props.pointerEvents).toBeUndefined();
     expect(label.props.pointerEvents).toBeUndefined();
     expect(stop.props.pointerEvents).toBeUndefined();
   });
@@ -320,71 +318,17 @@ describe('the per-turn progress indicator', () => {
     expect(renderer.root.findAllByType('View')[0].props.accessibilityLiveRegion).toBe('polite');
   });
 
-  it('draws the Beeline mark as a brass ribbon, not a cycling text glyph', () => {
+  it('starts the live status with its readable label, without a stray animated mark', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, {
-        label: 'beebee Thinking\u2026',
+        label: 'beebee Thinking…',
         startedAt: 1_000,
         testID: 'turn-progress-line',
       }),
     );
-    const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
-    // The mark is vector, in the cell; no Text carries a glyph before the label.
-    expect(cell.findAllByType('Text')).toHaveLength(0);
-    expect(cell.findAllByType('Svg')).toHaveLength(1);
-    const ribbons = cell.findAllByType('AnimatedPath');
-    expect(ribbons.length).toBe(1);
-    for (const path of ribbons) {
-      // The icon's own loop, painting itself: brass on aubergine, never the
-      // UI accent and never a row of dots.
-      expect(path.props.d).toBe(ribbon.path);
-      expect(path.props.stroke).toBe(GLYPH_PAINT.darkInk);
-      expect(path.props.stroke).not.toBe(groknight.accent);
-      expect(path.props.fill).toBe('none');
-      expect(path.props.strokeDasharray).toEqual([ribbon.length, ribbon.length]);
-    }
-    // Live means drawing: the static completed mark is not what is shown.
-    expect(cell.findAllByType('Path')).toHaveLength(0);
-    expect(cell.findAllByType('View').filter((node) => node.props.style?.width === 5)).toHaveLength(
-      0,
-    );
-    expect(renderer.root.findAllByType('Text')[0].props.children).toBe('beebee Thinking\u2026');
-  });
-
-  it('holds the mark in a fixed square so the label never jitters', () => {
-    const renderer = render(
-      React.createElement(TurnProgressLine, {
-        label: 'beebee Thinking\u2026',
-        startedAt: 1_000,
-        testID: 'turn-progress-line',
-      }),
-    );
-    const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
-    expect(cell.findAllByType('Text')).toHaveLength(0);
-    expect(cell.props.style).toMatchObject({
-      width: MARK_CELL,
-      height: MARK_CELL,
-      flexShrink: 0,
-      alignItems: 'center',
-    });
-    expect(MARK_CELL).toBe(18);
-  });
-
-  it('shows the completed static mark under reduced motion', () => {
-    motion.reducedMotion = true;
-    const renderer = render(
-      React.createElement(TurnProgressLine, {
-        label: 'beebee Thinking\u2026',
-        startedAt: 1_000,
-        testID: 'turn-progress-line',
-      }),
-    );
-    const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
-    expect(cell.findAllByType('AnimatedPath')).toHaveLength(0);
-    const [mark] = cell.findAllByType('Path');
-    expect(mark.props.d).toBe(ribbon.path);
-    expect(mark.props.fill).toBe(GLYPH_PAINT.darkInk);
-    expect(mark.props.strokeDasharray).toBeUndefined();
+    expect(renderer.root.findAllByProps({ testID: 'turn-progress-line-glyph' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('Text')[0].props.children).toBe('beebee Thinking…');
+    expect(renderer.root.findAllByType('Svg')).toHaveLength(0);
   });
 
   it('settles to a static past-tense summary, with no counter', () => {

@@ -7070,11 +7070,9 @@ export class DaemonService {
       const key = appIdentity(service)?.key;
       const existing = key && await hasExistingAppRoute(this.database, context.owner.pubkey, key);
       if (!existing) {
-        // The public Registry is only a route preference; when it is slow or down, the managed route still serves the app.
-        const manifests = await this.mcpRegistry.search(service).catch((error: unknown) => {
-          console.warn(`[connect] Registry search failed for ${service}; using the managed route`, error);
-          return [];
-        });
+        let manifests;
+        try { manifests = await this.mcpRegistry.search(service); }
+        catch { return { status: 'unavailable', app: service, next: 'The Registry could not be checked. Try again shortly.' }; }
         const match = manifests.find(entry => entry.name.toLowerCase() === normalized
           || entry.title?.toLowerCase() === normalized || entry.websiteUrl && appIdentity(entry.websiteUrl)?.key === key);
         if (match) {

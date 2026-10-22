@@ -647,9 +647,9 @@ export async function connectApp(
         entry.remotes.some((remote) => remote.type === 'streamable-http') &&
         entry.secretInputNames.length === 0);
       if (offered) manifest = await registryClient.exact(offered.name, offered.version);
-    } catch (error) {
-      // A slow or down Registry must not block the managed routes below.
-      console.warn(`[connect] Registry lookup failed for ${key}; using the managed route`, error);
+    } catch {
+      return { status: 'unavailable', app: params.app, appKey: key,
+        next: 'The official sign-in could not be checked. Try again shortly.' };
     }
     if (manifest && manifest.name === officialName &&
         manifest.remotes.some((remote) => remote.type === 'streamable-http') &&

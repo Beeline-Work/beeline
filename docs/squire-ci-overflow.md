@@ -186,3 +186,18 @@ This initial sample demonstrates operation, not a queue-time improvement:
 overflow routing is only present on this PR until it merges. DEAD CODE on
 the first head identified missing Knip operator entry points; they are now
 declared explicitly rather than added to the unused-code baseline.
+
+The server suite runs one Vitest worker per overflow slot, retaining two on
+GitHub-hosted runners. On head `a187c88644c6`, shard six was canceled when
+the slot hit its memory limit: the host journal recorded `oom-kill` and a
+6.0G peak at 21:21:04 UTC. This worker limit keeps the resource cap intact.
+Diagnosis used the operator wrapper with `sudo -n journalctl -u beeline-ci-1
+-u beeline-ci-2 -u beeline-ci-3 -u beeline-ci-4 --since '2026-10-22
+21:19:00 UTC' --until '2026-10-22 21:22:00 UTC' --no-pager -n 100`.
+The same shard completed locally with one worker in seconds (565), with
+tests passing (215), skipped (2), and failing (2). Both failures are the
+existing `production-corpus-width.test.ts` room-list latency assertions
+(p95 242ms and median 173ms against a 150ms budget). This is not a green
+suite result; CI still needs to confirm the bounded runner path.
+An immediate standalone rerun of that file with one worker passed all tests
+(4) in seconds (15), confirming the latency failures vary with host load.

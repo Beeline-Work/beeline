@@ -552,7 +552,10 @@ jobs:
       # server test except the large integration file, which runs below.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth && npm run build -w @beeline/body
       - name: Run the server suite shard
-        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2 --shard=${{ matrix.shard }}/8
+        # Two concurrent PGlite workers exceed the overflow slot's 6 GiB cap.
+        env:
+          SERVER_TEST_WORKERS: ${{ runner.environment == 'self-hosted' && '1' || '2' }}
+        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers="$SERVER_TEST_WORKERS" --minWorkers="$SERVER_TEST_WORKERS" --shard=${{ matrix.shard }}/8
 
   server-claim-latency:
     name: SERVER CLAIM LATENCY

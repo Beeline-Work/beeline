@@ -6262,7 +6262,9 @@ export function BuzzChatSurface({
                     state={cornerHeaderDisplay?.status}
                     headerSuffix={cornerHeaderDisplay?.headerSuffix}
                     waitingReason={cornerHeaderSource?.reason}
-                    onReasonPress={cornerHeaderSource?.itemId ? () => {
+                    blocker={cornerHeaderSource?.blocker}
+                    viewerId={viewerPubkey}
+                    onReasonPress={cornerHeaderSource?.itemId && (!cornerHeaderSource.blocker || cornerHeaderSource.blocker.kind === 'message') ? () => {
                       requestMessageJump(scrollController, cornerHeaderSource.itemId!, jumpToTranscriptMessage);
                     } : undefined}
                     style={[

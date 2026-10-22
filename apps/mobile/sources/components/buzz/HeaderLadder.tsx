@@ -52,6 +52,8 @@ export function CornerHeaderAgentText({
   state,
   headerSuffix,
   waitingReason,
+  blocker,
+  viewerId,
   onReasonPress,
   style,
 }: {
@@ -60,6 +62,8 @@ export function CornerHeaderAgentText({
   state?: CornerState;
   headerSuffix?: string;
   waitingReason?: 'approve' | 'connect' | 'question';
+  blocker?: import('@beeline/api-contract/phone').CornerBlocker;
+  viewerId?: string;
   onReasonPress?: () => void;
   style?: StyleProp<TextStyle>;
 }) {
@@ -68,10 +72,12 @@ export function CornerHeaderAgentText({
   return (
     <Text numberOfLines={1} style={[styles.metaCaps, style]}>
       {label ? `${name.toUpperCase()} · ${label}` : name.toUpperCase()}
-      {waiting && waitingReason ? (
+      {waiting && blocker?.kind === 'merge-hold' ? ` on ${blocker.personId === viewerId ? 'your' : `${blocker.personName ?? 'someone'}'s`} merge hold`
+        : waiting && blocker?.kind === 'report' ? ' on a report'
+        : waiting && waitingReason ? (
         <>
           {waitingReason === 'question' ? ' on a ' : ' to '}
-          <Text accessibilityRole="link" onPress={onReasonPress}>{waitingReason}</Text>
+          <Text accessibilityRole={onReasonPress ? "link" : undefined} onPress={onReasonPress}>{waitingReason}</Text>
         </>
       ) : null}
       {waiting && headerSuffix ? ` · ${headerSuffix}` : null}

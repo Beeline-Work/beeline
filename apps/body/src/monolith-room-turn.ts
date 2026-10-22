@@ -1783,6 +1783,7 @@ export class MonolithRoomTurnLoop {
     try {
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
+      let deliberateNoReply = false;
       await withTurnReceiptHeartbeat(
         api,
         {
@@ -2058,7 +2059,9 @@ export class MonolithRoomTurnLoop {
                 return;
               }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
+                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
+                await stream.retract();
                 await this.discardSession();
                 return;
               }
@@ -2124,7 +2127,9 @@ export class MonolithRoomTurnLoop {
                 throw new Error('unreported_order: repeated-tool-call; requested work is unconfirmed');
               }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
+                deliberateNoReply = result.stopReason === 'no-reply';
                 stream.close();
+                await stream.retract();
                 await this.discardSession();
                 return;
               }
@@ -2240,6 +2245,7 @@ export class MonolithRoomTurnLoop {
         roomId: this.options.roomId,
         requestId: item.id,
         status: 'complete',
+        ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,

@@ -842,6 +842,7 @@ describe('Room turn failure receipt', () => {
     expect(sessionsOpened).toBe(2);
     expect(posted).toEqual([]);
     expect(receipts.filter(receipt => receipt.status === (stopReason === 'repeated-tool-call' ? 'failed' : 'complete'))).toHaveLength(2);
+    expect(receipts.filter(receipt => receipt.completionKind === 'no-reply')).toHaveLength(stopReason === 'no-reply' ? 2 : 0);
     console.info('Terminal guard releases queued wakes in a fresh session; repeated-call order stop owns a failed receipt.');
   });
 

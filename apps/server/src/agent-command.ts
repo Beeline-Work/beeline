@@ -1650,6 +1650,17 @@ export async function queueCornerMergeConflict(
  * agent. Only an agent delivery failure addresses a person.
  */
 export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> {
+  // A completed recovery is not new evidence. Wait for the check snapshot to change.
+  const recoveredSnapshot = `EXISTS (
+    SELECT 1 FROM agent_commands recovery JOIN messages source ON source.id=recovery.source_message_id
+    WHERE recovery.room_id=fact.corner_id
+      AND recovery.agent_id=${cornerImplementerSql('fact', 'corner')}
+      AND recovery.reason='corner_check'
+      AND source.system_event->>'verb'='requested another check of'
+      AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+      AND extract(epoch FROM recovery.created_at)>=(fact.lifecycle->'checksSummary'->>'updatedAt')::double precision
+  )`;
+
   // Delivery already gets its normal push and the 30-second renudge. A
   // command still unclaimed after two minutes is an agent-start failure,
   // independent of whether CI happens to be red.
@@ -1726,22 +1737,8 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
        AND fact.lifecycle->>'checks'='failing'
        AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND (stuck.held OR (NOT EXISTS (
-         SELECT 1 FROM jsonb_array_elements(
-           CASE WHEN jsonb_typeof(fact.lifecycle->'checksSummary'->'checks')='array'
-                THEN fact.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
-         WHERE running->>'status'='pending'
-       ) AND EXISTS (
-         SELECT 1 FROM agent_commands command
-         JOIN messages source ON source.id=command.source_message_id
-         WHERE command.room_id=fact.corner_id AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
-           AND command.reason='corner_check' AND command.state IN ('complete','cancelled')
-           AND command.id=(SELECT newest.id FROM agent_commands newest
-             WHERE newest.room_id=fact.corner_id AND newest.agent_id=command.agent_id
-               AND newest.reason='corner_check' ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1)
-           AND command.completed_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
-           AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-       )))
+       AND stuck.held
+       AND NOT ${recoveredSnapshot}
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands working
          WHERE working.room_id=fact.corner_id AND working.agent_id=${cornerImplementerSql('fact', 'corner')}
@@ -1757,6 +1754,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
           AND fact.lifecycle->'pr'->>'headSha'=$2 AND fact.lifecycle->>'checks'='failing'
           AND ${cornerImplementerSql('fact', 'corner')}=$3
           AND fact.lifecycle=$4::jsonb
+          AND NOT ${recoveredSnapshot}
           AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
           AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
             AND newest.agent_id=$3 AND newest.reason='corner_check'

@@ -3267,7 +3267,8 @@ async function executeAgentOperation(
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
       if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake');
-      await daemonExecute('postAgentTurnReceipt', { status: 'complete', completionKind: 'no-reply' });
+      // The helper drains in-flight activity and drafts before its terminal receipt.
+      // Completing here revokes authority while those writes are still running.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
       const context = await readTurnContextFile();
       writeFileSync(path, JSON.stringify({ ...context, terminalReason: 'no-reply' }), { mode: 0o600 });

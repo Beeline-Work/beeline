@@ -1482,3 +1482,27 @@ it.each([
   expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
     .toEqual(changed ? [posted.id, result.id] : [posted.id]);
 });
+
+
+it.each(['human', 'order'])('Reproduction R1: silent completion preserves fresh %s input without a pause', async input => {
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  // The old tool completed the command while the helper still had draft writes.
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), status: 'complete', completionKind: 'no-reply' }, WORKER);
+  await expect(daemon.execute('postAgentDraft', { ...authority(turn), agentId: WORKER, turnId: turn.turnRequestId, text: 'late' }, WORKER))
+    .rejects.toThrow('command output authority rejected');
+  if (input === 'human') {
+    await phone.execute('sendRoomMessage', { roomId: opened.cornerId, text: '@worker Continue the widget' }, HUMAN);
+  } else {
+    await daemon.execute('order', { ...authority(order), address: opened.cornerId, agent: 'worker', text: 'Continue the widget' }, RUBY);
+  }
+  const next = await worker(opened.cornerId);
+  // The helper now owns completion: queued presentation writes finish first.
+  await daemon.execute('postAgentDraft', { ...authority(next), agentId: WORKER, turnId: next.turnRequestId, text: 'Checking the widget' }, WORKER);
+  await daemon.execute('retractAgentLiveOutput', { ...authority(next), agentId: WORKER, turnId: next.turnRequestId, kind: 'draft' }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(next), status: 'complete', completionKind: 'no-reply' }, WORKER);
+  expect((await db.query(`SELECT state,generation_id FROM agent_commands WHERE id=$1`, [next.id])).rows[0])
+    .toMatchObject({ state: 'complete', generation_id: authority(next).generationId });
+  expect(await commands(opened.cornerId, WORKER)).toEqual([]);
+  expect((await commands(DM, RUBY)).filter(command => command.reason === 'report')).toEqual([]);
+});

@@ -1778,20 +1778,23 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect(await noteBlockedCornerChecks(db)).toBe(0);
     expect((await blocked()).rows).toEqual([]);
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes' WHERE room_id=$1`, [cornerId]);
+    expect(await noteBlockedCornerChecks(db)).toBe(0);
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
 
   });
 
-  it('returns a completed fix with no push to the agent, repeatedly, without pulling in a person', async () => {
+  it('Reproduction R1: does not restart a completed fix with no push', async () => {
     const cornerId = await redWhileRunning();
     githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
     await checkRun(cornerId, 'Server suite', 'success');
     for (let round = 0; round < 2; round++) {
       await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes'
         WHERE room_id=$1`, [cornerId]);
-      expect(await noteBlockedCornerChecks(db)).toBe(1);
+      expect(await noteBlockedCornerChecks(db)).toBe(0);
       expect(await noteBlockedCornerChecks(db)).toBe(0);
     }
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(4);
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(2);
     const people = await db.query(`SELECT 1 FROM messages m JOIN identities person ON person.id=$2
       WHERE m.room_id=$1 AND m.presentation='system'
         AND ${addressedToPersonSql('m', 'person.id', 'person.handle', 'person.kind')}`, [cornerId, H]);

@@ -285,6 +285,47 @@ describe('GitHub phone operations', () => {
     expect(row.retry).toBeNull();
   });
 
+  it('Reproduction REVIEW-PR-1: a missed close cannot send green wakes to the replaced PR', async () => {
+    const { corners, headSha, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const implementer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [corner, implementer]);
+    app.readPullRequest.mockImplementation(async (_token, _repository, number) => ({
+      number, headSha, url: `https://github.com/owner/widgets/pull/${number}`,
+      mergeability: 'clean', state: number === 1 ? 'closed' : 'open', headRef: 'feature/checks-1',
+    }));
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await operations.processWebhook('pull_request', { ...payload, action: 'opened', pull_request: {
+      number: 2, title: 'Replacement', html_url: 'https://github.com/owner/widgets/pull/2',
+      head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean',
+    } });
+    const lifecycle = (await database.query<{ lifecycle: { pr?: { number: number }; checks: string } }>(
+      'SELECT lifecycle FROM corner_facts WHERE corner_id=$1', [corner])).rows[0]!.lifecycle;
+    expect(lifecycle.pr?.number).toBe(2);
+    expect(lifecycle.checks).toBe('passing');
+    const commands = (await readAgentCommands(database, corner, REVIEWER)).commands;
+    expect(commands).toHaveLength(1);
+    const target = (await database.query<{ pr: number }>(
+      "SELECT (review_context->>'pullRequest')::int pr FROM agent_commands WHERE id=$1", [commands[0]!.id])).rows[0];
+    expect(target?.pr).toBe(2);
+    expect(commands.some(command => command.source.body.includes('pull/1'))).toBe(false);
+    console.info('Demonstrated REVIEW-PR-1: missed close replaced by live open PR; no wake for closed PR');
+  });
+
+  it('Reproduction REVIEW-PR-1: a green check for a live closed PR clears the stale association', async () => {
+    const { corners, app, payload } = await checksFixture();
+    app.readPullRequest.mockImplementation(async (_token, _repository, number) => ({
+      number, headSha: '1'.repeat(40), url: `https://github.com/owner/widgets/pull/${number}`,
+      mergeability: 'clean', state: 'closed',
+    }));
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await operations.processWebhook('check_run', payload);
+    expect((await database.query<{ pr: unknown }>(
+      "SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1", [corners[0]])).rows[0]?.pr).toBeNull();
+  });
+
   it.each(['green on reopen', 'green after reopen', 'prior head green'])('R1: close, push, stale reopen — %s dispatches once with current card totals', async timing => {
     const { corners, headSha: oldHead, app, payload } = await checksFixture();
     const corner = corners[0]!;

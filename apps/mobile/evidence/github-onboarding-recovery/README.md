@@ -31,3 +31,11 @@ NODE_ENV=production apps/mobile/android/gradlew -p apps/mobile/android :app:asse
 Install the APK on the leased emulator, then run `python3 apps/mobile/evidence/github-onboarding-recovery/capture-full-screen.py emulator-PORT OUTPUT_DIRECTORY`.
 
 The capture checks the full initial screen, cancellation, expiry, and a tap through the real sign-in handler into offline recovery in Bone and Obsidian. Each error screen must expose exactly one recovery action; the initial screen retains both providers with GitHub primary.
+
+## Consumed installation return regression
+
+Reproduction GITHUB-INSTALLATION-CONSUMED: connect from the Room card, complete the installation callback, then cold-start Beeline. Previously the completed marker and Room return path survived, so the cold-resume host opened a repository picker again. The card integration regression fails against the preceding implementation and passes after consuming native session results. The landing tests also check that a web return keeps the Room path until its redirect and then clears it.
+
+`installation-resume.js` renders the production repository card and uses the real installation session, foreground-return monitor and native AsyncStorage. Its resolver replaces only the external GitHub browser and server operations with deterministic success/dismiss boundaries. Build using the full-screen command above with entry `installation-resume.js` and resolver `installation-resume.metro.cjs`. Install the proof APK, then run `python3 apps/mobile/evidence/github-onboarding-recovery/capture-installation-resume.py emulator-PORT OUTPUT_DIRECTORY`.
+
+The capture connects through the actual card, observes the repository picker, force-stops and restarts the Android process, then exercises the production cold-resume function. It verifies no picker reopens, the path is gone and an unrelated native callback is refused, after both success and tab dismissal in Bone and Obsidian. The browser dismissal exercises the real foreground-monitor refresh fallback. This is an isolated native stand-in, not a production GitHub authorization claim. The daemon regression separately exercises concurrent agent card posts against the migrated service database and checks one open card remains.

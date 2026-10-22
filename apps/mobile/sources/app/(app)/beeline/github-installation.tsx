@@ -7,8 +7,14 @@ import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet } from 'react-native-unistyles';
 import { Redirect, type Href, useLocalSearchParams } from 'expo-router';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { completeGitHubInstallationRoute, githubInstallationReturnPath } from '@/auth/github-auth-session';
+import { clearPendingGitHubInstallation, completeGitHubInstallationRoute, githubInstallationReturnPath } from '@/auth/github-auth-session';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+
+/** Redirect first, then acknowledge consumption after the destination is handed off. */
+function InstallationReturn({ path }: { path: string }) {
+  useEffect(() => { void clearPendingGitHubInstallation().catch(() => undefined); }, [path]);
+  return <Redirect href={path as Href} />;
+}
 
 /** Keep progress and recoverable errors in Beeline after GitHub's consent page. */
 function EnhancedGitHubInstallation() {
@@ -40,7 +46,7 @@ function EnhancedGitHubInstallation() {
     })();
     return () => { alive = false; };
   }, [installed, connectionError]);
-  if (returnPath) return <Redirect href={returnPath as Href} />;
+  if (returnPath) return <InstallationReturn path={returnPath} />;
   return <View style={styles.page} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
     {error ? <ErrorBanner title="Continue connecting GitHub"
@@ -72,7 +78,7 @@ function LegacyGitHubInstallation() {
     };
   }, [installed, connectionError]);
 
-  return returnPath ? <Redirect href={returnPath as Href} /> : null;
+  return returnPath ? <InstallationReturn path={returnPath} /> : null;
 }
 
 export default function GitHubInstallationFallback() {

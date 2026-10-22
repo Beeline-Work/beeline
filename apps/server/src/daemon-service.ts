@@ -1766,9 +1766,9 @@ export class DaemonService {
         if (!owner) throw new Error('repository onboarding unavailable');
         if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
         if (request.kind === 'repository') await this.github?.refresh(owner);
-        const card = await postRepositoryOnboarding(this.database, this.github, {
+        const card = await this.database.transaction(database => postRepositoryOnboarding(database, this.github, {
           roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,
-        });
+        }));
         this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: authenticatedAgentId });
         return card as Output<Name>;
       }

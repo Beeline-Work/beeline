@@ -33,7 +33,7 @@ vi.mock('expo-router', () => ({
 }));
 
 import GitHubInstallation from './github-installation';
-import { persistGitHubInstallationReturnPath, runGitHubInstallationSession } from '@/auth/github-auth-session';
+import { githubInstallationReturnPath, resumeInitialGitHubInstallation, persistGitHubInstallationReturnPath, runGitHubInstallationSession } from '@/auth/github-auth-session';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root;
@@ -104,6 +104,8 @@ it('hands the successful callback to the opener using Expo and returns to the sa
     url: `${window.location.origin}/beeline/github-installation?installed=1`, expoSender: 'install-session',
   }, `${window.location.origin}/beeline/github-installation?installed=1`);
   expect(window.location.pathname).toBe('/beeline/chat/room-1');
+  expect(await githubInstallationReturnPath()).toBeNull();
+  expect(await resumeInitialGitHubInstallation(async () => null)).toBe(false);
 });
 
 it('shows shared recovery for a GitHub failure and returns to the saved Room', async () => {
@@ -116,5 +118,7 @@ it('shows shared recovery for a GitHub failure and returns to the saved Room', a
   expect(container.querySelector('button')?.textContent).toBe('Back to Room');
   await act(async () => { container.querySelector('button')!.click(); });
   expect(window.location.pathname).toBe('/beeline/chat/room-1');
+  expect(await githubInstallationReturnPath()).toBeNull();
+  expect(await resumeInitialGitHubInstallation(async () => null)).toBe(false);
   expect(mocks.operation).not.toHaveBeenCalled();
 });

@@ -32,7 +32,7 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
     try {
       if (action === 'install' || action === 'organization') {
         const [{ authSessionOptions }, { openAccountAuthSession, subscribeToAuthUrls },
-          { githubInstallationRedirectUri, runGitHubInstallationSession }] = await Promise.all([
+          { githubInstallationRedirectUri, runGitHubInstallationSession, clearPendingGitHubInstallation }] = await Promise.all([
           import('@/auth/auth-session'), import('@/auth/desktop-auth-session'), import('@/auth/github-auth-session'),
         ]);
         const result = await monolithPhoneOperation('actOnRepositoryCard', {
@@ -52,9 +52,16 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
           refreshRepositories: async () => { await monolithPhoneOperation('actOnRepositoryCard', { ...request, action: 'refresh' }); },
         });
         setPicker(true);
+        // The mounted Room card has consumed the native return destination.
+        // Web's landing tab still needs the shared path until it redirects.
+        if (Platform.OS !== 'web') await clearPendingGitHubInstallation();
       } else await monolithPhoneOperation('actOnRepositoryCard', request);
     } catch (reason) {
       const code = reason && typeof reason === 'object' && 'code' in reason && typeof reason.code === 'string' ? reason.code : 'unknown';
+      if (code === 'browser_canceled' && Platform.OS !== 'web') {
+        const { clearPendingGitHubInstallation } = await import('@/auth/github-auth-session');
+        await clearPendingGitHubInstallation();
+      }
       const notice = githubConnectionErrorNotice(code);
       setErrorTitle(notice.title);
       setError(notice.description);

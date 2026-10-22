@@ -14,7 +14,7 @@ vi.mock('@/components/buzz/TranscriptCard', () => ({ TranscriptCard: (props: any
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: mocks.operation }));
 vi.mock('@/auth/auth-session', () => ({ authSessionOptions: () => ({}) }));
 vi.mock('@/auth/desktop-auth-session', () => ({ openAccountAuthSession: vi.fn(), subscribeToAuthUrls: vi.fn() }));
-vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: () => 'beeline://beeline/github-installation', runGitHubInstallationSession: vi.fn() }));
+vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: () => 'beeline://beeline/github-installation', runGitHubInstallationSession: vi.fn(), clearPendingGitHubInstallation: vi.fn(async () => undefined) }));
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 const H='a'.repeat(64);
 const card: Card = { id:'b'.repeat(64), roomId:'11111111-1111-4111-8111-111111111111', agentId:'c'.repeat(64), requesterId:H,
@@ -88,3 +88,18 @@ it('opens the repository picker for a covered user without opening GitHub', asyn
   expect(renderer.root.findByType('TranscriptCard').props.choices.map((choice: any) => choice.label))
     .toEqual(['test/current', 'test/other']);
 });
+
+for (const result of ['success', 'foreground', 'browser_canceled'] as const) {
+  it(`consumes native installation state after ${result}`, async () => {
+    const session = await import('@/auth/github-auth-session');
+    vi.mocked(session.clearPendingGitHubInstallation).mockClear();
+    if (result === 'browser_canceled') vi.mocked(session.runGitHubInstallationSession).mockRejectedValueOnce({ code: result });
+    else vi.mocked(session.runGitHubInstallationSession).mockResolvedValueOnce(result === 'success' ? 'beeline://beeline/github-installation?installed=1' : null);
+    mocks.operation.mockResolvedValueOnce({ url: 'https://github.com/apps/beeline/installations/select_target' });
+    let renderer: any;
+    await act(async () => { renderer = create(<RepositoryOnboardingCard card={{...card, installationId: undefined}} viewerId={H} />); });
+    await act(async () => renderer.root.findByType('TranscriptCard').props.actions.find((action: any) => action.testID === 'repo-card-install').onPress());
+    expect(session.clearPendingGitHubInstallation).toHaveBeenCalledOnce();
+    await act(async () => renderer.unmount());
+  });
+}

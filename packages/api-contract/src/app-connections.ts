@@ -110,10 +110,13 @@ export type AppIdentity = {
 };
 
 /** Built-in tool namespaces do not represent external account connections. */
-export function builtinBeelineApp(input: string): string | undefined {
+export function builtinBeelineApp(input: string, context = ''): string | undefined {
   const text = input.trim().toLowerCase();
   if (/^beeline:[a-z][a-z0-9_]*$/.test(text)) return text;
-  if (text === 'github' || /\b(?:repo|repository|repositories)\b/.test(text)) return 'beeline:onboarding';
+  const request = `${text} ${context.toLowerCase()}`;
+  if (/\b(?:repo|repository|repositories)\b/.test(request)
+    && /\b(?:link|connect|set[ -]up|choose|card)\b/.test(request)
+    && !/\b(?:payment|wallet|stripe)\b/.test(request)) return 'beeline:onboarding';
   const key = text.replace(/[ _-]/g, '');
   for (const name of ['workflow', 'wallet', 'browser_share', 'corner_app', 'avatar', 'onboarding']) {
     const alias = name.replace(/_/g, '');
@@ -128,8 +131,7 @@ export function builtinBeelineApp(input: string): string | undefined {
  * letters and digits only, so `Hugging Face` and `huggingface.co` agree.
  */
 export function appIdentity(input: string): AppIdentity | undefined {
-  // GitHub remains an external account identity even when connect routes its short name to a Room card.
-  if (input.trim().toLowerCase() !== 'github' && builtinBeelineApp(input)) return undefined;
+  if (builtinBeelineApp(input)) return undefined;
   const text = input.trim();
   if (!text || text.length > APP_INPUT_MAX_LENGTH) return undefined;
   const host = hostOf(text);

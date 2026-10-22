@@ -108,8 +108,12 @@ describe('urlBelongsToApp', () => {
 });
 
 it('routes repository intent before external app discovery without losing GitHub account identity', () => {
-  for (const request of ['GitHub', 'repo', 'repository', 'link my repository', 'GitHub-repository', 'connect my repo'])
+  for (const request of ['link my repository', 'connect a repo', 'repository card', 'set up repository', 'choose repo'])
     expect(builtinBeelineApp(request)).toBe('beeline:onboarding');
+  expect(builtinBeelineApp('GitHub', 'link a repo to this Room')).toBe('beeline:onboarding');
+  for (const reason of ['List repositories', 'connect personal GitHub', 'read issues'])
+    expect(builtinBeelineApp('GitHub', reason)).toBeUndefined();
+  expect(builtinBeelineApp('Link', 'Connect Stripe payment wallet')).toBeUndefined();
   expect(appIdentity('GitHub')).toEqual({key:'github'});
   expect(builtinBeelineApp('Stripe Link')).toBeUndefined();
   expect(builtinBeelineApp('GitHub.com')).toBeUndefined();

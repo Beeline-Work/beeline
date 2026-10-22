@@ -392,10 +392,18 @@ describe('connect_app', () => {
     const provider = fakeComposio();
     provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'github');
     const result = await daemonWith(registry.client, provider).execute('connect',
-      { ...turn, service: 'GitHub', reason: 'Link a repository' }, HELPER);
+      { ...turn, service: 'GitHub', reason: 'Read issues' }, HELPER);
     expect(registry.transport).toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
     expect(result.next).not.toContain('Registry could not be checked');
+  });
+
+  it.each(['link my repository', 'GitHub'])('R-REPO-CARD: %s bypasses a Registry outage for repository linking', async service => {
+    const registry = fakeRegistry([], true);
+    const result = await daemonWith(registry.client, fakeComposio()).execute('connect',
+      { ...turn, service, reason: 'Link a repository' }, HELPER);
+    expect(result).toMatchObject({ status: 'ready', app: 'beeline:onboarding' });
+    expect(registry.transport).not.toHaveBeenCalled();
   });
 
   it('connect installs a no-sign-in Registry remote to ready with no owner card', async () => {
@@ -699,7 +707,7 @@ describe('connect_app', () => {
       connectorId: installed.connectorId, steps: [],
       signIn: { method: 'oauth', url: 'https://github.com/login/oauth/authorize?state=fixture',
         attemptId: 'github-owner-sign-in' } }, HELPER);
-    const started = await daemon.execute('connect', { ...turn, service: 'github.com',
+    const started = await daemon.execute('connect', { ...turn, service: 'GitHub',
       reason: 'connect personal GitHub' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client);
@@ -757,7 +765,7 @@ describe('connect_app', () => {
           fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 2, stale: false, state: 'error' },
       ]);
     const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
-    const connected = await daemon.execute('connect', { ...turn, service: 'github.com',
+    const connected = await daemon.execute('connect', { ...turn, service: 'github',
       reason: 'List repositories', squireAvailable: true }, HELPER);
     expect(connected).toMatchObject({ status: 'ready', connectionReference: 'vault:github-work' });
     expect(connected.next).toContain('reference "vault:github-work"');

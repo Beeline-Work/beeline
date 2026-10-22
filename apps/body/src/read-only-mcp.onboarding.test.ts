@@ -57,3 +57,8 @@ it('reports unavailable repo cards without attempting an external connector', as
   expect(result.next).toContain('active Room');
   expect(calls.map(call => call.name)).toEqual(['getRoomRepositoryState']);
 });
+
+it('keeps ordinary GitHub repository reads on the connector route', async () => {
+  await callAgentTool('connect', {mode:'ensure', service:'GitHub', reason:'List repositories', continuation:'Read the account repositories.'}, 'github');
+  expect(calls.map(call => call.name)).toEqual(['connect']);
+});

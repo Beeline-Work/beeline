@@ -2805,7 +2805,8 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       if (args.action !== undefined && args.action !== 'request') throw new Error('action must be request or list');
       return execute(name);
     case 'connect': {
-      const builtin = builtinBeelineApp(String(args.service ?? args.query ?? ''));
+      const builtin = builtinBeelineApp(String(args.service ?? args.query ?? ''),
+        `${args.reason ?? ''} ${args.continuation ?? ''}`);
       const capabilities = builtin || args.mode === 'discover' || args.mode === 'status'
         ? await availableCapabilities(!builtin || builtin === 'beeline:onboarding') : [];
       if (builtin === 'beeline:onboarding' && !capabilities.includes(builtin))

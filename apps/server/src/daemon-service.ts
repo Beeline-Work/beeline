@@ -6985,7 +6985,7 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('service and reason are required');
-    const builtin = builtinBeelineApp(service);
+    const builtin = builtinBeelineApp(service, `${reason} ${input.continuation ?? ''}`);
     if (builtin) {
       await this.access(input.roomId, agentId);
       return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };

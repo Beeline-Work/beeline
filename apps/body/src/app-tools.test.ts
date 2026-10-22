@@ -187,7 +187,7 @@ describe('server-mediated connected app tools', () => {
     expect(calls).toEqual([]);
   });
 
-  it('discovers and executes a connected app with turn authority and no provider secret', async () => {
+  it.each([appId, 'github', 'web'])('discovers and executes connected app %s with turn authority and no provider secret', async (appId) => {
     expect(agentToolsFor(true, false).map((tool) => tool.name))
       .toEqual(expect.arrayContaining(['app_tool']));
     answer = (name) => Response.json(name === 'listAppTools'

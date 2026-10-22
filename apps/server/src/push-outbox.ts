@@ -1,4 +1,5 @@
 import type { SqlDatabase } from './database.js';
+import { pushDirectAttentionSql } from './push-attention.js';
 
 /** Write-side indexes keep delivery reads on message primary keys. */
 export const PUSH_OUTBOX_SCHEMA = `
@@ -64,7 +65,14 @@ BEGIN
     JOIN push_devices device ON device.identity_id=member.identity_id
       AND device.registered_at<=m.created_at
     JOIN push_delivery_floors floor ON floor.id='message-delivery' AND floor.started_at<=m.created_at
+    JOIN identities recipient ON recipient.id=device.identity_id AND recipient.kind='human'
+    JOIN rooms room ON room.id=m.room_id
+    JOIN identities author ON author.id=m.author_id
     WHERE member.room_id=m.room_id AND member.removed_at IS NULL AND member.identity_id<>m.author_id
+      -- Prose stays queued for an Attention/Off -> Full preference change.
+      -- Other kinds need direct attention under every possible push level.
+      AND ((m.presentation='message' AND m.card_type IS NULL)
+        OR ${pushDirectAttentionSql('collected_turn_ids')})
     ON CONFLICT DO NOTHING;
 END $$;
 CREATE OR REPLACE FUNCTION message_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$

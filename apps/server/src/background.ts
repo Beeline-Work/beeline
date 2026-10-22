@@ -19,6 +19,7 @@ import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import type { ObjectService } from './object-service.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { addressedToPersonSql } from './corner-owed.js';
+import { pushDirectAttentionSql } from './push-attention.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
 const BACKGROUND_LOCK_KEY = 0x0bee11;
@@ -487,17 +488,7 @@ export class PushDeliveryLoop {
           AND workspace_member.removed_at IS NULL
         JOIN identities author ON author.id=m.author_id
         JOIN identities recipient ON recipient.id=m.push_identity_id AND recipient.kind='human'
-        CROSS JOIN LATERAL (SELECT (
-          (room.direct_participants IS NOT NULL AND (m.presentation='message' OR m.card_type IS NULL OR m.card_type='grant-request'))
-          OR (m.card_type='machine-offline' AND m.card->>'status'='open'
-            AND m.card->>'ownerId'=recipient.id)
-          OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}
-          OR (author.kind='agent' AND m.presentation='message' AND m.request_id IS NOT NULL
-            AND EXISTS (SELECT 1 FROM ${messagePointsSql('m.turn_ids', 'part')} WHERE part.room_id=m.room_id
-              AND part.author_id=m.author_id AND part.request_id=m.request_id
-              AND part.deleted_at IS NULL
-              AND ${addressedToPersonSql('part', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}))
-        ) direct) attention
+        CROSS JOIN LATERAL (SELECT ${pushDirectAttentionSql('m.turn_ids')} direct) attention
 
         WHERE (
             room.direct_participants IS NULL
@@ -775,8 +766,11 @@ export class PushDeliveryLoop {
           -- Preserve only work that can become eligible without a message write.
           AND NOT EXISTS (SELECT 1 FROM push_devices device JOIN identities recipient ON recipient.id=device.identity_id
             WHERE device.token=queue.device_token AND (recipient.push_level='off'
-              OR (recipient.push_level='attention' AND EXISTS (SELECT 1 FROM messages m
-                WHERE m.id=queue.message_id AND m.presentation='message' AND m.card_type IS NULL))
+              OR (recipient.push_level='attention' AND (
+                EXISTS (SELECT 1 FROM messages m WHERE m.id=queue.message_id
+                  AND m.presentation='message' AND m.card_type IS NULL)
+                OR EXISTS (SELECT 1 FROM workspace_join_notifications notification
+                  WHERE notification.id=queue.message_id)))
               OR NOT (device.platform=ANY($3::text[]))))
           AND NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=queue.message_id AND claim.device_token=queue.device_token

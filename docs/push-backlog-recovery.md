@@ -27,8 +27,12 @@ The worker drops expired rows in bounded batches before selection, checks each
 leased expiry again immediately before calling the provider, and retires
 ineligible notes. It retains work that can become eligible without a message
 write: working turns, retries/active claims, disabled platforms, Off recipients,
-and Attention prose eligible after a switch to Full. Updating a message can
+and Attention prose or workspace-join notices eligible after a switch to Full. Updating a message can
 transactionally enqueue it again. Excluded card types no longer fan out on writes.
+Other non-prose messages enqueue
+only for recipients covered by the shared direct-attention policy; ordinary
+GitHub notes produce no device rows, while a note replying to the recipient still
+qualifies. Prose remains queued for later preference changes.
 Room access, direct attention, mute, presence, and read rules stay authoritative.
 
 Each cycle processes at most ten batches, including zero-claim batches, before
@@ -51,6 +55,10 @@ worker delivered only the DM and left no queued rows (about 5,379 rows/second on
 the measured local run). This is not a device or production-delivery proof.
 `push-outbox.test.ts` additionally covers suppression parity, expiry while waiting
 to send, fanout exclusions, retries and real PostgreSQL migration-lock handoff.
+A frozen executable pre-fix selector (`test-fixtures/push-selection-before-backlog.sql`)
+independently checks the enqueue and retirement matrix: every originally eligible
+row survives enqueue filtering and every retired row is absent from that selector.
+The matrix also verifies preserved delivery after preference changes and turn completion.
 
 ## Production follow-through
 

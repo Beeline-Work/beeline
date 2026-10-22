@@ -28,6 +28,10 @@ try {
   await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 day')`);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type)
     SELECT 'noise-'||n,$1,$2,'GitHub updated','system','github-corner-note' FROM generate_series(1,200) n`,[room,peer]);
+  // Seed rows left by the previous enqueue policy, even after new writes are filtered.
+  await db.query(`INSERT INTO push_outbox(message_id,device_token,expires_at)
+    SELECT id,'isolated-proof-device',created_at+interval '1 hour' FROM messages WHERE id LIKE 'noise-%'
+    ON CONFLICT DO NOTHING`);
   await db.query(`UPDATE push_outbox SET not_before=now()-interval '2 minutes'`);
   await db.query(`INSERT INTO push_outbox(message_id,device_token,not_before,expires_at)
     SELECT 'expired-'||n,'isolated-proof-device',now()-interval '3 minutes',now()-interval '1 second'

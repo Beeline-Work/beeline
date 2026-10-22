@@ -59,7 +59,13 @@ for theme in ['bone', 'obsidian']:
         capture(f'android-{theme}-corner-line-room')
         tap(label='Open corner shared-face')
         destination('corner-shared-face')
-        tap(label='Open corner dm-unread-clear')
+        # Reproduction corner-row-tap-1: press the Room row's words, not its chevron.
+        _, current = nodes()
+        row = next(n for n in current if n.get('resource-id') == 'notification-run-cell-opened')
+        left, top, right, bottom = map(int, re.findall(r'\d+', row.get('bounds')))
+        adb('shell', 'input', 'tap', str(left + 60), str((top + bottom) // 2))
+        time.sleep(.3)
+        receipts.append({'target': 'Room row text', 'tap': [left + 60, (top + bottom) // 2], 'row': row.get('bounds')})
         destination('corner-dm')
         continue
     if args.shared_face_only:

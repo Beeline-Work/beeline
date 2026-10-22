@@ -329,7 +329,7 @@ jobs:
   typecheck:
     name: TYPECHECK
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck'
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -377,7 +377,7 @@ jobs:
   shared-package-tests:
     name: SHARED PACKAGE TESTS
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -397,7 +397,7 @@ jobs:
   dead-code:
     name: DEAD CODE
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'dead-code'
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -538,7 +538,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -676,7 +676,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -716,7 +716,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -910,7 +910,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.nativeFingerprint == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint'))
       )
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

@@ -1,3 +1,9 @@
+# Current status: overflow rolled back
+
+The overflow host setup has been removed. All proposed overflow job selectors
+now use `ubuntu-latest`; the new instruction to fix and push failed checks
+authorized this routing rollback. Historical setup and measurements follow.
+
 # Temporary squire CI overflow
 
 This is temporary capacity for same-repository PRs while #2803 consolidates
@@ -266,3 +272,36 @@ delivery instruction authorized committing and pushing this remaining host
 command record. No further implementation changes are included. Any check
 failure on overflow capacity requires removal of the overflow host setup
 and a failed report, as directed by Ruby.
+
+
+## Authorized rollback after recovery failure
+
+GitHub reported SERVER SUITE SHARD 6 on head 8f16164ec failed with exit
+143 and runner shutdown (job 120122980843). Ruby's standing instruction
+required rollback on any overflow check failure. No further fix was pushed.
+Executed locally:
+
+```sh
+systemd-run --user --wait --pipe /usr/bin/systemctl --user stop beeline-ci-supervisor
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/systemctl stop beeline-ci-1 beeline-ci-2 beeline-ci-3 beeline-ci-4
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/rm -rf -- /usr/local/lib/beeline-ci
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/sbin/userdel beeline-ci
+systemd-run --user --wait --pipe /usr/bin/systemctl --user show beeline-ci-supervisor --property=ActiveState --property=LoadState
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/systemctl list-units 'beeline-ci-*' 'actions.runner*' --all --no-pager
+systemd-run --user --wait --pipe /usr/bin/test ! -e /usr/local/lib/beeline-ci
+getent passwd beeline-ci
+```
+
+Supervisor stop succeeded. Explicit child stops found every slot already
+absent. Removed the complete overflow installation, including the root-owned
+Chrome copy, runner archive, launcher and supervisor scripts, and deleted
+the dedicated account. Production runner configuration was not changed.
+The personal GitHub API refused runner-list access with HTTP 403 (missing
+administration permission). No alternate identity was used after denial;
+remote registration cleanup remains unverified. The PR must not land with
+active overflow routing after this host rollback. This rollback record is
+local only, respecting the prohibition on another push.
+
+The later failed-check repair instruction authorized running
+`node scripts/squire-ci/disable.mjs` and pushing the full hosted routing
+rollback with this host removal record. No overflow services were recreated.

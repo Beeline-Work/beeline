@@ -17,7 +17,7 @@ for an installed helper.
 
 ## Disposable Fly proof
 
-Created test Machine `861d27ae563518` in `beeline-free-agents`, using the same
+Created test Machine `805321f6220728` in `beeline-free-agents`, using the same
 production image digest `fc5e3236992b1ff2a362801042f1ed8a56bf50cd7c68d001748ffe38d97654bb`,
 with persistent rootfs and restart policy `no`. No production agent identity,
 bootstrap token or server connection was provisioned.
@@ -25,16 +25,17 @@ bootstrap token or server connection was provisioned.
 Injected the changed entrypoint, bundled runtime owner validation and a small
 launcher fixture into the test machine. The installer fixture replaces an old
 launcher with a Node script that exercises owner validation and records
-readiness. This substitutes for the public installer and a connected agent;
+readiness. The old launcher writes a failure marker if executed, and the
+replacement asserts that marker is absent. This substitutes for the public installer and a connected agent;
 the shell entrypoint, owner validation, persistent disk and Fly stop/start are
 real. Full helper bundle and image construction were checked separately.
 
-First boot recorded boot ID `64b89f0d-00ba-45f7-ace2-53882cc27626` and confirmed
+First boot recorded boot ID `9f9cf741-5574-48d3-80e1-2c3fe4f5ea7e` and confirmed
 refresh before launcher execution. The running fixture left an old launcher
 on disk and saved its birth identity. Stopped the Machine through the Fly API,
 waited for `stopped`, then started it again without changing its configuration.
 
-Second boot recorded boot ID `ddda32c5-b1c4-4bdf-8d47-ee94690ab451`, read the
+Second boot recorded boot ID `adc35cdc-fc11-45ad-be3d-56812a065e06`, read the
 previous boot's saved identity and confirmed:
 
 - The persisted old launcher was replaced before execution.

@@ -85,6 +85,8 @@ export function postgresPoolConfig(
   return {
     connectionString,
     max: maximumConnections,
+    // These latency-sensitive connections should not compile each complex read.
+    options: '-c jit=off',
     // Half-open TCP connections (peer/NAT dropped without FIN/RST) never emit
     // an error on their own; keepalive probes eventually fail and surface the
     // dead connection so the pool can reclaim it instead of wedging.
@@ -118,11 +120,11 @@ export function postgresPoolConfig(
           : mode === 'migration'
             ? {
                 connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
-                options: `-c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
+                options: `-c jit=off -c lock_timeout=${MIGRATION_LOCK_TIMEOUT_MS}ms -c statement_timeout=${MIGRATION_STATEMENT_TIMEOUT_MS}ms`,
               }
             : {
               statement_timeout: JOB_STATEMENT_TIMEOUT_MS,
-              options: `-c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
+              options: `-c jit=off -c lock_timeout=${JOB_LOCK_TIMEOUT_MS}ms`,
               connectionTimeoutMillis: APP_POOL_WAIT_TIMEOUT_MS,
             }),
   };

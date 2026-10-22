@@ -1,7 +1,7 @@
 {
   "status": "incomplete",
   "baselineEligible": false,
-  "reason": "Both the shared owner login and Nerd\u2019s own signed-in Grok harness returned HTTP 402: Grok Build usage balance exhausted. Nerd captured its live soul/model/effort profile and attempted the usage smoke; no model answer completed. The full cohort remains unrun.",
+  "reason": "The original Grok CLI controller used the wrong harness and its refusal is not a Cursor allowance verdict. The corrected Cursor smoke completed and passed (1/1); the full cohort is still outstanding.",
   "agent": "nerd",
   "model": "grok-4.7",
   "effort": "xhigh",
@@ -630,5 +630,12 @@
       "profileSha256": "a9878abbf7f827f367a8481150286b1e2da0e4d15dd52501125c19ba81989171"
     },
     "startedAt": "2026-10-22T20:07:46.499Z"
+  },
+  "correctedCursorSmoke": {
+    "evidence": "cursor-smoke.json",
+    "completed": 1,
+    "total": 1,
+    "passed": 1,
+    "passRate": 1
   }
 }

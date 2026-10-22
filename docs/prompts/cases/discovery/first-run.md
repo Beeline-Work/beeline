@@ -67,21 +67,19 @@ capability gaps or pass rate have been measured.
 | workflow-vs-reminder | schedules | incomplete (not run after refusal) |
 | revoke-invite | members | incomplete (not run after refusal) |
 
-## Run prerequisites, ranked
+## Routing correction
 
-1. Restore allowance on Nerd’s existing Grok subscription route. Both the owner’s shared login and Nerd’s own normal signed-in harness returned HTTP 402, “Grok Build usage balance exhausted.” No account/model was substituted.
-2. Rerun the usage smoke and then the full cohort after the provider accepts requests. Nerd captured its current soul/model/effort privately and attempted that exact signed-in route. The attached result is preserved in [nerd-smoke.json](nerd-smoke.json), including configuration and source hashes; the smoke completed no cases. The full cohort and wording judgments are still outstanding.
-3. Reuse the existing game-mime-schema follow-up for the independently reproduced advertised-schema gap. The game MIME exists in artifact validation but the current tool input enum rejects it. This is service evidence, not something Nerd did.
+The original controller selected the wrong harness. These rows are not a Nerd
+baseline; the Grok Build refusal does not establish a Cursor allowance problem.
+See [routing-diagnosis.md](routing-diagnosis.md) for the confirmed live Cursor
+configuration, redacted refusal host/body, and corrected-route diagnostic.
+Nerd's old delegated smoke is also excluded: it used the same Grok launcher.
+The full cohort remains outstanding until the corrected Cursor path completes.
 
 ## Verified service paths
 
-The no-model integration test sends calls through the production MCP and local HTTP service: create a reminder, delete that same reminder, upload a text artifact, and intercept a merge without forwarding it. It also preserves the as-is game schema gap as evidence. These checks prove the harness paths, not model discovery performance.
-
-## Routes checked
-
-- Live Beeline Members read: Nerd is online, model grok-4.7-xhigh.
-- Installed CLI: Grok 1.0.52. The local Room, ACP session, skill filter and model-selection path launch; the provider returns the balance refusal.
-- Host filesystem: Nerd’s private agent directory is outside Jellybean’s session view. Nerd then ran the isolated smoke itself with its authorized private profile and normal GROK_HOME; that route returned the same provider balance refusal.
-- Connected-service discovery: the separate Grok API connector is not connected. It is not the required normal harness route, so it was not provisioned or used as a substitute.
-
-Ruby owns skill-fix follow-ups after a complete measured run. There are no observed model-discovery gaps to file yet.
+The no-model integration test sends calls through the production MCP and local
+HTTP service: create/delete the same reminder, upload a text artifact, and
+intercept a merge without forwarding it. These are harness proofs, not model
+discovery scores. No observed model-discovery gaps are claimed from the invalid
+provider attempts.

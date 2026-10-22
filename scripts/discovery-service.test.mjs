@@ -7,9 +7,11 @@ import { randomUUID, createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { fixture } from './discovery-live.mjs';
+import { fixture, validateNerdProfile } from './discovery-live.mjs';
 test('safe actions persist and clean up; unsafe call is only recorded', { timeout: 60000 }, async () => {
     const f = await fixture();
+    const configured = (await f.database.query(`SELECT harness,selected_model,selected_effort FROM agents`)).rows[0];
+    assert.deepEqual(configured, { harness: 'cursor', selected_model: 'grok-4.7-xhigh', selected_effort: null });
     const root = await mkdtemp(join(tmpdir(), 'discovery-service-'));
     const client = new Client({ name: 'discovery-controller', version: '1.0.0' });
     try {
@@ -29,12 +31,15 @@ test('safe actions persist and clean up; unsafe call is only recorded', { timeou
         await writeFile(context, JSON.stringify({ roomId: room, requestId: command.turn_request_id, generationId: generation }));
         const trace = join(root, 'trace.jsonl');
         await writeFile(trace, '');
-        await client.connect(new StdioClientTransport({ command: process.execPath, args: [resolve('scripts/discovery-mcp.mjs'), resolve('apps/body/dist/read-only-mcp.js')], env: {
-                PATH: process.env.PATH, HOME: root, BEELINE_TURN_CONTEXT_FILE: context, BEELINE_DISCOVERY_TRACE: trace, BEELINE_MCP_SURFACE: 'agent',
+        await client.connect(new StdioClientTransport({ command: process.execPath, args: [resolve('scripts/discovery-mcp.mjs'), resolve('apps/body/dist/read-only-mcp.js'), trace], env: {
+                PATH: process.env.PATH, HOME: root, BEELINE_TURN_CONTEXT_FILE: context, BEELINE_MCP_SURFACE: 'agent',
                 BEELINE_DAEMON_BASE_URL: f.origin, BEELINE_DAEMON_TOKEN: f.daemonToken, BEELINE_DAEMON_AGENT_ID: agent,
                 BEELINE_DAEMON_ROOM_ID: room, BEELINE_DAEMON_WORKSPACE_ID: workspace, BEELINE_ATTACH_ROOT: root, BEELINE_ATTACH_SCRATCH_ROOT: root,
                 BEELINE_OPERATOR_HOME: root,
             } }));
+        const usage = await client.callTool({name:'read',arguments:{facet:'usage'}});
+        assert.ok(!usage.isError,JSON.stringify(usage));
+        assert.match(JSON.stringify(usage),/Fixture plan/);
         const members = await client.callTool({ name: 'read', arguments: { facet: 'members' } });
         assert.equal(members.isError, undefined, JSON.stringify(members));
         const created = await client.callTool({ name: 'wake', arguments: { action: 'create', trigger: 'schedule', title: 'Eval cleanup', cadence: { kind: 'interval', everyMinutes: 10 }, prompt: 'A local fixture reminder' } });
@@ -58,6 +63,8 @@ test('safe actions persist and clean up; unsafe call is only recorded', { timeou
         // Keep the as-is schema gap observable; this corner does not fix tool text.
         assert.equal(Boolean(playable.isError), !supportsGame, JSON.stringify(playable));
         assert.equal((await f.database.query(`SELECT id FROM objects WHERE owner_id=$1 AND mime=$2`, [agent, 'application/vnd.beeline.game+html'])).rows.length, supportsGame ? 1 : 0);
+        const setup=await client.callTool({name:'connect',arguments:{mode:'ensure',service:'Gmail',reason:'Fixture evaluation',continuation:'Search the fixture mailbox.'}});
+        assert.match(JSON.stringify(setup),/intended call recorded/);
         // This operation never crosses the forwarding boundary, including on a repo-less Room.
         const intended = await client.callTool({ name: 'merge_corner', arguments: { address: 'fixture-corner' } });
         assert.match(JSON.stringify(intended), /intended call recorded/);
@@ -70,4 +77,10 @@ test('safe actions persist and clean up; unsafe call is only recorded', { timeou
         await f.close();
         await rm(root, { recursive: true, force: true });
     }
+});
+test('Nerd profile must preserve the actual Cursor harness and complete model ID', () => {
+    const profile = { agentId: '2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762', harness: 'cursor', model: 'grok-4.7-xhigh', effort: null, soul: { name: 'Nerd', instructions: 'Fixture soul' } };
+    assert.equal(validateNerdProfile(profile), profile);
+    assert.throws(() => validateNerdProfile({ ...profile, harness: 'grok', model: 'grok-4.7', effort: 'xhigh' }), /current Nerd configuration/);
+    assert.throws(() => validateNerdProfile({ ...profile, harness: undefined }), /current Nerd configuration/);
 });

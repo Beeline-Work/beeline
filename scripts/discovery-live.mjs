@@ -1,7 +1,7 @@
-/** Run the installed Grok harness against a disposable local Beeline service. */
+/** Run Nerd’s configured Cursor harness against a disposable local Beeline service. */
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,6 +19,7 @@ import { prepareRoomAgentHome } from '../apps/body/src/agent-home.ts';
 import { DaemonApiClient } from '../apps/body/src/daemon-api-client.ts';
 import { runtimeConfigPath } from '../apps/body/src/runtime.ts';
 import { ThinDaemonCore } from '../apps/body/src/thin-core.ts';
+import { cursorAcpBridgeLaunch } from '../apps/body/src/cursor-acp-bridge.ts';
 import { summarize } from './discovery-score.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HUMAN = createHash('sha256').update('discovery-fixture-owner').digest('hex');
@@ -32,8 +33,9 @@ export async function fixture(profile) {
     await migrate(database);
     await database.query(`INSERT INTO identities(id,kind,name,handle,github_subject)
     VALUES($1,'human','Fixture Owner','fixture-owner','discovery-fixture-owner'),($2,'agent','Nerd','nerd',NULL),($3,'human','Fixture Member','fixture-member','discovery-fixture-member')`, [HUMAN, AGENT, MEMBER]);
-    await database.query(`INSERT INTO agents(agent_id,owner_id,soul,selected_model,selected_effort,model_catalog)
-    VALUES($1,$2,$3::jsonb,'grok-4.7','xhigh','[]'::jsonb)`, [AGENT, HUMAN, JSON.stringify(profile?.soul ?? { name: 'Nerd', instructions: '' })]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id,soul,harness,selected_model,selected_effort,model_catalog)
+    VALUES($1,$2,$3::jsonb,'cursor','grok-4.7-xhigh',NULL,'[]'::jsonb)`, [AGENT, HUMAN, JSON.stringify(profile?.soul ?? { name: 'Nerd', instructions: '' })]);
+    await database.query(`UPDATE agents SET usage_snapshot=$1::jsonb WHERE agent_id=$2`, [JSON.stringify({ updatedAt: Date.now() / 1000, plan: 'Fixture plan', windows: [{ rateLimitType: 'included_usage', status: 'allowed', utilization: 0.25, resetsAt: Date.now() / 1000 + 604800, updatedAt: Date.now() / 1000 }] }), AGENT]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Discovery evaluation')`, [WORKSPACE]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member')`, [WORKSPACE, HUMAN, AGENT, MEMBER]);
@@ -63,22 +65,23 @@ export async function runCase(f, testCase, directory, options = {}) {
     const room = randomUUID();
     const root = join(directory, testCase.id);
     await mkdir(root, { recursive: true });
-    const trace = join(root, 'calls.jsonl');
+    const agentHomeRoot = join(root, 'agent-home');
+    await mkdir(join(agentHomeRoot, 'user'), { recursive: true });
+    const trace = join(agentHomeRoot, 'user', 'discovery-calls.jsonl');
     await writeFile(trace, '');
     await f.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`, [room, WORKSPACE, testCase.id]);
     await f.database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`, [WORKSPACE, room, HUMAN, AGENT, MEMBER]);
     const operatorHome = options.operatorHome ?? '/home/lunchbox';
-    const agentHomeRoot = join(root, 'agent-home');
-    const overlay = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'grok', sharedSkills: [], grantedHostRoutes: [] });
+    const overlay = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'cursor', sharedSkills: [], grantedHostRoutes: [] });
     const runtime = { version: 2, communityId: WORKSPACE, pairedBy: HUMAN,
         agent: { name: 'Nerd', publicKey: AGENT, secretKeyHex: Buffer.from(SECRET).toString('hex') },
         body: { name: 'Fixture Body', publicKey: getPublicKey(new Uint8Array(32).fill(44)), secretKeyHex: Buffer.from(new Uint8Array(32).fill(44)).toString('hex') },
-        rooms: [{ channelId: room, root }], supervisorRoot: directory, agentKind: 'grok', agentCommand: 'grok', agentArgs: ['agent', 'stdio'],
-        agentBinary: 'grok', mcpBinary: process.execPath, accessPolicy: 'everyone', transport: { kind: 'monolith', baseUrl: f.origin, daemonToken: f.daemonToken } };
-    const config = { bwrapPath: '/usr/bin/bwrap', agentKind: 'grok', agentCommand: process.execPath, agentArgs: [join(ROOT, 'scripts/discovery-launch.mjs'), 'agent', 'stdio'], agentBinary: 'grok',
-        modelSelection: { model: 'grok-4.7', effort: 'xhigh' }, mcpBinary: process.execPath,
-        readonlyMcpCommand: process.execPath, readonlyMcpArgs: [join(ROOT, 'scripts/discovery-mcp.mjs'), join(ROOT, 'apps/body/dist/read-only-mcp.js')],
+        rooms: [{ channelId: room, root }], supervisorRoot: directory, agentKind: 'cursor', agentCommand: process.execPath, agentArgs: cursorAcpBridgeLaunch().args,
+        agentBinary: 'cursor-agent', mcpBinary: process.execPath, accessPolicy: 'everyone', transport: { kind: 'monolith', baseUrl: f.origin, daemonToken: f.daemonToken } };
+    const config = { bwrapPath: '/usr/bin/bwrap', agentKind: 'cursor', agentCommand: process.execPath, agentArgs: [join(ROOT, 'scripts/discovery-launch.mjs')], agentBinary: 'cursor-agent',
+        modelSelection: { model: 'grok-4.7-xhigh' }, mcpBinary: process.execPath,
+        readonlyMcpCommand: process.execPath, readonlyMcpArgs: [join(ROOT, 'scripts/discovery-mcp.mjs'), join(ROOT, 'apps/body/dist/read-only-mcp.js'), trace],
         agentHomeRoot, sharedSkills: [], operatorHome, workspaceRoot: root,
         agentEnv: { ...overlay, PATH: process.env.PATH, LANG: 'C.UTF-8', USER: process.env.USER, BEELINE_DISCOVERY_TRACE: trace, BEELINE_DISCOVERY_HOME_ROOT: agentHomeRoot },
         autoApprovePermissions: false, accessPolicy: 'everyone' };
@@ -140,10 +143,14 @@ export async function runCase(f, testCase, directory, options = {}) {
     }
     return observation;
 }
-export async function runDiscovery({ out, only, operatorHome, timeoutMs, profilePath, grokHome } = {}) {
-    const profile = profilePath ? JSON.parse(await readFile(profilePath, 'utf8')) : undefined;
-    if (profile && (profile.agentId !== '2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762' || profile.model !== 'grok-4.7' || profile.effort !== 'xhigh' || typeof profile.soul?.instructions !== 'string'))
+export function validateNerdProfile(profile) {
+    if (profile && (profile.agentId !== '2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762' || profile.harness !== 'cursor' || profile.model !== 'grok-4.7-xhigh' || profile.effort != null || typeof profile.soul?.instructions !== 'string'))
         throw new Error('Profile must be the current Nerd configuration, not a model substitute');
+    return profile;
+}
+export async function runDiscovery({ out, only, operatorHome, timeoutMs, profilePath } = {}) {
+    const profile = profilePath ? JSON.parse(await readFile(profilePath, 'utf8')) : undefined;
+    validateNerdProfile(profile);
     const cases = JSON.parse(await readFile(join(ROOT, 'docs/prompts/cases/discovery/corpus.json'), 'utf8'));
     const selected = only ? cases.filter((c) => only.split(',').includes(c.id)) : cases;
     if (!selected.length)
@@ -152,15 +159,9 @@ export async function runDiscovery({ out, only, operatorHome, timeoutMs, profile
     if (existsSync(join(directory, 'result.json')))
         throw new Error('Use a fresh output directory; existing evidence must not be overwritten');
     await mkdir(directory, { recursive: true });
-    if (grokHome) {
-        const bridge = join(directory, 'operator');
-        await mkdir(bridge, { recursive: true });
-        await symlink(resolve(grokHome), join(bridge, '.grok'), 'dir');
-        operatorHome = bridge;
-    }
     const observations = [];
     const sourceHashes = Object.fromEntries(await Promise.all(['scripts/discovery-live.mjs', 'scripts/discovery-launch.mjs', 'scripts/discovery-mcp.mjs', 'scripts/discovery-score.mjs', 'docs/prompts/cases/discovery/corpus.json', 'apps/body/src/beeline-skill.ts', 'apps/body/src/prompt-assembly.ts', 'apps/body/src/minimal-tool-surface.ts', 'apps/body/dist/read-only-mcp.js'].map(async (path) => [path, createHash('sha256').update(await readFile(join(ROOT, path))).digest('hex')])));
-    const metadata = { sourceHashes, configurationParity: profile ? { agentId: profile.agentId, profileSha256: createHash('sha256').update(JSON.stringify(profile)).digest('hex') } : 'unverified; smoke only', agent: 'nerd', model: 'grok-4.7', effort: 'xhigh', harness: execFileSync('grok', ['--version'], { encoding: 'utf8' }).trim(), commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(), startedAt: new Date().toISOString() };
+    const metadata = { sourceHashes, configurationParity: profile ? { agentId: profile.agentId, profileSha256: createHash('sha256').update(JSON.stringify(profile)).digest('hex') } : 'unverified; smoke only', agent: 'nerd', model: 'grok-4.7-xhigh', effort: null, harness: 'cursor', harnessVersion: execFileSync('cursor-agent', ['--version'], { encoding: 'utf8' }).trim(), commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(), startedAt: new Date().toISOString() };
     const f = await fixture(profile);
     const save = async () => {
         const summary = summarize(selected, observations);
@@ -196,8 +197,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const args = process.argv.slice(2);
     const option = (name) => args[args.indexOf(name) + 1];
     if (!args.includes('--run'))
-        throw new Error('Use --run deliberately: this spends the owner’s Grok subscription allowance');
-    const result = await runDiscovery({ out: args.includes('--out') ? resolve(option('--out')) : undefined, only: args.includes('--only') ? option('--only') : undefined, profilePath: args.includes('--profile') ? resolve(option('--profile')) : undefined, grokHome: args.includes('--grok-home') ? resolve(option('--grok-home')) : undefined });
+        throw new Error('Use --run deliberately: this spends the owner’s Cursor subscription allowance');
+    const result = await runDiscovery({ out: args.includes('--out') ? resolve(option('--out')) : undefined, only: args.includes('--only') ? option('--only') : undefined, profilePath: args.includes('--profile') ? resolve(option('--profile')) : undefined, operatorHome: args.includes('--operator-home') ? resolve(option('--operator-home')) : undefined });
     console.log(`Discovery: ${result.passed}/${result.completed} completed passed; ${result.completed}/${result.total} completed; overall rate ${result.passRate ?? 'unavailable'}`);
     if (result.passRate === null)
         process.exitCode = 1;

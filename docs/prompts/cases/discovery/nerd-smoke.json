@@ -54,5 +54,9 @@
         "objects": []
       }
     }
-  ]
+  ],
+  "evaluationValidity": {
+    "validNerdBaseline": false,
+    "reason": "Controller ran the Grok CLI; the live Nerd harness is Cursor. Profile validation then omitted the harness."
+  }
 }

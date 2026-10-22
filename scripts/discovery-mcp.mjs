@@ -3,7 +3,8 @@ import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 const target = process.argv[2];
-if (!target || !process.env.BEELINE_DISCOVERY_TRACE)
+const trace = process.argv[3] ?? process.env.BEELINE_DISCOVERY_TRACE;
+if (!target || !trace)
     throw new Error('Missing eval target or trace');
 const child = spawn(process.execPath, [target], { env: process.env, stdio: ['pipe', 'pipe', 'inherit'] });
 const pending = new Map();
@@ -17,7 +18,7 @@ createInterface({ input: child.stdout }).on('line', (line) => {
         return;
     }
     if (pending.has(message.id)) {
-        appendFileSync(process.env.BEELINE_DISCOVERY_TRACE, `${JSON.stringify({ type: 'result', id: message.id, result: message.result, error: message.error })}\n`);
+        appendFileSync(trace, `${JSON.stringify({ type: 'result', id: message.id, result: message.result, error: message.error })}\n`);
         pending.delete(message.id);
     }
     process.stdout.write(`${line}\n`);
@@ -34,8 +35,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
     if (message.method === 'tools/call') {
         const { name, arguments: args = {} } = message.params;
-        const unsafe = blocked.has(name) || (name === 'app_tool' && args.tool && !['beeline:workflow', 'beeline:onboarding'].includes(args.app));
-        appendFileSync(process.env.BEELINE_DISCOVERY_TRACE, `${JSON.stringify({ type: 'call', id: message.id, name, args, intendedOnly: unsafe })}\n`);
+        const unsafe = blocked.has(name) || (name === 'connect' && args.mode === 'ensure') || (name === 'app_tool' && args.tool && !['beeline:workflow', 'beeline:onboarding'].includes(args.app));
+        appendFileSync(trace, `${JSON.stringify({ type: 'call', id: message.id, name, args, intendedOnly: unsafe })}\n`);
         if (unsafe) {
             process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: '{"eval":"intended call recorded; operation not executed"}' }] } })}\n`);
             return;

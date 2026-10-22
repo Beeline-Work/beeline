@@ -197,6 +197,13 @@ describe('background advisory-lock ownership', () => {
       const send = vi.fn().mockResolvedValue(undefined);
       const loop = new PushDeliveryLoop(db, { send });
       const query = vi.spyOn(db, 'query');
+      const transactionSqls: string[] = [];
+      const transaction = db.transaction.bind(db);
+      vi.spyOn(db,'transaction').mockImplementation(async work => transaction(async tx => {
+        const query = vi.spyOn(tx,'query');
+        try { return await work(tx); }
+        finally { transactionSqls.push(...query.mock.calls.map(([sql])=>sql)); }
+      }));
       expect(await loop.runOnce()).toBe(0);
       expect(query.mock.calls.some(([sql]) => sql.includes('FROM unclaimed'))).toBe(false);
       expect(send).not.toHaveBeenCalled();
@@ -207,9 +214,9 @@ describe('background advisory-lock ownership', () => {
       );
       expect(await loop.runOnce()).toBe(7);
       expect(send).toHaveBeenCalledTimes(7);
-      const candidateQueries = query.mock.calls.filter(([sql]) => sql.includes('FROM unclaimed'));
+      const candidateQueries = transactionSqls.filter(sql => sql.includes('FROM unclaimed'));
       expect(candidateQueries).toHaveLength(1);
-      const sql = candidateQueries[0]![0];
+      const sql = candidateQueries[0]!;
       query.mockRestore();
       expect(sql).toContain('SELECT * FROM messages WHERE id=queued.message_id OFFSET 0');
       expect(sql).toContain('unnest(context.turn_ids) final_ids(id)');

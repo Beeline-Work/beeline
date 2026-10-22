@@ -188,7 +188,7 @@ describe('activeWorkflowRunIds', () => {
     const { runId } = await start();
     const created = await daemon.execute(
       'createAgentSchedule',
-      {
+      { title: 'Scheduled check',
         roomId: ROOM,
         agentId: SCANNER,
         prompt: 'Start workflow daily',

@@ -339,7 +339,7 @@ export type DaemonOperationMap = {
   setWakeDelivery: Operation<RoomInput & WakeDeliveryResult, WakeDeliveryResult>;
   getWakeDelivery: Operation<RoomInput, WakeDeliveryResult>;
   createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string;
-    channelId?: string; channelName?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
+    channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
   listServiceSubscriptionEvents: Operation<RoomInput, SubscriptionEventCatalog>;
   listAgentSubscriptions: Operation<RoomInput, RoomSubscriptionListResult>;
   deleteAgentSubscription: Operation<RoomInput & { subscriptionId: string }, WriteResult>;

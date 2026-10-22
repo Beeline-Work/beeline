@@ -969,6 +969,11 @@
     "components/buzz/ScheduledWorkWhere.tsx": {
       "78cfd6ebfcfb461ad2c2": 1
     },
+    "components/buzz/SettingsScopeTabs.tsx": {
+      "97a3975adf48515a50b1": 1,
+      "c9ffb70fbada89b47a81": 1,
+      "e62022b6dce6f6ed3561": 1
+    },
     "components/buzz/SlashVerbPicker.tsx": {
       "03ef32a48dc30509846f": 1,
       "088d5eab1d1d3ea3dfe1": 1,
@@ -1087,8 +1092,8 @@
       "0cf3061c88de5e66fc5e": 1,
       "21230d975184f8da17ed": 1,
       "33a88b8a1c8189df2b86": 1,
-      "7199cda1776ea8af7666": 1,
-      "7490d38951f35d7b143c": 1,
+      "42975728937a0195f250": 1,
+      "7da6c0a55fb0604dd9cc": 1,
       "871423a726bae7a0bbe2": 1,
       "9580eeb4b9539161a9d5": 1,
       "992e8416b1f5a80439d1": 1,

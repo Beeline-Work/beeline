@@ -1,15 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { expect, it, vi } from 'vitest';
 import { focusComposerSelection } from './composer-selection';
-import { composerFieldSelection } from './composer-tags';
 
 it('Reproduction SENTRY-2: web replacement sets DOM selection without native methods', () => {
   const setSelectionRange = vi.fn(), setNativeProps = vi.fn(() => { throw new Error('native method used on web'); });
   const focus = vi.fn();
   const text = '@jellybean hello @ruby ';
-  const selection = composerFieldSelection(text, new Set(['jellybean']), { start: text.length, end: text.length });
-  focusComposerSelection({ focus, setSelectionRange, setNativeProps }, selection, 'web');
-  expect(setSelectionRange).toHaveBeenCalledWith(12, 12);
+  focusComposerSelection({ focus, setSelectionRange, setNativeProps }, { start: text.length, end: text.length }, 'web');
+  expect(setSelectionRange).toHaveBeenCalledWith(text.length, text.length);
   expect(focus).toHaveBeenCalledOnce();
   expect(setNativeProps).not.toHaveBeenCalled();
   focusComposerSelection({ focus, setSelectionRange }, { start: 3, end: 3 }, 'web');
@@ -28,10 +26,10 @@ it.each(['selectMention', 'selectChannel'])('Reproduction SENTRY-2: %s callback 
   const callback = handler.slice(handler.indexOf('scheduleAnimationFrame(() => {') + 'scheduleAnimationFrame(() => {'.length);
   const body = callback.slice(0, callback.indexOf('\n      });'));
   const setSelectionRange = vi.fn(), focus = vi.fn();
-  const run = new Function('composerRef', 'composerFieldSelection', 'composerTagHandlesRef', 'inserted', 'nextSelection', 'Platform', 'focusComposerSelection', body);
+  const run = new Function('composerRef', 'inserted', 'nextSelection', 'Platform', 'focusComposerSelection', body);
   const text = name === 'selectMention' ? '@jellybean hello @ruby ' : '@jellybean hello #general ';
-  run({ current: { focus, setSelectionRange } }, composerFieldSelection, { current: new Set(['jellybean']) },
+  run({ current: { focus, setSelectionRange } },
     { text }, { start: text.length, end: text.length }, { OS: 'web' }, focusComposerSelection);
-  expect(setSelectionRange).toHaveBeenCalledWith(text.length - 11, text.length - 11);
+  expect(setSelectionRange).toHaveBeenCalledWith(text.length, text.length);
   expect(focus).toHaveBeenCalledOnce();
 });

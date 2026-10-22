@@ -294,12 +294,7 @@ import {
   type ComposerPrefill,
   type ComposerPrefillPlan,
 } from '@/buzz/composer-prefill';
-import {
-  composerFieldSelection,
-  roomComposerTagHandles,
-  splitComposerTags,
-  toggleComposerTag,
-} from '@/buzz/composer-tags';
+import { roomComposerTagHandles, splitComposerTags } from '@/buzz/composer-tags';
 import {
   composerBottomPadding,
   mentionKeyboardAction,
@@ -365,7 +360,6 @@ import {
 } from '@/buzz/room-new-message-boundary';
 import { pinnedTailReadReport } from '@/buzz/read-cursor-advance';
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
-import { BubblePressable } from '@/components/BubblePressable';
 import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
@@ -1097,13 +1091,7 @@ export function BuzzChatSurface({
     if (!composerMounted || !fullSelection) return;
     stagedComposerFocusRef.current = null;
     scheduleAnimationFrame(() => {
-      const composer = composerRef.current;
-      const selection = composerFieldSelection(
-        inputTextRef.current,
-        composerTagHandlesRef.current,
-        fullSelection,
-      );
-      focusComposerSelection(composer, selection, Platform.OS);
+      focusComposerSelection(composerRef.current, fullSelection, Platform.OS);
     });
   }, [composerMounted, decodedId]);
 
@@ -2050,15 +2038,12 @@ export function BuzzChatSurface({
     () => roomParticipants.filter((participant) => participant.kind === 'agent'),
     [roomParticipants],
   );
-  // A leading `@member ` in the composer shows as a chip (`buzz/composer-tags.ts`).
+  // Room member handles: one backspace deletes a whole `@member` tag
+  // (`buzz/composer-tags.ts`).
   const composerTagHandles = useMemo(
     () => roomComposerTagHandles(roomParticipants),
     [roomParticipants],
   );
-  const composerTagHandlesRef = useRef(composerTagHandles);
-  composerTagHandlesRef.current = composerTagHandles;
-  const [tagMenuOpen, setTagMenuOpen] = useState(false);
-  useEffect(() => setTagMenuOpen(false), [decodedId]);
   // kind:30078 is the sole delivery-availability truth. Transcript/activity
   // events can describe work, but they never mint or renew availability.
   const agentPresences = heartbeatPresences;
@@ -2109,7 +2094,6 @@ export function BuzzChatSurface({
     [activeMention, mentionCandidateRoster, agentPresences, presenceNow],
   );
   const mentionMenuVisible = Boolean(
-    !tagMenuOpen &&
     composerFocused &&
     mentionMenuKey &&
     mentionMenuKey !== dismissedMentionKey &&
@@ -2167,7 +2151,6 @@ export function BuzzChatSurface({
     );
   }, [activeChannel, channelCorners, channelCornerRoomId, workspaceChats]);
   const channelMenuVisible = Boolean(
-    !tagMenuOpen &&
     composerFocused &&
     channelMenuKey &&
     channelMenuKey !== dismissedMentionKey &&
@@ -4028,7 +4011,6 @@ export function BuzzChatSurface({
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
       setReceivedSteer(null);
-      setTagMenuOpen(false);
       setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
       sendInFlightRef.current = true;
@@ -4423,30 +4405,13 @@ export function BuzzChatSurface({
       scheduleAnimationFrame(() => {
         focusComposerSelection(
           composerRef.current,
-          composerFieldSelection(inserted.text, composerTagHandlesRef.current, nextSelection),
+          nextSelection,
           Platform.OS,
         );
       });
       void Haptics.selectionAsync();
     },
     [activeMention],
-  );
-
-  /** A tap in the tag menu adds the agent as a chip, or removes its chip. */
-  const toggleComposerAgentTag = useCallback(
-    (participant: RoomMemberOption) => {
-      const before = inputTextRef.current;
-      const next = toggleComposerTag(before, composerTagHandlesRef.current, participant.handle);
-      if (splitComposerTags(next, composerTagHandlesRef.current).tags.includes(participant.handle)) {
-        selectedAgentMentionsRef.current.set(participant.handle, participant.pubkey);
-        recordMentionPick(selectedMentionsRef.current, participant);
-      }
-      inputTextRef.current = next;
-      setInputText(next);
-      setInputSelection({ start: next.length, end: next.length });
-      void Haptics.selectionAsync();
-    },
-    [setInputText],
   );
 
   const selectChannel = useCallback(
@@ -4461,7 +4426,7 @@ export function BuzzChatSurface({
       scheduleAnimationFrame(() => {
         focusComposerSelection(
           composerRef.current,
-          composerFieldSelection(inserted.text, composerTagHandlesRef.current, nextSelection),
+          nextSelection,
           Platform.OS,
         );
       });
@@ -6598,16 +6563,6 @@ export function BuzzChatSurface({
                 discVisible={newestJumpDiscShown}
                 onJumpToNewest={landAtNewestMessage}
               />
-              {tagMenuOpen && (
-                <BubblePressable
-                  scaleFeedback={false}
-                  accessibilityLabel="Close tag menu"
-                  accessibilityRole="button"
-                  onPress={() => setTagMenuOpen(false)}
-                  style={styles.tagMenuBackdrop}
-                  testID="tag-menu-backdrop"
-                />
-              )}
             </View>
 
             {/* P2: Archived channels are read-only */}
@@ -6689,26 +6644,13 @@ export function BuzzChatSurface({
                           />
                         );
                       })()}
-                    {/* One menu: the @ suggestions while typing, or the tag
-                    menu a chip opens, which ticks tagged agents and toggles. */}
-                    {(tagMenuOpen || mentionMenuVisible) && (
+                    {mentionMenuVisible && (
                       <MentionSuggestionMenu
-                        checkedHandles={
-                          tagMenuOpen
-                            ? new Set(splitComposerTags(inputText, composerTagHandles).tags)
-                            : undefined
-                        }
-                        highlightedIndex={tagMenuOpen ? -1 : highlightedMentionIndex}
+                        highlightedIndex={highlightedMentionIndex}
                         keyboardOpen={keyboardHeight > 0}
-                        matches={
-                          tagMenuOpen
-                            ? describedRoomParticipants.filter(
-                                (participant) => participant.kind === 'agent',
-                              )
-                            : mentionSuggestions.matches
-                        }
-                        onSelect={tagMenuOpen ? toggleComposerAgentTag : selectMention}
-                        overflow={tagMenuOpen ? 0 : mentionSuggestions.overflow}
+                        matches={mentionSuggestions.matches}
+                        onSelect={selectMention}
+                        overflow={mentionSuggestions.overflow}
                         personAvatar={(pubkey) => personProfileByPubkey.get(pubkey)?.avatar}
                       />
                     )}
@@ -6844,7 +6786,6 @@ export function BuzzChatSurface({
                       }
                       onCancelReply={() => setReplyTarget(null)}
                       tagHandles={composerTagHandles}
-                      onEditTags={() => setTagMenuOpen((open) => !open)}
                       attachments={pendingAttachments.map((attachment) => ({
                         uri: attachment.uri,
                         name: attachment.name,
@@ -6909,10 +6850,7 @@ export function BuzzChatSurface({
                           ),
                         );
                       }}
-                      onFocus={() => {
-                        setComposerFocused(true);
-                        setTagMenuOpen(false);
-                      }}
+                      onFocus={() => setComposerFocused(true)}
                       onBlur={() => setComposerFocused(false)}
                       onKeyPress={(event) => {
                         const action = mentionKeyboardAction(event.nativeEvent.key);
@@ -7782,8 +7720,11 @@ const styles = StyleSheet.create((theme) => {
     // no height in this column.
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
-    // Under the composer's tag menu: a tap anywhere else closes the menu.
+    // No longer drawn. The UI component policy fingerprints the header's
+    // `insets.top` through this file's last `top:` style, so removing this
+    // entry would read as a changed legacy header.
     tagMenuBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+    // Under the composer's tag menu: a tap anywhere else closes the menu.
     repoPromptBanner: {
       minWidth: 0,
       marginBottom: groknight.space.sm,

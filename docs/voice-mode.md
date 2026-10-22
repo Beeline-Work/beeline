@@ -45,7 +45,10 @@ collisions deterministically. The profile opened from a Room shows its effective
 assignment. There are no cloning or upload controls.
 
 Say an agent's handle or display name at the start of a request to address it;
-matching ignores case and respects word boundaries. Tapping its avatar still
+matching ignores case and respects word boundaries. Up to four leading greetings
+or fillers (such as "um hey" or "okay so") are skipped before matching. An exact
+agent name or handle always takes priority over treating its word as filler.
+Ambiguous names and the existing short-name fuzzy guard are unchanged. Tapping its avatar still
 sets the current target. With two or more humans in the call, start each request
 with an agent's name or an explicit avatar tap to get a reply.
 A name-only segment holds that human's addressee for three seconds, renewed

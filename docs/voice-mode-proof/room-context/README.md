@@ -107,3 +107,13 @@ baseline's second run includes a 449 ms host outlier. These are observed
 controlled-provider results, not a guarantee about every live call.
 
 Dead-code baseline passed with no introduced findings.
+
+
+## Reproduction VOICE-FILLER-1
+
+The approved stand-in is the production opening-name function; no call is needed.
+Before this addition, `openingVoiceName('um hey Candy help', agents)` returned
+`undefined`. The same direct source invocation now returns Candy. Stacked fillers,
+phonetic spellings, no-name speech, a four-word bound, filler names/handles,
+full display names, ambiguity and the short-name guard have regression coverage.
+The matcher performs bounded local work without another provider call or timer.

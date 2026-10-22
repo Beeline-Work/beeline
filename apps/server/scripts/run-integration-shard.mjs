@@ -41,6 +41,10 @@ assert.deepEqual(
 );
 
 console.log(`Integration shard ${position}/${count}: ${selected.length}/${all.length} tests`);
+if (process.argv.includes('--list')) {
+  console.log(JSON.stringify(names));
+  process.exit(0);
+}
 const run = spawnSync(
   process.execPath,
   [vitest, 'run', testFile, '--maxWorkers=1', '--minWorkers=1', '--testNamePattern', pattern],

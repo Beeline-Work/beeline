@@ -1374,6 +1374,7 @@ function readCheck(
 function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
   const item = record(value);
   if (!item) return null;
+  const mergeQueue = record(item.mergeQueue);
   const checksSummary = record(item.checksSummary);
   const summaryStatus = oneOf(checksSummary?.status, ['passing', 'failing', 'pending', 'unknown']);
   const projectedSummary =
@@ -1416,6 +1417,10 @@ function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
   return {
     lifecycle: oneOf(item.lifecycle, ['working', 'in-review', 'unknown', 'done']) ?? 'unknown',
     checks: oneOf(item.checks, ['passing', 'failing', 'pending', 'unknown']) ?? 'unknown',
+    ...field('mergeQueue', mergeQueue && typeof mergeQueue.headSha === 'string' && SHA1.test(mergeQueue.headSha)
+      ? { headSha: mergeQueue.headSha,
+          ...field('combinedSha', typeof mergeQueue.combinedSha === 'string' && SHA1.test(mergeQueue.combinedSha)
+            ? mergeQueue.combinedSha : undefined) } : undefined),
     ...field('branch', typeof item.branch === 'string' ? item.branch : undefined),
     ...field('outcome', oneOf(item.outcome, ['landed', 'abandoned'])),
     ...field('reason', typeof item.reason === 'string' ? item.reason : undefined),

@@ -4339,10 +4339,12 @@ export class PhoneService {
           input as Input<'createHumanCorner'>,
           viewerId,
         )) as Output<Name>;
-      case 'setCornerHold':
-        return (await this.database.transaction((db) =>
-          setCornerHold(db, input as Input<'setCornerHold'>, viewerId),
-        )) as Output<Name>;
+      case 'setCornerHold': {
+        const hold = input as Input<'setCornerHold'>;
+        const result = await this.database.transaction(db => setCornerHold(db, hold, viewerId));
+        await this.github?.reconcileQueuedCorners(hold.cornerId);
+        return result as Output<Name>;
+      }
       case 'setCornerLocked': {
         const value = input as Input<'setCornerLocked'>;
         if (typeof value.locked !== 'boolean') throw new Error('locked must be a boolean');

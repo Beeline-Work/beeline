@@ -88,7 +88,7 @@ export function TranscriptNavigationRow({
   );
 }
 
-const inlineStyles = StyleSheet.create({ row: { flexDirection: 'row' } });
+const inlineStyles = StyleSheet.create(() => ({ row: { flexDirection: 'row' } }));
 const navigationStyles = StyleSheet.create(({ buzz }) => ({
   row: { minHeight: 44, flexDirection: 'row', alignItems: 'flex-start', gap: buzz.space.sm },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },

@@ -1,3 +1,4 @@
+// Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
 // Merge-refusal notification ID change approved by lunchboxfortwo in Room message 1c880c7a; wording unchanged.
@@ -5548,6 +5549,22 @@
       "'status'",
       "'string'"
     ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/operator-system-dm.ts:flushOperatorSystemDms:wrapper:68025df2a8940f74",
+    "file": "apps/server/src/operator-system-dm.ts",
+    "kind": "wrapper",
+    "template": "sendSystemDirectMessage(db, row.workspace_id, row.recipient_id, row.text, createHash('sha256').update(`operator-system-dm:${row.send_id}:${row.recipient_id}`).digest('hex'))",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/system-line.ts:sendSystemDirectMessage:message-write:03f075af0303bf5d",
+    "file": "apps/server/src/system-line.ts",
+    "kind": "message-write",
+    "template": "INSERT messages text=text, author_id=SYSTEM_IDENTITY_ID",
+    "literals": [],
     "occurrences": 1
   }
 ]

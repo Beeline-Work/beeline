@@ -14,6 +14,7 @@ import { needsYouExpiryLabel } from '@/buzz/needs-you';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import brand from '@/buzz/brand.json';
 import { HullDialogActions } from './HullDialog';
+import { TranscriptCardChoicePlate } from './ChoicePlate';
 
 /** How far a phone swipe travels before the rail it reveals dismisses the cell. */
 const SWIPE_RAIL_WIDTH = 96;
@@ -76,11 +77,25 @@ export function NeedsYouCell({
   const actor = approval?.actor ?? item.author?.name;
   const ask = approval?.ask ?? 'asks you';
   const subject = item.text;
+  const actions = onAction ? (approval?.actions ?? []) : [];
+  // Inline choice options already name every option, so the "a · b" line goes.
+  const choiceActions = actions.some((action) => action.kind === 'choice');
   const meta = [
     ...(approval?.forName ? [`for ${approval.forName}`] : []),
     sourcePath(item),
     ...(expiry ? [approval?.kind === 'choice' ? expiry.replace('expires', 'closes') : expiry] : []),
   ].join(' · ');
+  const send = async (action: NeedsYouActionView, index: number) => {
+    if (!onAction || sending.current) return;
+    sending.current = true;
+    setBusy(index);
+    try {
+      await onAction(item, action);
+    } finally {
+      sending.current = false;
+      setBusy(null);
+    }
+  };
   const source = (
     <Pressable
       accessibilityHint={
@@ -129,7 +144,7 @@ export function NeedsYouCell({
       >
         {subject}
       </Text>
-      {approval?.detail ? (
+      {approval?.detail && !choiceActions ? (
         <Text style={styles.detail} testID={`needs-you-detail-${item.messageId}`}>
           {approval.detail}
         </Text>
@@ -165,7 +180,7 @@ export function NeedsYouCell({
   const cell = (
     <View>
       {source}
-      {onAction && approval?.actions?.length ? (
+      {onAction && approval && actions.length ? (
         <View style={styles.actionArea}>
           {approval?.script ? (
             <View style={styles.script}>
@@ -175,32 +190,55 @@ export function NeedsYouCell({
               </Text>
             </View>
           ) : null}
-          <HullDialogActions
-            style={styles.actions}
-            actions={approval.actions.map((action, index) => ({
-              label: action.label,
-              variant: action.kind === 'skip-choice' || action.kind === 'external' || ((action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny') ? 'quiet' : 'primary',
-                accessibilityRole: action.kind === 'external' ? 'link' : 'button',
-              disabled: busy !== null,
-              loading: busy === index,
-              testID: `needs-you-action-${item.messageId}-${index}`,
-              description: action.detail ? (
-                <Text style={styles.detail}>{action.detail}</Text>
-              ) : undefined,
-              onPress: async (event) => {
-                event.stopPropagation();
-                if (sending.current) return;
-                sending.current = true;
-                setBusy(index);
-                try {
-                  await onAction(item, action);
-                } finally {
-                  sending.current = false;
-                  setBusy(null);
-                }
-              },
-            }))}
-          />
+          {choiceActions ? (
+            <View style={styles.choices}>
+              {actions.map((action, index) =>
+                action.kind === 'choice' ? (
+                  <TranscriptCardChoicePlate
+                    key={index}
+                    closed={false}
+                    choice={{
+                      id: `${item.messageId}-${index}`,
+                      letter: String.fromCharCode(65 + index),
+                      label: action.label,
+                      consequence:
+                        action.detail && action.detail !== action.label ? action.detail : '',
+                      busy: busy === index,
+                      disabled: busy !== null,
+                      testID: `needs-you-action-${item.messageId}-${index}`,
+                      onPress: () => void send(action, index),
+                    }}
+                  />
+                ) : null,
+              )}
+            </View>
+          ) : null}
+          {actions.some((action) => action.kind !== 'choice') ? (
+            <HullDialogActions
+              style={styles.actions}
+              actions={actions.flatMap((action, index) =>
+                action.kind === 'choice'
+                  ? []
+                  : [
+                      {
+                        label: action.label,
+                        variant: action.kind === 'skip-choice' || action.kind === 'external' || ((action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny') ? 'quiet' : 'primary',
+                        accessibilityRole: action.kind === 'external' ? 'link' : 'button',
+                        disabled: busy !== null,
+                        loading: busy === index,
+                        testID: `needs-you-action-${item.messageId}-${index}`,
+                        description: action.detail ? (
+                          <Text style={styles.detail}>{action.detail}</Text>
+                        ) : undefined,
+                        onPress: (event) => {
+                          event.stopPropagation();
+                          void send(action, index);
+                        },
+                      },
+                    ],
+              )}
+            />
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -242,6 +280,8 @@ const styles = StyleSheet.create((theme) => ({
   cellSelected: { borderLeftWidth: 1, borderLeftColor: theme.buzz.accent },
   actionArea: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.md },
   actions: { marginTop: theme.buzz.space.sm },
+  // Options are equal alternatives: one full-width plate each, as in a Room.
+  choices: { gap: theme.buzz.space.sm, marginTop: theme.buzz.space.sm },
   action: { flexShrink: 1 },
   script: { marginTop: theme.buzz.space.sm },
   head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },

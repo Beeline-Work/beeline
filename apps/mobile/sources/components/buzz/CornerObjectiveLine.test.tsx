@@ -212,13 +212,13 @@ describe('CornerObjectiveLine', () => {
   });
 
 
-  it('R12k: shows workflow errors inline and retries from the objective line', () => {
-    const retry = vi.fn();
-    const renderer = render(<CornerObjectiveLine objective="Ship it" workflowError="offline" onRetryWorkflow={retry} />);
-    expect(flatText(renderer.root.findByProps({ testID: 'corner-objective-line-workflow-error' }))).toContain('offline');
-    act(() => renderer.root.findByProps({ testID: 'corner-objective-line-workflow-retry' }).props.onPress());
-    expect(retry).toHaveBeenCalledTimes(1);
-    console.log('R12k Demonstrated: objective line shows offline inline; Retry invokes the workflow read retry.');
+  it('CR1: background workflow errors cannot add a Retry control or alert', () => {
+    // Simulate a stale caller passing the retired error props at runtime.
+    const failure = { workflowError: 'offline', onRetryWorkflow: vi.fn() };
+    const renderer = render(<CornerObjectiveLine objective="Ship it" onOpenBrief={() => {}} {...failure} />);
+    expect(renderer.root.findAllByType('Text' as any).map(flatText)).toEqual(['Ship it', 'Read brief']);
+    expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ accessibilityLabel: 'Retry workflow' })).toHaveLength(0);
   });
 
   it('shows the objective once and keeps the brief behind Read brief', () => {

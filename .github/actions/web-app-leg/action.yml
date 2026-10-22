@@ -1,3 +1,5 @@
+# The caller installs Node 22, the root `npm ci`, the @beeline/nostr,
+# api-contract and buzz-client builds Metro resolves, and the pinned eas-cli.
 name: Publish the Expo web app
 description: Export the release app, deploy it to EAS Hosting production, and verify the canonical custom domain
 inputs:
@@ -13,18 +15,10 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: npm
-    - shell: bash
-      run: npm ci
-    - shell: bash
-      run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
     - name: Install mobile dependencies
       shell: bash
       working-directory: apps/mobile
-      run: npm ci
+      run: bash ../../scripts/npm-ci-timed.sh
     - name: Export the production web bundle
       shell: bash
       working-directory: apps/mobile
@@ -32,7 +26,7 @@ runs:
         EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
         EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
         NODE_ENV: production
-      run: npx expo export --platform web --output-dir dist --clear
+      run: npx expo export --platform web --output-dir dist
     - name: Verify the push worker is in the export
       shell: bash
       run: cmp apps/mobile/public/push-sw.js apps/mobile/dist/push-sw.js
@@ -47,7 +41,7 @@ runs:
       working-directory: apps/mobile
       env:
         EXPO_TOKEN: ${{ inputs.expo_token }}
-      run: npx --yes eas-cli@22.2.0 deploy --prod --export-dir dist --non-interactive
+      run: '"$EAS_CLI_PATH" deploy --prod --export-dir dist --non-interactive'
     - name: Verify the canonical web origin serves this release
       shell: bash
       run: node scripts/verify-web-deployment.mjs --expected-release apps/mobile/dist/beeline-web-release.json --attempts 20

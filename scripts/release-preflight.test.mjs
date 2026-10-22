@@ -58,7 +58,7 @@ test('each shell-bearing self-hosted release job installs pinned Node before its
     const firstRun = job.search(/\n        run:|\n      - run:|uses: \.\//);
     const setup = job.indexOf('uses: actions/setup-node@v4');
     assert.ok(setup > 0 && setup < firstRun, job.slice(0,120));
-    assert.match(job.slice(setup,firstRun), /node-version-file: .nvmrc/);
+    assert.match(job.slice(setup,firstRun), /node-version: 22/);
   }
 });
 

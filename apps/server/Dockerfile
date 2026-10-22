@@ -30,13 +30,7 @@ FROM ghcr.io/beeline-work/ci-node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
   && test -s /etc/ssl/certs/ca-certificates.crt \
   && rm -rf /var/lib/apt/lists/*
-ARG BEELINE_RELEASE_VERSION=development
-ARG BEELINE_RELEASE_SHA=unknown
 ENV NODE_ENV=production
-ENV BEELINE_RELEASE_VERSION=$BEELINE_RELEASE_VERSION \
-  BEELINE_RELEASE_SHA=$BEELINE_RELEASE_SHA
-LABEL app.usebeeline.release.version=$BEELINE_RELEASE_VERSION \
-  app.usebeeline.release.sha=$BEELINE_RELEASE_SHA
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/server/package.json ./apps/server/package.json
@@ -53,6 +47,14 @@ COPY --from=build /app/apps/body/dist ./apps/body/dist
 COPY --from=build /app/packages/nostr/dist ./packages/nostr/dist
 COPY --from=build /app/packages/api-contract/dist ./packages/api-contract/dist
 COPY --from=build /app/packages/buzz-client/dist ./packages/buzz-client/dist
+# The release identity changes every build, so it comes after every cached
+# layer: a new version or SHA must not reinstall production dependencies.
+ARG BEELINE_RELEASE_VERSION=development
+ARG BEELINE_RELEASE_SHA=unknown
+ENV BEELINE_RELEASE_VERSION=$BEELINE_RELEASE_VERSION \
+  BEELINE_RELEASE_SHA=$BEELINE_RELEASE_SHA
+LABEL app.usebeeline.release.version=$BEELINE_RELEASE_VERSION \
+  app.usebeeline.release.sha=$BEELINE_RELEASE_SHA
 USER node
 EXPOSE 8080
 CMD ["node", "apps/server/dist/index.js"]

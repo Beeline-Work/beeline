@@ -1,0 +1,89 @@
+# Publishes the free starter agent base image after a successful production
+# release that shipped the server. It runs outside the release so it never
+# delays the release record or holds a production host runner during it, and
+# it is best effort: a failure leaves Machines on the previous image.
+name: Free starter agent image
+
+on:
+  workflow_run:
+    workflows: [Unified production release]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: free-agent-image
+  cancel-in-progress: false
+
+jobs:
+  free_agent_image:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 18
+    steps:
+      - name: Download the release record
+        id: index
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: unified-release-index
+          path: ${{ runner.temp }}/release
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Read the server release identity
+        id: release
+        if: steps.index.outcome == 'success'
+        run: |
+          node - "$RUNNER_TEMP/release/release-attempt.json" >> "$GITHUB_OUTPUT" <<'NODE'
+          const release = require(process.argv[2]);
+          if (release.plan?.selected?.includes('server') && release.components?.server?.state === 'checked') {
+            console.log(`sha=${release.sourceSha}`);
+            console.log(`version=${release.version}`);
+          }
+          NODE
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.sha != ''
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.sha != ''
+        with:
+          node-version: 22
+          cache: npm
+      - if: steps.release.outputs.sha != ''
+        run: bash scripts/npm-ci-timed.sh
+      # Helper staging builds pinned block/buzz with its Rust toolchain.
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.release.outputs.sha != ''
+      - uses: ./.github/actions/buzz-agent-cache
+        if: steps.release.outputs.sha != ''
+        with:
+          platform: linux-x64
+      - name: Publish the free starter agent base image
+        if: steps.release.outputs.sha != ''
+        shell: bash
+        run: |
+          set -uo pipefail
+          image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
+          if BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
+            bash scripts/stage-free-agent-helper.sh \
+            && flyctl deploy . \
+            --local-only \
+            --config fly.beeline-free-agents.toml \
+            --dockerfile infra/free-agent/Dockerfile \
+            --app beeline-free-agents \
+            --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+            --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
+            --image-label "$image_label" --build-only --push --yes \
+            && flyctl auth docker \
+            && docker tag "registry.fly.io/beeline-free-agents:$image_label" registry.fly.io/beeline-free-agents:latest \
+            && docker push registry.fly.io/beeline-free-agents:latest; then
+            echo "Published registry.fly.io/beeline-free-agents:$image_label and :latest"
+          else
+            echo "::warning::Free starter agent image was not published; Machines keep the previous image"
+          fi
+        env:
+          RELEASE_SHA: ${{ steps.release.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}

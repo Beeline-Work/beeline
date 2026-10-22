@@ -2,7 +2,8 @@
 # unified-release.yml calls it twice from the self-hosted production host:
 # phase=build combines the install-verified Linux and macOS native bundles,
 # phase=promote publishes it to Pages and smoke-tests the exact manifest. Fleet
-# uptake is asynchronous observability and never holds a release open.
+# uptake is asynchronous observability and never holds a release open. The
+# caller installs Node 22, Rust, and the root `npm ci` once for both phases.
 name: Beeline daemon release leg
 description: Build the exact daemon artifact or publish it and await updater READY proof
 
@@ -44,16 +45,6 @@ runs:
         path: ${{ runner.temp }}/daemon-release
         run-id: ${{ inputs.reuse_run_id }}
         github-token: ${{ github.token }}
-    - uses: actions/setup-node@v4
-      if: inputs.phase == 'build' && inputs.reuse_run_id == ''
-      with:
-        node-version: '20.19'
-        cache: npm
-    - uses: dtolnay/rust-toolchain@stable
-      if: inputs.phase == 'build' && inputs.reuse_run_id == ''
-    - if: inputs.phase == 'build' && inputs.reuse_run_id == ''
-      shell: bash
-      run: npm ci
     - name: Build and verify the exact daemon bundle
       if: inputs.phase == 'build' && inputs.reuse_run_id == ''
       shell: bash

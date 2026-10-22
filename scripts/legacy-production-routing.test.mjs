@@ -8,7 +8,6 @@ const productionSurfaces = [
   '.github/actions/daemon-leg/action.yml',
   '.github/actions/server-leg/action.yml',
   '.github/workflows/unified-release.yml',
-  'scripts/build-release-server-images.sh',
   'fly.beeline-server.toml',
 ];
 

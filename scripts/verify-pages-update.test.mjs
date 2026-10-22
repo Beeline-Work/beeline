@@ -48,23 +48,22 @@ test('the Pages leg builds every workspace package the update proof bundles', as
   // Whatever workspace packages the updater's source graph reaches today
   // (none, since the service-manager modules stopped importing runtime.ts)
   // must be built before the proof bundles it.
+  // The leg's callers install once and build before it runs.
   const required = await updaterWorkspacePackages();
-  const action = await readFile(
-    new URL('../.github/actions/pages-leg/action.yml', import.meta.url),
+  const workflow = await readFile(
+    new URL('../.github/workflows/unified-release.yml', import.meta.url),
     'utf8',
   );
-  const install = action.indexOf('run: npm ci');
-  const verify = action.indexOf('scripts/verify-pages-update.mjs');
-  assert.ok(install >= 0, 'the Pages leg must install dependencies');
-  assert.ok(verify > install, 'the update proof must run after npm ci');
-  for (const name of required) {
-    const step = `npm run build -w ${name}`;
-    const at = action.indexOf(step);
-    assert.ok(at >= 0, `pages-leg must ${step} before its update proof`);
-    assert.ok(
-      at > install && at < verify,
-      `${step} must build the workspace package between npm ci and the proof`,
-    );
+  for (const [job, leg] of [['website', 'uses: ./.github/actions/pages-leg'], ['helper', 'phase: promote']]) {
+    const body = workflow.match(new RegExp(`^  ${job}:[\\s\\S]*?(?=^  [a-z_]+:$)`, 'm'))?.[0];
+    assert.ok(body, `${job} job`);
+    const install = body.indexOf('scripts/npm-ci-timed.sh');
+    const proof = body.indexOf(leg);
+    assert.ok(install >= 0 && proof > install, `${job} must install dependencies before the Pages leg`);
+    for (const name of [...required, '@beeline/nostr', '@beeline/api-contract', '@beeline/buzz-client']) {
+      const at = body.indexOf(`npm run build -w ${name}`);
+      assert.ok(at > install && at < proof, `${job} must build ${name} between npm ci and the Pages leg`);
+    }
   }
 });
 

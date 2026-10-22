@@ -7,7 +7,7 @@ const db = new PgliteDatabase();
 const room = '22222222-2222-4222-8222-222222222222';
 const agent = 'a'.repeat(64);
 const human = 'b'.repeat(64);
-const input = { roomId: room, requestId: 'request', generationId: 'generation', inputs: { release_version: 'v0.1.94', retry_attempt: '2' } };
+const input = { roomId: room, requestId: 'request', generationId: 'generation', inputs: { release_version: 'v0.1.94', selection: 'server' } };
 beforeAll(async () => {
   await migrate(db);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Jellybean','jellybean'),($2,'human','Owner','owner')`, [agent, human]);
@@ -25,7 +25,7 @@ it('release-dispatch-attribution: commits readable server provenance before disp
     const provenance = JSON.parse(inputs.dispatched_by!);
     expect(provenance).toMatchObject({ agentId: agent, handle: 'jellybean', place: room, humanCommandMessageId: 'human-command' });
     expect(inputs.release_version).toBe('v0.1.94');
-    expect(inputs.retry_attempt).toBe('2');
+    expect(inputs.selection).toBe('server');
     const receipt = (await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [provenance.auditMessageId])).rows[0];
     expect(receipt?.text).toContain(inputs.dispatched_by);
     expect(receipt?.text).not.toMatch(/token|secret/i);
@@ -105,7 +105,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
     await writeFile(context, JSON.stringify(input));
     const port = (server.address() as import('node:net').AddressInfo).port;
     const script = fileURLToPath(new URL('../../../scripts/dispatch-production-release.mjs', import.meta.url));
-    const child = spawn(process.execPath, [script, '-f', 'release_version=v0.1.94', '-f', 'retry_attempt=2'], {
+    const child = spawn(process.execPath, [script, '-f', 'release_version=v0.1.94', '-f', 'selection=server'], {
       env: { ...process.env, BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${port}`, BEELINE_DAEMON_TOKEN: 'fixture-token',
         BEELINE_DAEMON_AGENT_ID: agent, BEELINE_TURN_CONTEXT_FILE: context },
     });
@@ -118,7 +118,7 @@ it('demonstrates the operator executable through authenticated daemon dispatch t
     expect(dispatched).toHaveLength(1);
     const provenance = JSON.parse(dispatched[0]!.dispatched_by!);
     expect(provenance.handle).toBe('jellybean');
-    expect(dispatched[0]!.retry_attempt).toBe('2');
+    expect(dispatched[0]!.selection).toBe('server');
     const receipt = (await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [provenance.auditMessageId])).rows[0];
     expect(receipt?.text).toContain('human-command');
     console.log('Demonstrated release-dispatch-attribution: operator command → daemon active-turn authority → persisted Room receipt + GitHub attribution (provider mocked, no production dispatch)');

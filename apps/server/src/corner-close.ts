@@ -1,5 +1,4 @@
 import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
-import { CommandRefusalError } from './commander.js';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
@@ -76,13 +75,6 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
-  const pullRequest = await database.query(
-    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND lifecycle->'pr'->>'number' IS NOT NULL
-       AND lifecycle->'pr'->>'mergedAt' IS NULL`,
-    [cornerId],
-  );
-  if (pullRequest.rowCount)
-    throw new CommandRefusalError('close the corner pull request with close_corner_pr before closing the corner', 409);
   await cancelCornerAgentCommands(database, cornerId);
   // Match command output: command locks precede the room's archival write lock.
   await database.query(

@@ -5314,7 +5314,7 @@ export function BuzzChatSurface({
     } catch (err) {
       console.warn('Close corner failed:', err);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert('Could not close corner', phoneOperationFailureReason(err));
+      Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
     } finally {
       setClosingCorner(false);
     }

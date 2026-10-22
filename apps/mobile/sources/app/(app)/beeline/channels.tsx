@@ -1016,6 +1016,7 @@ export default function BuzzChannels() {
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
                   <RoomListSectionHeader title={section.title}
+                    count={section.data.length}
                     actionAccessibilityLabel={section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'}
                     onAction={viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace) ? undefined : () => compose(section.kind === 'rooms' ? 'room' : 'message')} />
                 ) : null

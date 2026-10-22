@@ -277,7 +277,7 @@ export function SettingsRow({
     return (
       <View
         accessibilityLabel={accessibilityLabel ?? (spoken ? `${title}. ${spoken}` : title)}
-        style={[styles.row, appBoard && styles.boardRow]}
+        style={[styles.row, description && styles.describedRow, appBoard && styles.boardRow]}
         testID={testID}
       >
         {body}
@@ -291,7 +291,7 @@ export function SettingsRow({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.row, appBoard && styles.boardRow, disabled && styles.disabled]}
+      style={[styles.row, description && styles.describedRow, appBoard && styles.boardRow, disabled && styles.disabled]}
       testID={testID}
     >
       {body}
@@ -315,6 +315,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
+    describedRow: { paddingVertical: hull.space.sm },
     boardRow: { minHeight: 64, gap: 16, paddingHorizontal: 0,
       borderBottomWidth: 1, borderBottomColor: board.border },
     toggleOff: { backgroundColor: hull.borderStrong },

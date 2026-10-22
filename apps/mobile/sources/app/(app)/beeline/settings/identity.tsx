@@ -465,6 +465,7 @@ export default function BuzzIdentitySettings() {
 
         {selectedWorkspace && workspaceListConfirmed && (workspaceRole === 'owner' || workspaceRole === 'admin') ? (
           <View style={styles.section} testID="workspace-settings-section">
+            <RoomListSectionHeader title="Workspace" inset="content" />
             <SettingsRow title="Workspace" value={selectedWorkspace.name} chevron="right"
               testID="settings-workspace-row"
               onPress={() => router.push({ pathname: '/beeline/settings/workspace', params: { communityId: selectedWorkspace.id } } as never)} />

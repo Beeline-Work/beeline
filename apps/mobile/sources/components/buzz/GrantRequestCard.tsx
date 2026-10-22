@@ -164,4 +164,3 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
     </View>
   );
 });
-

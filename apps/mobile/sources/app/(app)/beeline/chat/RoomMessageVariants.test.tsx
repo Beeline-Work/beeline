@@ -3098,6 +3098,7 @@ describe('Room message variant components', () => {
       expect(card.root.findByProps({ testID: 'grant-purpose-once' })).toBeDefined();
     } else {
       expect(card.root.findAllByProps({ testID: 'grant-purpose-once' })).toHaveLength(0);
+      expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ textTransform: 'none' })]));
       expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.children).toMatch(
         status === 'denied' ? /^Denied by you · \d{2}:\d{2}$/ : /^Allowed by you · \d{2}:\d{2}$/);
     }

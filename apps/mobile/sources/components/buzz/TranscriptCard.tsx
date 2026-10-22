@@ -846,7 +846,7 @@ const styles = StyleSheet.create((theme) => {
       color: card.ledgerQuiet,
       flex: 1,
     },
-    decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textAlign: 'right' },
+    decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textTransform: 'none', textAlign: 'right' },
     footerNoteFailed: { color: card.diffRemoved },
     actions: { flexShrink: 1 },
     action: { ...card.type.body, fontSize: metric.actionSize, color: card.ledgerQuiet },

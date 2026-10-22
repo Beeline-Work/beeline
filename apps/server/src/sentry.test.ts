@@ -166,3 +166,37 @@ it('SENTRY-7807034373: schedule HTTP refusals stay visible without Sentry events
     expect(events[0].exception.values[0].value).toBe('title must be one to four words');
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
+
+it.each(['server', 'body'] as const)('R-SENTRY-REPEAT: %s sends one envelope for a changing-PID loop', async (surface) => {
+  const events: unknown[] = [];
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    for (const line of Buffer.concat(chunks).toString().split('\n')) {
+      try { const item = JSON.parse(line); if (item.exception) events.push(item); } catch { /* Envelope framing. */ }
+    }
+    response.end('{}');
+  });
+  await new Promise<void>(r => collector.listen(0, '127.0.0.1', r));
+  try {
+    const port = (collector.address() as AddressInfo).port;
+    const capture = surface === 'server' ? 'captureServerError' : 'captureHelperError';
+    const flush = surface === 'server' ? 'flushServerErrors' : 'flushHelperErrors';
+    const source = `import { ${capture}, ${flush} } from ${JSON.stringify(resolve('../', surface, 'src/sentry.ts'))};
+      for (let pid = 695; pid < 705; pid++) {
+        ${capture}(new Error('previous runtime owner ' + pid + ' still alive; native topology migration incomplete'));
+      }
+      await ${flush}();`;
+    let stderr = "";
+    const code = await new Promise<number | null>((done, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`,
+          BEELINE_SENTRY_DSN: `http://public@127.0.0.1:${port}/1` }, stdio: ['ignore', 'ignore', 'pipe'],
+      });
+      child.stderr.on('data', chunk => { stderr += String(chunk); });
+      child.on('error', reject); child.on('exit', done);
+    });
+    expect(code, stderr).toBe(0);
+    expect(events).toHaveLength(1);
+  } finally { await new Promise<void>(r => collector.close(() => r())); }
+});

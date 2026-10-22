@@ -42,3 +42,13 @@ it('Reproduction SENTRY-6: old iPhone update messages remain intact without Sent
   captureMobileError('voice-join', unexpected);
   expect(sdk.captureException).toHaveBeenCalledWith(unexpected, expect.anything());
 });
+
+it('R-SENTRY-REPEAT: applies the shared cap to SDK events while preserving private filtering', async () => {
+  vi.stubGlobal('__DEV__', false); vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');
+  await import('./sentry');
+  const { beforeSend } = sdk.init.mock.calls[0]![0];
+  const event = (pid: number) => ({ exception: { values: [{ type: 'Error', value: `owner ${pid} failed` }] }, request: { data: 'private' } });
+  expect(beforeSend(event(695))).toMatchObject({ exception: { values: [{ value: 'owner 695 failed' }] } });
+  expect(beforeSend(event(696))).toBeNull();
+  expect(beforeSend({ message: 'a different error' })).not.toBeNull();
+});

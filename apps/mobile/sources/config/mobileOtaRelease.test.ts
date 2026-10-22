@@ -1715,8 +1715,8 @@ esac
     expect(merge.failures.map((failure: { class: string }) => failure.class)).toEqual(
       failures.map((failure) => failure[2]),
     );
-    expect(unifiedWorkflow).toContain('createWorkflowDispatch');
-    expect(unifiedWorkflow).toContain('release_sha: process.env.RELEASE_SHA');
+    // A failed release never redispatches itself; recovery is an explicit dispatch.
+    expect(unifiedWorkflow).not.toContain('createWorkflowDispatch');
     expect(unifiedWorkflow).toContain('unified-release-state-${process.env.RELEASE_ID}');
     expect(unifiedWorkflow).toContain('release SHA is not a commit on main');
     expect(unifiedWorkflow).not.toContain('maxFailures < 3');
@@ -2048,7 +2048,7 @@ esac
     expect(workflow).not.toMatch(/branches: \[main\][\s\S]{0,120}paths:/);
   });
 
-  it('measures fix-to-phone through OTA completion and marks slow whole runs without failing them', () => {
+  it('reports fix-to-phone through OTA completion and never fails a delivered release on time', () => {
     expect(unifiedWorkflow).toContain('getWorkflowRun');
     expect(unifiedWorkflow).toContain("core.setOutput('trigger_epoch'");
     expect(unifiedWorkflow).toContain('completedAt:Number(completedAt)');
@@ -2056,20 +2056,12 @@ esac
     expect(unifiedWorkflow).toContain('unified-release.mjs classify-attempt');
     expect(unifiedWorkflow).toContain('--trigger-epoch "$TRIGGER_EPOCH"');
     expect(unifiedWorkflow).toContain('--checkpoints "$RUNNER_TEMP/checkpoints.json"');
-    // The 20-minute fix-to-phone budget stays the default; only a native
-    // store-binary leg extends it (60 minutes).
-    expect(unifiedReleaseScript).toContain(
-      'RELEASE_FIX_TO_PHONE_BUDGET_SECONDS = RELEASE_BUDGET_MINUTES * 60',
-    );
-    expect(unifiedReleaseScript).toContain('RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS = 60 * 60');
-    // A macOS helper release keeps its own 150-minute allowance (PR #1741).
-    expect(unifiedWorkflow).toContain('--helper-macos-build-ran "$helper_macos_build_ran"');
-    expect(unifiedReleaseScript).toContain(
-      'RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS = 150 * 60',
-    );
+    // Duration is reported, never judged: no budget can fail a delivered release.
+    expect(unifiedReleaseScript).not.toContain('BUDGET');
+    expect(unifiedWorkflow).not.toContain('--helper-macos-build-ran');
     expect(unifiedReleaseScript).toContain("checkpoint?.component === 'mobile-ota' && checkpoint.state === 'checked'");
     expect(unifiedReleaseScript).toContain('const otaElapsedSeconds = otaCompletedAt === undefined');
-    expect(unifiedReleaseScript).toContain('const failureClass = otaElapsedSeconds >= budgetSeconds');
+    expect(unifiedReleaseScript).toContain("const failureClass = unfinished ? `component:${unfinished}` : '';");
     expect(unifiedReleaseScript).toContain('RELEASE_SOFT_LIMIT_SECONDS = 45 * 60');
     expect(unifiedReleaseScript).toContain(
       "slow: outcome === 'success' && wholeRunElapsedSeconds > RELEASE_SOFT_LIMIT_SECONDS",

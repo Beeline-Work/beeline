@@ -379,7 +379,7 @@ test('initialize guards only a requested version against an existing release at 
 });
 
 test('release_result routes every release-mutating gh call through the retry wrappers', () => {
-  const job = WORKFLOW.match(/^  release_result:[\s\S]*?^  retry:/m)?.[0];
+  const job = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
   assert.ok(job, 'release_result job found in unified-release.yml');
   assert.match(job, /\. scripts\/gh-release-retry\.sh/);
   // No bare release-mutating call may remain in the job (view/download are
@@ -401,7 +401,7 @@ test('initialize preflights a draft release before dependent shipping jobs', () 
   assert.match(initialize, /ghr_requested_version_guard "\$RELEASE_VERSION" "\$RELEASE_SHA"/);
   assert.match(initialize, /ghr_create "\$RELEASE_VERSION"[^\n]*--draft/);
   assert.ok(initialize.indexOf('Preflight the release record') < initialize.indexOf('name: unified-release-plan-'));
-  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*?^  retry:/m)?.[0];
+  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
   assert.doesNotMatch(releaseResult, /ghr_create/);
 });
 

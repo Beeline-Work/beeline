@@ -128,9 +128,7 @@ the delivery UUID and App Store build ID. Transport success alone does not
 authorize the native checkpoint or OTA promotion. Android store binaries
 build locally on the Linux runner and use the existing Google Play authentication
 and upload path. Three legs now contend for that single machine: the iOS store
-build, the helper `darwin-x64` bundle, and the `MAC HELPER ACCEPTANCE` PR gate -
-that queueing is why the release budget was widened for attempts that build the
-macOS helper (or deliver on a reused artifact so it never had to).
+build, the helper `darwin-x64` bundle, and the `MAC HELPER ACCEPTANCE` PR gate.
 
 Selected jobs build immutable artifacts named with both release version and
 source SHA, promote them, run bounded checks, and publish a component
@@ -190,9 +188,10 @@ all release jobs are skipped. The same local proof is covered by:
 node --test scripts/unified-release.test.mjs
 ```
 
-A failed attempt stores its release state. Up to two automatic retries use the
-same version and SHA, skip checked components, reuse successful immutable build
-artifacts, and rerun only unfinished component work. When an earlier attempt at
+A failed attempt stores its release state. The release never redispatches
+itself. An explicit recovery dispatch with the same `release_version` and
+`release_sha` skips checked components, reuses successful immutable build
+artifacts, and reruns only unfinished component work. When an earlier attempt at
 this identity already merged the three-platform daemon artifact, `initialize`
 resolves the run holding it once and the helper leg promotes those exact bytes,
 so neither macOS bundle is rebuilt. When no reusable artifact resolves - it
@@ -203,12 +202,11 @@ absent selected artifacts fail closed. Helper fleet uptake is recorded once as
 post-release observability; installed-helper convergence never gates delivery.
 
 Routine version allocation skips every version already held by a GitHub release
-record, including unpublished drafts from terminated or partially shipped
+record, including unpublished drafts from failed or partially shipped
 attempts. Those records and assets remain intact; the next routine dispatch
-gets a fresh version without deleting a draft or retrying a terminated identity.
-Explicit recovery keeps the existing identity and can resume a terminated
-attempt; termination suppresses automatic self-redispatch only. A release
-listing failure stops initialization before anything ships.
+gets a fresh version without deleting a draft. Explicit recovery keeps the
+existing identity. A release listing failure stops initialization before
+anything ships.
 
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
@@ -222,31 +220,15 @@ Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 
-Normal selective attempts spend their 20-minute budget from dispatch to the
-`mobile_ota` **completion** checkpoint, not to the end of the whole run: the
-native, desktop, and website legs finish after the phone can already receive the
-update, so they no longer count against the fix-to-phone promise. An attempt
-that built a store binary or ran the emulator proof is allowed 60 minutes, and
-one whose helper leg either built the macOS bundles or delivered on a reused
-artifact 150 - a cold `cargo build --release` on the one self-hosted Intel Mac
-that the iOS leg also holds is queue time, not a missed budget, and a retry that
-delivered on reused bytes is not a budget failure just because that Mac never
-had to run. When no OTA completion checkpoint exists the whole-run elapsed time
-stands in for it. Separately the whole run has a 45-minute soft limit: exceeding
-it never fails the attempt or blocks the release record, it only marks the
-attempt **slow** in the summary. Component jobs otherwise have shorter explicit
-timeouts and network smoke checks have second-scale limits. The final index
-records outcome, duration, selected/carried components, and a failure class
-(`budget` or the unfinished component list).
-
-## Reliability measurement
-
-The workflow summary reports failed attempts over the latest 20 completed
-manual `unified-release.yml` runs, using GitHub Actions run conclusions. It
-surfaces the percentage only after at least 10 completed attempts; before that,
-it reports the sample as insufficient. The target is fewer than 10% failed
-attempts. This is an operating metric, not a claim that one change or one
-successful release proves the target.
+A release that shipped every selected component is a success, however long it
+took. Duration never fails an attempt. The summary reports the fix-to-phone time
+(dispatch to the `mobile_ota` completion checkpoint, or the whole run when no
+OTA completion checkpoint exists) and the whole-run time. A whole run over the
+45-minute soft limit is marked **slow** in the summary; it still publishes the
+release record. Component jobs have explicit timeouts and network smoke checks
+have second-scale limits. The final index records outcome, duration,
+selected/carried components, and, for a failed attempt, the unfinished
+component list as its failure class.
 
 Review the planner without deploying by running:
 
@@ -256,8 +238,8 @@ node --test scripts/unified-release.test.mjs
 
 Those fixtures cover canary ordering and window verdicts, rollback selection,
 the server image ledger, no-input defaults, per-component published-input drift,
-shared-path fanout, carry-forward, same-identity no-op and retry continuation,
-missing artifacts, completion/publication checks, and the workflow time budget.
+shared-path fanout, carry-forward, same-identity no-op and recovery continuation,
+missing artifacts, and completion/publication checks.
 
 ## Compatibility and signing invariants
 

@@ -5,13 +5,6 @@ import { runtimeVersionsFromConfig } from '../apps/mobile/scripts/native-fingerp
 import { nextDesktopVersion, normalizeDesktopVersion } from './desktop-update.mjs';
 
 export const RELEASE_COMPONENTS = ['server', 'helper', 'mobile-ota', 'mobile-native', 'desktop', 'website'];
-export const RELEASE_BUDGET_MINUTES = 20;
-export const RELEASE_FIX_TO_PHONE_BUDGET_SECONDS = RELEASE_BUDGET_MINUTES * 60;
-export const RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS = 60 * 60;
-// A macOS helper release pays a cold `cargo build --release` of buzz-agent/
-// buzz-dev-mcp ahead of the helper leg on the ONE self-hosted Intel Mac the iOS
-// leg and the Mac PR gate also hold; 150 minutes covers the worst serialized case.
-export const RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS = 150 * 60;
 export const RELEASE_SOFT_LIMIT_SECONDS = 45 * 60;
 export const RELEASE_NOTIFY_TIMEOUT_MS = 10_000;
 export const RELEASE_NOTIFY_ENDPOINT = 'https://server.usebeeline.app/v1/releases/notify';
@@ -84,12 +77,13 @@ function writeJson(path, value) {
 }
 function now() { return new Date().toISOString(); }
 
+// Duration is reported, never judged: a release that shipped every selected
+// component is a success however long it took. Only an unfinished component
+// fails the attempt.
 export function classifyReleaseAttempt({
   triggerEpoch,
   finishedEpoch,
   checkpoints = [],
-  nativeBuildRan = false,
-  helperMacosBuildRan = false,
   incomplete = '',
 }) {
   const trigger = Number(triggerEpoch);
@@ -106,22 +100,14 @@ export function classifyReleaseAttempt({
   const otaElapsedSeconds = otaCompletedAt === undefined
     ? wholeRunElapsedSeconds
     : Math.max(0, Math.trunc(otaCompletedAt) - Math.trunc(trigger));
-  const budgetSeconds = helperMacosBuildRan
-    ? RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS
-    : nativeBuildRan
-      ? RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS
-      : RELEASE_FIX_TO_PHONE_BUDGET_SECONDS;
   const unfinished = String(incomplete ?? '').trim();
-  const failureClass = otaElapsedSeconds >= budgetSeconds
-    ? 'budget'
-    : unfinished ? `component:${unfinished}` : '';
+  const failureClass = unfinished ? `component:${unfinished}` : '';
   const outcome = failureClass ? 'failure' : 'success';
   return {
     outcome,
     failureClass,
     otaElapsedSeconds,
     wholeRunElapsedSeconds,
-    budgetSeconds,
     softLimitSeconds: RELEASE_SOFT_LIMIT_SECONDS,
     slow: outcome === 'success' && wholeRunElapsedSeconds > RELEASE_SOFT_LIMIT_SECONDS,
     ...(otaCompletedAt === undefined ? {} : { otaCompletedAt: Math.trunc(otaCompletedAt) }),
@@ -543,7 +529,7 @@ export function releasePlanSummary(state) {
       const entry = componentEntry(state, component);
       return [component, `${entry.version}@${entry.sourceSha} (${entry.artifactRef})`];
     })),
-    retry: retryPlan(state), budgetMinutes: RELEASE_BUDGET_MINUTES,
+    retry: retryPlan(state),
   };
 }
 
@@ -656,8 +642,6 @@ async function main(argv) {
       triggerEpoch: args['trigger-epoch'],
       finishedEpoch: args['finished-epoch'],
       checkpoints,
-      nativeBuildRan: args['native-build-ran'] === 'true',
-      helperMacosBuildRan: args['helper-macos-build-ran'] === 'true',
       incomplete: args.incomplete,
     });
     if (args.output) writeJson(args.output, result);

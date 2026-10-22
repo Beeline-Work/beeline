@@ -1,7 +1,6 @@
 # The one production release button. It plans from the last successful release,
 # runs only affected components, and carries every other immutable artifact into
-# one new release record. A merge to main never releases. A normal selective
-# release ceiling is 20 minutes from dispatch to the final result.
+# one new release record. A merge to main never releases.
 #
 # RELEASE POLICY (consent gates):
 # - The default release is OTA-ONLY. Mobile OTA promotion never requires the
@@ -236,7 +235,7 @@ jobs:
               ghr_requested_version_guard "$release_version" "$(git rev-parse --verify "$release_sha^{commit}")"
             else
               # Every existing record reserves its version, including a draft
-              # left by a terminated or partially shipped attempt. Keep those
+              # left by a failed or partially shipped attempt. Keep those
               # records/assets intact; routine dispatch always gets a fresh
               # identity. Explicit recovery above retains its strict guard.
               ghr_api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/reserved-release-versions.txt"
@@ -246,7 +245,6 @@ jobs:
             fi
           fi
           release_id="${release_version}-${release_sha}"
-          # Manual dispatch may resume any identity; termination only suppresses automatic retries.
           if [ -f "$previous" ]; then
             node scripts/unified-release.mjs component-paths \
               --previous "$previous" --sha "$release_sha" \
@@ -491,38 +489,6 @@ jobs:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-      # Retry gates for the server component: whether this attempt touched
-      # (updated/restarted) any Fly Machine and whether the release migration
-      # failed. The server-leg action writes the marker files; this step folds
-      # them into one inspectable artifact the release_result/retry jobs read.
-      # A just-updated machine runs its own startup migrations that can
-      # deadlock the next attempt's release migration, so a machines-touched
-      # attempt is terminal on failure.
-      - name: Collect the server retry gates
-        id: retry_gates
-        if: >-
-          always() && contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server) &&
-          steps.promote.conclusion != 'skipped'
-        run: |
-          set -euo pipefail
-          node - "$RUNNER_TEMP/server-release" > "$RUNNER_TEMP/server-retry-gates.json" <<'NODE'
-          const fs = require('node:fs');
-          const dir = process.argv[2];
-          const exists = (name) => { try { fs.statSync(`${dir}/${name}`); return true; } catch { return false; } };
-          let migrationFailed = false;
-          if (exists('migration-failed.json')) {
-            migrationFailed = JSON.parse(fs.readFileSync(`${dir}/migration-failed.json`)).failed === true;
-          }
-          process.stdout.write(`${JSON.stringify({ machinesTouched: exists('machines-touched.json'), migrationFailed })}\n`);
-          NODE
-          mkdir -p "$RUNNER_TEMP/server-gates"
-          mv "$RUNNER_TEMP/server-retry-gates.json" "$RUNNER_TEMP/server-gates/gates.json"
-      - uses: actions/upload-artifact@v4
-        if: always() && steps.retry_gates.conclusion == 'success'
-        with:
-          name: server-retry-gates-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/server-gates/gates.json
-          retention-days: 90
       - name: Preserve server image rollback ledger
         if: always() && contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
         uses: actions/upload-artifact@v4
@@ -1390,8 +1356,7 @@ jobs:
 
   release_result:
     # !cancelled(), not always(): a run superseded by cancel-in-progress must not
-    # classify itself as a failed attempt, and (below) must never redispatch its
-    # pinned identity — that redispatch cancelled the fresh cut that replaced it.
+    # classify itself as a failed attempt.
     if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
     needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
     runs-on: [self-hosted, beeline-prod-host]
@@ -1403,8 +1368,6 @@ jobs:
     outputs:
       outcome: ${{ steps.result.outputs.outcome }}
       failure_class: ${{ steps.result.outputs.failure_class }}
-      terminated: ${{ steps.result.outputs.terminated }}
-      terminated_reason: ${{ steps.result.outputs.terminated_reason }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1419,13 +1382,6 @@ jobs:
         with:
           name: unified-release-plan-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/release
-      - name: Download the server retry gates
-        if: always()
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: server-retry-gates-${{ needs.initialize.outputs.release_id }}
-          path: ${{ runner.temp }}/server-gates
       - uses: actions/download-artifact@v4
         continue-on-error: true
         with:
@@ -1476,16 +1432,6 @@ jobs:
         id: result
         env:
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
-          SERVER_RESULT: ${{ needs.server.result }}
-          HELPER_RESULT: ${{ needs.helper.result }}
-          HELPER_MACOS_RESULT: ${{ needs.helper_macos.result }}
-          HELPER_REUSE_RUN_ID: ${{ needs.initialize.outputs.helper_reuse_run_id }}
-          MOBILE_OTA_RESULT: ${{ needs.mobile_ota.result }}
-          RELEASE_PROOF_RESULT: ${{ needs.release_proof.result }}
-          MOBILE_NATIVE_ANDROID_RESULT: ${{ needs.mobile_native_android.result }}
-          MOBILE_NATIVE_IOS_RESULT: ${{ needs.mobile_native_ios.result }}
-          DESKTOP_RESULT: ${{ needs.desktop_installers.result }}
-          WEBSITE_RESULT: ${{ needs.website.result }}
         run: |
           set -euo pipefail
           state="$RUNNER_TEMP/release/unified-release.json"
@@ -1501,70 +1447,19 @@ jobs:
           incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
           no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
           now=$(date +%s)
-          # The 20-minute budget is the fix-to-phone promise (server + OTA). A store
-          # binary built in this attempt (local iOS archive+export ~30 min on the Mac
-          # runner, EAS Android similar) cannot fit it, and run 34775159256 delivered
-          # every component yet was classified "budget" and never published its
-          # release record. When a native build ran, allow 60 minutes instead.
-          # A macOS helper release pays the same shape twice over: a cold
-          # `cargo build --release` of buzz-agent/buzz-dev-mcp, serial ahead of the
-          # helper leg, on the ONE self-hosted Intel Mac that the iOS leg (90-minute
-          # cap) and the Mac PR gate (35) also hold. Queue time on that single runner
-          # is the cost, present whether or not iOS built in this attempt, so a
-          # helper release that delivered every component must not be classified
-          # "budget" for waiting in it: 150 minutes covers the worst serialized case.
-          # The fix-to-phone clock now runs to the checked OTA checkpoint, not to the
-          # end of the whole run (native/desktop/website legs finish after the phone
-          # already has the update); the whole run keeps a 45-minute soft limit that
-          # only marks the attempt "slow".
-          native_build_ran=false
-          if [ "$MOBILE_NATIVE_IOS_RESULT" = success ] || [ "$MOBILE_NATIVE_ANDROID_RESULT" = success ] || [ "$RELEASE_PROOF_RESULT" = success ]; then
-            native_build_ran=true
-          fi
-          # A helper leg riding a reused artifact skips that Mac entirely, so it
-          # earns the same widening on its own success — the whole point of the
-          # reuse path is that it delivers, and delivering must never be recorded
-          # as a budget failure just because the Mac never had to run.
-          helper_macos_build_ran=false
-          if [ "$HELPER_MACOS_RESULT" = success ] || { [ "$HELPER_RESULT" = success ] && [ -n "$HELPER_REUSE_RUN_ID" ]; }; then
-            helper_macos_build_ran=true
-          fi
+          # A release that shipped every selected component is a success,
+          # however long it took. Elapsed times are reported, never judged.
           node scripts/unified-release.mjs classify-attempt \
             --trigger-epoch "$TRIGGER_EPOCH" \
             --finished-epoch "$now" \
             --checkpoints "$RUNNER_TEMP/checkpoints.json" \
-            --native-build-ran "$native_build_ran" \
-            --helper-macos-build-ran "$helper_macos_build_ran" \
             --incomplete "$incomplete" \
             --output "$RUNNER_TEMP/release-classification.json"
           failure_class=$(node -e 'process.stdout.write(require(process.argv[1]).failureClass)' "$RUNNER_TEMP/release-classification.json")
           slow=$(node -e 'process.stdout.write(String(require(process.argv[1]).slow))' "$RUNNER_TEMP/release-classification.json")
           ota_elapsed=$(node -e 'process.stdout.write(String(require(process.argv[1]).otaElapsedSeconds))' "$RUNNER_TEMP/release-classification.json")
           whole_run_elapsed=$(node -e 'process.stdout.write(String(require(process.argv[1]).wholeRunElapsedSeconds))' "$RUNNER_TEMP/release-classification.json")
-          budget_seconds=$(node -e 'process.stdout.write(String(require(process.argv[1]).budgetSeconds))' "$RUNNER_TEMP/release-classification.json")
           soft_limit_seconds=$(node -e 'process.stdout.write(String(require(process.argv[1]).softLimitSeconds))' "$RUNNER_TEMP/release-classification.json")
-          # Termination rules for the retry loop: a cancelled attempt (including
-          # cancel-in-progress), a failed release migration, and any attempt
-          # whose server leg touched a Fly Machine are all PERMANENT for this
-          # release identity — the retry job must never re-dispatch them.
-          cancelled=false
-          for need_result in "$SERVER_RESULT" "$HELPER_MACOS_RESULT" "$HELPER_RESULT" "$MOBILE_OTA_RESULT" "$RELEASE_PROOF_RESULT" "$MOBILE_NATIVE_ANDROID_RESULT" "$MOBILE_NATIVE_IOS_RESULT" "$DESKTOP_RESULT" "$WEBSITE_RESULT"; do
-            if [ "$need_result" = cancelled ]; then cancelled=true; fi
-          done
-          machines_touched=false
-          migration_failed=false
-          gates="$RUNNER_TEMP/server-gates/gates.json"
-          if [ -f "$gates" ]; then
-            machines_touched=$(node -e 'process.stdout.write(String(require(process.argv[1]).machinesTouched===true))' "$gates")
-            migration_failed=$(node -e 'process.stdout.write(String(require(process.argv[1]).migrationFailed===true))' "$gates")
-          fi
-          terminated_reason=''
-          if [ "$cancelled" = true ]; then terminated_reason=cancelled
-          elif [ "$migration_failed" = true ]; then terminated_reason=migration-failed
-          elif [ "$machines_touched" = true ]; then terminated_reason=machines-touched
-          fi
-          terminated=false
-          if [ -n "$terminated_reason" ]; then terminated=true; fi
           if [ -n "$failure_class" ]; then
             node scripts/unified-release.mjs finalize --state "$state" --outcome failure --failure-class "$failure_class"
             {
@@ -1586,36 +1481,10 @@ jobs:
           {
             echo "ota_elapsed_seconds=$ota_elapsed"
             echo "whole_run_elapsed_seconds=$whole_run_elapsed"
-            echo "fix_to_phone_budget_seconds=$budget_seconds"
             echo "soft_limit_seconds=$soft_limit_seconds"
-            echo "machines_touched=$machines_touched"
-            echo "migration_failed=$migration_failed"
-            echo "terminated=$terminated"
-            echo "terminated_reason=$terminated_reason"
           } >> "$GITHUB_OUTPUT"
           cp "$state" "$RUNNER_TEMP/release-attempt.json"
-      - name: Stamp the terminated identity into the published attempt state
-        # Retain the reason for suppressing automatic redispatch. An explicit
-        # manual dispatch can still resume this identity.
-        if: steps.result.outputs.terminated == 'true' && steps.result.outputs.no_op != 'true'
-        env:
-          TERMINATED_REASON: ${{ steps.result.outputs.terminated_reason }}
-        run: |
-          set -euo pipefail
-          node - "$RUNNER_TEMP/release-attempt.json" "$TERMINATED_REASON" <<'NODE'
-          const fs = require('node:fs');
-          const [path, reason] = process.argv.slice(2);
-          const state = JSON.parse(fs.readFileSync(path));
-          state.terminated = true;
-          state.delivery = { ...state.delivery, terminated: true, terminatedReason: reason };
-          fs.writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`);
-          NODE
-          node - "$RUNNER_TEMP/release-attempt.json" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
-          const state = require(process.argv[2]);
-          console.log(`## Release identity TERMINATED (${state.delivery.terminatedReason})`);
-          console.log('- No retry of this identity may run: not the retry job, and not a manual run of the same identity.');
-          NODE
-      - name: Publish immutable attempt state for component-local retry
+      - name: Publish immutable attempt state for manual recovery of this identity
         if: steps.result.outputs.no_op != 'true'
         uses: actions/upload-artifact@v4
         with:
@@ -1819,23 +1688,7 @@ jobs:
           path: ${{ runner.temp }}/release-attempt.json
           overwrite: true
           retention-days: 90
-      - name: Measure rolling release attempt reliability
-        id: reliability
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const runs = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner, repo: context.repo.repo,
-              workflow_id: 'unified-release.yml', event: 'workflow_dispatch', per_page: 20,
-            });
-            const completed = runs.data.workflow_runs.filter((run) => run.status === 'completed').slice(0, 20);
-            const failed = completed.filter((run) => run.conclusion !== 'success').length;
-            const rate = completed.length ? failed / completed.length : 0;
-            core.setOutput('sample', String(completed.length));
-            core.setOutput('failed', String(failed));
-            core.setOutput('rate', (rate * 100).toFixed(1));
-      - name: Surface release outcome, duration, and measured failure rate
+      - name: Surface release outcome and duration
         env:
           OUTCOME: ${{ steps.result.outputs.outcome }}
           NO_OP: ${{ steps.result.outputs.no_op }}
@@ -1843,11 +1696,7 @@ jobs:
           SLOW: ${{ steps.result.outputs.slow }}
           OTA_ELAPSED_SECONDS: ${{ steps.result.outputs.ota_elapsed_seconds }}
           WHOLE_RUN_ELAPSED_SECONDS: ${{ steps.result.outputs.whole_run_elapsed_seconds }}
-          FIX_TO_PHONE_BUDGET_SECONDS: ${{ steps.result.outputs.fix_to_phone_budget_seconds }}
           SOFT_LIMIT_SECONDS: ${{ steps.result.outputs.soft_limit_seconds }}
-          SAMPLE: ${{ steps.reliability.outputs.sample }}
-          FAILED: ${{ steps.reliability.outputs.failed }}
-          RATE: ${{ steps.reliability.outputs.rate }}
           RUN_DESKTOP: ${{ needs.initialize.outputs.run_desktop }}
           MACOS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           MACOS_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -1863,7 +1712,7 @@ jobs:
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
           console.log(`- Duration: ${release.delivery.durationSeconds}s`);
-          console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s / ${process.env.FIX_TO_PHONE_BUDGET_SECONDS}s budget`);
+          console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s`);
           if (process.env.SLOW === 'true') console.log(`- Slow: whole run reached ${process.env.WHOLE_RUN_ELAPSED_SECONDS}s (soft limit ${process.env.SOFT_LIMIT_SECONDS}s); release record still published.`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);
           console.log(`- Carried: ${release.plan.carried.join(', ') || 'none'}`);
@@ -1881,76 +1730,9 @@ jobs:
           if (process.env.NO_OP === 'true') console.log('- No-op: this exact release was already delivered; nothing was republished.');
           console.log(`- Notification: ${process.env.NOTIFICATION_STATE} (${process.env.NOTIFICATION_DETAIL})`);
           if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);
-          console.log('- Reliability target: fewer than 10% failed attempts over the rolling 20 release attempts.');
-          if (Number(process.env.SAMPLE) >= 10) console.log(`- Measured failure rate: ${process.env.RATE}% (${process.env.FAILED}/${process.env.SAMPLE}).`);
-          else console.log(`- Measured failure rate: insufficient sample (${process.env.SAMPLE}/10 attempts); one release cannot prove the target.`);
           NODE
       - name: Fail the attempt after preserving its classified record
         if: steps.result.outputs.outcome != 'success'
         run: |
           echo "Release failed (${{ steps.result.outputs.failure_class }}): ${{ steps.result.outputs.incomplete }}" >&2
           exit 1
-
-  retry:
-    # Retry rules (all terminal = no re-dispatch, ever):
-    # - a cancelled attempt (including cancel-in-progress) never re-dispatches;
-    # - a failed release migration never re-dispatches;
-    # - an attempt whose server leg touched a Fly Machine never re-dispatches
-    #   (the just-updated machine's startup migrations deadlock the next
-    #   attempt's release migration — the 15:19→19:11Z 7-attempt churn chain).
-    # release_result.outputs.terminated carries all three; the retry job also
-    # re-checks its own run conclusion as belt-and-suspenders.
-    if: >-
-      !cancelled() && inputs.plan_only != true &&
-      needs.release_result.result == 'failure' &&
-      needs.release_result.outputs.terminated != 'true' &&
-      fromJSON(inputs.retry_attempt || '1') < 3
-    needs: [initialize, release_result]
-    runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 2
-    steps:
-      - name: Refuse to re-dispatch a cancelled run
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const run = await github.rest.actions.getWorkflowRun({
-              owner: context.repo.owner, repo: context.repo.repo, run_id: context.runId,
-            });
-            if (run.data.conclusion === 'cancelled') {
-              core.setFailed('this run was cancelled; cancellation is terminal for the release identity and never re-dispatches');
-            }
-      - name: Redispatch the same release identity; successful checkpoints stay complete
-        uses: actions/github-script@v7
-        env:
-          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
-          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
-          DISPATCHED_BY: ${{ inputs.dispatched_by }}
-          ATTEMPT: ${{ inputs.retry_attempt || '1' }}
-          SELECTION: ${{ inputs.selection || 'auto' }}
-          STORE_TRACK: ${{ inputs.store_track || 'none' }}
-          ALLOW_PIN_RESTORE: ${{ inputs.allow_pin_restore || 'false' }}
-        with:
-          script: |
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-              owner: context.repo.owner, repo: context.repo.repo,
-              workflow_id: 'unified-release.yml', per_page: 100,
-            });
-            const active = runs.find(run => run.id !== context.runId && run.status !== 'completed');
-            if (active) {
-              core.notice(`Production release ${active.id} is already ${active.status}; skipping automatic retry. Recover this identity explicitly after that run finishes.`);
-              return;
-            }
-            const attempt = Number(process.env.ATTEMPT);
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner, repo: context.repo.repo,
-              workflow_id: 'unified-release.yml', ref: 'main',
-              inputs: {
-                dispatched_by: process.env.DISPATCHED_BY,
-                release_sha: process.env.RELEASE_SHA,
-                release_version: process.env.RELEASE_VERSION,
-                retry_attempt: String(attempt + 1),
-                selection: process.env.SELECTION,
-                store_track: process.env.STORE_TRACK,
-                allow_pin_restore: process.env.ALLOW_PIN_RESTORE === 'true',
-              },
-            });

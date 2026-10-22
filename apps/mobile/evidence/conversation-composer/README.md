@@ -9,14 +9,14 @@ npx vitest run sources/components/buzz/ConversationComposer.conversation.browser
 ```
 
 The proof checks connected silence, connection pending, listening and agent speech;
-all controls remain available. It taps Jellybean, verifies the selected avatar outline without an underlined name
-and persistent selected state across those phases, and checks that the existing scrolling waveform retains a live bar at its
+all controls remain available. It taps Jellybean, verifies the filled pinned tile, brass badge and caption without an underlined name,
+taps again to unpin, then pins again and checks persistent pinned state across those phases, and checks that the existing scrolling waveform retains a live bar at its
 visible newest edge. A level update changes that bar in the same synchronous
 render, before any history sample or timer advances. History keeps its existing
 glide and 120 ms spacing, without attack/release smoothing. It then ends the call and sends a staged document with the next message,
 reusing the upload. Both themes print RESULT PASS. Screenshots show Ruby speaking
-while Jellybean remains selected. Jellybean has a black selection frame; Ruby has a pulsing brass speaking frame.
-Inactive Goosey has no frame. Speaking takes precedence when the selected agent speaks.
+while Jellybean remains selected. Jellybean has a filled tile and brass pin badge; Ruby has a pulsing brass speaking frame.
+Inactive Goosey has no frame. The pin badge remains visible when the pinned agent speaks.
 The production HullLivePulse respects reduced motion and app backgrounding.
 
 Reproductions CONVERSATION-2 (tap selection) and CONVERSATION-3 (live waveform)

@@ -47,6 +47,8 @@ const decorativeAccentFills = new Set([
   // The center point of the outlined attention glyph, not the button plate.
   // The running call's status dot; Join uses a separate neutral plate.
   'components/buzz/VoiceCallCard.tsx:dot',
+  // The approved non-interactive pin badge overlays a neutral avatar tile.
+  'components/buzz/VoiceBar.tsx:pinBadge',
 ]);
 
 function filesUnder(directory: string): string[] {

@@ -145,6 +145,21 @@ it('keeps the batch pending if the target corner is archived', async () => {
   expect((await commands()).rowCount).toBe(1);
 });
 
+it('keeps handled arrivals pending until the recipient has current membership', async () => {
+  await fixture();
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`,[JELLYBEAN,ROOM]);
+  const handled = issue('704');
+  handled.data.issue.level = 'error';
+  expect((await post(handled)).status).toBe(200);
+  expect((await commands()).rowCount).toBe(0);
+  expect((await db.query(`SELECT pending FROM sentry_wake_issues`)).rows).toEqual([{pending:true}]);
+  expect((await db.query(`SELECT last_wake_at FROM sentry_wake_state`)).rows).toEqual([{last_wake_at:null}]);
+  await db.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id=$2`,[JELLYBEAN,ROOM]);
+  await flushSentryWakes(db);
+  expect((await commands()).rowCount).toBe(1);
+  expect(await nextSentryWakeAt(db)).toBeNull();
+});
+
 it('updates a later occurrence of the same issue without waking again for retries or older events', async () => {
   await fixture();
   const first = issue('123','unresolved','regressed');
@@ -168,30 +183,60 @@ it('updates a later occurrence of the same issue without waking again for retrie
   expect(await nextSentryWakeAt(db)).toBeNull();
 });
 
-it('Reproduction sentry-direct: batches handled errors daily while fatal and unhandled events wake Jellybean directly', async () => {
+it('Reproduction SENTRY-ARRIVAL-1: handled issue.created wakes privately on arrival and coalesces mixed bursts', async () => {
   await fixture();
-  const handled = issue('700');
+  await db.query(`UPDATE sentry_wake_state SET last_daily_wake_at=now()-interval '12 hours'`);
+  const messagesBefore = (await db.query(`SELECT id FROM messages`)).rowCount;
+  const handled = issue('7805731896');
   handled.data.issue.level = 'error';
   expect((await post(handled)).status).toBe(200);
-  expect((await commands()).rowCount).toBe(0);
-  expect(await nextSentryWakeAt(db)).toBeInstanceOf(Date);
-  expect((await post({action:'triggered',data:{event:{issue_id:'701',title:'Unhandled',level:'error',
-    exception:{values:[{mechanism:{handled:false}}]}}}},'event_alert')).status).toBe(200);
-  expect((await commands()).rows.map(row => row.agent_id)).toEqual([JELLYBEAN]);
-  expect((await commands()).rows[0]!.private_payload.text).toContain('/701/');
-  expect((await commands()).rows[0]!.private_payload.text).not.toContain('/700/');
-  await db.query(`UPDATE sentry_wake_state SET last_daily_wake_at=now()-interval '24 hours'`);
+  const first = (await commands()).rows;
+  expect(first).toHaveLength(1);
+  expect(first[0]).toMatchObject({agent_id:JELLYBEAN,room_id:TRIAGE,source_message_id:null});
+  expect(first[0]!.private_payload.text).toContain('error: Issue 7805731896');
+  expect((await db.query(`SELECT urgent,pending FROM sentry_wake_issues`)).rows)
+    .toEqual([{urgent:false,pending:false}]);
+  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect((await post(handled)).status).toBe(200);
+  const next = issue('702');
+  next.data.issue.level = 'error';
+  expect((await post(next)).status).toBe(200);
+  expect((await post(issue('703'))).status).toBe(200);
+  expect((await commands()).rowCount).toBe(1);
+  const deadline = (await nextSentryWakeAt(db))!;
+  expect(deadline.getTime()).toBeGreaterThan(Date.now());
+  expect(deadline.getTime()).toBeLessThanOrEqual(Date.now()+5*60*1000);
+  // Even an expired legacy daily clock cannot bypass burst coalescing.
+  await db.query(`UPDATE sentry_wake_state SET last_daily_wake_at=now()-interval '25 hours'`);
+  await flushSentryWakes(db);
+  expect((await commands()).rowCount).toBe(1);
+  await db.query(`UPDATE sentry_wake_state SET last_wake_at=now()-interval '5 minutes'`);
   await Promise.all([flushSentryWakes(db),flushSentryWakes(db)]);
   const rows = (await commands()).rows;
   expect(rows).toHaveLength(2);
-  expect(rows[1]!.agent_id).toBe(JELLYBEAN);
-  expect(rows[1]!.private_payload.text).toContain('/700/');
-  expect(rows[1]!.private_payload.text).not.toContain('/701/');
-  expect(await nextSentryWakeAt(db)).toBeNull();
-  handled.data.issue.id = '702';
-  expect((await post(handled)).status).toBe(200);
+  expect(rows[1]!.private_payload.text).toContain('2 Sentry issue events');
+  expect(rows[1]!.private_payload.text).toContain('/702/');
+  expect(rows[1]!.private_payload.text).toContain('/703/');
+  expect(rows[1]!.private_payload.text).not.toContain('/7805731896/');
+  await post(next);
   expect((await commands()).rowCount).toBe(2);
-  expect((await nextSentryWakeAt(db))!.getTime()).toBeGreaterThan(Date.now()+23*60*60*1000);
+  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect((await db.query(`SELECT id FROM messages`)).rowCount).toBe(messagesBefore);
+});
+
+it('releases handled backlog from the old daily policy on restart without a new webhook', async () => {
+  await fixture();
+  await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`,[TRIAGE]);
+  const handled = issue('700');
+  handled.data.issue.level = 'error';
+  await post(handled);
+  await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`,[TRIAGE]);
+  await db.query(`UPDATE sentry_wake_state SET last_wake_at=NULL,last_daily_wake_at=now()`);
+  expect((await nextSentryWakeAt(db))!.getTime()).toBeLessThanOrEqual(Date.now());
+  await Promise.all([flushSentryWakes(db),flushSentryWakes(db)]);
+  expect((await commands()).rowCount).toBe(1);
+  expect((await commands()).rows[0]!.private_payload.text).toContain('/700/');
+  expect(await nextSentryWakeAt(db)).toBeNull();
 });
 
 it('recognizes issue flags and both Sentry handled-tag encodings without treating handled exceptions as urgent', async () => {

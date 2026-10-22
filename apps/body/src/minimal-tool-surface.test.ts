@@ -275,11 +275,12 @@ describe('minimal agent surface', () => {
     expect(status.capabilities).toEqual(
       expect.arrayContaining(['beeline:workflow', 'beeline:wallet', 'beeline:browser_share']),
     );
-    expect(calls.every((call) => call.operation === 'readAgentWorkbench')).toBe(true);
+    expect(calls.map(call => call.operation)).toEqual(['getRoomRepositoryState', 'readAgentWorkbench']);
     const before = calls.length;
     const discovery = JSON.parse(await callAgentTool('connect', { mode: 'discover' }, 'discover'));
     expect(discovery.capabilities).toContain('beeline:workflow');
-    expect(calls).toHaveLength(before);
+    expect(calls).toHaveLength(before + 1);
+    expect(calls.at(-1)?.operation).toBe('getRoomRepositoryState');
   });
 
   it('discovers optional schemas locally and scopes an existing workflow wake to its corner', async () => {

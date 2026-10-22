@@ -308,8 +308,8 @@ describe('server-mediated connected app tools', () => {
       reason: 'Check X posts', continuation: 'I will check the requested posts after sign-in.'
     }, 'call-2'))).toMatchObject({ status: 'needs_sign_in', appId });
     expect(calls.map((call) => [call.name, call.input.roomId]))
-      .toEqual([['readAgentWorkbench', 'corner-1'], ['connect', 'corner-1']]);
-    expect(calls[1]?.input).toMatchObject({ requestId: 'request-1',
+      .toEqual([['getRoomRepositoryState', 'room-1'], ['readAgentWorkbench', 'corner-1'], ['connect', 'corner-1']]);
+    expect(calls[2]?.input).toMatchObject({ requestId: 'request-1',
       generationId: 'generation-1' });
   });
 });

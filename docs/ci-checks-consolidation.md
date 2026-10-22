@@ -52,6 +52,6 @@ Local checks: root typecheck, workflow lint, workflow test-path lint, dead-code 
 
 Hosted results for the new workflow are pending. The job-count table is an evaluated scheduling result, not a measured wall-clock or compute speedup. Before/after hosted timings for the same server, mobile and mixed revisions remain required to finish the brief.
 
-README PARITY, APP LINK ASSOCIATIONS and ACTIONLINT retain their check names. AGENTS.md and the development guide declare job names required and prohibit renaming. The owner's personal GitHub token returned HTTP 403 for branch-protection inspection. Replacing these contexts with REPO LINT therefore awaits a human decision and any required-check configuration change; the implementation does not silently remove them.
+README PARITY, APP LINK ASSOCIATIONS and ACTIONLINT remain separate as Ruby directed. All required aggregate check names are preserved; only the runners under SERVER SUITE and SERVER INTEGRATION are consolidated. No branch-protection change or check-name approval is requested.
 
 The removed matrix contexts are SERVER SUITE SHARD 5–8 and SERVER INTEGRATION SHARD 1–8. SERVER SUITE SHARD 1–4, SERVER SUITE, SERVER INTEGRATION and SERVER CLAIM LATENCY remain. No release workflow changes are included.

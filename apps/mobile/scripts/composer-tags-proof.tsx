@@ -144,9 +144,9 @@ async function put(value: string, cursor = value.length) {
   await pause();
 }
 
-/** A Backspace key press; true when the composer handled it itself. */
-async function backspace() {
-  const event = new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true });
+/** A Backspace (or other) key press; true when the composer handled it itself. */
+async function backspace(key = 'Backspace') {
+  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
   input().dispatchEvent(event);
   await pause();
   return event.defaultPrevented;
@@ -190,6 +190,8 @@ async function run() {
   check('after the space, backspace is left to the browser', !(await backspace()));
   await put('@spee', 5);
   check('a half-typed handle that is no member is left to the browser', !(await backspace()));
+  await put('@ruby hi', 4);
+  check('a forward delete inside a tag is left to the browser', !(await backspace('Delete')));
 
   // The @ suggestions still open while typing a handle, at the start and mid-message.
   await put('@ru');

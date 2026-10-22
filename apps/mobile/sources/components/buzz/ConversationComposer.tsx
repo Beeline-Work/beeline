@@ -216,7 +216,10 @@ function ConversationComposerContent({
   const deleteTagBackward = (cursor: number) => {
     const next = deleteComposerTagBackward(value, cursor, tagHandles);
     if (!next) return false;
-    if (isInputRevisionCurrent?.(inputRevision) !== false) pendingCursorRef.current = next.cursor;
+    if (isInputRevisionCurrent?.(inputRevision) !== false) {
+      pendingCursorRef.current = next.cursor;
+      selectionRef.current = { start: next.cursor, end: next.cursor };
+    }
     commitInputChange(next.text);
     return true;
   };

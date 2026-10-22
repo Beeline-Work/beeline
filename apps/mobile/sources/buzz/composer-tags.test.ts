@@ -96,9 +96,14 @@ describe('reading a native backspace from the text', () => {
 
   it('finds the cursor a one-character backspace was pressed at', () => {
     expect(composerBackspaceCursor('@ruby hi', '@rub hi', caret(5))).toBe(5);
-    // The selection may already have moved for this change.
-    expect(composerBackspaceCursor('@ruby hi', '@rub hi', caret(4))).toBe(5);
-    expect(composerBackspaceCursor('@ann hi', '@an hi', caret(3))).toBe(4);
+    expect(composerBackspaceCursor('@ann hi', '@an hi', caret(4))).toBe(4);
+    // A selection that fits neither side, such as one never reported.
+    expect(composerBackspaceCursor('@ruby hi', '@rub hi', caret(0))).toBe(5);
+  });
+
+  it('ignores a forward delete', () => {
+    expect(composerBackspaceCursor('@ruby hi', '@rub hi', caret(4))).toBeNull();
+    expect(composerBackspaceCursor('@ruby hi', '@rubyhi', caret(5))).toBeNull();
   });
 
   it('ignores typing, pastes, replacements and a deleted one-character selection', () => {

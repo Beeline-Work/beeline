@@ -1036,8 +1036,7 @@ describe('member tags', () => {
       expect(start.nativeInput.setSelection).toHaveBeenLastCalledWith(0, 0);
 
       const middle = renderControlled('ask @speedy and @sol now');
-      // The selection may already have moved for the change (iOS).
-      middle.select(10);
+      middle.select(11);
       act(() => middle.input().props.onChangeText('ask @speed and @sol now'));
       expect(middle.changes).toEqual(['ask  and @sol now']);
       expect(middle.nativeInput.setSelection).toHaveBeenLastCalledWith(4, 4);
@@ -1082,6 +1081,37 @@ describe('member tags', () => {
       act(() => cut.input().props.onChangeText('@rub hi'));
       expect(cut.changes).toEqual(['@rub hi']);
       expect(cut.nativeInput.setSelection).not.toHaveBeenCalled();
+    });
+
+    it.each(['Delete', 'Backspace'])(
+      'deletes one letter on a forward delete inside a tag reported as %s',
+      (key) => {
+        // iOS reports a forward delete as Backspace; the cursor tells them apart.
+        const onKeyPress = vi.fn();
+        const forward = renderControlled('@ruby hi', onKeyPress);
+        forward.select(4);
+        act(() => forward.input().props.onKeyPress({ nativeEvent: { key } }));
+        act(() => forward.input().props.onChangeText('@rub hi'));
+        expect(onKeyPress).toHaveBeenCalledOnce();
+        expect(forward.changes).toEqual(['@rub hi']);
+        expect(forward.nativeInput.setSelection).not.toHaveBeenCalled();
+
+        const beforeSpace = renderControlled('@ruby hi', onKeyPress);
+        beforeSpace.select(5);
+        act(() => beforeSpace.input().props.onKeyPress({ nativeEvent: { key } }));
+        act(() => beforeSpace.input().props.onChangeText('@rubyhi'));
+        expect(beforeSpace.changes).toEqual(['@rubyhi']);
+      },
+    );
+
+    it('reads the next backspace from the cursor it set after deleting a tag', () => {
+      const pair = renderControlled('@ruby @sol');
+      pair.select(10);
+      act(() => pair.input().props.onChangeText('@ruby @so'));
+      expect(pair.changes).toEqual(['@ruby ']);
+      expect(pair.nativeInput.setSelection).toHaveBeenLastCalledWith(6, 6);
+      act(() => pair.input().props.onChangeText('@ruby'));
+      expect(pair.changes).toEqual(['@ruby ', '@ruby']);
     });
   });
 

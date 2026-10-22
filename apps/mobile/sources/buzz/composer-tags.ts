@@ -72,9 +72,12 @@ export function deleteComposerTagBackward(
 
 /**
  * The cursor a backspace was pressed at, read from a native text change that
- * removed one character, or null for any other change. Inside a run of one
- * letter it is the run's end, which is the only place a tag can end. A
- * deleted one-character selection is not a backspace.
+ * removed one character, or null for any other change. iOS and Android report
+ * the change before the cursor moves, so `selection` is where the cursor was:
+ * a backspace removed the character before it, and a forward delete or a
+ * deleted one-character selection removed the one after it. Only when the
+ * selection fits neither is the cursor read from the text alone; inside a run
+ * of one letter it is then the run's end, the only place a tag can end.
  */
 export function composerBackspaceCursor(
   before: string,
@@ -83,7 +86,12 @@ export function composerBackspaceCursor(
 ): number | null {
   if (after.length !== before.length - 1) return null;
   const without = (at: number) => before.slice(0, at) + before.slice(at + 1);
-  if (selection.end === selection.start + 1 && without(selection.start) === after) return null;
+  if (selection.start === selection.end) {
+    if (selection.start > 0 && without(selection.start - 1) === after) return selection.start;
+    if (without(selection.start) === after) return null;
+  } else if (selection.end === selection.start + 1 && without(selection.start) === after) {
+    return null;
+  }
   let at = 0;
   while (at < after.length && after[at] === before[at]) at += 1;
   return without(at) === after ? at + 1 : null;

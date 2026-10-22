@@ -543,6 +543,9 @@ it('call history search excludes Rooms another caller cannot read and privately 
     const { readAgentCommands } = await import('./agent-command.js');
     const commands = await readAgentCommands(db, room, A);
     expect(commands.commands[0]?.source.body).toContain('This is a separate request from a live voice call.');
+    expect(commands.commands[0]?.source.body).toContain('Results dated today are current');
+    expect(commands.commands[0]?.source.body).toContain('Never start your reply with your name');
+    expect(commands.commands[0]?.source.body).toContain(String(new Date().getUTCFullYear()));
     expect(commands.commands[0]?.source.body).toContain('one line for a status, a few sentences for a real answer, at most about 150 words');
     const message = (await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [source])).rows[0]!;
     expect(message.text).not.toContain('This request came');
@@ -578,4 +581,28 @@ it('VOICE-ROUTER-1: hand-offs arriving mid-turn remain separate requests after o
     expect(queued.every(command=>command.source.body.includes('Answer this request in this turn'))).toBe(true);
     expect((await db.query(`SELECT state FROM agent_commands WHERE source_message_id=$1`,[first])).rows[0]).toEqual({state:'complete'});
   } finally { await service.leave(joined.call.id,H); await db.query('DELETE FROM rooms WHERE id=$1',[room]); }
+});
+
+it('Reproduction R1/R2: a handed-off voice request carries today and posts its heavy answer without its own name', async () => {
+  const room = '13131313-1313-4313-8313-131313131313';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Voice reply proof')`,[room,W]);
+  for (const id of [H,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,room,id]);
+  const joined = await service.join(room,H);
+  try {
+    const agent = (await service.agents(room,H)).find(agent=>agent.id===A)!;
+    const owner = (await db.query<{runtime_owner:string}>(`SELECT runtime_owner FROM voice_calls WHERE id=$1`,[joined.call.id])).rows[0]!.runtime_owner;
+    const source = await service.recordHuman(joined.call.id,room,H,agent,"what triggered today's chip selloff",owner);
+    await service.dispatch(joined.call.id,source,A);
+    const {readAgentCommands}=await import('./agent-command.js');
+    const command=(await readAgentCommands(db,room,A)).commands.find(command=>command.source.id===source)!;
+    expect(command.source.body).toContain('Results dated today are current');
+    expect(command.source.body).toContain('Never start your reply with your name');
+    const day=new Intl.DateTimeFormat('en-GB',{timeZone:'UTC',day:'numeric',month:'long',year:'numeric'}).format(Date.now());
+    expect(command.source.body).toContain(day);
+    const daemon=new DaemonService(db,live);
+    await daemon.execute('claimAgentCommand',{roomId:room,commandId:command.id,generationId:'voice-name-proof'},A);
+    await daemon.execute('postRoomMessage',{roomId:room,requestId:command.turnRequestId,generationId:'voice-name-proof',text:'**Ruby:** Today’s search shows the answer.'},A);
+    const messages=(await new PhoneService(db,'http://proof').readRoom(room,H))!.messages;
+    expect(messages.some(message=>message.author.pubkey===A && message.text==='Today’s search shows the answer.')).toBe(true);
+  } finally {await service.leave(joined.call.id,H);await db.query('DELETE FROM rooms WHERE id=$1',[room]);}
 });

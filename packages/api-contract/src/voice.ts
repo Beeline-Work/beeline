@@ -36,6 +36,8 @@ export type VoiceSignal =
   | { type: 'speech' }
   /** A tap also sends the next turn to this agent when several humans are in the call. */
   | { type: 'target'; agentId: string; tap?: boolean }
+  /** Clear only the sending participant's explicit pin. */
+  | { type: 'unpin' }
   | { type: 'humans'; count: number }
   /** Several humans are in the call and this turn named no agent, so nobody answers. */
   | { type: 'unaddressed' }

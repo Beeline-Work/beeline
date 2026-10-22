@@ -149,11 +149,12 @@ it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and 
     expect(outline('Ruby')).toBe('transparent');
     expect(underlined()).toBe(false);
     await act(async () => updateSpeaker('ruby'));
-    expect(outline('Goosey')).toBe('#000000');
+    expect(outline('Goosey')).not.toBe('transparent');
     expect(renderer.root.findAllByType('LivePulse')).toHaveLength(1);
     expect(renderer.root.findByProps({ testID: 'voice-speaking-frame-ruby' })).toBeTruthy();
     await act(async () => updateSpeaker('goose'));
-    expect(outline('Goosey')).toBe('transparent');
+    expect(outline('Goosey')).not.toBe('transparent');
+    expect(renderer.root.findByProps({testID:'voice-pin-goose'})).toBeTruthy();
     expect(renderer.root.findByProps({ testID: 'voice-speaking-frame-goose' })).toBeTruthy();
     expect(face('Goosey').props.accessibilityState.selected).toBe(true);
     await act(async () => updateSpeaker(null));
@@ -175,4 +176,31 @@ it('VOICE-CONTEXT-1: remote speech animates the waveform and keeps its speaker l
     expect(waveform.props.level).toBe(.7);
     expect(waveform.props.flat).toBe(false);
   } finally { await act(async () => renderer.unmount()); }
+});
+
+it('Reproduction R3: shows a private pin, keeps its badge over speech, and offers Unpin', async () => {
+  let renderer: any;
+  const aim = vi.fn();
+  const voice = {agents:[{pubkey:'ruby',kind:'agent',name:'Ruby'},{pubkey:'goose',kind:'agent',name:'Goosey'}],
+    target:null,speaker:null,level:0,muted:false,humans:2,aim} as any;
+  const render = (target: string | null, speaker: string | null = null) => <>
+    <VoiceAgentStrip voice={{...voice,target,speaker}}/><VoiceBar voice={{...voice,target,speaker}}/>
+    <VoiceAgentStrip voice={voice}/>
+  </>;
+  await act(async()=>{renderer=create(render(null));});
+  try {
+    expect(renderer.root.findAllByProps({testID:'voice-pin-line'})).toHaveLength(0);
+    await act(async()=>renderer.update(render('ruby','ruby')));
+    expect(renderer.root.findAllByProps({testID:'voice-pin-ruby'})).toHaveLength(2);
+    expect(renderer.root.findByProps({testID:'voice-speaking-frame-ruby'})).toBeTruthy();
+    const strips=renderer.root.findAllByType(VoiceAgentStrip);
+    expect(strips[1].props.voice.target).toBeNull();
+    await act(async()=>renderer.root.findAllByType('Pressable').find((node:any)=>node.props.accessibilityLabel==='Unpin agent').props.onPress());
+    expect(aim).toHaveBeenCalledWith('ruby');
+    await act(async()=>renderer.update(render('goose')));
+    expect(renderer.root.findAllByProps({testID:'voice-pin-ruby'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID:'voice-pin-goose'})).toHaveLength(2);
+    await act(async()=>renderer.update(render(null)));
+    expect(renderer.root.findAllByProps({testID:'voice-pin-line'})).toHaveLength(0);
+  } finally {await act(async()=>renderer.unmount());}
 });

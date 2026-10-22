@@ -120,7 +120,7 @@ it('shows Room agents during a pending or failed join and clears the error on ex
 
 it.each([
   ['sol', 'sol'],
-  ['restricted', 'ruby'],
+  ['restricted', null],
 ])('uses the joined roster while RTC connects and validates early target %s', async (selected, expectedTarget) => {
   const agents = [{ pubkey: 'ruby', kind: 'agent' as const, name: 'Ruby' },
     { pubkey: 'sol', kind: 'agent' as const, name: 'Sol' }];
@@ -144,8 +144,10 @@ it.each([
     expect(voice.agents).toEqual(agents);
     await act(async () => { resolveConnect(); await joining; });
     expect(voice.target).toBe(expectedTarget);
-    const [bytes] = fixture.room.localParticipant.publishData.mock.calls[0];
-    expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({ type: 'target', agentId: expectedTarget });
+    if (expectedTarget) {
+      const [bytes] = fixture.room.localParticipant.publishData.mock.calls[0];
+      expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({ type: 'target', agentId: expectedTarget, tap: true });
+    } else expect(fixture.room.localParticipant.publishData).not.toHaveBeenCalled();
     await act(async () => voice.end());
   } finally { await act(async () => renderer.unmount()); }
 });
@@ -224,7 +226,7 @@ it('preserves the connection error even if disconnect and audio cleanup also rej
   } finally { await act(async () => renderer.unmount()); }
 });
 
-it('keeps the second human in the joined call across roster rerenders and follows spoken target signals', async () => {
+it('keeps the second human in the joined call across roster rerenders without pinning from spoken target signals', async () => {
   const agents = [{ pubkey: 'ruby', kind: 'agent' as const, name: 'Ruby' }, { pubkey: 'goose', kind: 'agent' as const, name: 'Goosey' }];
   const call = { id: fixture.callId, roomId: fixture.callId, startedAt: 1,
     participants: [{ pubkey: 'first', kind: 'human', name: 'First' }, { pubkey: 'second', kind: 'human', name: 'Second' }] };
@@ -243,9 +245,9 @@ it('keeps the second human in the joined call across roster rerenders and follow
     expect(fixture.room.disconnect).not.toHaveBeenCalled();
     const bridge = { identity: `beeline-voice-${fixture.callId}` };
     await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'goose' })), bridge, undefined, VOICE_DATA_TOPIC));
-    expect(voice.target).toBe('goose');
+    expect(voice.target).toBeNull();
     await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'restricted' })), bridge, undefined, VOICE_DATA_TOPIC));
-    expect(voice.target).toBe('goose');
+    expect(voice.target).toBeNull();
     await act(async () => voice.aim('ruby'));
     expect(voice.target).toBe('ruby');
     await act(async () => renderer.update(<Probe roster={[...agents]} />));
@@ -479,5 +481,40 @@ it('VOICE-ROUTER-1: joining stays visible until mic publication and audio playba
     await act(async () => { fixture.room.canPlaybackAudio = true; fixture.room.emit('audio-ready'); });
     expect(voice.connecting).toBe(false);
     await act(async () => voice.end());
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+it('Reproduction R3: join unpinned, pin, move, unpin, and ignore remote routing updates', async () => {
+  const agents = [{ pubkey: 'ruby', kind: 'agent' as const, name: 'Ruby' },
+    { pubkey: 'sol', kind: 'agent' as const, name: 'Sol' }];
+  const publishData = vi.fn(async () => {});
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: async () => {},
+    remoteParticipants: new Map(), localParticipant: { publishData, setMicrophoneEnabled: async () => {} } });
+  fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({
+    sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] },
+    url: 'wss://proof', token: 'test', agents,
+  })));
+  let voice!: ReturnType<typeof useVoiceCall>; let otherVoice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true, agents); otherVoice = useVoiceCall('other-participant', true, agents); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    expect(voice.target).toBeNull();
+    expect(publishData).not.toHaveBeenCalled();
+    await act(async () => voice.aim('ruby'));
+    expect(voice.target).toBe('ruby');
+    expect(otherVoice.target).toBeNull();
+    await act(async () => otherVoice.aim('sol'));
+    expect(otherVoice.target).toBe('sol');
+    expect(voice.target).toBe('ruby');
+    await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({type:'target',agentId:'sol'})),
+      {identity:`beeline-voice-${fixture.callId}`}, undefined, VOICE_DATA_TOPIC));
+    expect(voice.target).toBe('ruby');
+    await act(async () => voice.aim('sol'));
+    expect(voice.target).toBe('sol');
+    await act(async () => voice.aim('sol'));
+    expect(voice.target).toBeNull();
+    const signals = publishData.mock.calls.map(args => JSON.parse(new TextDecoder().decode((args as unknown[])[0] as Uint8Array)));
+    expect(signals).toEqual([{type:'target',agentId:'ruby',tap:true}, {type:'target',agentId:'sol',tap:true}, {type:'unpin'}]);
   } finally { await act(async () => renderer.unmount()); }
 });

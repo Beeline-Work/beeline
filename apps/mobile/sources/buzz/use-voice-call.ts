@@ -193,9 +193,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
           }
-          if (data.type === 'target' && joined!.agents.some(agent => agent.pubkey === data.agentId)) {
-            targetRef.current = data.agentId; setTarget(data.agentId);
-          }
+          // Routing notifications describe speech, not this person's explicit pin.
           if (data.type === 'error') {
             setError(data.message);
             if (data.code === 'speech-quota-exhausted') {
@@ -236,7 +234,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           await room.connect(fresh.url, fresh.token);
           if (version !== revision.current) { await release(); await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           const agentId = targetRef.current;
-          if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
+          if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
             { reliable: true, topic: VOICE_DATA_TOPIC });
           await room.localParticipant.setMicrophoneEnabled(!quotaRef.current && !mutedRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
           microphonePublished = true;
@@ -253,8 +251,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       await room.connect(joined.url, joined.token);
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       const playbackReady = room.startAudio();
-      const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey ?? joined.agents[0]?.pubkey;
-      if (defaultTarget) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: defaultTarget })),
+      const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey;
+      if (defaultTarget) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: defaultTarget, tap: true })),
         { reliable: true, topic: VOICE_DATA_TOPIC });
       await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true,
         autoGainControl: false });
@@ -295,8 +293,10 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   }, [enabled, roomId, join]);
   const aim = React.useCallback((agentId: string) => {
     if (!agents.some(a => a.pubkey === agentId)) return;
-    setTarget(agentId); targetRef.current = agentId;
-    void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
+    const next = targetRef.current === agentId ? null : agentId;
+    setTarget(next); targetRef.current = next;
+    void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(next
+      ? { type: 'target', agentId: next, tap: true } : { type: 'unpin' })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
   const toggleMute = React.useCallback(async () => {

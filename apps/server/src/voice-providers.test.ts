@@ -18,7 +18,7 @@ describe('voice providers', () => {
     ['[#beeline/item/abc]: [#beeline/item/def]: Hello.', 'Hello.'],
     ['Hello. Ruby (@ruby) [#beeline/item/abc]: quoted.', 'Hello. Ruby (@ruby) [#beeline/item/abc]: quoted.'],
     ['She said “Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.”', 'She said “Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.”'],
-    ['Ruby: Hello.', 'Ruby: Hello.'],
+    ['Ruby: Hello.', 'Hello.'],
   ])('cleans only the opening transcript prefix: %s', async (content, expected) => {
     // Split inside the prefix: provider token boundaries must not affect speech.
     const wire = content.match(/.{1,7}/gu)!.map(part => 'data: ' + JSON.stringify({ choices: [{ delta: { content: part } }] }) + '\n\n').join('');
@@ -99,6 +99,8 @@ describe('voice providers', () => {
     expect(body.reasoning).toEqual({ effort: 'none', exclude: true });
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
+    expect(body.messages[0].content).toContain('Results dated today are current');
+    expect(body.messages[0].content).toContain('Never start your reply with your name');
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history', 'read_posted_item']);
     expect(body.messages[0].content).toContain('Answer conversation, knowledge, history, explanations, opinions');
     expect(body.messages[0].content).toContain('Use search_history');
@@ -470,7 +472,10 @@ describe('voice date grounding', () => {
       { announce: async () => {}, search: (request, signal) => searchWeb(request.query, signal, request.currentTime) });
     expect(answer.order).toBe(false);
     expect(bodies).toHaveLength(3);
-    for (const body of bodies) expect(body.messages[0].content).toContain(date);
+    for (const body of bodies) {
+      expect(body.messages[0].content).toContain(date);
+      if (body.tools) expect(body.messages[0].content).toContain('Results dated today are current');
+    }
     expect(bodies[1].messages[0].content).toContain('prefer sources from this date');
     expect(bodies[1].messages[0].content).toContain('state each source’s date');
     expect(bodies[1].plugins).toEqual([{ id: 'web', engine: 'parallel', mode: 'turbo', max_results: 3 }]);

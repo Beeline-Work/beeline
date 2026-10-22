@@ -1548,7 +1548,7 @@ it('multi-human: only named speech is answered; unnamed speech is dropped and th
   } finally { await runtime.close(); }
 });
 
-it('multi-human: an avatar tap persists for that person until a spoken target replaces it', async () => {
+it('multi-human: an avatar pin persists for that person until explicitly cleared', async () => {
   const call = multiCall(2);
   const runtime = await VoiceRoomRuntime.connect(call.service as unknown as VoiceService, 'call', 'room');
   try {
@@ -1566,7 +1566,7 @@ it('multi-human: an avatar tap persists for that person until a spoken target re
     await new Promise(resolve => setTimeout(resolve, 10));
     await runtime.utterance('alex', 'Ruby, you answer');
     await runtime.utterance('alex', 'Anyone?');
-    expect(call.answered()).toEqual(['goose', 'goose', 'ruby', 'ruby']);
+    expect(call.answered()).toEqual(['goose', 'goose', 'goose', 'goose']);
   } finally { await runtime.close(); }
 });
 
@@ -2311,7 +2311,7 @@ it('Reproduction AURA-413-1: a long report plays completely through provider req
   } finally { await runtime.close(); }
 });
 
-it('Reproduction CONVERSATION-2: a solo tap survives silence and completed turns until a named switch', async () => {
+it('Reproduction CONVERSATION-2: a solo pin survives silence, completed turns and spoken names until unpinned', async () => {
   vi.useFakeTimers();
   const call = multiCall(1);
   call.service.lastActiveAgent.mockResolvedValue('goose');
@@ -2323,7 +2323,7 @@ it('Reproduction CONVERSATION-2: a solo tap survives silence and completed turns
       const turn = runtime.utterance('human', text);
       await vi.advanceTimersByTimeAsync(1500); await turn;
     }
-    expect(call.answered()).toEqual(['ruby', 'ruby', 'goose', 'goose']);
+    expect(call.answered()).toEqual(['ruby', 'ruby', 'ruby', 'ruby']);
   } finally { await runtime.close(); vi.useRealTimers(); }
 });
 
@@ -2433,13 +2433,13 @@ it('VOICE-ROUTER-1: pending call work reaches the brain without an invented repo
   } finally { await runtime.close(); }
 });
 
-it('Reproduction SPOKEN-150: measures report refresh to first audio with controlled synthesis and RTC', async () => {
+it('Reproduction R1 / SPOKEN-150: cleans the heavy report and measures refresh to first audio with controlled synthesis and RTC', async () => {
   const elapsed: number[] = [];
   for (let sample = 0; sample < 7; sample++) {
     const { service, speech } = conversationService(1);
     let offered = false, claimed = false;
     const text = 'History helps us understand how people lived and why their choices still matter so much. '.repeat(8).trim();
-    const report = { source_message_id: 'order', id: 'report', text, agent_id: 'ruby', human_id: 'human' };
+    const report = { source_message_id: 'order', id: 'report', text: 'Ruby: ' + text, agent_id: 'ruby', human_id: 'human' };
     service.db.query.mockImplementation(async (sql: string) => {
       if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: offered && !claimed ? 1 : 0, rows: offered && !claimed ? [report] : [] };
       if (sql.startsWith('UPDATE voice_orders')) claimed = true;
@@ -2626,5 +2626,38 @@ it('VOICE-DISPOSE-1: live audio failures remain observable and release turn clea
     await expect(runtime.utterance('human', 'Ruby explain this')).rejects.toBe(failure);
     await (runtime as any).speechIdle;
     expect((runtime as any).speaking).toBeUndefined();
+  } finally { await runtime.close(); }
+});
+
+it('Reproduction R3: pins and unpins route only the participant who sent them', async () => {
+  const call = multiCall(2);
+  const runtime = await VoiceRoomRuntime.connect(call.service as unknown as VoiceService, 'call', 'room');
+  try {
+    call.roomData('alex', {type:'target',agentId:'ruby',tap:true});
+    call.roomData('sam', {type:'target',agentId:'goose',tap:true});
+    await vi.waitFor(() => expect((runtime as any).explicitTargets.size).toBe(2));
+    await runtime.utterance('alex', 'Please help');
+    await runtime.utterance('sam', 'Please help');
+    call.roomData('alex', {type:'unpin'});
+    await vi.waitFor(() => expect((runtime as any).explicitTargets.has('alex')).toBe(false));
+    await runtime.utterance('alex', 'Please help');
+    await runtime.utterance('sam', 'More please');
+    expect(call.answered()).toEqual(['ruby','goose','goose']);
+    expect(call.signals('alex')).toContainEqual({type:'unaddressed'});
+    expect((runtime as any).explicitTargets.get('sam')).toBe('goose');
+  } finally { await runtime.close(); }
+});
+
+it('Reproduction R1: the quick answer and search acknowledgement are clean before posting and synthesis', async () => {
+  const { service, speech } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, _onText, _signal, context) => {
+    await context!.announce('**Ruby:** Let me look.');
+    return {text:'Ruby: Here is the answer.', order:false};
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human','Ruby, what is new?');
+    expect(service.recordAnswer.mock.calls.map(call=>call[2])).toEqual(['Let me look.', 'Here is the answer.']);
+    expect(speech.synthesize.mock.calls.map(call=>call[0])).toEqual(['Let me look.', 'Here is the answer.']);
   } finally { await runtime.close(); }
 });

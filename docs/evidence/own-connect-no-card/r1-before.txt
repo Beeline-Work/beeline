@@ -1,0 +1,59 @@
+
+> @beeline/server@0.0.0 test
+> vitest run src/app-connections.integration.test.ts -t Reproduction R1: the owner --maxWorkers=1 --minWorkers=1
+
+
+ RUN  v2.1.9 /home/lunchbox/.local/state/beeline/corners/1e1ec5ab-c82e-4bd3-bb92-f91a2df45c09/apps/server
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card
+[req] POST /v1/daemon/operations/connect
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=github route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+
+ ❯ src/app-connections.integration.test.ts (89 tests | 1 failed | 88 skipped) 3544ms
+   × connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card 3542ms
+     → expected { status: 'needs_approval', …(7) } to match object { status: 'needs_squire', …(1) }
+(6 matching properties omitted from actual)
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 88 skipped (89)
+   Start at  23:08:50
+   Duration  8.18s (transform 2.43s, setup 0ms, collect 4.26s, tests 3.54s, environment 0ms, prepare 108ms)
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/app-connections.integration.test.ts > connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card
+AssertionError: expected { status: 'needs_approval', …(7) } to match object { status: 'needs_squire', …(1) }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  Object {
+    "appKey": "github",
+-   "status": "needs_squire",
++   "status": "needs_approval",
+  }
+
+ ❯ src/app-connections.integration.test.ts:428:37
+    426|       });
+    427|       expect(response.status).toBe(200);
+    428|       expect(await response.json()).toMatchObject({ status: 'needs_squ…
+       |                                     ^
+    429|     } finally {
+    430|       await new Promise<void>((resolve, reject) => server.close(error …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /home/lunchbox/.local/state/beeline/corners/***/apps/server
+npm error workspace @beeline/server@0.0.0
+npm error location /home/lunchbox/.local/state/beeline/corners/***/apps/server
+npm error command failed
+npm error command sh -c vitest run src/app-connections.integration.test.ts -t 'Reproduction R1: the owner' --maxWorkers=1 --minWorkers=1

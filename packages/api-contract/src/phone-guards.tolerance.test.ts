@@ -279,7 +279,7 @@ const cases: Case[] = [
     name: 'AgentGrantView',
     read: readAgentGrantView,
     base: grant,
-    optionals: ['decidedBy', 'decidedAt', 'expiresAt', 'script'],
+    optionals: ['decidedBy', 'decidedAt', 'expiresAt', 'script', 'appName'],
     loadBearingMissing: { ...grant, grantId: undefined },
   },
   {
@@ -292,6 +292,9 @@ const cases: Case[] = [
 ];
 
 describe('phone surface readers', () => {
+  it('preserves connection app display names in grant cards', () => {
+    expect(readAgentGrantView({ ...grant, kind: 'mcp', target: 'connection-install:github', appName: 'GitHub' })?.appName).toBe('GitHub');
+  });
   it('preserves standing Wallet cards and legacy time-limited cards', () => {
     expect(
       readRoomViewMessage({ ...message, walletDelegation: { standing: true } })?.walletDelegation,

@@ -40,6 +40,14 @@ export type AgentGrantDecision = 'always' | 'once' | 'deny';
 export const AGENT_GRANT_TARGET_MAX_LENGTH = 512;
 export const AGENT_GRANT_REASON_MAX_LENGTH = 1_000;
 
+/** Display copy for legacy cards that predate the stored product name. */
+export function connectionInstallName(grant: { kind: AgentGrantKind; target: string; appName?: string }): string | undefined {
+  if (grant.kind !== 'mcp' || !grant.target.startsWith('connection-install:')) return undefined;
+  const key = grant.target.slice('connection-install:'.length);
+  return grant.appName ?? (key === 'github' ? 'GitHub'
+    : key ? key.charAt(0).toUpperCase() + key.slice(1) : 'this app');
+}
+
 export function isAgentGrantKind(value: unknown): value is AgentGrantKind {
   return typeof value === 'string' && (AGENT_GRANT_KINDS as readonly string[]).includes(value);
 }

@@ -98,6 +98,7 @@ import {
   interpreterScriptArgument,
   isRequestableAgentGrantKind,
   isSharedAssetCategory,
+  connectionInstallName,
   isCommandGrantScript,
   parseCommandGrantTarget,
   type AgentGrantEscalation,
@@ -6191,18 +6192,21 @@ export class DaemonService {
     if (!context) throw new Error('agent not found');
     const source = await this.approvalSource('grant-request');
     const requesterRow = await this.grantRequester();
-    const appOwner = target.startsWith('app:') && input.appId
+    const connectionInstall = kind === 'mcp' && target.startsWith('connection-install:');
+    const appOwner = (target.startsWith('app:') || connectionInstall) && input.appId
       ? (await this.database.query<{ id: string; name: string; handle: string | null;
-          avatar: string | null }>(
-          `SELECT person.id,person.name,person.handle,person.avatar
+          avatar: string | null; display_name: string }>(
+          `SELECT person.id,person.name,person.handle,person.avatar,app.display_name
            FROM workspace_apps app JOIN identities person ON person.id=app.owner_identity_id
            WHERE app.id=$1::uuid AND app.app_key=$2 AND app.state='active'
-             AND app.transport='composio'`,
-          [input.appId, target.slice(4)],
+             AND ($3::boolean OR app.transport='composio')`,
+          [input.appId, target.slice(connectionInstall ? 'connection-install:'.length : 4), connectionInstall],
         )).rows[0]
       : undefined;
     if (target.startsWith('app:') && !appOwner)
       throw new Error('Connected app grant requires an active app');
+    if (connectionInstall && input.appId && !appOwner)
+      throw new Error('Connection grant requires the matching active app');
     const resourceOwnerId = appOwner?.id ?? context.owner_id;
     const owner = appOwner ? {
       pubkey: appOwner.id, kind: 'human' as const, name: appOwner.name,
@@ -6237,7 +6241,7 @@ export class DaemonService {
       !requireOwnerApproval &&
       kind !== 'shared_asset' &&
       escalations.length === 0 &&
-      (kind === 'mcp' && target.startsWith('app:')
+      (kind === 'mcp' && (target.startsWith('app:') || connectionInstall)
         ? context.owner_id === resourceOwnerId
         : kind === 'mcp' && target === 'wallet'
         ? context.yolo_mode && requesterRow.id === context.owner_id
@@ -6274,6 +6278,7 @@ export class DaemonService {
         grantId,
         kind,
         target,
+        ...(connectionInstall && appOwner ? { appName: appOwner.display_name } : {}),
         reason,
         status,
         requestedBy: requester,
@@ -7147,13 +7152,26 @@ export class DaemonService {
           next: `${outcome.app} is ready: your Squire session is signed in. Use your own operate_* tools on it.` };
     }
     const target = `connection-install:${outcome.appKey}`;
-    const consent = (await this.database.query<{ id: string; status: string }>(
+    const appOwner = (await this.database.query<{ owner_identity_id: string }>(
+      'SELECT owner_identity_id FROM workspace_apps WHERE id=$1', [outcome.appId])).rows[0];
+    const ownAccount = appOwner?.owner_identity_id === context.owner.pubkey;
+    let consent = (await this.database.query<{ id: string; status: string }>(
       `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
-        WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2 AND NOT grant_row.auto
+        LEFT JOIN workspace_apps consent_app ON consent_app.id=grant_row.app_id
+        WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2
+          AND (NOT grant_row.auto OR $3::boolean)
+          AND COALESCE(consent_app.owner_identity_id,agent.owner_id)=$4
           AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now())
-        ORDER BY grant_row.created_at DESC LIMIT 1`, [context.owner.pubkey, target])).rows[0];
+        ORDER BY grant_row.created_at DESC LIMIT 1`,
+      [context.owner.pubkey, target, ownAccount, appOwner?.owner_identity_id ?? context.owner.pubkey])).rows[0];
+    if (ownAccount && consent?.status !== 'approved') {
+      const approved = await this.requestAgentGrant({ ...input, kind: 'mcp', target, appId: outcome.appId,
+        reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId);
+      await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [approved.grantId, commandId]);
+      consent = { id: approved.grantId, status: approved.status };
+    }
     if (!consent || consent.status === 'revoked') {
-      const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target,
+      const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target, appId: outcome.appId,
         reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
       await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
       return { ...result, status: 'needs_approval', grantId: asked.grantId,
@@ -8445,8 +8463,12 @@ function validateGrantScript(
 function grantCardPhrase(
   requester: { pubkey: string; kind: 'human' | 'agent'; name: string },
   agent: { pubkey: string; name: string },
-  grants: readonly { kind: AgentGrantKind; target: string }[],
+  grants: readonly { kind: AgentGrantKind; target: string; appName?: string }[],
 ): SystemPhrase {
+  if (grants.every(grant => connectionInstallName(grant))) {
+    return { subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
+      verb: 'wants to connect', object: grants.map(grant => connectionInstallName(grant)).join(' and ') };
+  }
   return {
     subject: {
       kind: requester.kind === 'human' ? 'person' : 'agent',
@@ -8457,7 +8479,8 @@ function grantCardPhrase(
     object: grants
       .map(
         (grant) =>
-          `${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`,
+          connectionInstallName(grant) ? `${agent.name} to connect ${connectionInstallName(grant)}`
+            : `${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`,
       )
       .join(' and '),
   };

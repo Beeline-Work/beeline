@@ -15,6 +15,12 @@ function policyLineId(kind: 'resume', grantId: string): string {
 /** Narrow old approvals to the new policy; never infer consent or requester provenance. */
 export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
   await database.transaction(async (db) => {
+    const connectionOwner = `(SELECT app.owner_identity_id FROM workspace_apps app
+      WHERE app.id=g.app_id AND g.kind='mcp' AND g.target LIKE 'connection-install:%')`;
+    const ownConnection = `(${connectionOwner})=a.owner_id`;
+    const foreignAuto = `g.auto AND g.requested_by<>a.owner_id AND NOT COALESCE(${ownConnection},false)`;
+    const nonOwnerDecision = `NOT g.auto AND g.status IN ('approved','once')
+      AND g.decided_by IS DISTINCT FROM COALESCE(${connectionOwner},a.owner_id)`;
     const recorded = await db.query<{
       grant_id: string;
       agent_id: string;
@@ -41,7 +47,7 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
             WHERE c.id=g.command_id AND c.agent_id=g.agent_id AND c.room_id=g.room_id
               AND m.author_id=g.requested_by
           ) THEN 'missing-requester-provenance'
-          WHEN g.auto AND g.requested_by<>a.owner_id THEN 'third-party-auto-resource'
+          WHEN ${foreignAuto} THEN 'third-party-auto-resource'
           ELSE 'non-owner-resource-decision' END reason
       FROM agent_grants g JOIN agents a ON a.agent_id=g.agent_id
       WHERE (
@@ -54,8 +60,8 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
         WHERE c.id=g.command_id AND c.agent_id=g.agent_id AND c.room_id=g.room_id
           AND m.author_id=g.requested_by
       ) OR (g.kind<>'repository' AND (
-        (g.auto AND g.requested_by<>a.owner_id) OR
-        (NOT g.auto AND g.status IN ('approved','once') AND g.decided_by IS DISTINCT FROM a.owner_id)
+        (${foreignAuto}) OR
+        (${nonOwnerDecision})
       )))
     )
     INSERT INTO agent_grant_policy_revocations(
@@ -74,8 +80,8 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
         WHERE c.id=g.command_id AND c.agent_id=g.agent_id AND c.room_id=g.room_id
           AND m.author_id=g.requested_by
       ) OR (g.kind<>'repository' AND (
-        (g.auto AND g.requested_by<>a.owner_id) OR
-        (NOT g.auto AND g.status IN ('approved','once') AND g.decided_by IS DISTINCT FROM a.owner_id)
+        (${foreignAuto}) OR
+        (${nonOwnerDecision})
       )))`);
 
     for (const grant of recorded.rows) {
@@ -181,7 +187,9 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
  * Asks still pending from before an agent could use its own owner's resources
  * without a card. The current server never raises them: owner-machine access
  * is recorded as approved on the spot, and budget and repository asks are
- * retired. Built-in Beeline app installation asks are also superseded.
+ * retired. Connection installs for the agent's own account are superseded too.
+ * Legacy install grants have no app_id: connect only provisioned the helper
+ * owner's account. An explicit foreign app_id retains its owner decision.
  * Cancellation uses the existing revoked status and clears card actions. Nothing waits on these rows, yet their cards kept offering
  * No/Once/Always. Each is withdrawn by @system without waking the turn that
  * raised it, so an answer can no longer resume stale work. Asks the current
@@ -194,10 +202,13 @@ export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promis
       kind: string;
       target: string;
       script: CommandGrantScript | null;
-    }>(`SELECT id::text,kind,target,script FROM agent_grants
-      WHERE status='pending' AND NOT (kind='mcp' AND (target='wallet' OR
-        (target LIKE 'connection-install:%' AND target NOT LIKE 'connection-install:beeline%')))
-      FOR UPDATE`);
+    }>(`SELECT g.id::text,g.kind,g.target,g.script FROM agent_grants g
+      JOIN agents agent ON agent.agent_id=g.agent_id
+      LEFT JOIN workspace_apps app ON app.id=g.app_id
+      WHERE g.status='pending' AND NOT (g.kind='mcp' AND (g.target='wallet' OR
+        (g.target LIKE 'connection-install:%' AND g.target NOT LIKE 'connection-install:beeline%'
+          AND app.owner_identity_id IS NOT NULL AND app.owner_identity_id<>agent.owner_id)))
+      FOR UPDATE OF g`);
     const superseded = pending.rows
       .filter((grant) => {
         if (grant.kind !== 'command') return true;

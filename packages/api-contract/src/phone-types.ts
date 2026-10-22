@@ -500,6 +500,8 @@ export type AgentGrantView = {
   readonly grantId: string;
   readonly kind: AgentGrantKind;
   readonly target: string;
+  /** Product name for a connection-install permission; never an authority target. */
+  readonly appName?: string;
   readonly reason: string;
   readonly status: AgentGrantStatus;
   readonly requestedBy: RoomViewIdentity;

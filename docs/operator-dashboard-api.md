@@ -20,11 +20,21 @@ without a platform observation and deduplicate multi-platform users.
 
 Counts are exact, including measured zero, for this private operator surface.
 Hidden identities and the fixed Play Review identity are excluded. The immutable
-IDs of confirmed Review, Firstmate Proof, and Empty screen test Workspaces are
-listed in `FIXTURE_WORKSPACE_IDS`. Fixture-only members are excluded; people with
-real memberships remain eligible. Fixture Rooms do not contribute replies or
-corners. Extend the explicit fixture list when adding a production proof fixture;
-do not infer test status from a customer's Workspace name.
+IDs of confirmed Review, Firstmate Proof, Empty screen test and operator team
+Workspaces are migrated to `workspaces.internal`. Both the dashboard cohort and
+service review exclude that flag. Internal-only members are excluded; people with
+external memberships remain eligible. Internal Rooms do not contribute replies or
+corners. Mark new internal/proof Workspaces explicitly; never infer classification
+from a customer's Workspace name.
+
+The daily walk reserves opted-in external Workspaces with unread messages or
+turns. `service_review_visits` persists each window. The maximum completed
+`read_through` is the per-Workspace cursor; a first reservation starts 24 hours
+back, and retries retain that initial lower bound. Only an atomic, complete set
+of validated receipts advances cursors. Unread backlog remains eligible even
+without fresh human activity. Readers recheck internal classification and opt-out
+and paginate the entire frozen window. Legacy reservations without bounds use
+24 hours ending at their reservation timestamp, never unbounded history.
 
 Health and Ops cover all platforms regardless of the Usage selection. Phone reach
 counts only explicit iOS/Android receipts within 30 days. Receipts with missing

@@ -1,5 +1,8 @@
+import { PageHeader } from './PageHeader';
+import { RoomListSectionHeader } from './RoomListSectionHeader';
+import { ErrorBanner } from './ErrorBanner';
 import React, { useState } from 'react';
-import { InlineRow } from './IndexRow';
+import { IndexRow, InlineRow } from './IndexRow';
 import { StatusBar, Text, View, useWindowDimensions } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -99,11 +102,7 @@ function RoomScene() {
   const { theme } = useUnistyles();
   return (
     <View style={scene.shell} testID="welcome-room-scene">
-      <View style={scene.header}>
-        <ChevronGlyph color={theme.buzz.textPrimary} direction="left" size={22} />
-        <Text style={scene.roomTitle}>#growth</Text>
-        <CornerGlyph color={theme.buzz.accent} size={18} />
-      </View>
+      <PageHeader title="#growth" action={<CornerGlyph color={theme.buzz.accent} size={18} />} />
       <View style={scene.transcript}>
         <SampleEntry
           name="dani"
@@ -139,14 +138,7 @@ function CornerScene() {
   const { theme } = useUnistyles();
   return (
     <View style={scene.shell} testID="welcome-corner-scene">
-      <View style={scene.header}>
-        <ChevronGlyph color={theme.buzz.textPrimary} direction="left" size={22} />
-        <IdentityMark seed={'3'.repeat(64)} kind="agent" size={28} />
-        <View style={{ flex: 1 }}>
-          <Text style={scene.cornerTitle}>#app/Sign-in retry</Text>
-          <Text style={scene.cornerState}>SPEEDY · review</Text>
-        </View>
-      </View>
+      <PageHeader title="#app/Sign-in retry" meta="SPEEDY · review" />
       <View style={scene.transcript}>
         <Text style={scene.quote}>
           Make sign-in retry cleanly after a failed or cancelled attempt; add a regression test.
@@ -170,13 +162,10 @@ function CornerScene() {
           seed={'3'.repeat(64)}
         />
       </View>
-      <View style={scene.cornerRow}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-          <Text style={scene.rowCaption}>IN #APP, ONE ROW</Text>
-          <Text style={scene.rowStatus}>REVIEW ●</Text>
-        </View>
-        <Text style={scene.rowName}>#app/Sign-in retry · Opened by Speedy</Text>
-      </View>
+      <InlineRow style={scene.cornerRow}>
+        <RoomListSectionHeader title="IN #APP, ONE ROW" spacing="flush" inset="content" surface="sheet" />
+        <IndexRow title="#app/Sign-in retry · Opened by Speedy" value="REVIEW ●" />
+      </InlineRow>
     </View>
   );
 }
@@ -191,22 +180,11 @@ function ModelScene() {
   const { theme } = useUnistyles();
   return (
     <View style={scene.collection} testID="welcome-model-scene">
-      <Text style={scene.collectionCaption}>AGENTS IN THIS WORKSPACE</Text>
+      <RoomListSectionHeader title="AGENTS IN THIS WORKSPACE" inset="content" spacing="flush" surface="sheet" />
       {AGENTS.map((agent) => (
-        <View key={agent.name} style={scene.agentRow}>
-          {/* Monochrome Simple Icons marks: the ink follows the theme so they
-              stay legible on Obsidian (unfilled paths would paint black). */}
-          <SvgXml
-            xml={welcomeBrandMarks[agent.logo]}
-            width={22}
-            height={22}
-            fill={theme.buzz.textPrimary}
-          />
-          <View>
-            <Text style={scene.agentName}>{agent.name}</Text>
-            <Text style={scene.agentMeta}>{agent.model}</Text>
-          </View>
-        </View>
+        <IndexRow key={agent.name} title={agent.name} description={agent.model}
+          leading={<SvgXml xml={welcomeBrandMarks[agent.logo]} width={22} height={22}
+            fill={theme.buzz.textPrimary} />} />
       ))}
       <Text style={scene.agentFoot}>Four models, three harnesses, one Room.</Text>
     </View>
@@ -215,13 +193,13 @@ function ModelScene() {
 
 function ToolsScene() {
   return (
-    <View style={scene.tools} testID="welcome-tools-scene">
+    <InlineRow style={scene.tools} testID="welcome-tools-scene">
       {TOOL_NAMES.map((name) => (
         <View key={name} style={scene.toolCell} accessibilityLabel={name}>
           <WelcomeToolMark name={name} />
         </View>
       ))}
-    </View>
+    </InlineRow>
   );
 }
 
@@ -277,11 +255,11 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
     );
   const footer = (
     <InlineRow style={card.footer} testID="welcome-footer">
-      <View style={card.steps}>
+      <InlineRow style={card.steps}>
         {COPY.map((_, i) => (
           <View key={i} style={[card.step, i === index && card.stepActive]} />
         ))}
-      </View>
+      </InlineRow>
       <Button
         label={index === 3 ? 'Get started' : 'Next'}
         onPress={() => void next()}
@@ -325,7 +303,7 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
                 <Text style={card.body}>{COPY[index].body}</Text>
               </View>
               <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-                {error && <Text style={card.error}>{error}</Text>}
+                {error && <ErrorBanner title={error} />}
               </View>
               {footer}
             </View>
@@ -336,7 +314,7 @@ function WelcomeCardsContent({ onDone }: { onDone: () => void }) {
                 <Text style={card.body}>{COPY[index].body}</Text>
               </View>
               <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-                {error && <Text style={card.error}>{error}</Text>}
+                {error && <ErrorBanner title={error} />}
               </View>
               {footer}
             </>
@@ -377,7 +355,6 @@ const card = StyleSheet.create((theme) => ({
   copy: { gap: theme.buzz.space.sm },
   title: { ...theme.buzz.type.hero, color: theme.buzz.textPrimary },
   body: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
-  error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -402,18 +379,6 @@ const scene = StyleSheet.create((theme) => ({
     borderColor: theme.buzz.border,
     backgroundColor: theme.buzz.bgBase,
   },
-  header: {
-    minHeight: 56,
-    paddingHorizontal: theme.buzz.space.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.buzz.space.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.buzz.border,
-  },
-  roomTitle: { ...theme.buzz.type.hero, flex: 1, color: theme.buzz.textPrimary },
-  cornerTitle: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  cornerState: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   accent: { color: theme.buzz.accent },
   transcript: {
     flex: 1,
@@ -447,15 +412,13 @@ const scene = StyleSheet.create((theme) => ({
     marginBottom: theme.buzz.space.xs,
   },
   cornerRow: {
+    flexDirection: 'column',
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: theme.buzz.space.sm,
     borderTopWidth: 1,
     borderTopColor: theme.buzz.border,
     gap: theme.buzz.space.xs,
   },
-  rowCaption: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
-  rowName: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
-  rowStatus: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   collection: {
     flex: 1,
     borderRadius: theme.buzz.radius,
@@ -463,18 +426,6 @@ const scene = StyleSheet.create((theme) => ({
     padding: theme.buzz.space.md,
     gap: theme.buzz.space.sm,
   },
-  collectionCaption: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
-  agentRow: {
-    minHeight: 65,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.bgBase,
-    paddingHorizontal: theme.buzz.space.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.buzz.space.sm,
-  },
-  agentName: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  agentMeta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   agentFoot: {
     ...theme.buzz.type.meta,
     color: theme.buzz.ledgerQuiet,

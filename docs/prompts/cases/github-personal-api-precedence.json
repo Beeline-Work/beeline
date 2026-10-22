@@ -1,7 +1,7 @@
 {
   "id": "github-personal-api-precedence",
   "section": "tools",
-  "summary": "A supported personal GitHub API push takes precedence over repository App authentication.",
+  "summary": "Linked-repository pushes use the repository App even when personal GitHub is connected.",
   "place": "code-corner",
   "session": {
     "worktree": {
@@ -15,7 +15,7 @@
   },
   "turn": {
     "task": {
-      "body": "Push verified commit 1111111111111111111111111111111111111111 to the existing feature/corner-proof branch in owner/widgets through the Git Data API. Personal GitHub and the repository App are both configured. The commit and remote ref are already verified; do not repeat local git checks or open a PR.",
+      "body": "Publish verified commit 1111111111111111111111111111111111111111 to existing feature/corner-proof in this Room's linked repository owner/widgets. Personal GitHub lacks contents write and the repository App checkout is configured. The commit and remote ref are already verified; do not repeat local git checks or open a PR.",
       "fromName": "dana",
       "commandReason": "human_tag"
     }
@@ -24,26 +24,28 @@
     "Bash"
   ],
   "toolResults": {
-    "connect": "{\"status\": \"ready\", \"appId\": \"11111111-1111-4111-8111-111111111111\", \"appKey\": \"github\", \"transport\": \"composio\", \"readiness\": \"GitHub (app:github, id 11111111-1111-4111-8111-111111111111) via composio: connected. GitHub operation identity: prefer this owner's personal GitHub connection over the repository App for supported API operations, including Git Data API pushes. A denial requires repairing this connection, never switching to the App identity. For managed personal tools use app_tool(app:\\\"11111111-1111-4111-8111-111111111111\\\"); the app key github is not the connected app ID.\"}",
+    "connect": "{\"status\": \"ready\", \"appId\": \"11111111-1111-4111-8111-111111111111\", \"appKey\": \"github\", \"transport\": \"composio\", \"readiness\": \"Personal GitHub is connected without contents write. The repository App checkout is configured in this corner.\"}",
     "app_tool": "{\"tools\": [{\"name\": \"GITHUB_UPDATE_A_REFERENCE\", \"description\": \"Update the authorized branch to the prepared commit.\", \"inputSchema\": {\"type\": \"object\", \"properties\": {\"owner\": {\"type\": \"string\"}, \"repo\": {\"type\": \"string\"}, \"ref\": {\"type\": \"string\"}, \"sha\": {\"type\": \"string\"}, \"force\": {\"type\": \"boolean\"}}}}], \"status\": \"executed\", \"data\": {\"ref\": \"refs/heads/feature/corner-proof\", \"sha\": \"1111111111111111111111111111111111111111\"}}"
   },
   "pass": {
     "all": [
       {
-        "call": "app_tool",
+        "call": "Bash",
         "args": {
-          "app": "11111111-1111-4111-8111-111111111111",
-          "tool": "GITHUB_UPDATE_A_REFERENCE",
-          "args.ref": {
-            "matches": "^(refs/)?heads/feature/corner-proof$"
+          "command": {
+            "matches": "git[^\\n]*push|gh[^\\n]*api"
           }
         }
       },
       {
-        "noCall": "Bash",
+        "noCall": "app_tool",
         "args": {
-          "command": {
-            "matches": "git[^\\n]*push|gh[^\\n]*api"
+          "app": {
+            "matches": "^(11111111-1111-4111-8111-111111111111|github|app:github)$",
+            "flags": "i"
+          },
+          "tool": {
+            "matches": ".+"
           }
         }
       }

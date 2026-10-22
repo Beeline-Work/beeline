@@ -1,3 +1,6 @@
+import { EmptyState } from './EmptyState';
+import { ErrorBanner } from './ErrorBanner';
+import { InlineRow } from './IndexRow';
 import { HullActionSheetRow } from './HullActionSheet';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
@@ -196,24 +199,24 @@ export const RepoPicker = memo(function RepoPicker({
           showLoadingPlaceholders ? (
             <View accessibilityLabel="Loading repositories" testID={`${testIDPrefix}-loading`}>
               {Array.from({ length: REPO_CANDIDATE_VISIBLE_ROWS }, (_, index) => (
-                <View
+                <InlineRow
                   key={index}
                   style={styles.placeholderRow}
                   testID={`${testIDPrefix}-placeholder-${index}`}
                 >
                   <View style={styles.placeholderBar} />
-                </View>
+                </InlineRow>
               ))}
             </View>
           ) : !error && !pastedFullName ? (
-            <Text style={styles.empty}>No repositories match.</Text>
+            <EmptyState title="No repositories match." />
           ) : null
         }
         nestedScrollEnabled
         renderItem={({ item, section }) => candidateRow(item, section.owner)}
         renderSectionHeader={({ section }) =>
           section.owner ? (
-            <View
+            <InlineRow
               style={styles.groupHeader}
               testID={`${testIDPrefix}-group-${section.owner.toLowerCase()}`}
             >
@@ -223,7 +226,7 @@ export const RepoPicker = memo(function RepoPicker({
                   ? section.installation.status.toUpperCase()
                   : `${section.data.length} ${section.data.length === 1 ? 'REPO' : 'REPOS'}`}
               </Text>
-            </View>
+            </InlineRow>
           ) : null
         }
         sections={sections}
@@ -298,7 +301,7 @@ export const RepoPicker = memo(function RepoPicker({
                   />
                 ))}
               </View>
-              <View style={styles.createRow}>
+              <InlineRow style={styles.createRow}>
                 <HullDialogInput
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -323,7 +326,7 @@ export const RepoPicker = memo(function RepoPicker({
                       .catch(() => undefined);
                   },
                 }]} />
-              </View>
+              </InlineRow>
             </View>
           )}
         </View>
@@ -352,9 +355,7 @@ export const RepoPicker = memo(function RepoPicker({
         </Text>
       )}
       {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
-          ! {error}
-        </Text>
+        <ErrorBanner title={`! ${error}`} />
       )}
     </View>
   );
@@ -391,7 +392,6 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: groknight.space.xs,
     },
     groupMeta: { ...groknight.type.meta, color: groknight.textMuted },
-    empty: { ...groknight.type.machine, color: groknight.textMuted, paddingVertical: groknight.space.sm },
     // The secondary-caption role, not another raw size (DESIGN.md → Type).
     connectReason: { ...groknight.type.meta, color: groknight.textMuted },
     instructionCard: {
@@ -419,11 +419,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textPrimary,
       borderBottomWidth: 1,
       borderBottomColor: groknight.border,
-    },
-    error: {
-      ...groknight.type.machine,
-      color: groknight.danger,
-      paddingTop: 8,
     },
     notice: {
       ...groknight.type.machine,

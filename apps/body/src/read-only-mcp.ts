@@ -1011,7 +1011,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call read(facet:checks) again in this turn.',
+          next: 'No PR is recorded for this corner yet. Continue the assigned work; when it is ready, push the corner branch and open a PR. If you already opened one, print its actual full URL as your final response so it can be recorded, then end the turn. Do not invent a PR URL or reread checks before a PR exists.',
         }
       : {}),
   });
@@ -2494,7 +2494,7 @@ export async function workbenchStatus(
     const route = github.transport === 'squire-api'
       ? `call Squire use_credential (${github.connectionReference ? `reference ${JSON.stringify(github.connectionReference)}` : 'service "github"'})`
       : `use app_tool(app:"${github.appId}")`;
-    lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult beeline-connecting-services for checkout and merge boundaries.`);
+    lines.push('', `GitHub operation identity: in Room, corner and DM sessions, use the Beeline GitHub App for linked-repository code, branch and PR writes, including Git Data API pushes, even when personal GitHub is connected. Without an App checkout, use a corner of the linked Room. This owner's personal GitHub connection (app ${github.appId}, ${github.transport}) serves general lookups, repositories without App access and person-scoped actions; ${route}. Report denials with the exact error and route. Never fall back from App to personal for linked-repository writes or retry person-scoped actions as the App. A mistaken personal-route denial on a linked-repository write does not prevent using the authorized App route. Consult beeline-connecting-services for checkout and merge boundaries.`);
   }
   if (deps.tailscaleReach) {
     const enabled = Boolean(

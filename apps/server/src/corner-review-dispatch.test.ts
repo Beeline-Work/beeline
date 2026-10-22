@@ -324,6 +324,68 @@ describe('corner message attribution', () => {
     expect(reviewerWakes).toHaveLength(0);
   });
 
+  it.each(['FAIL: fix the demonstration.', 'PASS: reviewed all changed files.',
+    'FAIL: the diff is empty; there is nothing to review.'])(
+    'Reproduction REVIEW-QUIET-1: duplicate green deliveries retain %s', async verdict => {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      const head = '9'.repeat(40);
+      await greenHead(71, head);
+      const [review] = await commands(B, C);
+      await claim(review!);
+      await result(review!, verdict);
+      // A pending/green cycle writes new lifecycle cards, losing the old
+      // outstanding-command window. The source event has no head field.
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+      await advanceCorner(db, C, { kind: 'checks-pending' });
+      await greenHead(71, head);
+      for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
+      expect(await commands(B, C)).toEqual([]);
+      const handback = (await commands(A, C)).find(command => command.reason === 'corner_review_needed');
+      expect(handback?.source.body).toContain(verdict);
+      expect(handback?.source.body).not.toContain('ended without a PASS');
+      // Finishing the handback permits the next review after a new push.
+      await claim(handback!);
+      await result(handback!, 'The next push contains the requested evidence.');
+      await greenHead(71, '8'.repeat(40));
+      const [continuation] = await commands(B, C);
+      expect(continuation?.source.body).toContain('Prior reviewer verdict and evidence');
+      expect(continuation?.source.body).toContain(verdict);
+      console.info(`Demonstrated REVIEW-QUIET-1: repeated green deliveries suppressed; continuation carries ${verdict}`);
+    });
+
+  it('Reproduction REVIEW-QUIET-1: a changed check result permits review with the prior verdict', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(72, '9'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, 'FAIL: required evidence is missing.');
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
+      '{"checks":[{"name":"new-required-check","status":"passed"}]}') WHERE corner_id=$1`, [C]);
+    await reconcileConfiguredCornerReviewers(db, R);
+    const [continuation] = await commands(B, C);
+    expect(continuation?.source.body).toContain('FAIL: required evidence is missing.');
+    expect(continuation?.reason).toBe('corner_review_dispatch');
+  });
+
+  it.each(['pending', 'complete'] as const)(
+    'Reproduction REVIEW-PR-1: a replacement PR on the same head supersedes a %s review', async state => {
+      await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+      const head = '9'.repeat(40);
+      await greenHead(73, head);
+      const [old] = await commands(B, C);
+      if (state === 'complete') {
+        await claim(old!);
+        await result(old!, 'FAIL: the diff is empty.');
+      }
+      await greenHead(74, head);
+      const reviews = await commands(B, C);
+      expect(reviews).toHaveLength(1);
+      expect(reviews[0]?.id).not.toBe(old?.id);
+      const rows = await db.query<{ context: { pullRequest: number }; state: string }>(
+        'SELECT review_context context,state FROM agent_commands WHERE id=$1', [old!.id]);
+      expect(rows.rows[0]?.state).toBe(state === 'pending' ? 'cancelled' : 'complete');
+    });
+
   it('Reproduction REVIEW-CYCLE-1: later background cycles repair a lost wake and report a finished review only once', async () => {
     // Keep the database stand-in tied to the actual background-cycle wiring.
     const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
@@ -342,7 +404,7 @@ describe('corner message attribution', () => {
     await result(repaired!, 'Review ended without a verdict.');
     for (let i = 0; i < 4; i++) await cycle();
     expect(await commands(B, C)).toHaveLength(0);
-    const reports = (await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('the review ended without a PASS'));
+    const reports = (await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('the reviewer completed its review'));
     expect(reports).toHaveLength(1);
     expect(reports[0]?.source.body).toMatch(/^blocked:/);
     expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
@@ -418,7 +480,7 @@ describe('corner message attribution', () => {
     expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(1);
     const handback = await commands(A, C);
     expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
-    expect(handback[0]?.source.body).toContain('the review ended without a PASS on the current head');
+    expect(handback[0]?.source.body).toContain('the reviewer completed its review of the current head');
     expect(handback[0]?.source.body).toContain('report the blocker to its commander');
     for (let sweep = 2; sweep <= 3; sweep += 1)
       expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);

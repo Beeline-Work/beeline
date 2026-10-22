@@ -1,66 +1,41 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
-
-/**
- * The open Repository row on the Room sheet and New Room. Its label once
- * shrank to a grey field label and its switch wore the black/white primary
- * fill on a paler track; the org header in the repo list sat in a pale band.
- */
-const choice = readFileSync(new URL('./RepositoryChoice.tsx', import.meta.url), 'utf8');
-const sheet = readFileSync(new URL('./IndexRow.tsx', import.meta.url), 'utf8');
-const header = readFileSync(new URL('./RoomListSectionHeader.tsx', import.meta.url), 'utf8');
-const repoList = readFileSync(new URL('./RepoList.tsx', import.meta.url), 'utf8');
-
-function styleBody(source: string, name: string): string {
-  const match = source.match(new RegExp(`\\n\\s+${name}: \\{([^}]*)\\}`));
-  expect(match, `missing style ${name}`).not.toBeNull();
-  return match![1]
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('//'))
-    .join(' ');
-}
-
-describe('open Repository row', () => {
-  it('keeps the label in the same type as the other sheet row labels', () => {
-    const label = styleBody(choice, 'fieldLabel');
-    for (const part of ['...Typography.default()', '...hull.type.body', 'color: hull.textPrimary'])
-      expect(label).toContain(part);
-    for (const part of ['...Typography.default()', '...hull.type.body', 'color: hull.textPrimary'])
-      expect(styleBody(sheet, 'title')).toContain(part);
-  });
-
-  it('sits inside one row frame with the closed row height', () => {
-    expect(styleBody(choice, 'labelLine')).toContain('minHeight: 52 - 2 * hull.space.sm');
-    expect(HULL_SHEET_ROW_HEIGHT).toBe(52);
-    expect(styleBody(sheet, 'sheetRow')).toContain('minHeight: HULL_SHEET_ROW_HEIGHT');
-    expect(styleBody(sheet, 'sheetRow')).toContain('paddingVertical: hull.space.sm');
-    const block = styleBody(choice, 'repoBlock');
-    expect(block).toContain('paddingVertical: hull.space.sm');
-    expect(block).toContain('borderTopColor: hull.border');
-  });
-
-  it('marks the selected segment quietly, with no primary fill and no track band', () => {
-    const selected = `${styleBody(choice, 'segmentSelected')} ${styleBody(choice, 'segmentTextSelected')}`;
-    expect(selected).not.toMatch(/buttonPrimary(Fill|Text)/);
-    expect(selected).toContain('backgroundColor: hull.bgHighlight');
-    expect(selected).toContain('borderColor: hull.borderStrong');
-    expect(selected).toContain('color: hull.textPrimary');
-    expect(styleBody(choice, 'segmentTextSelected')).toContain("Typography.default('semiBold')");
-    expect(styleBody(choice, 'segments')).not.toContain('backgroundColor');
-  });
-
-  it('draws no box around the repo picker', () => {
-    expect(styleBody(choice, 'repoRow')).not.toContain('borderWidth');
-  });
+import React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create } from 'react-test-renderer';
+import { expect, it, vi } from 'vitest';
+vi.mock('react-native', async () => {
+  const R = await import('react');
+  const host = (name: string) => (props: any) => R.createElement(name, props, props.children);
+  return { View: host('View'), Text: host('Text'), Pressable: host('Pressable'), ScrollView: host('ScrollView'), Switch: host('Switch') };
 });
-
-describe('section header on a sheet', () => {
-  it('takes the sheet surface instead of the screen fill', () => {
-    expect(styleBody(header, 'sectionHeader')).toContain('backgroundColor: hull.bgTerminal');
-    expect(styleBody(header, 'sheetSurface')).toContain("backgroundColor: 'transparent'");
-    expect(repoList).toMatch(/<RoomListSectionHeader[^>]*surface="sheet"/);
-    expect(repoList).toContain('stickySectionHeadersEnabled={false}');
-  });
+vi.mock('./Button', async () => {
+  const R = await import('react');
+  return { Button: (props: any) => R.createElement('Button', props) };
+});
+vi.mock('./HullActionSheet', async () => {
+  const R = await import('react');
+  return { HullActionSheetRow: (props: any) => R.createElement('SheetRow', props) };
+});
+vi.mock('./ChevronGlyph', () => ({ ChevronGlyph: () => null, CHEVRON_ROW_SIZE: 16 }));
+import { RepositoryChoice } from './RepositoryChoice';
+import { ErrorBanner } from './ErrorBanner';
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+it('uses shared mode controls and keeps selection, busy state, connection and errors observable', () => {
+  const choose = vi.fn(), connect = vi.fn();
+  let tree: any;
+  const props = { testIDPrefix:'choice', busy:false, mode:'link' as const, onChooseMode:choose,
+    loading:false, githubConnected:false, onConnect:connect, linkRepo:null, onOpenList() {},
+    activeInstallations:[], selectedInstallation:undefined, onSelectInstallation() {},
+    ownerMenuOpen:false, setOwnerMenuOpen() {}, createName:'', takenRepo:null, onLinkInstead() {} };
+  act(() => { tree = create(React.createElement(RepositoryChoice, props)); });
+  const host = (id:string) => tree.root.find((n:any) => typeof n.type === 'string' && n.props.testID === id);
+  expect(host('choice-repo-mode-link').props.accessibilityState.selected).toBe(true);
+  expect(host('choice-repo-mode-create').props.accessibilityState.selected).toBe(false);
+  act(() => host('choice-repo-mode-create').props.onPress());
+  expect(choose).toHaveBeenCalledWith('create');
+  act(() => host('choice-github-connect').props.onPress());
+  expect(connect).toHaveBeenCalledOnce();
+  act(() => tree.update(React.createElement(RepositoryChoice, {...props,busy:true,error:'Repository unavailable.'})));
+  for (const mode of ['none','link','create']) expect(host(`choice-repo-mode-${mode}`).props.disabled).toBe(true);
+  expect(tree.root.findByType(ErrorBanner).props.title).toBe('Repository unavailable.');
+  act(() => tree.unmount());
 });

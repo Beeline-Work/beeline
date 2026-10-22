@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 
-async function fixture(options: { machineReport?: { status: string }; noBroker?: boolean; noRow?: boolean; stale?: boolean; failure?: string; toolFailure?: string; syncFails?: boolean } = {}) {
+async function fixture(options: { github?: boolean; machineReport?: { status: string }; noBroker?: boolean; noRow?: boolean; stale?: boolean; failure?: string; toolFailure?: string; syncFails?: boolean } = {}) {
   const context = { roomId: 'corner', requestId: 'turn', taskId: 'root', generationId: 'generation' };
   const contextFile = join(directory, 'turn.json');
   await writeFile(contextFile, JSON.stringify(context));
@@ -58,7 +58,7 @@ async function fixture(options: { machineReport?: { status: string }; noBroker?:
       response.end(JSON.stringify({ owner: { name: 'Owner' }, machine: { name: 'squire', squire: options.machineReport },
         catalog: [{ connectorType: 'trusty-squire', name: 'Trusty Squire', purpose: 'A vault.',
           available: true, ...(options.noRow ? {} : { paired: { status, errorMessage: cause, helperName: 'squire', onThisMachine: true } }) }],
-        connections, apps: [],
+        connections, apps: options.github ? [{ appId: 'github-personal', appKey: 'github', name: 'GitHub', transport: 'composio', status: 'connected' }] : [],
       }));
     } else { response.writeHead(404).end('{}'); }
   });
@@ -111,6 +111,21 @@ async function fixture(options: { machineReport?: { status: string }; noBroker?:
     }),
   };
 }
+
+describe('Reproduction R-GHROUTE through the built MCP service', () => {
+  it('routes linked-repository writes to the App despite a connected personal account', async () => {
+    const f = await fixture({ github: true });
+    const text = await f.statusText();
+    expect(text).toContain('use the Beeline GitHub App for linked-repository code, branch and PR writes');
+    expect(text).toContain('in Room, corner and DM sessions');
+    expect(text).toContain('Without an App checkout, use a corner of the linked Room');
+    expect(text).toContain('serves general lookups, repositories without App access and person-scoped actions');
+    expect(text).toContain('Never fall back from App to personal');
+    expect(text).toContain('does not prevent using the authorized App route');
+    expect(text).not.toContain("prefer this owner's personal GitHub connection");
+    console.log('R-GHROUTE stand-in: connect status with personal GitHub connected → linked-repository writes use the App');
+  });
+});
 
 describe('Reproduction squire-status-1 through the released Workbench MCP', () => {
   it('Reproduction squire-machine-status-2: working broker without a server connection row', async () => {

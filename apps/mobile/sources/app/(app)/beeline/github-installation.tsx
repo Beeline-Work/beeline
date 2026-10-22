@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
@@ -44,9 +45,9 @@ function EnhancedGitHubInstallation() {
   if (returnPath) return <Redirect href={returnPath as Href} />;
   return <View style={styles.page} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
-    <Text style={styles.copy} accessibilityRole={error ? 'alert' : undefined}>
-      {error ?? 'Checking your installation and loading the repositories Beeline can work in.'}
-    </Text>
+    {error ? <ErrorBanner title={error} /> : <Text style={styles.copy}>
+      Checking your installation and loading the repositories Beeline can work in.
+    </Text>}
     {error ? <Button label="Retry" variant="secondary" onPress={() => {
       if (installed !== '1' || connectionError) setReturnPath(recoveryPath);
       else setAttempt(value => value + 1);

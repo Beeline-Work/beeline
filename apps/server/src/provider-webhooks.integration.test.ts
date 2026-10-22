@@ -107,7 +107,8 @@ describe.each(['linear', 'stripe'] as const)('%s provider subscription', (servic
         .toContainEqual(service === 'linear'
           ? { service: 'Linear', event, label: 'new issue in Linear' }
           : { service: 'Stripe', event, label: 'payment succeeded in Stripe' });
-      const subscription = await createAgentSubscription(db, AGENT, {
+      const subscription = await createAgentSubscription(db, AGENT, { title: 'Watch events',
+        when: service === 'linear' ? 'On new issue in Linear' : 'On payment succeeded in Stripe',
         roomId: ROOM, source: 'service', event, prompt: 'Read this event and respond.'
       }, { receiverUrl: RECEIVER });
       expect(subscription.when).toBe(service === 'linear'
@@ -155,7 +156,7 @@ describe.each(['linear', 'stripe'] as const)('%s provider subscription', (servic
         [SECOND_AGENT, OWNER, AGENT]);
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
         VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, SECOND_AGENT]);
-      const second = await createAgentSubscription(db, SECOND_AGENT, {
+      const second = await createAgentSubscription(db, SECOND_AGENT, { title: 'Watch events', when: 'On event received',
         roomId: ROOM, source: 'service', event, prompt: 'Also watch this event.'
       }, { receiverUrl: RECEIVER });
       expect(second.id).not.toBe(subscription.id);
@@ -178,7 +179,7 @@ it('retires a webhook when its only subscriber stops during registration', async
   const { db, home } = await fixture('linear');
   const provider = mockProvider('linear');
   try {
-    const subscription = await createAgentSubscription(db, AGENT, {
+    const subscription = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
       roomId: ROOM, source: 'service', event: 'issue.created', prompt: 'Watch issues.'
     }, { receiverUrl: RECEIVER });
     const register = (await providerWebhookAssignments(db, AGENT))[0]!;
@@ -200,7 +201,7 @@ it('retires a webhook when its only subscriber stops during registration', async
 it('stops advertising a provider event after registration fails', async () => {
   const { db, home } = await fixture('linear');
   try {
-    const subscription = await createAgentSubscription(db, AGENT, {
+    const subscription = await createAgentSubscription(db, AGENT, { title: 'Watch events', when: 'On event received',
       roomId: ROOM, source: 'service', event: 'issue.created', prompt: 'Watch issues.'
     }, { receiverUrl: RECEIVER });
     const job = (await providerWebhookAssignments(db, AGENT))[0]!;

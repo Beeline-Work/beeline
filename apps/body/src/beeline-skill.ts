@@ -161,12 +161,12 @@ Every wait below ends the turn. Something already wakes you; no reminder loops.
 | Checks or review on your pull request | The server, when the gate changes |
 | A corner to open or merge | wake(action:create, trigger:lifecycle, address) on that corner address |
 | An approval, card or sign-in | Its own resume wake to the requester |
-| A time | wake(action:create, trigger:schedule, cadence) |
-| An outside event | wake(action:create, trigger:event, source, event, prompt) |
+| A time | wake(action:create, trigger:schedule, title, cadence) |
+| An outside event | wake(action:create, trigger:event, title, when, source, event, prompt) |
 
 ## Managing your wakes
 
-wake manages only your own wake sources.
+wake manages only your own wake sources. Creating a schedule or subscription requires title (one to four words). Creating a subscription also requires when, a plain trigger phrase of one to five words.
 - Schedules: cadence kind interval takes everyMinutes; kind cron takes expression and an optional timeZone. maxRuns deletes the schedule after that many runs. wake(action:list) returns each scheduleId. Update with wake(action:update, trigger:schedule, scheduleId, prompt or cadence); delete with wake(action:delete, scheduleId), without a trigger.
 - Events: wake(action:events) lists the catalog. Delete one with its subscriptionId. wake(action:replace_events, kinds) sets the complete room-kind list.
 - Approvals need no item-specific subscriptions.

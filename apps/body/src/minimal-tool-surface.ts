@@ -1189,7 +1189,8 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "type": "string",
           "description": "Required lifecycle corner address; rejected for local schedule/event management."
         },
-        "title": {"type": "string", "description": "Plain schedule label in one to four words.", "maxLength": 80},
+        "title": {"type": "string", "description": "Required for schedule and event creation: plain name in one to four words.", "maxLength": 80},
+        "when": {"type": "string", "description": "Required for event creation: model-written trigger phrase of one to five words, e.g. On corner checks failing."},
         "workflowName": {
           "type": "string",
           "description": "Saved workflow targeted by this subscription, if the action starts one."
@@ -1237,9 +1238,12 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "required": ["action"],
       "additionalProperties": false,
       "anyOf": [
+        {"properties": {"action": {"const": "create"}, "trigger": {"const": "schedule"}}, "required": ["action", "trigger", "title"]},
+        {"properties": {"action": {"const": "create"}, "trigger": {"const": "event"}}, "required": ["action", "trigger", "title", "when"]},
+        {"properties": {"action": {"const": "create"}, "trigger": {"const": "lifecycle"}}, "required": ["action", "trigger", "address"]},
         {"properties": {"action": {"enum": ["list", "events"]}}, "required": ["action"]},
         {
-          "properties": {"action": {"enum": ["create", "update", "delete"]}},
+          "properties": {"action": {"enum": ["update", "delete"]}},
           "required": ["action", "trigger"]
         },
         {"properties": {"action": {"const": "delete"}, "trigger": {"const": "schedule"}}, "required": ["action", "scheduleId"]},

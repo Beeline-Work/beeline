@@ -29,9 +29,7 @@ Beeline adds no shared pip or Gradle cache override; their defaults follow
 the private Room HOME, while inherited custom locations remain unchanged.
 Existing Rust, Cargo, Maven, Java, Android NDK, Gradle and other toolchain
 settings pass through. The added environment variables select only supported
-shared package and harness download caches. `BEELINE_SHARED_ASSETS_ENABLED=0` selects the
-legacy layout for new cold activations; an already running session continues
-on its selected generation.
+shared package and harness download caches.
 
 ## Capacity and migration
 

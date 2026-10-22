@@ -1,5 +1,3 @@
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
@@ -109,18 +107,6 @@ export default function BuzzIdentitySettings() {
   const [face, setFace] = useState<string | null>(null);
   const [facePickerOpen, setFacePickerOpen] = useState(false);
   const [githubNotice, setGitHubNotice] = useState<string | null>(null);
-  const [googleAvailable, setGoogleAvailable] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    const refresh = () => {
-      void readAuthCapabilities(getBuzzRuntimeConfig().monolithUrl)
-        .then(capabilities => { if (alive) setGoogleAvailable(capabilities.google === true); })
-        .catch(() => undefined);
-    };
-    const unwatch = watchGooglePreview(refresh);
-    refresh();
-    return () => { alive = false; unwatch(); };
-  }, []);
   useEffect(() => {
     if (!profilePubkey) return;
     void (async () => {
@@ -520,7 +506,7 @@ export default function BuzzIdentitySettings() {
             <SettingsRow title="GitHub" description="Needed only to link repositories" value="Connect"
               onPress={() => void connectGitHub()} disabled={githubBusy} testID="settings-provider-github" />
           ) : null}
-          {googleAvailable && managedProjection && !managedProjection.providers?.some(link => link.provider === 'google') ? (
+          {managedProjection && !managedProjection.providers?.some(link => link.provider === 'google') ? (
             <SettingsRow title="Google" value="Connect" onPress={() => void connectGoogle()}
               disabled={googleBusy} testID="settings-provider-google" />
           ) : null}

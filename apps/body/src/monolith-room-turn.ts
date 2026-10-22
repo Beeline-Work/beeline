@@ -12,7 +12,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { machineHost } from './machine-host.js';
-import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
+import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -1207,7 +1207,7 @@ export class MonolithRoomTurnLoop {
       kind: this.options.config.agentKind,
       command,
     });
-    let assets = sharedAssetsEnabled() && this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
+    let assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;

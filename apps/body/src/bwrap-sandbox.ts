@@ -1,4 +1,3 @@
-import { readEnv } from './env.js';
 /**
  * OS-level sandbox for ACP harness child processes (bubblewrap).
  *
@@ -121,7 +120,7 @@ import { readEnv } from './env.js';
  * their contents are absent, not merely unwritable. The built-in list covers
  * the known credential homes ({@link KNOWN_CREDENTIAL_MASK_PATHS}); an owner
  * whose machine keeps secrets elsewhere extends it via the runtime record's
- * `sandboxMaskPaths` or the `BEELINE_BODY_SANDBOX_MASK` (`BUZZY_BODY_SANDBOX_MASK` still works) environment variable
+ * `sandboxMaskPaths` or the `BEELINE_BODY_SANDBOX_MASK` environment variable
  * (comma-separated absolute paths). MCP server configuration and session
  * directories are not on that list — a sandboxed agent can read the host
  * Trusty Squire session.
@@ -757,8 +756,7 @@ export function detectBwrapSandbox(
   } = {},
 ): BwrapAvailability {
   const env = options.env ?? process.env;
-  const override = readEnv(env, 'BODY_SANDBOX');
-  const policy = isSandboxPolicy(override) ? override : (options.policy ?? DEFAULT_SANDBOX_POLICY);
+  const policy = options.policy ?? DEFAULT_SANDBOX_POLICY;
   if (policy === 'off') {
     return {
       advisory:
@@ -1020,8 +1018,7 @@ export async function ensureBwrapSandbox(
   const detected = detect(detectInput);
   if (detected.path) return detected;
   const env = options.env ?? process.env;
-  const override = readEnv(env, 'BODY_SANDBOX');
-  const policy = isSandboxPolicy(override) ? override : (options.policy ?? DEFAULT_SANDBOX_POLICY);
+  const policy = options.policy ?? DEFAULT_SANDBOX_POLICY;
   const shellConsequence = 'A Room shell stays refused while the OS sandbox is unavailable.';
   if (policy === 'off') {
     return {

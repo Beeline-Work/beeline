@@ -31,7 +31,7 @@ it.each(['staged', 'active'] as const)('boots the verified %s release without a 
   const network = vi.fn().mockRejectedValue(new Error('publication unavailable'));
   vi.stubGlobal('fetch', network);
   const entry = await bootstrapMachine({ ...process.env, HOME: home,
-    BEELINE_LIB_DIR: libDir, BEELINE_BOOT_LAUNCHER_PID: '123', BEELINE_UPDATE_DISABLE: '0' });
+    BEELINE_LIB_DIR: libDir, BEELINE_BOOT_LAUNCHER_PID: '123' });
   expect(network).not.toHaveBeenCalled();
   expect(entry).toBe(resolve(releases, kind === 'staged' ? 'new' : 'old', 'lib/beeline/beeline-cli.mjs'));
   // Release retention belongs to the serving helper, never successor import.

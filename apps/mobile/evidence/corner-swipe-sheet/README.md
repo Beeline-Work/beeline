@@ -41,4 +41,3 @@ is set, so it never reaches this sheet, and `HullActionSheetModal` keeps its
 5. Use the named `chrome-devtools-axi` session at 390×844 to swipe a message
    right and capture. The reproduced pop-up uses the base-commit bundle on the
    same server and data.
-The legacy `BUZZY_AUTH_TENANTS_JSON` name still works; `BEELINE_AUTH_TENANTS_JSON` wins when both are set.

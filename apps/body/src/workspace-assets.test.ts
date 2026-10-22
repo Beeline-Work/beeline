@@ -7,7 +7,7 @@ import { detectBwrapSandbox, sandboxMountPlan, wrapAgentCommand } from './bwrap-
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
   isolatedSharedAssetCategories, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
-  sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv,
+  workspaceAssetRoot, workspaceCacheEnv,
 } from './workspace-assets.js';
 
 const roots: string[] = [];
@@ -84,8 +84,6 @@ describe('coarse Workspace assets', () => {
     expect(workspaceCacheEnv(a).PLAYWRIGHT_BROWSERS_PATH).toBe(resolve(a.cache, 'browser/playwright'));
     expect(workspaceCacheEnv(a, resolve(root, 'corner')).CARGO_TARGET_DIR).toBe(resolve(root, 'corner/.beeline-cargo-target'));
     expect(workspaceCacheEnv(a)).not.toHaveProperty('PIP_CACHE_DIR');
-    expect(sharedAssetsEnabled({ BEELINE_SHARED_ASSETS_ENABLED: '0' })).toBe(false);
-    expect(sharedAssetsEnabled({})).toBe(true);
   });
 
   it('publishes AVD metadata without copying or hashing the operator SDK', async () => {

@@ -3338,7 +3338,6 @@ describe('thin monolith corner turn', () => {
   });
 
   it.each(['completed', 'in_progress', 'failed', 'missing'])('R8f checks outcome (%s) controls the checks follow-up', async (status) => {
-    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-thin-corner-'));
     roots.push(root);
     const worktree = join(root, 'worktree');
@@ -3842,7 +3841,6 @@ describe('thin monolith corner turn', () => {
 
 describe('corner turn institutional-memory prefetch', () => {
   it('starts the snapshot fetch before activation, and serves a snapshot slower than the raw budget when it still beats activation', async () => {
-    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-memory-prefetch-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);

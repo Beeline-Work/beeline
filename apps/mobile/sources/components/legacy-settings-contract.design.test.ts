@@ -1,9 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const item = readFileSync(new URL('./Item.tsx', import.meta.url), 'utf8');
-const itemGroup = readFileSync(new URL('./ItemGroup.tsx', import.meta.url), 'utf8');
-const itemList = readFileSync(new URL('./ItemList.tsx', import.meta.url), 'utf8');
 const textSelection = readFileSync(
   new URL('../app/(app)/text-selection.tsx', import.meta.url),
   'utf8',
@@ -22,21 +19,6 @@ describe('retained settings leaves use the Beeline design contract', () => {
       );
       expect(source, `${name} contains a local hex color`).not.toMatch(/#[0-9a-f]{6}/i);
     }
-  });
-
-  it('renders settings as a flat hairline index with semantic prose and mono chrome', () => {
-    // Row title/subtitle/detail read through the shared type roles now
-    // (`theme.buzz.type.*`, DESIGN.md → Type) rather than a bare fontFamily —
-    // bodyStrong/meta/machine resolve to the same proseSemibold/proseRegular/
-    // monoRegular families these families named directly before.
-    expect(item).toContain('...theme.buzz.type.bodyStrong');
-    expect(item).toContain('...theme.buzz.type.meta');
-    expect(item).toContain('...theme.buzz.type.machine');
-    expect(item).toContain('backgroundColor: theme.buzz.border');
-    expect(itemGroup).toContain("backgroundColor: 'transparent'");
-    expect(itemGroup).toContain('borderTopWidth: StyleSheet.hairlineWidth');
-    expect(itemGroup).not.toMatch(/borderRadius|shadowRadius|elevation:/);
-    expect(itemList).toContain('backgroundColor: theme.buzz.bgTerminal');
   });
 
   it('draws the shared PageHeader instead of a stack header', () => {

@@ -192,7 +192,9 @@ describe('New Room sheet', () => {
     expect(text('create-room-repo-row')).toContain('None');
     expect(host('create-room-repo-mode')).toBeUndefined();
     expect(host('create-room-public')?.props.value).toBe(true);
-    expect(host('create-room-public')?.props.thumbColor).toBe(beelineThemes.obsidian.bgBase);
+    // The one switch: brass when on, with a light thumb.
+    expect(host('create-room-public')?.props.thumbColor).toBe(beelineThemes.obsidian.textPrimary);
+    expect(host('create-room-public')?.props.trackColor.true).toBe(beelineThemes.obsidian.accent);
     expect(host('create-room-submit')?.props.disabled).toBe(true);
     expect(load).not.toHaveBeenCalled();
     name('planning');

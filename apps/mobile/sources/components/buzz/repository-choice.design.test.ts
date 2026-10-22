@@ -8,7 +8,7 @@ import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
  * fill on a paler track; the org header in the repo list sat in a pale band.
  */
 const choice = readFileSync(new URL('./RepositoryChoice.tsx', import.meta.url), 'utf8');
-const sheet = readFileSync(new URL('./HullActionSheet.tsx', import.meta.url), 'utf8');
+const sheet = readFileSync(new URL('./IndexRow.tsx', import.meta.url), 'utf8');
 const header = readFileSync(new URL('./RoomListSectionHeader.tsx', import.meta.url), 'utf8');
 const repoList = readFileSync(new URL('./RepoList.tsx', import.meta.url), 'utf8');
 
@@ -24,14 +24,18 @@ function styleBody(source: string, name: string): string {
 
 describe('open Repository row', () => {
   it('keeps the label in the same type as the other sheet row labels', () => {
-    expect(styleBody(choice, 'fieldLabel')).toBe(styleBody(sheet, 'rowLabel'));
+    const label = styleBody(choice, 'fieldLabel');
+    for (const part of ['...Typography.default()', '...hull.type.body', 'color: hull.textPrimary'])
+      expect(label).toContain(part);
+    for (const part of ['...Typography.default()', '...hull.type.body', 'color: hull.textPrimary'])
+      expect(styleBody(sheet, 'title')).toContain(part);
   });
 
   it('sits inside one row frame with the closed row height', () => {
     expect(styleBody(choice, 'labelLine')).toContain('minHeight: 52 - 2 * hull.space.sm');
     expect(HULL_SHEET_ROW_HEIGHT).toBe(52);
-    expect(styleBody(sheet, 'row')).toContain('minHeight: HULL_SHEET_ROW_HEIGHT');
-    expect(styleBody(sheet, 'row')).toContain('paddingVertical: hull.space.sm');
+    expect(styleBody(sheet, 'sheetRow')).toContain('minHeight: HULL_SHEET_ROW_HEIGHT');
+    expect(styleBody(sheet, 'sheetRow')).toContain('paddingVertical: hull.space.sm');
     const block = styleBody(choice, 'repoBlock');
     expect(block).toContain('paddingVertical: hull.space.sm');
     expect(block).toContain('borderTopColor: hull.border');

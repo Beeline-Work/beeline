@@ -110,6 +110,8 @@
         "scripts/computer-session-frame.tsx",
         "scripts/render-computer-session-frame.mjs",
         "scripts/transcript-dates-proof.tsx",
+        // The shared UI library screenshots load these through esbuild and Gradle entry files.
+        "scripts/{render-shared-ui-library-proof.mjs,shared-ui-library-native-entry.tsx,shared-ui-library-web-entry.tsx,shared-ui-library-proof.tsx,shared-ui-library-proof-new.tsx}",
         "scripts/tool-output-sheet-proof.tsx",
         "scripts/direct-message-picker-proof.tsx",
         "scripts/dm-sheet-proof.tsx",

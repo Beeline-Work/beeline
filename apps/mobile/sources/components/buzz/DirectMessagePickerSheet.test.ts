@@ -23,10 +23,18 @@ vi.mock('react-native', async () => {
   };
 });
 
-vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (styles: unknown) => styles },
-  useUnistyles: () => ({ theme: { buzz: { textMuted: '#777' } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+  const { beelineThemes } = await import('@/buzz/groknight');
+  const buzz = { ...beelineThemes.obsidian, textMuted: '#777' };
+  return {
+    StyleSheet: {
+      create: (styles: unknown) =>
+        typeof styles === 'function' ? styles({ buzz }) : styles,
+      hairlineWidth: 1,
+    },
+    useUnistyles: () => ({ theme: { buzz } }),
+  };
+});
 
 vi.mock('@/constants/Typography', () => ({
   Typography: {

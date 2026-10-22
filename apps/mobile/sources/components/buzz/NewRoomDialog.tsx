@@ -1,7 +1,8 @@
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
-import { Keyboard, Platform, Switch, Text, TouchableOpacity, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Keyboard, Text, TouchableOpacity, View } from 'react-native';
+import { HullSwitch } from './HullSwitch';
+import { StyleSheet } from 'react-native-unistyles';
 import type { GitHubInstallationAccess } from '@beeline/buzz-client';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
 import { ROOM_LABEL } from '@/buzz/vocabulary';
@@ -72,7 +73,6 @@ export function NewRoomDialog({
   handleCreateRepository,
   draftContext = 'global',
 }: Props) {
-  const { theme } = useUnistyles();
   const [revealed, setRevealed] = useState(false);
   const [mode, setMode] = useState<RepoMode>('none');
   // Link follows the room name until the user picks a repository themselves.
@@ -247,14 +247,11 @@ export function NewRoomDialog({
           )}
           <View style={styles.fieldRow} testID="create-room-public-row">
             <Text style={styles.fieldLabel}>Public</Text>
-            <Switch
+            <HullSwitch
               accessibilityLabel="Public Room"
               disabled={busy}
               onValueChange={(value) => setInviteOnly(!value)}
               testID="create-room-public"
-              thumbColor={theme.buzz.bgBase}
-              {...(Platform.OS === 'web' ? { activeThumbColor: theme.buzz.bgBase } : {})}
-              trackColor={{ false: theme.buzz.borderStrong, true: theme.buzz.accent }}
               value={!inviteOnly}
             />
           </View>

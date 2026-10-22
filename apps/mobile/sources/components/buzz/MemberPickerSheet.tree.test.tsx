@@ -277,8 +277,9 @@ describe('MemberPickerSheet, mounted the way a Room mounts it', () => {
     const renderer = render(<MemberPickerSheet {...baseProps(null)} />);
     const row = hostWithTestID(renderer, `member-picker-candidate-${ANA}`)[0]!;
 
-    // `getStyles` spread the resolved style in, so the row really wears it.
-    expect(row.props.style.minHeight).toBe(unistylesTheme.buzz.layout.row);
+    // The resolved style reaches the row, so the row really wears it.
+    const style = Object.assign({}, ...[row.props.style].flat(Infinity).filter(Boolean));
+    expect(style.minHeight).toBe(unistylesTheme.buzz.layout.row);
   });
 
   it('checks a candidate and offers the brass add button', () => {

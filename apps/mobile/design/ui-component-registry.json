@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "fingerprintMode": "layout-shell-v1",
+  "fingerprintMode": "layout-shell-v2",
   "components": {
     "components/AnimatedOverlay.tsx": ["AnimatedBlurBackdrop"],
     "components/BubblePressable.tsx": ["AnimatedPressable", "BubblePressable"],
@@ -13,7 +13,6 @@
       "row"
     ],
     "components/buzz/AgentProfileView.tsx": ["AgentProfileView"],
-    "components/buzz/AgentUsageSection.tsx": ["AgentUsageSection"],
     "components/buzz/AgentSignInCard.tsx": [
       "AgentSignInCard",
       "failureLine",
@@ -21,6 +20,8 @@
       "linkStep",
       "waitLine"
     ],
+    "components/buzz/AgentUsageSection.tsx": ["AgentUsageSection"],
+    "components/buzz/AgentVoiceSection.tsx": ["AgentVoiceSection"],
     "components/buzz/AppearanceSetting.tsx": ["AppearanceSetting"],
     "components/buzz/AppMark.tsx": ["AppMark"],
     "components/buzz/AppPageHeader.tsx": ["AppPageHeader"],
@@ -33,7 +34,6 @@
       "WebView"
     ],
     "components/buzz/ArtifactMedia.tsx": ["ArtifactImage", "ArtifactText"],
-    "components/buzz/RunnableArtifact.tsx": ["RunnableArtifact", "WebView"],
     "components/buzz/ArtifactPdfView.tsx": [
       "ArtifactPdfFrame",
       "ArtifactPdfLoading",
@@ -60,10 +60,8 @@
     "components/buzz/BeelineMarkSpinner.tsx": ["BeelineMarkSpinner", "MARK_CELL"],
     "components/buzz/Button.tsx": ["Button"],
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
-    "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],
     "components/buzz/ChoicePlate.tsx": ["TranscriptCardChoicePlate", "inner"],
-    "components/buzz/CornerLockAction.tsx": ["CornerLockAction"],
     "components/buzz/CodeBlock.tsx": ["CodeBlock", "PEEK_LINE_COUNT", "body"],
     "components/buzz/CodeHighlighter.tsx": ["CodeHighlighter"],
     "components/buzz/CommunityInviteEntry.tsx": ["CommunityInviteEntry"],
@@ -104,6 +102,7 @@
     ],
     "components/buzz/CornerBranchGlyph.tsx": ["CORNER_BRANCH_POINTS", "CornerBranchGlyph"],
     "components/buzz/CornerGlyph.tsx": ["CORNER_POINTS", "CornerGlyph"],
+    "components/buzz/CornerLockAction.tsx": ["CornerLockAction"],
     "components/buzz/CornerObjectiveLine.tsx": [
       "CornerBriefLink",
       "CornerObjectiveLine",
@@ -142,6 +141,8 @@
       "SectionHeading"
     ],
     "components/buzz/EmptyLedgerState.tsx": ["EmptyLedgerState"],
+    "components/buzz/EmptyState.tsx": ["EmptyState"],
+    "components/buzz/ErrorBanner.tsx": ["ErrorBanner"],
     "components/buzz/ExitGlyph.tsx": ["ExitGlyph"],
     "components/buzz/FaceGrid.tsx": ["FaceGrid"],
     "components/buzz/FacePickerSheet.tsx": ["FacePickerSheet"],
@@ -170,7 +171,9 @@
       "HullDialogActions"
     ],
     "components/buzz/HullMenuTrigger.tsx": ["HullMenuTrigger"],
+    "components/buzz/HullSwitch.tsx": ["HullSwitch"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
+    "components/buzz/IndexRow.tsx": ["IndexRow", "body", "trailingColumn", "trailingMark"],
     "components/buzz/Ledger.tsx": [
       "Byline",
       "Container",
@@ -192,9 +195,17 @@
       "name",
       "withLedgerDayCaption"
     ],
+    "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure"],
+    "components/buzz/LifecycleCard.tsx": [
+      "LifecycleCard",
+      "LifecycleRecordCard",
+      "GitHubEventCard",
+      "DaemonFactCard"
+    ],
+    "components/buzz/LifecycleRow.tsx": ["LifecycleRow", "body"],
     "components/buzz/MemberGrantRow.tsx": ["MemberGrantRow"],
     "components/buzz/MemberPickerSheet.tsx": ["MemberPickerSheet"],
-    "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow", "Row"],
+    "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow"],
     "components/buzz/MembersAgentsGlyph.tsx": ["MembersAgentsGlyph"],
     "components/buzz/MembersGlyph.tsx": ["APEX_X", "MembersGlyph"],
     "components/buzz/MentionSuggestionMenu.tsx": ["ChannelSuggestionMenu", "MentionSuggestionMenu"],
@@ -205,7 +216,15 @@
       "MessageSearchRow",
       "Retry"
     ],
-    "components/buzz/MicGlyph.tsx": ["ArrowUpGlyph", "ConversationGlyph", "MicGlyph", "PlusGlyph", "StopGlyph", "StrokeGlyph", "WaveformGlyph"],
+    "components/buzz/MicGlyph.tsx": [
+      "ArrowUpGlyph",
+      "ConversationGlyph",
+      "MicGlyph",
+      "PlusGlyph",
+      "StopGlyph",
+      "StrokeGlyph",
+      "WaveformGlyph"
+    ],
     "components/buzz/MonoHull.tsx": [
       "HullLivePulse",
       "HullMechanismRail",
@@ -231,9 +250,11 @@
     "components/buzz/PageHeader.tsx": ["PageHeader"],
     "components/buzz/PinGlyph.tsx": ["PinGlyph"],
     "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
-    "components/buzz/LifecycleRow.tsx": ["LifecycleRow", "body"],
-    "components/buzz/LifecycleCard.tsx": ["LifecycleCard", "LifecycleRecordCard", "GitHubEventCard", "DaemonFactCard"],
-    "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard", "RepositoryLifecycleRow", "copy"],
+    "components/buzz/PrLifecycleCard.tsx": [
+      "NotificationLifecycleCard",
+      "RepositoryLifecycleRow",
+      "copy"
+    ],
     "components/buzz/ProfileActions.tsx": ["ProfileActions"],
     "components/buzz/ProfileIdentity.tsx": [
       "PROFILE_IDENTITY_PICTURE_SIZE",
@@ -253,7 +274,6 @@
       "loadingRow",
       "ownerMenu"
     ],
-    "components/buzz/RoomUnreadControls.tsx": ["RoomUnreadControls"],
     "components/buzz/RoomContextPreamble.tsx": ["RoomContextPreamble"],
     "components/buzz/RoomCornersHeader.tsx": ["RoomCornersHeader"],
     "components/buzz/RoomCornersList.tsx": [
@@ -286,6 +306,8 @@
       "RoomReviewerSurfaceNotice"
     ],
     "components/buzz/RoomRosterSheet.tsx": ["RoomRosterSheet", "trailing"],
+    "components/buzz/RoomUnreadControls.tsx": ["RoomUnreadControls"],
+    "components/buzz/RunnableArtifact.tsx": ["RunnableArtifact", "WebView"],
     "components/buzz/RuntimeErrorBoundary.tsx": ["RuntimeErrorBoundary", "RuntimeErrorView"],
     "components/buzz/sandbox-webview.ts": [],
     "components/buzz/ScheduledWorkDetail.tsx": [
@@ -297,8 +319,9 @@
     ],
     "components/buzz/ScheduledWorkWhere.tsx": ["ScheduledWorkWhere"],
     "components/buzz/ServiceMark.tsx": ["ServiceMark"],
-    "components/buzz/SettingsRow.tsx": ["SettingsRow", "body", "trailing", "trailingMark"],
+    "components/buzz/SettingsRow.tsx": ["SettingsRow"],
     "components/buzz/SettingsScopeTabs.tsx": ["SETTINGS_SCOPE_PICTURE_SIZE", "SettingsScopeTabs"],
+    "components/buzz/ShowMoreRow.tsx": ["ShowMoreRow"],
     "components/buzz/SlashVerbPicker.tsx": ["SlashVerbPicker"],
     "components/buzz/SoulPortraitControls.tsx": ["SoulPortraitControls"],
     "components/buzz/StarPromptCard.tsx": ["StarPromptCard"],
@@ -320,10 +343,7 @@
       "inner",
       "rowContent"
     ],
-    "components/buzz/TranscriptReference.tsx": [
-      "TranscriptReference",
-      "contents"
-    ],
+    "components/buzz/TranscriptReference.tsx": ["TranscriptReference", "contents"],
     "components/buzz/TranscriptScrubber.tsx": ["TranscriptScrubber"],
     "components/buzz/TrayGlyph.tsx": ["TrayGlyph", "glyph"],
     "components/buzz/TurnProgressLine.tsx": ["TurnBandSlot", "TurnProgressLine", "TurnSettledLine"],
@@ -331,6 +351,8 @@
     "components/buzz/ViewerConversationDock.tsx": ["ViewerConversationDock"],
     "components/buzz/VoiceBar.tsx": ["VoiceBar", "VoiceAgentStrip"],
     "components/buzz/VoiceCallCard.tsx": ["VoiceCallCard"],
+    "components/buzz/VoicePreviewPlayer.native.tsx": ["VoicePreviewPlayer"],
+    "components/buzz/VoicePreviewPlayer.tsx": ["VoicePreviewPlayer"],
     "components/buzz/WalletQr.tsx": ["WalletQr"],
     "components/buzz/welcome-brand-marks.ts": [],
     "components/buzz/WelcomeCards.tsx": [
@@ -357,7 +379,11 @@
       "WorkflowStepCircle"
     ],
     "components/buzz/WorkspaceActionsMenu.tsx": ["WorkspaceActionsMenu"],
-    "components/buzz/WorkspaceSettingsPanel.tsx": ["WorkspaceDeleteConfirmDialog", "WorkspaceSettings", "default"],
+    "components/buzz/WorkspaceSettingsPanel.tsx": [
+      "WorkspaceDeleteConfirmDialog",
+      "WorkspaceSettings",
+      "default"
+    ],
     "components/buzz/WritePermissionOutcome.tsx": ["WritePermissionOutcome"],
     "components/buzz/YouStep.tsx": ["YouStep"],
     "components/buzz/ZoomableArtifactImage.tsx": ["ZoomableArtifactImage"],
@@ -376,26 +402,17 @@
       "renderMessage"
     ],
     "components/glassInteractionPolicy.ts": [],
-    "components/Item.tsx": ["Item", "content"],
-    "components/ItemGroup.tsx": ["ItemGroup"],
-    "components/ItemList.tsx": ["ItemList", "ItemListStatic"],
     "components/layout.ts": [],
     "components/markdown/parseMarkdown.ts": [],
     "components/markdown/parseMarkdownBlock.ts": [],
     "components/markdown/parseMarkdownSpans.ts": [],
     "components/KeyboardShortcutsProvider.tsx": ["KeyboardShortcutsProvider"],
-    "components/ShortcutHints.tsx": [
-      "ShortcutHintsContext",
-      "ShortcutHintsProvider"
-    ],
+    "components/ShortcutHints.tsx": ["ShortcutHintsContext", "ShortcutHintsProvider"],
     "components/SidebarNavigator.tsx": ["PersistentHeader", "SidebarNavigator", "drawerContent"],
     "components/SidebarView.tsx": ["SidebarView"],
     "components/StatusBarProvider.tsx": ["StatusBarProvider"],
     "components/StyledText.tsx": ["RNText", "Text"],
-    "components/UpdateReadyPrompt.tsx": ["UpdateReadyPrompt"],
-    "components/buzz/AgentVoiceSection.tsx": ["AgentVoiceSection"],
-    "components/buzz/VoicePreviewPlayer.tsx": ["VoicePreviewPlayer"],
-    "components/buzz/VoicePreviewPlayer.native.tsx": ["VoicePreviewPlayer"]
+    "components/UpdateReadyPrompt.tsx": ["UpdateReadyPrompt"]
   },
   "legacyControls": {
     "app/(app)/beeline/channels.tsx": {
@@ -409,21 +426,6 @@
       "bb1677a7dc2eec73fd1d": 1,
       "d1c586ee80c2f4eb3891": 1,
       "e347b1032fab40a374ad": 1
-    },
-    "app/(app)/beeline/chat/RoomMessageVariants.tsx": {
-      "423e6b4ccfc89bb274b6": 1,
-      "4371e41e959fe140451d": 1,
-      "490ffb6e0554ae7df0b5": 1,
-      "6aa979a5429e91de5ee4": 1,
-      "7ea002bf7ce0904744cd": 1,
-      "83ba702057de1ac9661c": 1,
-      "86e2bed05b4e98965c2a": 1,
-      "a34f3998052010c3ad23": 1,
-      "aa4408de2cbbb0b3f96c": 1,
-      "b4067a6b821ad8c17aef": 1,
-      "d1315f5ee69cc0e8da1f": 1,
-      "e19f6b8c7f954b22b756": 1,
-      "e7448b61a3b921485b1f": 1
     },
     "app/(app)/beeline/chat/_chat-surface.tsx": {
       "1b9443b9d72d544a316a": 1,
@@ -441,6 +443,21 @@
       "d2217ba6b0bbe07fa86d": 1,
       "d46affe308a9b4478d86": 1,
       "d923bed4432a7487c602": 1
+    },
+    "app/(app)/beeline/chat/RoomMessageVariants.tsx": {
+      "423e6b4ccfc89bb274b6": 1,
+      "4371e41e959fe140451d": 1,
+      "490ffb6e0554ae7df0b5": 1,
+      "6aa979a5429e91de5ee4": 1,
+      "7ea002bf7ce0904744cd": 1,
+      "83ba702057de1ac9661c": 1,
+      "86e2bed05b4e98965c2a": 1,
+      "a34f3998052010c3ad23": 1,
+      "aa4408de2cbbb0b3f96c": 1,
+      "b4067a6b821ad8c17aef": 1,
+      "d1315f5ee69cc0e8da1f": 1,
+      "e19f6b8c7f954b22b756": 1,
+      "e7448b61a3b921485b1f": 1
     },
     "app/(app)/beeline/community.tsx": {
       "90955f5a00cd90038e4c": 1,
@@ -574,6 +591,524 @@
       "5c95025a8066eac53022": 1,
       "803e43023ebd9400d229": 1,
       "82b0e47faccafef9dc8d": 1
+    },
+    "components/AnimatedOverlay.tsx": {
+      "966fb974068f5f26b0db": 1
+    },
+    "components/BubblePressable.tsx": {
+      "686ddf35376800939e3b": 1
+    },
+    "components/buzz/ActivityTimeline.tsx": {
+      "05b096611958b873d706": 1,
+      "8379cc8d44d506022e72": 1,
+      "9292b12b21fe8b13a3a2": 1,
+      "b1f91c762916818f91dd": 1,
+      "c9262aaf198df799cbcb": 1
+    },
+    "components/buzz/AgentProfileView.tsx": {
+      "06fbd0f8620950c79081": 1,
+      "328207522807f328252f": 1,
+      "616b89b40f752abac8c4": 1
+    },
+    "components/buzz/AgentSignInCard.tsx": {
+      "2631393d81cdacf0567c": 1,
+      "49d853e879486f6a298c": 1,
+      "7406c313bad39a2a5ca6": 1,
+      "9028fdfc85e59eb32030": 1,
+      "ee4348efcedc404e55d7": 3,
+      "f797ee549f7256b59bc9": 1
+    },
+    "components/buzz/AgentUsageSection.tsx": {
+      "5102d26e524ed6ec9656": 1
+    },
+    "components/buzz/ArtifactCard.tsx": {
+      "1d646c4972e669470ee7": 1,
+      "22be061d460f72a118d4": 1,
+      "42397fba63800100ee1b": 1,
+      "559719576a3b303bb101": 1,
+      "703bb7263bf9a3ad346f": 1,
+      "78d6c4977fcc413b01e3": 1,
+      "b152719c968a14565d11": 1,
+      "ce75fa37f17ae6e293c3": 1,
+      "fee3fb27ac05ec401e17": 1
+    },
+    "components/buzz/ArtifactViewer.tsx": {
+      "096fd34190d9a9f894e9": 1,
+      "2d67993536a0543fe847": 1,
+      "3b0dc6bc5be2a537ecf0": 1,
+      "54352e234d325a9c3b3a": 1,
+      "66e81123266625231cc0": 1,
+      "68969aa56244e307a2ab": 2,
+      "7af990e869bfe66f7c0e": 1,
+      "863ab92e6afa8660aae7": 1,
+      "89bd876ccb1c5ca3a1a4": 1,
+      "aa45372f4c399a8866ba": 1,
+      "bdb954dae9a23f885ab9": 1,
+      "ef34844250161aedab02": 1,
+      "f83a9aa45aa282b33334": 1
+    },
+    "components/buzz/CodeBlock.tsx": {
+      "0bcdc63a749e13801827": 1,
+      "23d04e2ea076befb59ba": 1,
+      "7debf37301c8bc4f788b": 2,
+      "b345a0dfa6ce7e0dbdb9": 1
+    },
+    "components/buzz/CommunityInviteEntry.tsx": {
+      "14efb1f7d15d0dc81d80": 1,
+      "2e2fd9b0727e74ee92f4": 1,
+      "af40d2a59d4336b356f3": 1,
+      "b08ab5883512878fef51": 1,
+      "c9e9b1e0cb1952f7eea2": 1
+    },
+    "components/buzz/CommunityRail.tsx": {
+      "05ec7deeaec614cddb85": 1,
+      "152f840c40550390b9a8": 1,
+      "15deca5c67349d7385d9": 1,
+      "5b93fe5e271763986f18": 1,
+      "9bd7a7f3a955f126a130": 1,
+      "ab6484dd62731a517171": 1,
+      "dfc8789ffc8f1fb6ecd1": 1
+    },
+    "components/buzz/ComputerSession.tsx": {
+      "54dc6fa74f06a52ed410": 1,
+      "658fc4a6c48fed7a2d0a": 1,
+      "a72501ad3e6744e8974d": 1,
+      "f6e25cbd08696510b990": 1
+    },
+    "components/buzz/ConversationComposer.tsx": {
+      "22578cf5ca100603d2c1": 1,
+      "27dd4a9cba3de9179f92": 1,
+      "2e8e49f66387d2e347d3": 1,
+      "4a1b51f7952483d3f0aa": 1,
+      "4d84c433bd459151ca42": 1,
+      "53a36e39b36d1345b822": 1,
+      "578b8149fffa2da91d81": 1,
+      "5967129e1152b3616762": 1,
+      "605af797db5205148f25": 1,
+      "6335377f946977a91207": 1,
+      "7e52f088486d36ea8dc4": 1,
+      "b485455e234f472e209d": 1,
+      "b5cb239bd687b313a43e": 1,
+      "d2e7859d8f3687ea6edf": 1
+    },
+    "components/buzz/ConversationRow.tsx": {
+      "0f7c4477542ef7895e6b": 1,
+      "103218ce836ef7f08697": 1,
+      "2e3a8b31e3653f5186ec": 1,
+      "319b5d7ef1aafa800332": 1,
+      "44ce57990a79ff334a30": 1,
+      "60abcb3b7dc0e565ded6": 1,
+      "6ce9fc3e2235e3652bf7": 1,
+      "87d7cd47a599f23d3fb8": 1,
+      "8dfa0609ed3f409aca67": 1,
+      "b0806ada504ba16370dd": 1,
+      "d243f595a469414ee4b5": 1,
+      "e863530fa2209379186a": 1,
+      "eeac5fb962d4050594d1": 1
+    },
+    "components/buzz/CopiedToast.tsx": {
+      "f7608a1c8b3a9b524cac": 1
+    },
+    "components/buzz/CornerAppScreen.tsx": {
+      "081da508d7ea69dea79d": 1,
+      "27c9c90a0fba7fe17c62": 1,
+      "3a86610ee1a38bf62906": 1,
+      "416ce6813f207e5aa97e": 1,
+      "5b3e65669e23f32d0db2": 1,
+      "5ce68da4df44909a4745": 1,
+      "8daca9d5134758d5c378": 1,
+      "9eb9f00486d225105650": 1,
+      "b902812eb93169c3efe3": 1,
+      "d525936c08906da90107": 1
+    },
+    "components/buzz/CornerObjectiveLine.tsx": {
+      "04353acfb735120e1174": 1,
+      "0f1b82564c4bea047d3e": 1,
+      "37335f67e64644d1b02a": 1,
+      "6d26f55a5b56731cc4ae": 1,
+      "88faae29b4f975e405c0": 1,
+      "8b19a55d7f141d6c5874": 1,
+      "eaeb923b0085276bae85": 1
+    },
+    "components/buzz/CornerOpenedMarker.tsx": {
+      "12775da8a2a61206091d": 1,
+      "55afe612d13446c4c3fe": 1
+    },
+    "components/buzz/CornerOpenToast.tsx": {
+      "29cd603bd2a48a1c4387": 1,
+      "65aa6c3b36ee36c19489": 1,
+      "92300ec9e0a69a851ff6": 1,
+      "da982b33bc01145aa248": 1,
+      "f5e62153b95ca00dc737": 1
+    },
+    "components/buzz/CornerStatusLine.tsx": {
+      "08a1b2bf09d61b55a62d": 1,
+      "91f3b8071df271969dec": 1
+    },
+    "components/buzz/CreatePollSheet.tsx": {
+      "807f2bd52d57620bc3cb": 1,
+      "8b2633a87fec58a4d4db": 1,
+      "b079661ffa1f2d2839b9": 1,
+      "ecf7052eaa40d0095358": 1,
+      "f63242337cf84557f433": 1
+    },
+    "components/buzz/DesktopArtifactPane.tsx": {
+      "96e2b8298e2819fbe193": 1,
+      "97711d23741f785f6ffe": 1,
+      "bb24a2beeb3c01428c1d": 1,
+      "cab31b3d04e623fecf9d": 1,
+      "d953996799f73ea777aa": 1,
+      "e112a0bb617f8c06c9e6": 1
+    },
+    "components/buzz/DesktopMessageAction.tsx": {
+      "7e82a3f187f43c3df879": 1
+    },
+    "components/buzz/DesktopRoomCorners.tsx": {
+      "247aa39f38cda2ad998b": 1,
+      "5968b8d885e4d047f9ec": 1
+    },
+    "components/buzz/DesktopWorkspaceRail.tsx": {
+      "3eabbde592e51f1f9b90": 1,
+      "6877bc5cb84635bbd4c0": 1,
+      "7c38d45ffce96dcc3ca8": 1,
+      "a90722aeb79538898ab6": 1
+    },
+    "components/buzz/DesktopWorkspaceStrip.tsx": {
+      "34137c5e1451a13a3f3d": 1,
+      "a6bb31c92bc0d9edb1a2": 1,
+      "b8ffd98e3bdcad87d02d": 1
+    },
+    "components/buzz/DictationWaveform.tsx": {
+      "5e0a83836c3666c967fa": 1
+    },
+    "components/buzz/EmptyLedgerState.tsx": {
+      "0f7cc42b38554ef23605": 1,
+      "ebf599fcf206dd831a5d": 1
+    },
+    "components/buzz/FaceGrid.tsx": {
+      "83272ab901756ad29955": 1,
+      "8bf2dc03fbd5e22dd290": 1
+    },
+    "components/buzz/HeaderLadder.tsx": {
+      "3c72f081223ee16ff97d": 1
+    },
+    "components/buzz/HullMenuTrigger.tsx": {
+      "5bd4a52e2493151507d4": 1
+    },
+    "components/buzz/Ledger.tsx": {
+      "0597300a820800856e61": 1,
+      "7d389033ab4975eaa722": 1,
+      "a8e8b78f2ae1be8cba1f": 1,
+      "c0cac74fb5c5bd3ec603": 1,
+      "c4b3deb4c73c81a0883c": 1,
+      "ee7b68f74d8e4d0103f4": 1,
+      "f7d46450d4b01d796218": 1,
+      "ff65418127215da2b921": 1
+    },
+    "components/buzz/LedgerDisclosure.tsx": {
+      "4acc3fb57b575c1ba8f5": 1,
+      "86bc10043a61f93611e2": 1
+    },
+    "components/buzz/LifecycleCard.tsx": {
+      "5e612178855374c7fff6": 1
+    },
+    "components/buzz/LifecycleRow.tsx": {
+      "24f8c4d3af3376fc07e9": 1,
+      "68c6efaa09cf2ac0e899": 1,
+      "9293320136ba5f74bb37": 1,
+      "e15ded891f25a9971a7f": 1
+    },
+    "components/buzz/MemberGrantRow.tsx": {
+      "396374bb114f5bbc0926": 1
+    },
+    "components/buzz/MemberPickerSheet.tsx": {
+      "259221524e41e78fcb13": 1,
+      "beace1365246a898cb86": 1
+    },
+    "components/buzz/MentionSuggestionMenu.tsx": {
+      "1159050ddfecb4e275c2": 1,
+      "2772fba5d382deab81fc": 1,
+      "3804df6b10d7dcf9b7ce": 1,
+      "4a227fa149dc23244b0f": 1,
+      "73d4dee58307d4ab107f": 1,
+      "ccf84283571de16f92be": 1
+    },
+    "components/buzz/MessageReactionRoster.tsx": {
+      "a40bf5a9dff7d987e9c4": 1,
+      "a54fb10665e07cb63a21": 1
+    },
+    "components/buzz/MessageReactionStrip.tsx": {
+      "fc11f2f90b8eb4f0f365": 1
+    },
+    "components/buzz/MessageSearchResults.tsx": {
+      "2cc33f3d36955c44da90": 1,
+      "3a31ab015b7e86c6e12a": 1,
+      "769b61a2a0b2019cca07": 1,
+      "e7e899c373a4dea3d9fe": 1
+    },
+    "components/buzz/MonoHull.tsx": {
+      "df5cd1ccc3d0d0a88138": 1
+    },
+    "components/buzz/MonoMarkdown.tsx": {
+      "6eac3c7cbd0219486414": 1,
+      "e7900b90ba0e8a86dfcb": 1,
+      "fc060490b6bf3f2b5f90": 1
+    },
+    "components/buzz/NeedsYouCell.tsx": {
+      "275d6b296040d0aac9ed": 1,
+      "8a8cb9e8de7bfe6da3bc": 1,
+      "8d3bdc37c19ac68bc5e5": 1,
+      "c2f35f2b261f6df78b5a": 1
+    },
+    "components/buzz/NewRoomDialog.tsx": {
+      "3df567bb3834c79883b1": 1,
+      "7415fa0d95dc372f32cd": 1,
+      "99ecf43de666660e0f42": 1
+    },
+    "components/buzz/NoMatchingConversationsEmpty.tsx": {
+      "645bf8ab3c560d741c2d": 1,
+      "6fb72711b26a8a3fb186": 1
+    },
+    "components/buzz/PinnedConversationsEmpty.tsx": {
+      "a927756b97e4b21da37c": 1,
+      "ad9e4adb819ece60552e": 1
+    },
+    "components/buzz/PrLifecycleCard.tsx": {
+      "111124ea33f966b77038": 1,
+      "4b14392dba206490d18c": 1,
+      "53e829b61a140dcbc29c": 1,
+      "57cfa3592b6d7a0efeee": 1,
+      "8ca568bcf01f6c76a821": 1,
+      "9f60c18bba476000fd59": 1,
+      "a874c267c11a8cd95c84": 1,
+      "c64c3f95598ffae3fafb": 1,
+      "cdd520c3d8d6c45733e1": 1,
+      "df8758f3abc013cb902a": 1,
+      "f2e9b241e2be21530775": 1,
+      "f57ff243e013d987abfe": 1
+    },
+    "components/buzz/ProfileActions.tsx": {
+      "c59917b6eb919e5e9ec0": 1
+    },
+    "components/buzz/ProfileIdentity.tsx": {
+      "b188e906092f1f0116ca": 1,
+      "b21e1c3e4f0177611c3b": 1
+    },
+    "components/buzz/RepoPicker.tsx": {
+      "2e93d12a8c532628647e": 1,
+      "4746314930bcbf6f988c": 1,
+      "d20f99df95b3d1bb2d2f": 1,
+      "d27f4c4e1c9baa3c38ab": 1
+    },
+    "components/buzz/RepositoryChoice.tsx": {
+      "05ca19c7108071705f3d": 1,
+      "0bfd0f95fd02483515d8": 1,
+      "2d27a9bca2b9502b1ce7": 1,
+      "380c5723f1fc458c3f7a": 1,
+      "3b3e0d74f923024e49ce": 1,
+      "47d0c04b555992d91410": 1,
+      "521b7670ad446f4bc3a8": 1,
+      "6e933d230debcf4897c9": 1,
+      "734ad4993e94a1a907fa": 1,
+      "88d4a132ad2bc876ce88": 1,
+      "9b6647d054eec89a6955": 1,
+      "bd7b229c6cdc9b4f6f32": 1,
+      "cb2e6b928c41ed9f4740": 1,
+      "cdc9d2565ac22ecb445e": 1,
+      "d582b75a6e55971acaa0": 1
+    },
+    "components/buzz/RoomContextPreamble.tsx": {
+      "14935f2c8458994b43e1": 1,
+      "5866f254d1900dba357a": 1
+    },
+    "components/buzz/RoomCornersHeader.tsx": {
+      "7733822a1572aa7dc88c": 1
+    },
+    "components/buzz/RoomCornersList.tsx": {
+      "1211894e06b9b8d499f1": 1,
+      "281ee082f98b50da3abf": 1,
+      "54e35262107520adef63": 1,
+      "700690e1963b394752a7": 1,
+      "86ffabc4e635f013e2c9": 1,
+      "adfd1f295189ba883bc0": 1,
+      "c83ad0db04c1b2c4d009": 1,
+      "ce030000cf4387e7c01c": 1,
+      "e6a8e75d78bc75c24973": 1,
+      "f75535f3e58a05c6ec32": 1,
+      "fd6346c6944549b92076": 1
+    },
+    "components/buzz/RoomCornerSummary.tsx": {
+      "2bd070b726f690d197c8": 1,
+      "68ebad581191f13c42ef": 1
+    },
+    "components/buzz/RoomDeckComposeMenu.tsx": {
+      "eaa90ca32840ecc145c1": 1
+    },
+    "components/buzz/RoomListToolbar.tsx": {
+      "bf149a5611dc5bdb41f9": 1,
+      "e440173c08cbd5f256d4": 1,
+      "ee5450eebc63831ae939": 1
+    },
+    "components/buzz/RoomMemberPickerActions.tsx": {
+      "0e2f928f558822b91865": 1,
+      "35149fedb9eff31c458f": 1,
+      "eb926aa9489c6d13a5f6": 1,
+      "fc77fcb78570b32656a9": 1
+    },
+    "components/buzz/RoomRepositorySubtitle.tsx": {
+      "952d7bcf39dccc220db7": 1
+    },
+    "components/buzz/RoomRosterSheet.tsx": {
+      "24bb8c95685af12ffd20": 1,
+      "4043f9e1877a9e1fd854": 1,
+      "54e7a3e7676871741f9e": 1,
+      "b274880b89a6cd8aa7cc": 1,
+      "bcc99c5137e6690f8600": 1,
+      "df1bd3bd0345331d497b": 1
+    },
+    "components/buzz/RoomUnreadControls.tsx": {
+      "1a1f8ba1c7b137d2ea08": 1
+    },
+    "components/buzz/ScheduledWorkDetail.tsx": {
+      "07de2e5c25d42e98decd": 1,
+      "b19562113bc51653909c": 1
+    },
+    "components/buzz/ScheduledWorkWhere.tsx": {
+      "78cfd6ebfcfb461ad2c2": 1
+    },
+    "components/buzz/SettingsScopeTabs.tsx": {
+      "1fec11345992a82086ee": 1,
+      "6a0d44af663df27a80b3": 1,
+      "e62022b6dce6f6ed3561": 1
+    },
+    "components/buzz/SlashVerbPicker.tsx": {
+      "03ef32a48dc30509846f": 1,
+      "088d5eab1d1d3ea3dfe1": 1,
+      "570f6940b8b231db211e": 1,
+      "61837e79ba8e3d30dc94": 1,
+      "647daa733eb59f72ff49": 1,
+      "9c64f0153bb3b2bf986a": 1,
+      "aa986723babf0607b9d2": 1,
+      "f104cd1c93b153a81d96": 1
+    },
+    "components/buzz/TranscriptCard.tsx": {
+      "1efa450b4113d8417e86": 1,
+      "1fa19ec112c867eefefc": 1,
+      "3c2d9954efbea41554fd": 1,
+      "4998fccef724c194c07c": 1,
+      "6f412c2e4e1742dd9d33": 1,
+      "a21c2a51ae37e0dc3cc4": 1,
+      "c65b4f2969ad6b8bb9f2": 1,
+      "f552aa59d228b8ade2b6": 1
+    },
+    "components/buzz/TranscriptReference.tsx": {
+      "25b80d7ac400061f4653": 1,
+      "e3735b6b9b84181ec0a6": 1
+    },
+    "components/buzz/TurnProgressLine.tsx": {
+      "56fe93ebbc43a204721a": 1,
+      "87fd67731f2e3fe94174": 1
+    },
+    "components/buzz/VoiceBar.tsx": {
+      "42fc40d4b1d08bc6f4e3": 1,
+      "7e256437fdac19bbe269": 1,
+      "b4df8874a9b5c6eb2c0c": 1,
+      "d440860830fbf5ac1dda": 1
+    },
+    "components/buzz/VoiceCallCard.tsx": {
+      "15f4bfb3260376544362": 1,
+      "374342a797c166704900": 1,
+      "a1ad8745864ec2270ecd": 1
+    },
+    "components/buzz/WalletQr.tsx": {
+      "795a06a3c8214f8ee29d": 1,
+      "d616ecd7fa0ad087c13a": 1
+    },
+    "components/buzz/WelcomeCards.tsx": {
+      "04e101cd2024d98e6d34": 1,
+      "1e95c80677e9c8ff368e": 1,
+      "2c755eaf0d0387ad9e86": 1,
+      "49c57652aa2a14578132": 1,
+      "6ff19e480da6c2f908d3": 1,
+      "79b944a315f7e0129bcb": 1,
+      "987acf023569aa1acc68": 1,
+      "9dd2efd27102476facf1": 1,
+      "ca0bbf83ae3b61939db5": 1,
+      "d37e792970ff50a02e56": 1,
+      "e7dbc7e2a24743b23130": 1
+    },
+    "components/buzz/WorkflowRunLine.tsx": {
+      "42408c394befb67a97a4": 1,
+      "6ece2732bccd321374e6": 1,
+      "6f52f0235a9002944288": 1,
+      "75f485958ef51de64424": 1,
+      "a37f597560bbdb2a5561": 1,
+      "bbd6f84b02feb2624c79": 1,
+      "cb26179b8119ec449cdb": 1,
+      "ce4564f488f16c704254": 1,
+      "cebcb8d5394e44cfb7a8": 1,
+      "daf80b89e3ca32f89c98": 1,
+      "f584b10a339df08f9e2e": 1
+    },
+    "components/buzz/WorkspaceActionsMenu.tsx": {
+      "2e3ac5a7105ac3756c75": 1
+    },
+    "components/buzz/WritePermissionOutcome.tsx": {
+      "496ba06512a75665179a": 1,
+      "6249d446a6831e3cefd1": 1,
+      "f6677e3474641d7bca03": 1
+    },
+    "components/buzz/ZoomableArtifactImage.tsx": {
+      "0986ffe94c724ffc53a4": 1,
+      "2461e032b4a1e87fb16c": 1,
+      "2a5b4de6a9a98eb8c1e8": 1,
+      "f0438ed53deb61d8d486": 1,
+      "fa0328f6402cbcf91fbd": 1
+    },
+    "components/DesktopRoomInspector.tsx": {
+      "26dfe00ea9b7f1c62f01": 1,
+      "39cc324794450f746b0d": 1,
+      "3e6e3e58fb57eee9ffe5": 1,
+      "4f7ed947784f35c81eae": 1,
+      "5a7f369acdc161d06ba5": 1,
+      "73c6e0773d859d13b6a5": 1,
+      "81f85296f7957ee7e3d4": 1,
+      "cbb3ffaf6b7ea250e597": 1
+    },
+    "components/ShortcutHints.tsx": {
+      "343860001bcf23a1e664": 1,
+      "b25525fbfab777507a4b": 1
+    },
+    "components/SidebarNavigator.tsx": {
+      "63aa677df0c96abef995": 1,
+      "af1d36c09ec143d9faf6": 1,
+      "cf8540640a311e454507": 1,
+      "d16da296562d4012dcc0": 1,
+      "e28db079c27be621ef53": 1,
+      "f0a056cfec7128fe8575": 1,
+      "fc75377e0172bce0f77c": 1
+    },
+    "components/SidebarView.tsx": {
+      "0ae3dbf6ee081c7b305e": 1,
+      "0cf3061c88de5e66fc5e": 1,
+      "21230d975184f8da17ed": 1,
+      "33a88b8a1c8189df2b86": 1,
+      "42975728937a0195f250": 1,
+      "7da6c0a55fb0604dd9cc": 1,
+      "871423a726bae7a0bbe2": 1,
+      "9580eeb4b9539161a9d5": 1,
+      "992e8416b1f5a80439d1": 1,
+      "99c100443a9343fde03b": 1,
+      "ef8d91793e5661a1fb40": 1
+    },
+    "components/UpdateReadyPrompt.tsx": {
+      "7749a9d5e512818eab6e": 1,
+      "8f24d47c1aca32d83c54": 1,
+      "e6f089b91161a277e95f": 1
+    },
+    "components/buzz/ChoicePlate.tsx": {
+      "23606cee4b7cb19f699c": 1,
+      "6c5b0bb9abee62727ee4": 1
     }
   }
 }

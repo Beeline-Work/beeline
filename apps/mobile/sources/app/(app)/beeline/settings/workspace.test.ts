@@ -198,6 +198,7 @@ vi.mock('react-native', async () => {
   return {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Platform: { get OS() { return platform.OS; }, select: (choices: Record<string, unknown>) => choices[platform.OS] ?? choices.default },
+    Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Share: { share: vi.fn() },
@@ -544,14 +545,14 @@ describe('Workspace Settings authority', () => {
     expect(
       renderer.root.findAll(
         (node) =>
-          node.type === 'TouchableOpacity' &&
+          node.type === 'Pressable' &&
           node.props.testID === 'room-visibility-484556f2-archived',
       ),
     ).toHaveLength(0);
     expect(
       renderer.root.findAll(
         (node) =>
-          node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-9d5e2285-live',
+          node.type === 'Pressable' && node.props.testID === 'room-visibility-9d5e2285-live',
       ),
     ).toHaveLength(1);
   });
@@ -657,7 +658,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const row = renderer.root.findAll(
-      (node) => node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-room-1',
+      (node) => node.type === 'Pressable' && node.props.testID === 'room-visibility-room-1',
     )[0]!;
     expect(row.props).toMatchObject({
       accessibilityLabel: 'Show actions for Room #atlas',

@@ -108,12 +108,6 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
     treatment: 'exception',
     reason: 'Native WebView document chrome, not a Beeline surface load gate.',
   },
-  {
-    id: 'legacy-item',
-    file: 'components/Item.tsx',
-    treatment: 'exception',
-    reason: 'Vendored Happy list-item busy indicator; not a Beeline load gate.',
-  },
 ];
 
 function loadingSurfaceGlyphFiles(): readonly string[] {

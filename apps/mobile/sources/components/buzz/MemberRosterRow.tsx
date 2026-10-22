@@ -1,18 +1,13 @@
 import { type AgentUsage, usageDollars, usageTokens } from '@beeline/api-contract/phone';
 import { usageTime } from '@/buzz/agent-usage';
 import React, { type ReactNode } from 'react';
-import {
-  Text,
-  TouchableOpacity,
-  View,
-  type AccessibilityRole,
-  type AccessibilityState,
-} from 'react-native';
+import { Text, type AccessibilityRole, type AccessibilityState } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { fallbackMemberHandle } from '@/buzz/member-display';
 import { displayModel } from '@/buzz/model-display';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from './IdentityMark';
+import { IndexRow, type IndexRowProps } from './IndexRow';
 
 type SharedRowProps = {
   accessibilityLabel?: string;
@@ -21,16 +16,22 @@ type SharedRowProps = {
   title?: string;
   subtitle?: string;
   avatarUrl?: string;
+  chevron?: IndexRowProps['chevron'];
+  /** `sheet` rows sit in a sheet: the sheet row height and edge. */
+  density?: IndexRowProps['density'];
   disabled?: boolean;
   divider: 'top' | 'bottom';
   face?: string;
   handle?: string;
+  inset?: IndexRowProps['inset'];
   name: string;
   onPress?: () => void;
   pubkey: string;
   seed?: string;
   testID: string;
   trailing?: ReactNode;
+  /** A quiet state on the trailing axis (`Opening…`). */
+  value?: string;
 };
 
 export type MemberRosterRowProps = SharedRowProps &
@@ -106,105 +107,70 @@ export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; m
 }
 
 /**
- * The one member-list presentation shared by the Workspace Members page and
- * Room/corner roster sheets. Callers retain only their actions, detail panels,
- * and which edge owns the section divider.
+ * The roster preset of the one index row (`IndexRow`): a leading identity
+ * mark, the handle, and a quiet role or owner line. Shared by the Workspace
+ * Members page and Room/corner roster sheets; callers retain only their
+ * actions, detail panels, and which edge owns the section divider.
  */
 export function MemberRosterRow(props: MemberRosterRowProps) {
-  const Row = props.onPress ? TouchableOpacity : View;
   const usage = props.kind === 'agent' ? memberRosterUsage(props.usage) : undefined;
   const title = props.title ?? memberRosterTitle(props);
   const subtitle = props.subtitle ?? memberRosterSubtitle(props);
-  const model = memberRosterModel(props);
   const address = title.slice(1);
   // Presence is not spoken: it ages out while an idle agent waits on its
   // socket, so only a live turn is named, matching the ring.
   const workingState = props.kind === 'agent' && props.alive ? ', working' : '';
 
   return (
-    <Row
+    <IndexRow
       accessibilityLabel={
         props.accessibilityLabel ??
         `${title}, ${props.kind === 'human' ? 'person' : 'agent'}${workingState}, at ${address}`
       }
-      accessibilityRole={props.accessibilityRole ?? (props.onPress ? 'button' : undefined)}
+      accessibilityRole={props.accessibilityRole}
       accessibilityState={props.accessibilityState}
-      {...(props.onPress ? { disabled: props.disabled, onPress: props.onPress } : {})}
-      style={[styles.row, props.divider === 'top' ? styles.dividerTop : styles.dividerBottom]}
-      testID={props.testID}
-    >
-      <IdentityMark
-        kind={props.kind}
-        seed={props.seed ?? props.pubkey}
-        avatarUrl={props.avatarUrl}
-        face={props.face}
-        name={props.name}
-        size={38}
-        alive={props.kind === 'agent' ? props.alive : undefined}
-      />
-      <View style={styles.copy}>
-        <View style={styles.titleLine}>
-          <Text numberOfLines={1} style={styles.title}>
-            {title}
-          </Text>
-          {model ? (
-            <Text numberOfLines={1} style={styles.model}>
-              {model}
-            </Text>
-          ) : null}
-        </View>
-        {subtitle !== undefined ? (
+      chevron={props.chevron}
+      density={props.density}
+      description={subtitle}
+      descriptionContent={
+        subtitle !== undefined && usage ? (
           <Text numberOfLines={1} style={styles.subtitle}>
-            {usage ? (
-              <>
-                {subtitle}
-                <Text style={usage.tone === 'danger' ? styles.danger : styles.warning}>
-                  {` · ${usage.text}`}
-                </Text>
-              </>
-            ) : (
-              subtitle
-            )}
+            {subtitle}
+            <Text style={usage.tone === 'danger' ? styles.danger : styles.warning}>
+              {` · ${usage.text}`}
+            </Text>
           </Text>
-        ) : null}
-      </View>
-      {props.trailing}
-    </Row>
+        ) : undefined
+      }
+      disabled={props.disabled}
+      divider={props.divider}
+      inset={props.inset}
+      leading={
+        <IdentityMark
+          kind={props.kind}
+          seed={props.seed ?? props.pubkey}
+          avatarUrl={props.avatarUrl}
+          face={props.face}
+          name={props.name}
+          size={38}
+          alive={props.kind === 'agent' ? props.alive : undefined}
+        />
+      }
+      onPress={props.onPress}
+      testID={props.testID}
+      title={title}
+      titleAside={memberRosterModel(props)}
+      trailing={props.trailing}
+      value={props.value}
+    />
   );
 }
 
 const styles = StyleSheet.create((theme) => {
   const { buzz: hull } = theme;
   return {
-    row: {
-      minHeight: hull.layout.row,
-      paddingHorizontal: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-    },
-    dividerTop: {
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    dividerBottom: {
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    copy: { flex: 1, minWidth: 0 },
-    titleLine: { flexDirection: 'row', alignItems: 'baseline', gap: hull.space.sm },
-    title: { ...Typography.default(), ...hull.type.body, flexShrink: 1, color: hull.textPrimary },
-    model: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      flexShrink: 0,
-      marginLeft: 'auto',
-      maxWidth: '50%',
-      textAlign: 'right',
-      color: hull.textMuted,
-    },
     warning: { color: hull.accent },
     danger: { color: hull.dialogDanger },
-    subtitle: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
+    subtitle: { ...Typography.default(), ...hull.type.meta, flex: 1, minWidth: 0, color: hull.textMuted },
   };
 });

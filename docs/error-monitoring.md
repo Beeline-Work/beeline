@@ -64,7 +64,12 @@ activates them. Merging alone does not deploy this receiver.
   Do not enable native Sentry or remove those exclusions without a deliberate
   native runtime/store release.
 
-Capture samples all errors. Tracing, profiling, logs, replay, screenshots,
+Each SDK applies a process-local rolling-hour cap after privacy filtering: one
+report per error type and message (numeric runs normalized), with a hard ceiling
+of 100 reports across fingerprints. Repeated attempts do not extend the window.
+Restarting a process resets its cap; this is not an installation-wide quota.
+
+Capture samples admitted errors. Tracing, profiling, logs, replay, screenshots,
 view hierarchies, breadcrumbs and session tracking are not enabled. The shared
 `packages/api-contract/src/error-reporting.ts` filter allowlists event fields,
 redacts common credential/URL/email/home-path patterns, strips request/user/

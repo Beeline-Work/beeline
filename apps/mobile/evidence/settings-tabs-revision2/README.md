@@ -16,9 +16,9 @@ Every screenshot comes from the full app, unedited. Android is an API 36 emulato
 | Members with PEOPLE / AGENTS | `android-{before,after,main}-members.png` | `desktop-{before,after}-members.png` |
 | Owner Settings, before (has a Workspace row) | `android-before-owner-settings.png` | `desktop-before-owner-settings.png` |
 | Workspace screen reached from that row (before) | `android-before-workspace-screen.png` | `desktop-before-workspace-screen.png` |
-| Owner Settings, You tab selected (after) | `android-after-you-tab.png`, `-bottom.png` | `desktop-after-you-tab.png` |
-| Owner Settings, Beeline tab selected (after) | `android-after-workspace-tab.png`, `-bottom.png` | `desktop-after-workspace-tab.png` |
-| Member Settings (role set to member, app restarted) | `android-{before,after}-member-settings.png` (after also has `-bottom.png`) | `desktop-{before,after}-member-settings.png` |
+| Owner Settings, You tab selected (after) | `android-after-you-tab.png`, `-bottom.png`, `-dark.png` | `desktop-after-you-tab.png`, `-dark.png` |
+| Owner Settings, Beeline tab selected (after) | `android-after-workspace-tab.png`, `-bottom.png`, `-dark.png` | `desktop-after-workspace-tab.png`, `-dark.png` |
+| Member Settings (role set to member, app restarted) | `android-{before,after}-member-settings.png` (after also has `-bottom.png` and `-dark.png`) | `desktop-{before,after}-member-settings.png` (after also has `-dark.png`) |
 | Schedules and subscriptions for #beeline | `android-{before,after}-schedules.png` | `desktop-{before,after}-schedules.png` |
 | Connectors ("Your connections") | `android-{before,after}-connectors.png` | `desktop-{before,after}-connectors.png` |
 | Old route `/beeline/settings/workspace` as owner | `android-{before,after}-deeplink-owner.png` | `desktop-{before,after}-deeplink-owner.png` |
@@ -27,6 +27,9 @@ Every screenshot comes from the full app, unedited. Android is an API 36 emulato
 The `*.xml` files are uiautomator dumps of the Android room lists and the main Members screen. `measurements.json` holds the ROOMS header numbers and explains how they were measured. `measure.py` is the pixel-analysis script.
 
 ## How the shots were made
+
+The `-dark` shots use Appearance = Dark (Android: `cmd uimode night yes`). They were taken from head 225bdf948.
+
 
 1. `server.mts` is a copy of `../members-settings-prototype/server.mts` with three additions: six schedules and four Room subscriptions seeded on #beeline (so Schedules has many rows), and `http://localhost:18082` added as an allowed web origin. Role toggle: `http://127.0.0.1:45861/_proof/role/member` (or `/owner`). Run it from the repo root with `node --import tsx apps/mobile/evidence/settings-tabs-revision2/server.mts`.
 2. Boot the emulator with `beeline emulator -avd fm-members-frames -no-window -gpu swiftshader_indirect`. Then run `wm size 412x915`, `wm density 160` and `settings put system font_scale 1.3`. Install the existing debug APK; native code is the same in all three builds. Run `adb reverse tcp:45861` and `adb reverse tcp:18082`.

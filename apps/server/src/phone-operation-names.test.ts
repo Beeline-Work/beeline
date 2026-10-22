@@ -88,6 +88,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   readWorkflowRun: true,
   recoverGitHubIdentity: true,
   redeemInvite: true,
+  refreshAgentUsage: true,
   refreshAgentModelCatalog: true,
   registerPushDevice: true,
   removeAgent: true,

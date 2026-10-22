@@ -30,6 +30,7 @@ export function AgentProfileView({
   avatarDisabled,
   onGenerateAvatar,
   refreshAgent,
+  refreshUsage,
   loadMoreWork,
   editing,
   saving,
@@ -56,6 +57,7 @@ export function AgentProfileView({
   avatarDisabled: boolean;
   onGenerateAvatar: (soul: string) => Promise<void>;
   refreshAgent: () => Promise<AgentDetailView>;
+  refreshUsage?: () => Promise<unknown>;
   loadMoreWork?: (cursor: string) => Promise<AgentDetailView>;
   editing: boolean;
   saving: boolean;
@@ -269,7 +271,7 @@ export function AgentProfileView({
                 </>
               )}
             </View>
-            {canEdit ? <AgentUsageSection usage={detail.usage} harness={detail.harness} /> : null}
+            {canEdit ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={detail.usage} harness={detail.harness} onRefresh={refreshUsage} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}

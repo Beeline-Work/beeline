@@ -1,5 +1,8 @@
 import { usageHarness, usageTime } from '@/buzz/agent-usage';
 import React from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { Button } from './Button';
+import { InlineRow } from './IndexRow';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -23,18 +26,18 @@ export type UsageColumn = {
   tone?: Tone;
 };
 
-/** The Usage cell's columns and bottom line for one snapshot (mock r7). */
+/** The Usage cell's columns and bottom line for one snapshot (approved gallery). */
 export function usageCell(
   usage: AgentUsage,
   harness?: string,
   now = Date.now() / 1000,
-): { columns: UsageColumn[]; note: string; old: boolean } {
+): { columns: UsageColumn[]; note: string; stamp?: string; refreshable?: boolean; old: boolean } {
   const old = usageIsOld(usage, now);
   const context = usage.context
     ? `Context ${usageTokens(usage.context.used)} of ${usageTokens(usage.context.size)}`
     : undefined;
   const stamp = old
-    ? `last updated ${usageTime(usage.updatedAt)} · agent idle since`
+    ? `updated ${usageTime(usage.updatedAt)} · agent idle since then`
     : `updated ${usageTime(usage.updatedAt)}`;
   if (usage.free) {
     const f = usage.free;
@@ -47,7 +50,7 @@ export function usageCell(
               label: 'Today',
               value: `${usageTokens(f.used)} of ${usageTokens(f.limit)}`,
               fill: fraction,
-              foot: `↻ ${usageTime(f.resetsAt)}`,
+              foot: `resets ${usageTime(f.resetsAt)}`,
               tone: fraction >= 0.8 ? 'warning' : undefined,
             },
       ],
@@ -81,11 +84,21 @@ export function usageCell(
     }
     return {
       columns,
-      note: [context, `OpenRouter key, shared · ${stamp}`].filter(Boolean).join(' · '),
+      note: [context, 'OpenRouter key, shared'].filter(Boolean).join(' · '),
+      stamp, refreshable: true,
       old,
     };
   }
   if (usage.windows.length || usage.credits) {
+    const counts = new Map<number, number>();
+    for (const w of usage.windows) {
+      if (w.resetsAt) counts.set(w.resetsAt, (counts.get(w.resetsAt) ?? 0) + 1);
+    }
+    let sharedReset: number | undefined;
+    let most = 1;
+    for (const [time, count] of counts) {
+      if (count > most) { sharedReset = time; most = count; }
+    }
     const credits: UsageColumn[] = usage.credits
       ? [{ label: 'Credits', value: `${Math.floor(usage.credits.remaining).toLocaleString('en-US')} left` }]
       : [];
@@ -106,11 +119,13 @@ export function usageCell(
           label,
           value: `${Math.round(fraction * 100)}%`,
           fill: fraction,
-          ...(w.resetsAt ? { foot: `↻ ${usageTime(w.resetsAt)}` } : {}),
+          ...(w.resetsAt && w.resetsAt !== sharedReset ? { foot: `resets ${usageTime(w.resetsAt)}` } : {}),
           tone: fraction >= 0.8 ? 'warning' : undefined,
         };
       }), ...credits],
-      note: [context, usageHarness(harness), plan, stamp].filter(Boolean).join(' · '),
+      note: [context, usageHarness(harness), plan].filter(Boolean).join(' · '),
+      stamp: [!old && sharedReset ? `resets ${usageTime(sharedReset)}` : undefined, stamp].filter(Boolean).join(' · '),
+      refreshable: true,
       old,
     };
   }
@@ -122,11 +137,39 @@ export function usageCell(
 }
 
 /**
- * Owner-only USAGE section: one cell, one column per window (mock r7). A
+ * Owner-only USAGE section: one cell, one column per window (approved gallery). A
  * harness that never reported anything still gets the section and its note.
  */
-export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harness?: string }) {
-  const { columns, note, old } = usageCell(usage ?? { updatedAt: 0, windows: [] }, harness);
+export function AgentUsageSection({ usage, harness, onRefresh }: {
+  usage?: AgentUsage; harness?: string; onRefresh?: () => Promise<unknown>;
+}) {
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const pending = React.useRef<{ updatedAt: number | undefined; timer: ReturnType<typeof setTimeout> } | undefined>(undefined);
+  const clear = React.useCallback(() => {
+    if (pending.current) clearTimeout(pending.current.timer);
+    pending.current = undefined;
+  }, []);
+  React.useEffect(() => () => clear(), [clear]);
+  React.useEffect(() => {
+    if (pending.current && usage?.updatedAt !== pending.current.updatedAt) {
+      clear(); setRefreshing(false); setFailed(false);
+    }
+  }, [usage?.updatedAt, clear]);
+  const refresh = () => {
+    if (!onRefresh || pending.current) return;
+    setFailed(false); setRefreshing(true);
+    const attempt = {
+      updatedAt: usage?.updatedAt,
+      timer: setTimeout(() => { clear(); setRefreshing(false); setFailed(true); }, 15_000),
+    };
+    pending.current = attempt;
+    void Promise.resolve().then(onRefresh).catch(() => {
+      if (pending.current !== attempt) return;
+      clear(); setRefreshing(false); setFailed(true);
+    });
+  };
+  const { columns, note, stamp, refreshable, old } = usageCell(usage ?? { updatedAt: 0, windows: [] }, harness);
   return (
     <View style={styles.section} testID="agent-usage">
       <RoomListSectionHeader title="Usage" inset="row" spacing="flush" />
@@ -136,12 +179,12 @@ export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harn
             {columns.map((c) => (
               <View
                 key={c.label}
-                style={[styles.column, columns.length > 3 && styles.halfColumn]}
+                style={[styles.column, columns.length > 2 && styles.halfColumn]}
                 testID={`agent-usage-${c.label}`}
                 {...(c.fill !== undefined
                   ? {
                       accessibilityRole: 'progressbar' as const,
-                      accessibilityLabel: `${c.label}: ${c.value}${c.foot ? `, ${c.foot.replace('↻', 'resets')}` : ''}`,
+                      accessibilityLabel: `${c.label}: ${c.value}${c.foot ? `, ${c.foot}` : ''}`,
                       accessibilityValue: { min: 0, max: 100, now: Math.round(Math.min(1, c.fill) * 100) },
                     }
                   : { accessible: true, accessibilityLabel: `${c.label}: ${c.value}` })}
@@ -171,15 +214,28 @@ export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harn
             ))}
           </View>
         ) : null}
-        <Text style={[styles.note, old && styles.warning]} testID="agent-usage-note">
-          {note}
-        </Text>
+        <InlineRow style={styles.footer}>
+          <View style={styles.footerText}>
+            <Text style={styles.note} testID="agent-usage-note">{note}</Text>
+            {stamp ? <Text style={[styles.note, old && styles.warning]} testID="agent-usage-stamp">{stamp}</Text> : null}
+            {failed ? <Text style={[styles.note, styles.danger]} accessibilityRole="alert">Couldn't refresh</Text> : null}
+          </View>
+          {refreshable && onRefresh ? (
+            <Button label="" iconOnly variant="quiet" accessibilityLabel="Refresh usage"
+              disabled={refreshing} onPress={refresh} style={refreshing ? styles.dimmed : undefined}
+              icon={<Ionicons name="refresh-outline" size={20} color={styles.refreshGlyph.color} />} />
+          ) : null}
+        </InlineRow>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  footer: { alignItems: 'center', gap: theme.buzz.space.xs },
+  footerText: { flex: 1, gap: theme.buzz.space.xs },
+  refreshGlyph: { color: theme.buzz.textSecondary },
+  dimmed: { opacity: 0.4 },
   section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.xs },
   cell: {
     paddingHorizontal: theme.buzz.space.sm,
@@ -190,8 +246,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   columns: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.buzz.space.md },
   column: { flex: 1, minWidth: 0, gap: theme.buzz.space.xs },
-  // Four or more windows (Cursor) wrap two to a row so reset times stay whole.
-  halfColumn: { flexBasis: '40%' },
+  // Longer sets wrap two to a row so labels and reset times stay whole.
+  halfColumn: { flexBasis: '40%', maxWidth: '48%' },
   label: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   value: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   track: {

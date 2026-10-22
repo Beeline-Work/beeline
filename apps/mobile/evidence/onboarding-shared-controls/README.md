@@ -30,4 +30,16 @@ Capture scripts accept `ONBOARDING_PHASE=before|after`; native accepts `ONBOARDI
 
 ## Validation
 
+A native debug build can leave outputs under installed packages and local Expo modules. Those temporary outputs changed the local native fingerprint during proof collection. A clean mobile install and removal of local module build outputs restored the committed fingerprints without changing either runtime pin or the fingerprint baseline.
+
 Results are recorded after the final source and normal package entry are restored. Interaction coverage includes face selection/save failure, invite redemption/retry, repository link/create/owner selection, agent sign-in and clipboard submission, welcome completion/recovery and starter actions. The final PR records the completed command results.
+
+Final local results after restoring the normal entry and integrating main:
+
+- Full mobile suite: passed (598 files, 4 skipped; 4,858 tests, 5 skipped).
+- Root typecheck, UI component policy and policy tests: passed.
+- Shared package suites: passed (642 tests).
+- Native fingerprint gate and its real-edit regression: passed, with unchanged runtime pins and recorded hashes.
+- Dead-code baseline and workflow-path lint: passed.
+- Production Android export: passed; a Hermes bundle was emitted.
+- Screenshot comparison: corresponding dimensions match for every pair (116 pairs).

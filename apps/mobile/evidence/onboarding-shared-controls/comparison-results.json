@@ -1,0 +1,2131 @@
+[
+  {
+    "device": "android",
+    "file": "agent-failed-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      1199
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-failed-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      1199
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-key-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      153,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-key-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      151,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-pending-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      140,
+      51,
+      966,
+      902
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-pending-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      66,
+      51,
+      966,
+      902
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-wait-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      45,
+      51,
+      966,
+      286
+    ]
+  },
+  {
+    "device": "android",
+    "file": "agent-wait-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      45,
+      51,
+      966,
+      286
+    ]
+  },
+  {
+    "device": "android",
+    "file": "create-workspace-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      90,
+      51,
+      966,
+      138
+    ]
+  },
+  {
+    "device": "android",
+    "file": "create-workspace-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      51,
+      966,
+      640
+    ]
+  },
+  {
+    "device": "android",
+    "file": "empty-room-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      68,
+      51,
+      1013,
+      1640
+    ]
+  },
+  {
+    "device": "android",
+    "file": "empty-room-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      68,
+      51,
+      1013,
+      1640
+    ]
+  },
+  {
+    "device": "android",
+    "file": "github-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      51,
+      1017,
+      1521
+    ]
+  },
+  {
+    "device": "android",
+    "file": "github-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      54,
+      1017,
+      1521
+    ]
+  },
+  {
+    "device": "android",
+    "file": "invite-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      42,
+      51,
+      1038,
+      1230
+    ]
+  },
+  {
+    "device": "android",
+    "file": "invite-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      42,
+      51,
+      1038,
+      1230
+    ]
+  },
+  {
+    "device": "android",
+    "file": "invite-offline-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      42,
+      54,
+      1038,
+      828
+    ]
+  },
+  {
+    "device": "android",
+    "file": "invite-offline-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      42,
+      51,
+      1038,
+      828
+    ]
+  },
+  {
+    "device": "android",
+    "file": "invite-unavailable-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      42,
+      54,
+      1038,
+      614
+    ]
+  },
+  {
+    "device": "android",
+    "file": "invite-unavailable-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      42,
+      51,
+      1038,
+      614
+    ]
+  },
+  {
+    "device": "android",
+    "file": "new-room-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      21,
+      1080,
+      2400
+    ]
+  },
+  {
+    "device": "android",
+    "file": "new-room-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      21,
+      1080,
+      2400
+    ]
+  },
+  {
+    "device": "android",
+    "file": "new-room-picker-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      21,
+      1080,
+      2400
+    ]
+  },
+  {
+    "device": "android",
+    "file": "new-room-picker-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      21,
+      1080,
+      2400
+    ]
+  },
+  {
+    "device": "android",
+    "file": "profile-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      65,
+      51,
+      1015,
+      1531
+    ]
+  },
+  {
+    "device": "android",
+    "file": "profile-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      65,
+      54,
+      1015,
+      1531
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repo-empty-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      21,
+      1080,
+      610
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repo-empty-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      21,
+      1080,
+      610
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repo-picker-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      153,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repo-picker-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      152,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      151,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-create-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      769
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-create-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      54,
+      1080,
+      769
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-link-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      455
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-link-connected-0-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      433
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-link-connected-0-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      433
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-link-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      54,
+      1080,
+      455
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-none-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      51,
+      1080,
+      243
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-choice-mode-none-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      0,
+      54,
+      1080,
+      243
+    ]
+  },
+  {
+    "device": "android",
+    "file": "repository-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      152,
+      54,
+      958,
+      82
+    ]
+  },
+  {
+    "device": "android",
+    "file": "sign-in-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      151,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "sign-in-error-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      62,
+      51,
+      1018,
+      1726
+    ]
+  },
+  {
+    "device": "android",
+    "file": "sign-in-error-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      62,
+      51,
+      1018,
+      1726
+    ]
+  },
+  {
+    "device": "android",
+    "file": "sign-in-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      152,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "starters-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      151,
+      51,
+      966,
+      84
+    ]
+  },
+  {
+    "device": "android",
+    "file": "starters-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      152,
+      54,
+      958,
+      82
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-0-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      66,
+      54,
+      1014,
+      1041
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-0-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      66,
+      54,
+      1014,
+      1041
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-1-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      66,
+      54,
+      1014,
+      1322
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-1-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      66,
+      54,
+      1014,
+      1322
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-2-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      105,
+      54,
+      975,
+      1085
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-2-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      105,
+      54,
+      975,
+      1085
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-3-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      151,
+      54,
+      963,
+      82
+    ]
+  },
+  {
+    "device": "android",
+    "file": "welcome-step-3-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      152,
+      54,
+      958,
+      1235
+    ]
+  },
+  {
+    "device": "android",
+    "file": "workspace-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      51,
+      1017,
+      1589
+    ]
+  },
+  {
+    "device": "android",
+    "file": "workspace-join-1-bone.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      51,
+      1017,
+      1424
+    ]
+  },
+  {
+    "device": "android",
+    "file": "workspace-join-1-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      51,
+      1017,
+      2349
+    ]
+  },
+  {
+    "device": "android",
+    "file": "workspace-obsidian.png",
+    "beforeDimensions": [
+      1080,
+      2400
+    ],
+    "afterDimensions": [
+      1080,
+      2400
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      63,
+      51,
+      1017,
+      1589
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "agent-failed-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      329,
+      960,
+      438
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "agent-failed-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      329,
+      960,
+      438
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "agent-key-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "agent-key-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "agent-pending-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      373,
+      335,
+      381,
+      343
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "agent-pending-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      373,
+      335,
+      381,
+      343
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "agent-wait-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "agent-wait-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      337,
+      101,
+      345,
+      109
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "create-workspace-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      420,
+      39,
+      644,
+      53
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "create-workspace-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      420,
+      39,
+      644,
+      53
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "empty-room-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      460,
+      287,
+      820,
+      618
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "empty-room-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      460,
+      287,
+      820,
+      618
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "github-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      344,
+      378,
+      936,
+      550
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "github-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      344,
+      378,
+      936,
+      550
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "invite-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      410,
+      273,
+      870,
+      468
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "invite-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      410,
+      273,
+      870,
+      468
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "invite-offline-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      409,
+      48,
+      870,
+      293
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "invite-offline-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      409,
+      48,
+      870,
+      293
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "invite-unavailable-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      409,
+      57,
+      870,
+      210
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "invite-unavailable-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      409,
+      57,
+      870,
+      210
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "new-room-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      367,
+      278,
+      913,
+      658
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "new-room-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      353,
+      264,
+      927,
+      672
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "new-room-picker-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "new-room-picker-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "profile-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      434,
+      314,
+      846,
+      621
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "profile-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      434,
+      314,
+      846,
+      621
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repo-empty-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      321,
+      64,
+      702,
+      104
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repo-empty-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      321,
+      64,
+      702,
+      104
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repo-picker-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "repo-picker-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "repository-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-create-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      319,
+      49,
+      960,
+      293
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-create-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      319,
+      49,
+      960,
+      293
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-link-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      49,
+      960,
+      174
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-link-connected-0-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      49,
+      960,
+      165
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-link-connected-0-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      49,
+      960,
+      165
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-link-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      49,
+      960,
+      174
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-none-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      49,
+      960,
+      93
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-choice-mode-none-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      320,
+      49,
+      960,
+      93
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "repository-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "sign-in-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "sign-in-error-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      344,
+      280,
+      936,
+      650
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "sign-in-error-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      344,
+      280,
+      936,
+      650
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "sign-in-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "starters-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "starters-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-0-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      186,
+      187,
+      664,
+      482
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-0-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      186,
+      187,
+      664,
+      482
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-1-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      186,
+      179,
+      664,
+      728
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-1-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      186,
+      179,
+      664,
+      728
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-2-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      200,
+      185,
+      649,
+      548
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-2-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      200,
+      185,
+      649,
+      548
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-3-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "welcome-step-3-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": null
+  },
+  {
+    "device": "desktop",
+    "file": "workspace-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      410,
+      289,
+      870,
+      598
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "workspace-join-1-bone.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      410,
+      227,
+      870,
+      661
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "workspace-join-1-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      409,
+      227,
+      870,
+      661
+    ]
+  },
+  {
+    "device": "desktop",
+    "file": "workspace-obsidian.png",
+    "beforeDimensions": [
+      1280,
+      900
+    ],
+    "afterDimensions": [
+      1280,
+      900
+    ],
+    "sameDimensions": true,
+    "changedBoundingBox": [
+      409,
+      289,
+      870,
+      598
+    ]
+  }
+]

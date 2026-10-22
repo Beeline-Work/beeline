@@ -3,6 +3,7 @@ import {
   Pressable,
   Text,
   View,
+  type ViewProps,
   type AccessibilityRole,
   type AccessibilityState,
 } from 'react-native';
@@ -15,6 +16,93 @@ import { Button } from './Button';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 import { HullSwitch } from './HullSwitch';
 import { StateDot } from './StateDot';
+
+/** A horizontal composition for inline navigation and non-index layout.
+ * Unlike an index entry, its children retain their own typography and targets.
+ */
+export function InlineRow({ style, ...props }: ViewProps) {
+  return <View {...props} style={[inlineStyles.row, style]} />;
+}
+
+/** Transcript navigation keeps rich text, an optional hanging glyph, and two
+ * independent destinations. Index rows intentionally reserve a different axis.
+ */
+export function TranscriptNavigationRow({
+  children,
+  leading,
+  primary,
+  trailing,
+  singleDestination = false,
+  testID,
+}: {
+  children: React.ReactNode;
+  leading?: React.ReactNode;
+  primary?: IndexRowTrailingPress;
+  trailing?: IndexRowTrailingPress;
+  singleDestination?: boolean;
+  testID?: string;
+}) {
+  const chevron = (
+    <View style={navigationStyles.cornerTarget}>
+      <ChevronGlyph
+        color={navigationStyles.chevron.color}
+        direction="right"
+        size={CHEVRON_ROW_SIZE}
+      />
+    </View>
+  );
+  if (singleDestination && trailing)
+    return (
+      <View testID={testID}>
+        <Pressable
+          accessibilityRole="link"
+          {...trailing}
+          hitSlop={{ top: 6, bottom: 6 }}
+          style={({ pressed }) => [
+            navigationStyles.row,
+            !leading && navigationStyles.divider,
+            pressed && navigationStyles.pressed,
+          ]}
+        >
+          {leading ? <View style={navigationStyles.glyph}>{leading}</View> : null}
+          <View style={navigationStyles.copyTarget}>{children}</View>
+          {chevron}
+        </Pressable>
+      </View>
+    );
+  return (
+    <View style={[navigationStyles.row, navigationStyles.divider]} testID={testID}>
+      {primary ? (
+        <Pressable accessibilityRole="link" {...primary} style={navigationStyles.copyTarget}>
+          {children}
+        </Pressable>
+      ) : (
+        <View style={navigationStyles.copyTarget}>{children}</View>
+      )}
+      {trailing ? (
+        <Pressable accessibilityRole="link" {...trailing} style={navigationStyles.cornerTarget}>
+          {chevron}
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+const inlineStyles = StyleSheet.create({ row: { flexDirection: 'row' } });
+const navigationStyles = StyleSheet.create(({ buzz }) => ({
+  row: { minHeight: 44, flexDirection: 'row', alignItems: 'flex-start', gap: buzz.space.sm },
+  divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },
+  pressed: { opacity: 0.6 },
+  glyph: {
+    flexShrink: 0,
+    height: buzz.type.body.lineHeight,
+    justifyContent: 'center',
+    marginTop: buzz.space.sm,
+  },
+  copyTarget: { minHeight: 44, minWidth: 44, flex: 1, paddingVertical: buzz.space.sm },
+  cornerTarget: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  chevron: { color: buzz.accent },
+}));
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 export type IndexRowTrailingPress = {
@@ -252,7 +340,11 @@ export function IndexRow({
       accessibilityState={{ disabled: Boolean(trailingPress.disabled) }}
       disabled={trailingPress.disabled}
       onPress={trailingPress.onPress}
-      style={[styles.trailingSlot, styles.trailingControl, trailingPress.disabled && styles.disabled]}
+      style={[
+        styles.trailingSlot,
+        styles.trailingControl,
+        trailingPress.disabled && styles.disabled,
+      ]}
       testID={trailingPress.testID}
     >
       {trailingMark}

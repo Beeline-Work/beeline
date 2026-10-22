@@ -244,3 +244,50 @@ it('draws the call-site corner line as the Room row with the branch mark in fron
   expect(room.tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
   expect(callSite.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
 });
+
+it('opens the corner when the text of a corner row or call-site line is pressed (Reproduction corner-row-tap-1)', () => {
+  // The press lands on the words, so it opens whatever target holds them.
+  const pressText = (tree: any, words: string) => {
+    let node = tree.root.find(
+      (candidate: any) => candidate.type === 'Text' && text(candidate) === words,
+    );
+    while (node && !(node.type === 'Pressable' && node.props.onPress)) node = node.parent;
+    expect(node).toBeTruthy();
+    act(() => node.props.onPress());
+  };
+  const fact: ChatDisplayMessage = {
+    id: 'open',
+    text: '',
+    timestamp: 1,
+    isUser: false,
+    daemonFact: {
+      type: 'corner-open',
+      cornerId: 'corner-font-check',
+      name: 'font-check-android',
+      objective: 'Check fonts',
+      sourceMessageId: 'dm-source',
+    },
+  };
+  const room = render(
+    foldPrLifecycleRuns(anchorCornerMarkers([fact]))[0].notificationLifecycleRun!.items as any,
+  );
+  pressText(room.tree, 'Opened corner #font-check-android');
+  expect(room.onOpenCorner).toHaveBeenCalledWith('corner-font-check');
+  expect(room.onOpenUrl).not.toHaveBeenCalled();
+
+  const onOpen = vi.fn();
+  let callSite: any;
+  act(() => {
+    callSite = create(<CornerOpenedMarker title="font-check-android" onOpen={onOpen} />);
+  });
+  pressText(callSite, 'Opened corner #font-check-android');
+  expect(onOpen).toHaveBeenCalledTimes(1);
+
+  // A PR row keeps its two targets: the title opens GitHub, the chevron the corner.
+  const pr = render();
+  pressText(pr.tree, `Merged #2742 ${item.title}`);
+  expect(pr.onOpenUrl).toHaveBeenCalledWith(item.url);
+  expect(pr.onOpenCorner).not.toHaveBeenCalled();
+  act(() => pr.get('notification-run-cell-corner-pr').props.onPress());
+  expect(pr.onOpenCorner).toHaveBeenCalledWith('corner');
+});

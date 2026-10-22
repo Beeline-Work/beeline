@@ -44,6 +44,14 @@ async function run() {
     node ? `${getComputedStyle(node).fontSize} ${getComputedStyle(node).fontFamily}` : null;
   const eyebrow = find('#beeline');
   const title = find('Schedules and subscriptions');
+  const rowLines = ids(/^(scheduled-work-(daily|video|once)|subscription-sub-[12])$/).map(id => {
+    const row = document.querySelector(`[data-testid="${id}"]`)!;
+    const words = [...row.querySelectorAll<HTMLElement>('[dir=auto]')]
+      .filter(node => node.childElementCount === 0);
+    return { id, words: words.map(node => node.textContent),
+      ys: words.map(node => node.getBoundingClientRect().y),
+      cornerFills: [...row.querySelectorAll('polygon')].map(node => node.getAttribute('fill')) };
+  });
   const glyphs = ids(/^(scheduled-work-glyph-|subscription-glyph-)/);
   const workflowFills = glyphs.map((id) =>
     document.querySelector(`[data-testid="${id}"] polygon`)?.getAttribute('fill'));
@@ -103,7 +111,7 @@ async function run() {
     for (let i = 0; i < 3; i += 1) await pause();
   }
   report(
-    JSON.stringify({
+    JSON.stringify({ rowLines,
       text,
       eyebrowFont: font(eyebrow),
       titleFont: font(title),

@@ -316,6 +316,22 @@ describe('minimal agent surface', () => {
       'unavailable',
     );
   });
+  it('requires creation names and event trigger words, and forwards them', async () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'wake')!.inputSchema;
+    const schedule = { action: 'create', trigger: 'schedule', prompt: 'Check work',
+      cadence: { kind: 'interval', everyMinutes: 60 } };
+    const event = { action: 'create', trigger: 'event', source: 'room', event: 'check-failed',
+      prompt: 'Fix checks', title: 'Fix failing checks' };
+    expect(Check(schema as never, schedule)).toBe(false);
+    expect(Check(schema as never, { ...schedule, title: 'Check work' })).toBe(true);
+    expect(Check(schema as never, event)).toBe(false);
+    expect(Check(schema as never, { ...event, when: 'On corner checks failing' })).toBe(true);
+    await callAgentTool('wake', { ...event, when: 'On corner checks failing' }, 'w');
+    expect(calls).toContainEqual(expect.objectContaining({
+      operation: 'createAgentSubscription',
+      input: expect.objectContaining({ title: event.title, when: 'On corner checks failing' }),
+    }));
+  });
   it('wake cannot choose messaging operations or another agent', async () => {
     for (const forged of [
       { agent: 'other' },

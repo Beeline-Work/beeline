@@ -17,6 +17,7 @@ export function RoomListSectionHeader({
   actionTestID,
   onAction,
   actionDisabled,
+  tapLineHeight = false,
   testID,
 }: {
   title: string;
@@ -35,6 +36,8 @@ export function RoomListSectionHeader({
   actionAccessibilityLabel?: string;
   actionTestID?: string;
   onAction?: () => void;
+  /** Hold the + row to its 44 px tap line, as the desktop sidebar always has. */
+  tapLineHeight?: boolean;
 }) {
   return (
     <View
@@ -51,18 +54,24 @@ export function RoomListSectionHeader({
       </Text>
       {count !== undefined && <Text style={styles.sectionCount}>{count}</Text>}
       {onAction ? (
-        <Pressable
-          accessibilityLabel={actionAccessibilityLabel}
-          accessibilityRole="button"
-          onPress={onAction}
-          disabled={actionDisabled}
-          accessibilityState={{ disabled: actionDisabled }}
-          hitSlop={ACTION_HIT_SLOP}
-          style={({ pressed }) => [styles.sectionHeaderAction, pressed && { opacity: 0.7 }]}
-          testID={actionTestID}
-        >
-          <Ionicons name="add" size={ACTION_GLYPH} color={styles.sectionHeaderActionGlyph.color} />
-        </Pressable>
+        <View style={tapLineHeight && styles.tapLine}>
+          <Pressable
+            accessibilityLabel={actionAccessibilityLabel}
+            accessibilityRole="button"
+            onPress={onAction}
+            disabled={actionDisabled}
+            accessibilityState={{ disabled: actionDisabled }}
+            hitSlop={ACTION_HIT_SLOP}
+            style={({ pressed }) => [styles.sectionHeaderAction, pressed && { opacity: 0.7 }]}
+            testID={actionTestID}
+          >
+            <Ionicons
+              name="add"
+              size={ACTION_GLYPH}
+              color={styles.sectionHeaderActionGlyph.color}
+            />
+          </Pressable>
+        </View>
       ) : null}
     </View>
   );
@@ -100,6 +109,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       flex: 1,
     },
+    tapLine: { minHeight: 44, justifyContent: 'center' },
     sectionHeaderAction: {
       width: ACTION_GLYPH,
       height: LABEL_LINE,

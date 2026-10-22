@@ -3,7 +3,7 @@
  "builds": {
   "main": "origin/main c0d8e4578",
   "before": "8b6153f6d (PR 2741 head)",
-  "after": "afb5bedb9"
+  "after": "this branch head (Android room list recaptured with the desktop-only tap line in place)"
  },
  "method": "Pixel analysis of the unedited screenshots with measure.py (PIL). Divider = last row of the 2 px full-width rule under the filter row (y=158-159). Label = first contiguous run of rows with ink (>60 RGB-sum difference from background) in the ROOMS label column x=16..90. Card top = first row below the label where the card border spans >90% of x=40..350. Distances count the background rows strictly between the two edges. Cross-checked against uiautomator bounds: ROOMS TextView [16,191][..,211] and first row [17,216][395,285] are identical on main and after.",
  "rooms_header_android": {
@@ -52,12 +52,17 @@
   }
  },
  "rooms_header_desktop_1279x936_scale1": {
-  "note": "Same pixel method; divider y=105, label column x=16..60. Main and before put the + in a 44 px box, so their header is taller; after holds the + to one label line.",
+  "note": "Main shows the + only in the desktop sidebar, inside a 44 px box that sets the header height. After keeps that 44 px line in the desktop sidebar only (tapLineHeight), while the + itself stays a 16x15 box with a 44 px tap area. The Android room list on main has no +, so there the + adds no height.",
   "main": {
    "divider_to_label_top_px": 43,
    "label_bottom_to_first_row_top_px": 21,
    "label_glyph_top_y": 149,
-   "first_room_row_top_y": 177
+   "first_room_row_top_y": 177,
+   "dom": {
+    "header_height_px": 72,
+    "label_bottom_to_first_row_top_px": 18.5,
+    "source": "the reviewer's browser measurement of main"
+   }
   },
   "before": {
    "divider_to_label_top_px": 43,
@@ -66,12 +71,19 @@
    "first_room_row_top_y": 177
   },
   "after": {
-   "divider_to_label_top_px": 28,
-   "label_bottom_to_first_row_top_px": 8,
-   "label_glyph_top_y": 134,
-   "first_room_row_top_y": 149
+   "divider_to_label_top_px": 43,
+   "label_glyph_top_y": 149,
+   "first_room_row_top_y": 178,
+   "dom": {
+    "header_height_px": 72,
+    "label_bottom_to_first_row_top_px": 18.5,
+    "plus_box_px": [
+     16,
+     15
+    ]
+   }
   },
-  "after_equals_main": false,
-  "main_first_row_top_method": "main's first row is read (untinted); its top is the second row's tint top (259) minus the 82 px row pitch"
+  "after_equals_main": true,
+  "main_first_row_top_method": "main's first row is read (untinted); pixel estimate is the second row's tint top (259) minus the 82 px row pitch, which gives 177. DOM bounds give 178 on both builds."
  }
 }

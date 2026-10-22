@@ -28,7 +28,7 @@ The `*.xml` files are uiautomator dumps of the Android room lists and the main M
 
 ## How the shots were made
 
-The `-dark` shots use Appearance = Dark (Android: `cmd uimode night yes`). They were taken from head 225bdf948.
+The `-dark` shots use Appearance = Dark (Android: `cmd uimode night yes`). All desktop "after" shots and `android-after-rooms.png` were retaken after the desktop sidebar got main's header height back; the other Android "after" shots come from 225bdf948; the tap line is desktop-only, so they do not change.
 
 
 1. `server.mts` is a copy of `../members-settings-prototype/server.mts` with three additions: six schedules and four Room subscriptions seeded on #beeline (so Schedules has many rows), and `http://localhost:18082` added as an allowed web origin. Role toggle: `http://127.0.0.1:45861/_proof/role/member` (or `/owner`). Run it from the repo root with `node --import tsx apps/mobile/evidence/settings-tabs-revision2/server.mts`.

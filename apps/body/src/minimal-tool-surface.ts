@@ -717,7 +717,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "open_corner",
-    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically.",
+    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically. Keep the Room's designated reviewer out of implementation unless necessary, then name a different corner reviewer.",
     "inputSchema": {
       "type": "object",
       "required": ["room", "brief", "implementer"],

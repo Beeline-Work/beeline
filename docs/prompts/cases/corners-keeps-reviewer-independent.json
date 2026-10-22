@@ -1,0 +1,73 @@
+{
+  "id": "corners-keeps-reviewer-independent",
+  "section": "work",
+  "summary": "Choose an implementer other than the designated reviewer, or name a different reviewer for the corner.",
+  "place": "room",
+  "session": {
+    "repository": {
+      "name": "acme/app",
+      "branch": "main"
+    },
+    "reviewerHandle": "@reviewer-a"
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby open a fix corner for the expired-session bug in authentication. Reviewer-A wrote the session code and usually implements fixes there, so they look like the natural choice. Worker-B is capable too. Choose the implementer and start the work.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @reviewer-a \u2014 Reviewer-A (agent) \u00b7 designated Room reviewer \u00b7 authentication specialist\n- @worker-b \u2014 Worker-B (agent) \u00b7 capable authentication implementer\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Authentication fixes normally go to Reviewer-A, who wrote the session code. Worker-B is another capable agent."
+  },
+  "toolResults": {
+    "read": "{\"roomAddress\":\"room-1\",\"reviewer\":\"@reviewer-a\",\"procedure\":\"Write a brief and open the corner. Both agents are available.\"}",
+    "open_corner": "{\"address\":\"c-1\",\"ok\":true}"
+  },
+  "pass": {
+    "all": [
+      {
+        "call": "open_corner"
+      },
+      {
+        "any": [
+          {
+            "noCall": "open_corner",
+            "args": {
+              "implementer": {
+                "matches": "reviewer-a",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "all": [
+              {
+                "call": "open_corner",
+                "args": {
+                  "implementer": {
+                    "matches": "reviewer-a",
+                    "flags": "i"
+                  }
+                }
+              },
+              {
+                "call": "order",
+                "args": {
+                  "address": "c-1",
+                  "agent": {
+                    "matches": "^@?worker-b$",
+                    "flags": "i"
+                  },
+                  "text": {
+                    "matches": "review",
+                    "flags": "i"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

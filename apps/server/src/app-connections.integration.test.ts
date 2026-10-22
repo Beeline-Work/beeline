@@ -401,7 +401,7 @@ describe('connect_app', () => {
   it.each(['link my repository', 'GitHub'])('R-REPO-CARD: %s bypasses a Registry outage for repository linking', async service => {
     const registry = fakeRegistry([], true);
     const result = await daemonWith(registry.client, fakeComposio()).execute('connect',
-      { ...turn, service, reason: 'Link a repository' }, HELPER);
+      { ...turn, service, reason: `Connect ${service}`, continuation: `Connect my ${service} account.` }, HELPER);
     expect(result).toMatchObject({ status: 'ready', app: 'beeline:onboarding' });
     expect(registry.transport).not.toHaveBeenCalled();
   });
@@ -708,7 +708,7 @@ describe('connect_app', () => {
       signIn: { method: 'oauth', url: 'https://github.com/login/oauth/authorize?state=fixture',
         attemptId: 'github-owner-sign-in' } }, HELPER);
     const started = await daemon.execute('connect', { ...turn, service: 'GitHub',
-      reason: 'connect personal GitHub' }, HELPER);
+      reason: 'Read account issues' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client);
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)

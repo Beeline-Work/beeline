@@ -38,6 +38,8 @@ or accept a Nostr secret key.
    header signed by that public key. Auth-event IDs are durably replay guarded.
    The response is tenant-scoped and never contains email.
 
+Repository onboarding is always available to every user, without feature flags, a GitHub subject or an eligibility cookie. Signed cookies still bind installation callbacks to the account that started them.
+
 ## Managed display handles
 
 The mounted auth library preserves identity labels without publishing a public name resolver:

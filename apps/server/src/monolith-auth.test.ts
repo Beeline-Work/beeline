@@ -389,8 +389,6 @@ describe('mounted monolith auth', () => {
     await database.query(`INSERT INTO identities(id,kind,name,handle,avatar) VALUES($1,'human','Alex Chen','alex.chen','google-photo')`, [id]);
     await database.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience) VALUES('google','google-owner',$1,'https://accounts.google.com','test-client')`, [id]);
     repositorySelection = 'all';
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', id);
     const phone = new PhoneService(database, tenant.origin, githubOperations);
     const workspace = await phone.execute('createWorkspace', { name:'Google owner' }, id);
     const roomId = workspace.roomId!;
@@ -444,8 +442,6 @@ describe('mounted monolith auth', () => {
   });
 
   it('completes repo-card installation through the OAuth callback and rejects replay or forged state', async () => {
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '42');
     const start = await mountedRequest(
       `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'r'.repeat(43)}`,
     );

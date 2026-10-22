@@ -110,9 +110,13 @@ export type AppIdentity = {
 };
 
 /** Built-in tool namespaces do not represent external account connections. */
-export function builtinBeelineApp(input: string): string | undefined {
+export function builtinBeelineApp(input: string, context = ''): string | undefined {
   const text = input.trim().toLowerCase();
   if (/^beeline:[a-z][a-z0-9_]*$/.test(text)) return text;
+  const request = `${text} ${context.toLowerCase()}`;
+  if (/\b(?:repo|repository|repositories|github)\b/.test(request)
+    && /\b(?:link|connect|set[ -]up|choose|card)\b/.test(request)
+    && !/\b(?:payment|wallet|stripe)\b/.test(request)) return 'beeline:onboarding';
   const key = text.replace(/[ _-]/g, '');
   for (const name of ['workflow', 'wallet', 'browser_share', 'corner_app', 'avatar', 'onboarding']) {
     const alias = name.replace(/_/g, '');

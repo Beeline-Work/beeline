@@ -173,14 +173,20 @@ export function RepositoryLifecycleRow({
 }) {
   const { theme } = useUnistyles();
   const state = item.state.replace(/^PR /, '');
-  const verb = state.charAt(0).toUpperCase() + state.slice(1);
+  // The call-site line keeps its own closed wording in the shared format.
+  const closedCallSite = glyph && state === 'Closed';
+  const verb = closedCallSite ? 'Corner closed' : state.charAt(0).toUpperCase() + state.slice(1);
   const number =
     item.url?.match(/\/(?:pull|issues)\/(\d+)/)?.[1] ?? item.kindLine.match(/#(\d+)/)?.[1];
   const copy = (
     <Text style={styles.repositoryTitle} numberOfLines={2} ellipsizeMode="tail">
       <Text style={styles.verb}>{verb} </Text>
       {number && item.url ? <Text style={styles.number}>#{number} </Text> : null}
-      {item.kind === 'corner' ? `corner #${item.title}` : item.title}
+      {closedCallSite
+        ? `· #${item.title}`
+        : item.kind === 'corner'
+          ? `corner #${item.title}`
+          : item.title}
     </Text>
   );
   const cornerTestID = testID ?? `notification-run-cell-corner-${item.id}`;

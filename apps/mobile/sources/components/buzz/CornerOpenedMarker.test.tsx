@@ -81,7 +81,7 @@ describe('CornerOpenedMarker', () => {
     const renderer = render(
       <CornerOpenedMarker title="quiet amber corner" closed onOpen={onOpen} testID="marker" />,
     );
-    expect(textOf(renderer)).toBe('Closed corner #quiet amber corner');
+    expect(textOf(renderer)).toBe('Corner closed · #quiet amber corner');
     act(() => pressable(renderer).props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
   });

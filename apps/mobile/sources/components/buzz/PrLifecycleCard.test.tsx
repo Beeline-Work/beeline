@@ -291,3 +291,36 @@ it('opens the corner when the text of a corner row or call-site line is pressed 
   act(() => pr.get('notification-run-cell-corner-pr').props.onPress());
   expect(pr.onOpenCorner).toHaveBeenCalledWith('corner');
 });
+
+it('keeps each surface’s closed wording in the shared format', () => {
+  const closed = render([
+    {
+      ...item,
+      id: 'closed',
+      state: 'Closed',
+      kind: 'corner' as const,
+      kindLine: 'corner',
+      url: undefined,
+      title: 'quiet',
+    },
+  ] as any);
+  expect(text(closed.get('notification-run-cell-closed'))).toBe('Closed corner #quiet');
+  let callSite: any;
+  act(() => {
+    callSite = create(<CornerOpenedMarker title="quiet" closed onOpen={() => undefined} />);
+  });
+  const lines = (tree: any) =>
+    tree.root.findAll((node: any) => node.type === 'Text' && node.props.numberOfLines === 2);
+  const [line] = lines(callSite);
+  expect(text(line)).toBe('Corner closed · #quiet');
+  const flatten = (style: any): any =>
+    Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
+  const runs = (node: any) =>
+    node
+      .findAll((n: any) => n.type === 'Text')
+      .map((n: any) => {
+        const style = flatten(n.props.style);
+        return [style.fontFamily, style.fontSize, style.fontWeight, style.color];
+      });
+  expect(runs(line)).toEqual(runs(lines(closed.tree)[0]));
+});

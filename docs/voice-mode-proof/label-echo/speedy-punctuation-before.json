@@ -1,0 +1,48 @@
+{
+  "reproduction": "VOICE-LABEL-1",
+  "mode": "punctuation-baseline",
+  "prompt": "Ruby, what should I look for?",
+  "synthesis": [
+    {
+      "text": "Dr. Dr. Dr. Ruby (Dr. Dr. Dr. Ruby) [#beeline/item/previous]: A small ceramic planter.",
+      "at": 1792695259980
+    },
+    {
+      "text": "Dr. Dr. Dr. Ruby (Dr. Dr. Dr. Ruby) [#beeline/item/previous]: A small ceramic planter.",
+      "at": 1792695260269
+    }
+  ],
+  "transcript": [
+    {
+      "text": "@ruby Ruby, what should I look for?",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "text": "Dr. Ruby (@ruby) [#beeline/item/previous]: A small ceramic planter.",
+      "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "text": "@ruby Ruby, what should I look for?",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "text": "Dr. Ruby (@ruby) [#beeline/item/previous]: A small ceramic planter.",
+      "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "receivedAudioFrames": 165,
+  "samplesMs": [
+    50.20477200000005,
+    35.10425899999973,
+    40.009951,
+    42.02537500000017,
+    35.89782399999967,
+    33.27011300000049,
+    29.905461999999716,
+    30.990121999999246,
+    38.67818299999908,
+    34.958564999999
+  ],
+  "medianMs": 35.5010414999997,
+  "providers": "controlled SSE and PCM; actual local LiveKit RTC"
+}

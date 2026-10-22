@@ -6,6 +6,37 @@ import { voiceConfigFromEnv } from './voice-service.js';
 import { namedVoiceTarget } from './voice-room-runtime.js';
 
 describe('voice providers', () => {
+  it.each([
+    ['Ruby (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['Ruby! (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['🌻 Ruby (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['[Ruby] (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['Hello. Dr. Ruby (@ruby) [#beeline/item/abc]: quoted.', 'Hello. Dr. Ruby (@ruby) [#beeline/item/abc]: quoted.'],
+    ['Ruby Rose (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['[#beeline/item/abc] Hello.', 'Hello.'],
+    ['[#beeline/item/abc]: [#beeline/item/def]: Hello.', 'Hello.'],
+    ['Hello. Ruby (@ruby) [#beeline/item/abc]: quoted.', 'Hello. Ruby (@ruby) [#beeline/item/abc]: quoted.'],
+    ['She said “Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.”', 'She said “Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.”'],
+    ['Ruby: Hello.', 'Ruby: Hello.'],
+  ])('cleans only the opening transcript prefix: %s', async (content, expected) => {
+    // Split inside the prefix: provider token boundaries must not affect speech.
+    const wire = content.match(/.{1,7}/gu)!.map(part => 'data: ' + JSON.stringify({ choices: [{ delta: { content: part } }] }) + '\n\n').join('');
+    const brain = new OpenRouterVoiceBrain('test', async () => new Response(wire));
+    const reply = await brain.answer({ id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' },
+      [], () => {}, new AbortController().signal);
+    expect(reply.text).toBe(expected);
+  });
+
+  it.each(['Dr. Ruby', 'Ruby!', '🌻 Ruby', '[Ruby]', 'Hello. Ruby'])('cleans the exact known name: %s', async (name) => {
+    const content = `${name} (@ruby) [#beeline/item/abc]: Hello.`;
+    const brain = new OpenRouterVoiceBrain('test', async () => new Response('data: ' +
+      JSON.stringify({ choices: [{ delta: { content } }] }) + '\n\n'));
+    const reply = await brain.answer({ id: 'a', name, handle: 'ruby', soul: '', voice: 'luna' },
+      [], () => {}, new AbortController().signal);
+    expect(reply.text).toBe('Hello.');
+  });
+
   it('configures Aura speech', () => {
     const config = voiceConfigFromEnv({ BEELINE_VOICE_OPENROUTER_API_KEY: 'test', LIVEKIT_URL: 'ws://test',
       LIVEKIT_API_KEY: 'test', LIVEKIT_API_SECRET: 'test', CLOUDFLARE_WORKERS_AI_TOKEN: 'test',

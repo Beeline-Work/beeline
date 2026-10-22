@@ -21,7 +21,12 @@ async function renderPicker(busy: string | null, screenshotPath?: string) {
   expect(proof.status, proof.stderr).toBe(0);
   const result = JSON.parse(proof.result);
   if (process.env.PRINT_PROOF) console.log(result);
-  return result as { titleInset: number; searchLeftInset: number; searchRightInset: number; messageButtonBorders: string[] };
+  return result as { titleInset: number; searchLeftInset: number; searchRightInset: number; rowCount: number;
+    nestedButtons: number;
+    rowLeadInsets: number[];
+    headerInsets: number[];
+    busyValues: boolean[];
+  };
 }
 
 describe.skipIf(!existsSync(CHROME))('Message member picker', () => {
@@ -31,9 +36,12 @@ describe.skipIf(!existsSync(CHROME))('Message member picker', () => {
     expect(result.searchRightInset).toBe(result.titleInset);
   });
 
-  it('draws no border on the Message buttons while one DM is opening', async () => {
+  it('puts rows and headers on the title edge, with the whole row as the only tap target', async () => {
     const result = await renderPicker('pubkey-chloro', process.env.DM_PICKER_BUSY_SCREENSHOT);
-    expect(result.messageButtonBorders).toHaveLength(3);
-    for (const color of result.messageButtonBorders) expect(color).toBe('rgba(0, 0, 0, 0)');
+    expect(result.rowCount).toBe(3);
+    expect(result.nestedButtons).toBe(0);
+    expect(result.headerInsets).toHaveLength(2);
+    for (const inset of [...result.rowLeadInsets, ...result.headerInsets]) expect(inset).toBe(result.titleInset);
+    expect(result.busyValues).toEqual([false, true, false]);
   });
 });

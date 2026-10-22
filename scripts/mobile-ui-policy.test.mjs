@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -370,4 +371,86 @@ test('createElement layouts also fingerprint only their props and style', () => 
       (e) => e.rule === 'custom-row',
     ),
   );
+});
+
+test('shared components cannot hand-roll rows, buttons or headers; their owners can', () => {
+  const source = `import {Pressable,Text,View} from 'react-native';
+    const styles={row:{flexDirection:'row'},header:{padding:16}};
+    export function Thing(){return <><Pressable style={styles.row} onPress={go}/>
+      <View style={styles.header}><Text>Head</Text></View></>}`;
+  const offences = (file) =>
+    scan(source, file)
+      .offences.filter((offence) => !offence.strict)
+      .map((offence) => offence.rule);
+  assert.deepEqual(offences('components/buzz/Thing.tsx'), [
+    'raw-button',
+    'custom-row',
+    'custom-header',
+  ]);
+  assert.deepEqual(offences('components/buzz/IndexRow.tsx'), []);
+  assert.deepEqual(
+    scan(
+      "import {TextInput} from 'react-native'; export const F=()=> <TextInput/>;",
+      'components/F.tsx',
+    ).offences.filter((offence) => !offence.strict),
+    [],
+  );
+  const file = 'components/buzz/Thing.tsx';
+  const baseline = grandfatherRegistry([scan(source, file)]);
+  const registry = { ...baseline, components: { [file]: ['Thing'] } };
+  assert.deepEqual(judgeUiRegistry([scan(source, file)], registry, registry), []);
+  assert.ok(
+    judgeUiRegistry([scan(source.replace("'row'", "'column'"), file)], registry, registry).some(
+      (error) => error.rule === 'raw-button',
+    ),
+  );
+});
+
+test('a base registry from before shared components were checked bootstraps only their committed controls', () => {
+  const scratch = fileURLToPath(new URL('../.scratch/ui-policy/', import.meta.url));
+  mkdirSync(scratch, { recursive: true });
+  const root = mkdtempSync(path.join(scratch, 'v1-base-'));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  try {
+    const file = 'components/buzz/Thing.tsx';
+    const source =
+      "import {Pressable} from 'react-native'; export function Thing(){return <Pressable onPress={go}/>}";
+    mkdirSync(path.join(root, 'apps/mobile/sources/components/buzz'), { recursive: true });
+    mkdirSync(path.join(root, 'apps/mobile/design'), { recursive: true });
+    writeFileSync(path.join(root, 'apps/mobile/sources', file), source);
+    writeFileSync(
+      path.join(root, REGISTRY_PATH),
+      JSON.stringify({
+        version: 1,
+        fingerprintMode: 'layout-shell-v1',
+        components: { [file]: ['Thing'] },
+        legacyControls: {},
+      }),
+    );
+    git('init', '-q');
+    git('add', '.');
+    git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'base');
+    const base = registryAtRef(root, 'HEAD');
+    assert.equal(base.fingerprintMode, 'layout-shell-v2');
+    const registry = {
+      ...grandfatherRegistry([scan(source, file)]),
+      components: { [file]: ['Thing'] },
+    };
+    assert.deepEqual(judgeUiRegistry([scan(source, file)], registry, base), []);
+    const grown = source.replace(
+      '<Pressable onPress={go}/>',
+      '<><Pressable onPress={go}/><Pressable onPress={go}/></>',
+    );
+    const grownRegistry = {
+      ...grandfatherRegistry([scan(grown, file)]),
+      components: { [file]: ['Thing'] },
+    };
+    assert.ok(
+      judgeUiRegistry([scan(grown, file)], grownRegistry, base).some(
+        (error) => error.rule === 'grandfather-growth',
+      ),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

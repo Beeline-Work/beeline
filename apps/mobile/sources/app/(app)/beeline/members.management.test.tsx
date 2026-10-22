@@ -2120,7 +2120,7 @@ describe('Members workspace management', () => {
     const row = (pubkey: string) =>
       renderer.root.findAll(
         (node: any) =>
-          node.type === 'TouchableOpacity' && node.props.testID === `member-${pubkey}-identity`,
+          node.type === 'Pressable' && node.props.testID === `member-${pubkey}-identity`,
       );
     const firstPageRows = firstPage.flatMap((item) => row(item.identity.pubkey)).length;
     await press(renderer, 'members-load-more-people');

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { layout, typeRoles } from '@/buzz/groknight';
+import { layout, space, typeRoles } from '@/buzz/groknight';
 import { clearModalNavigationBarScrim } from '@/buzz/android-modal-navigation-bar';
 import { HULL_SHEET_INSET, HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 import { Button, type ButtonProps } from './Button';
@@ -35,15 +35,15 @@ export type HullDialogAction = {
 export const HULL_DIALOG_LAYOUT = {
   actionBorderTopWidth: StyleSheet.hairlineWidth,
   actionButtonMinHeight: 44,
-  actionPaddingVertical: 8,
+  actionPaddingVertical: space.sm,
   // dialogBody reads the meta role; dialogTitle reads bodyStrong — this
   // geometry budget (`hullDialogMinimumHeight`) must use their real line
   // heights, not an approximation, or the two drift apart.
   bodyLineHeight: typeRoles.meta.lineHeight,
-  bodyMarginTop: 8,
-  copyPaddingBottom: 16,
-  copyPaddingTop: 24,
-  inputMarginTop: 16,
+  bodyMarginTop: space.sm,
+  copyPaddingBottom: space.md,
+  copyPaddingTop: space.lg,
+  inputMarginTop: space.md,
   inputMinHeight: 44,
   titleLineHeight: typeRoles.bodyStrong.lineHeight,
 } as const;
@@ -524,7 +524,7 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     modalRoot: { flex: 1, minWidth: 0 },
-    modalRootCenter: { alignItems: 'center', justifyContent: 'center', padding: 24 },
+    modalRootCenter: { alignItems: 'center', justifyContent: 'center', padding: hull.space.lg },
     modalRootBottom: { alignItems: 'center', justifyContent: 'flex-end' },
     scrim: {
       ...StyleSheet.absoluteFillObject,
@@ -573,7 +573,8 @@ const styles = StyleSheet.create((theme) => {
     dialogActions: {
       flexShrink: 0,
       minHeight: hullDialogActionsMinimumHeight(),
-      paddingHorizontal: hull.space.sm,
+      // The buttons end on the copy's edge, not inside it.
+      paddingHorizontal: hull.space.lg,
       paddingVertical: HULL_DIALOG_LAYOUT.actionPaddingVertical,
       flexDirection: 'row',
       alignItems: 'center',
@@ -630,7 +631,7 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.body,
       minHeight: HULL_DIALOG_LAYOUT.inputMinHeight,
       paddingHorizontal: 0,
-      paddingVertical: 8,
+      paddingVertical: hull.space.sm,
       color: hull.textPrimary,
       backgroundColor: 'transparent',
       borderWidth: 0,

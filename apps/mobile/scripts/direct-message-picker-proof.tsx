@@ -27,15 +27,25 @@ createRoot(document.getElementById('root')!).render(
 setTimeout(() => {
   const title = [...document.querySelectorAll('[role="heading"]')].find(node => node.textContent === 'Message')!;
   const search = document.querySelector('[data-testid="direct-message-picker-search"]')!;
-  const buttons = [...document.querySelectorAll('[role="button"]')].filter(node =>
-    node.textContent === 'Message' || node.textContent === 'Opening…');
   const sheet = document.querySelector('[data-testid="direct-message-picker"]')!.getBoundingClientRect();
+  const rows = [...document.querySelectorAll('[data-testid^="message-workspace-member-"]')];
+  const leftOfText = (node: Element) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return range.getBoundingClientRect().left - sheet.left;
+  };
+  const headers = [...document.querySelectorAll('*')].filter(node =>
+    node.children.length === 0 && /^(people|agents)$/i.test(node.textContent ?? ''));
   const titleText = document.createRange();
   titleText.selectNodeContents(title);
   document.getElementById('result')!.textContent = JSON.stringify({
     titleInset: titleText.getBoundingClientRect().left - sheet.left,
     searchLeftInset: search.getBoundingClientRect().left - sheet.left + parseFloat(getComputedStyle(search).paddingLeft),
     searchRightInset: sheet.right - search.getBoundingClientRect().right + parseFloat(getComputedStyle(search).paddingRight),
-    messageButtonBorders: buttons.map(node => getComputedStyle(node).borderTopColor),
+    rowCount: rows.length,
+    nestedButtons: rows.reduce((total, row) => total + row.querySelectorAll('[role="button"]').length, 0),
+    rowLeadInsets: rows.map(row => row.firstElementChild!.getBoundingClientRect().left - sheet.left),
+    headerInsets: headers.map(leftOfText),
+    busyValues: rows.map(row => row.textContent?.includes('Opening…') ?? false),
   });
 }, 500);

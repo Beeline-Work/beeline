@@ -145,7 +145,7 @@ function rowIds(renderer: ReactTestRenderer): string[] {
   return renderer.root
     .findAll(
       (node: any) =>
-        node.type === 'TouchableOpacity' && /^room-roster-(person|agent)-/.test(node.props.testID),
+        node.type === 'Pressable' && /^room-roster-(person|agent)-/.test(node.props.testID),
     )
     .map((node: any) => node.props.testID);
 }

@@ -12,6 +12,8 @@ vi.mock('react-native', async () => {
     Platform: { OS: 'ios', select: (choices: Record<string, unknown>) => choices.default },
     StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
+    Pressable: host('Pressable'),
+    Switch: host('Switch'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };

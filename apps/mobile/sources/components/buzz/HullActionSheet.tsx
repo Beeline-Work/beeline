@@ -6,7 +6,6 @@ import {
   Keyboard,
   Pressable,
   ScrollView,
-  Switch,
   Text,
   View,
   useWindowDimensions,
@@ -14,11 +13,11 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { useIsDesktop } from '@/utils/responsive';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 import { HullFloatingSurface, HullModal } from './HullDialog';
+import { IndexRow } from './IndexRow';
 
 type HullActionSheetProps = {
   children: React.ReactNode;
@@ -144,14 +143,18 @@ export function HullActionSheet({
           onPress={onTitlePress}
           testID={titleTestID}
         >
-          <Text style={styles.title}>{title}</Text>
+          <Text numberOfLines={1} style={styles.title}>{title}</Text>
         </Pressable>
       ) : title ? (
-        <Text accessibilityRole="header" style={styles.title} testID={titleTestID}>
+        <Text accessibilityRole="header" numberOfLines={1} style={styles.title} testID={titleTestID}>
           {title}
         </Text>
       ) : null}
-      {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      {subtitle ? (
+        <Text numberOfLines={2} style={styles.subtitle}>
+          {subtitle}
+        </Text>
+      ) : null}
       {sticky}
       {body}
       {footer}
@@ -198,91 +201,24 @@ export type HullActionSheetAction = {
   };
 };
 
+/** The sheet preset of the one index row (`IndexRow`). */
 export function HullActionSheetRow({
-  accessibilityLabel,
-  chevron,
   description,
   destructive = false,
-  disabled = false,
   label,
-  leading,
   metadata,
-  onPress,
-  selected = false,
-  testID,
-  toggle,
+  ...props
 }: HullActionSheetAction) {
-  const { theme } = useUnistyles();
-  const metadataText = selected ? 'SELECTED' : metadata;
-  const spoken = [metadataText, description].filter(Boolean).join('. ');
-  const body = (
-    <>
-      {leading}
-      <View style={styles.copy}>
-        <Text numberOfLines={1} style={[styles.rowLabel, destructive && styles.destructive]}>
-          {label}
-        </Text>
-        {description ? <Text style={styles.description}>{description}</Text> : null}
-      </View>
-      {metadataText ? (
-        <Text numberOfLines={1} style={styles.metadata}>
-          {metadataText}
-        </Text>
-      ) : null}
-      {toggle ? (
-        // A pressable row IS the switch to a screen reader (role + checked
-        // below), so the control itself must not be announced a second time.
-        <View
-          accessibilityElementsHidden={Boolean(onPress)}
-          importantForAccessibility={onPress ? 'no-hide-descendants' : 'auto'}
-        >
-          <Switch
-            accessibilityLabel={toggle.accessibilityLabel ?? label}
-            disabled={toggle.disabled ?? disabled}
-            onValueChange={toggle.onValueChange}
-            thumbColor={theme.buzz.textPrimary}
-            // The off track must stand apart from the sheet surface, or the
-            // thumb floats alone and the state cannot be read.
-            ios_backgroundColor={theme.buzz.textDisabled}
-            trackColor={{ false: theme.buzz.textDisabled, true: theme.buzz.accent }}
-            value={toggle.value}
-          />
-        </View>
-      ) : chevron ? (
-        <View style={styles.chevron}>
-          <ChevronGlyph
-            color={styles.chevronMark.color}
-            direction={chevron === 'down' ? 'down' : 'right'}
-            size={CHEVRON_ROW_SIZE}
-          />
-        </View>
-      ) : null}
-    </>
-  );
-  const rowAccessibilityLabel = accessibilityLabel ?? (spoken ? `${label}. ${spoken}` : label);
-  if (!onPress) {
-    return (
-      <View accessibilityLabel={rowAccessibilityLabel} style={styles.row} testID={testID}>
-        {body}
-      </View>
-    );
-  }
   return (
-    <Pressable
-      accessibilityLabel={rowAccessibilityLabel}
-      accessibilityRole={toggle ? 'switch' : 'button'}
-      accessibilityState={toggle ? { checked: toggle.value, disabled } : { disabled, selected }}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.row,
-        pressed && styles.rowPressed,
-        disabled && styles.disabled,
-      ]}
-      testID={testID}
-    >
-      {body}
-    </Pressable>
+    <IndexRow
+      {...props}
+      density="sheet"
+      description={description}
+      inset="sheet"
+      title={label}
+      tone={destructive ? 'destructive' : undefined}
+      value={metadata}
+    />
   );
 }
 
@@ -403,7 +339,7 @@ const styles = StyleSheet.create((theme) => {
       flexGrow: 0,
       flexShrink: 1,
     },
-    gripSlot: { height: 18, alignItems: 'center', justifyContent: 'center' },
+    gripSlot: { height: SHEET_GRIP_HEIGHT, alignItems: 'center', justifyContent: 'center' },
     grip: {
       width: 34,
       height: 3,
@@ -417,7 +353,7 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: HULL_SHEET_INSET,
       paddingTop: hull.space.xs,
       paddingBottom: hull.space.sm,
-      color: hull.chrome,
+      color: hull.textPrimary,
       fontFamily: hull.proseSemibold,
     },
     subtitle: {
@@ -428,55 +364,9 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textSecondary,
       fontFamily: hull.proseRegular,
     },
-    row: {
-      minHeight: HULL_SHEET_ROW_HEIGHT,
-      paddingHorizontal: HULL_SHEET_INSET,
-      paddingVertical: hull.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    rowPressed: { backgroundColor: hull.bgPressed },
-    disabled: { opacity: 0.42 },
-    copy: { flex: 1, minWidth: 0 },
-    rowLabel: {
-      ...Typography.default(),
-      ...hull.type.body,
-      fontFamily: hull.proseRegular,
-      color: hull.textPrimary,
-    },
-    // The quiet line beneath the label: a full sentence, wrapping as far as it
-    // needs, never an ellipsis and never crammed into the label above it.
-    description: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      marginTop: hull.space.xs,
-      color: hull.textMuted,
-      fontFamily: hull.proseRegular,
-    },
-    // The value, on the trailing axis. `flexShrink: 0` keeps it whole and the
-    // cap keeps a long one from eating the label.
-    metadata: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      flexShrink: 0,
-      maxWidth: '46%',
-      textAlign: 'right',
-      color: hull.textMuted,
-      fontFamily: hull.proseRegular,
-    },
-    // Right-aligned in its own column so the glyph's trailing edge lands on the
-    // row's padding edge — the one axis every trailing mark shares (C99, C102).
-    // The mark is drawn, so the row keeps the 16 trailing axis every other
-    // trailing form ends on and the glyph sits centred in it — no type role,
-    // no text alignment, nothing to correct.
-    chevron: { width: 16, alignItems: 'flex-end', justifyContent: 'center' },
-    chevronMark: { color: hull.textMuted },
-    destructive: { color: hull.dialogDanger },
+    // Cancel is one more row: the sheet row's height on the sheet's edge.
     cancel: {
-      minHeight: 44,
+      minHeight: HULL_SHEET_ROW_HEIGHT,
       paddingHorizontal: HULL_SHEET_INSET,
       alignItems: 'center',
       justifyContent: 'center',

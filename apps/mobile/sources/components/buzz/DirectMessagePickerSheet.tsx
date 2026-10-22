@@ -1,5 +1,4 @@
 import { MemberRosterRow } from './MemberRosterRow';
-import { Button } from './Button';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -68,7 +67,7 @@ export function DirectMessagePickerSheet({
         style={styles.listViewport}
         testID="direct-message-picker-list"
       >
-        {people.length > 0 && <RoomListSectionHeader title="People" count={people.length} surface="sheet" />}
+        {people.length > 0 && <RoomListSectionHeader title="People" count={people.length} inset="sheet" surface="sheet" />}
         {people.map((member) => (
           <MemberRow
             busy={busyPubkey === member.peerPubkey}
@@ -85,7 +84,7 @@ export function DirectMessagePickerSheet({
               : 'No other members in this Workspace yet.'}
           </Text>
         )}
-        {agents.length > 0 && <RoomListSectionHeader title="Agents" count={agents.length} surface="sheet" />}
+        {agents.length > 0 && <RoomListSectionHeader title="Agents" count={agents.length} inset="sheet" surface="sheet" />}
         {agents.map((member) => (
           <MemberRow
             busy={busyPubkey === member.peerPubkey}
@@ -123,20 +122,14 @@ function MemberRow({
       face={member.face}
       disabled={disabled}
       onPress={onPress}
+      density="sheet"
       divider="top"
+      inset="sheet"
       accessibilityLabel={`Message ${member.peerName}`}
       testID={`message-workspace-member-${member.peerPubkey}`}
-      trailing={
-        <Button
-          label={busy ? 'Opening…' : 'Message'}
-          variant="quiet"
-          disabled={disabled}
-          onPress={(event) => {
-            event.stopPropagation();
-            onPress();
-          }}
-        />
-      }
+      // The whole row is the tap target; the chevron says it opens a thread.
+      chevron={busy ? undefined : 'right'}
+      value={busy ? 'Opening…' : undefined}
     />
   );
 }
@@ -145,10 +138,10 @@ const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
     listViewport: { maxHeight: 440, flexGrow: 0 },
-    list: { paddingBottom: 4 },
+    list: { paddingBottom: groknight.space.xs },
     empty: {
       ...groknight.type.meta,
-      paddingVertical: 24,
+      paddingVertical: groknight.space.lg,
       color: groknight.textMuted,
       textAlign: 'center',
     },

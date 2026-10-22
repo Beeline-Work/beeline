@@ -17,6 +17,29 @@ const primitives = new Set([
 ]);
 const touches = new Set([...primitives].filter((name) => /Pressable|Touchable/.test(name)));
 export const REGISTRY_PATH = 'apps/mobile/design/ui-component-registry.json';
+/** Registry fingerprints that cover shared components as well as screens. */
+const FINGERPRINT_MODE = 'layout-shell-v2';
+/** Rules held inside `components/` too, so shared parts stop hand-rolling controls. */
+const COMPONENT_RULES = new Set(['raw-button', 'custom-row', 'custom-header']);
+/** The shared parts that own those controls: rows, headers, buttons, sheets and dialogs. */
+export const SHARED_CONTROL_OWNERS = new Set([
+  'components/buzz/Button.tsx',
+  'components/buzz/EmptyState.tsx',
+  'components/buzz/ErrorBanner.tsx',
+  'components/buzz/HullActionSheet.tsx',
+  'components/buzz/HullDialog.tsx',
+  'components/buzz/HullSwitch.tsx',
+  'components/buzz/IndexRow.tsx',
+  'components/buzz/PageHeader.tsx',
+  'components/buzz/RoomListSectionHeader.tsx',
+  'components/buzz/ShowMoreRow.tsx',
+]);
+
+/** Whether a rule applies to a file: screens take every rule; shared files the strict and widened ones. */
+function ruleApplies(rule, file) {
+  if (rule.strict || !file.startsWith('components/')) return true;
+  return COMPONENT_RULES.has(rule.id) && !SHARED_CONTROL_OWNERS.has(file);
+}
 const hash = (value) => createHash('sha256').update(value).digest('hex').slice(0, 20);
 const normalize = (node, sourceFile) =>
   printer.printNode(ts.EmitHint.Unspecified, node, sourceFile);
@@ -379,7 +402,7 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
     {
       const control = controlContext(node, context);
       if (control)
-        for (const rule of rules.filter((rule) => !file.startsWith('components/') || rule.strict)) {
+        for (const rule of rules.filter((rule) => ruleApplies(rule, file))) {
           const message = rule.check(control);
           if (message) {
             const line =
@@ -431,7 +454,7 @@ export function scanUiTree(root) {
 export function grandfatherRegistry(scans) {
   return {
     version: 1,
-    fingerprintMode: 'layout-shell-v1',
+    fingerprintMode: FINGERPRINT_MODE,
     components: Object.fromEntries(
       scans
         .filter((scan) => scan.file.startsWith('components/'))
@@ -496,12 +519,11 @@ export function judgeUiRegistry(scans, registry, baseRegistry) {
             rule: 'component-symbol',
             message: `New UI component ${name}. Register it explicitly in ${REGISTRY_PATH}.`,
           });
-    } else {
-      const remaining = { ...(registry.legacyControls[scan.file] ?? {}) };
-      for (const offence of scan.offences.filter((offence) => !offence.strict)) {
-        if ((remaining[offence.fingerprint] ?? 0) > 0) remaining[offence.fingerprint]--;
-        else errors.push(offence);
-      }
+    }
+    const remaining = { ...(registry.legacyControls[scan.file] ?? {}) };
+    for (const offence of scan.offences.filter((offence) => !offence.strict)) {
+      if ((remaining[offence.fingerprint] ?? 0) > 0) remaining[offence.fingerprint]--;
+      else errors.push(offence);
     }
   }
   return errors;
@@ -517,7 +539,7 @@ export function registryAtRef(root, ref) {
   // A base without the registry bootstraps only controls already committed there.
   const registryFiles = git(['ls-tree', '--name-only', ref, '--', REGISTRY_PATH]);
   const stored = registryFiles.trim() ? JSON.parse(git(['show', `${ref}:${REGISTRY_PATH}`])) : null;
-  if (stored?.fingerprintMode === 'layout-shell-v1') return stored;
+  if (stored?.fingerprintMode === FINGERPRINT_MODE) return stored;
   const scans = files
     .filter(
       (file) =>
@@ -529,6 +551,16 @@ export function registryAtRef(root, ref) {
       scanUiSource(git(['show', `${ref}:${file}`]), file.replace('apps/mobile/sources/', '')),
     );
   if (!stored) return grandfatherRegistry(scans);
+  // A base from before shared components were checked holds every control its
+  // own committed components already had, and nothing the branch adds.
+  if (stored.fingerprintMode === 'layout-shell-v1') {
+    const shared = grandfatherRegistry(scans.filter((scan) => scan.file.startsWith('components/')));
+    return {
+      ...stored,
+      fingerprintMode: FINGERPRINT_MODE,
+      legacyControls: { ...stored.legacyControls, ...shared.legacyControls },
+    };
+  }
   // Translate only exceptions authorized by the old exact AST budgets. The
   // caller cannot create exceptions by changing the registry in its branch.
   for (const scan of scans) {

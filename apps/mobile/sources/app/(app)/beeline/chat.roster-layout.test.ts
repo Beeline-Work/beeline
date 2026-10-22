@@ -9,6 +9,10 @@ const rowSource = readFileSync(
   new URL('../../../components/buzz/MemberRosterRow.tsx', import.meta.url),
   'utf8',
 );
+const indexRowSource = readFileSync(
+  new URL('../../../components/buzz/IndexRow.tsx', import.meta.url),
+  'utf8',
+);
 const membersSource = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
 const channelsSource = readFileSync(new URL('./channels.tsx', import.meta.url), 'utf8');
 
@@ -48,9 +52,12 @@ describe('Room participant roster layout', () => {
     // One section, so no per-kind heads are left to drift apart.
     expect(source).not.toContain('room-roster-people-head');
     expect(source).not.toContain('room-roster-agents-head');
-    expect(rowSource).toContain('title: { ...Typography.default(), ...hull.type.body');
+    // The roster preset draws its title through the one index row.
+    expect(rowSource).toContain('<IndexRow');
+    expect(indexRowSource).toMatch(/title: \{\s*\.\.\.Typography\.default\(\),\s*\.\.\.hull\.type\.body/);
     expect(rowSource).toContain('subtitle: { ...Typography.default(), ...hull.type.meta');
     expect(rowSource).not.toMatch(/fontSize:\s*\d/);
+    expect(indexRowSource).not.toMatch(/fontSize:\s*\d/);
   });
 
   it('routes Workspace, Room, and corner member lists through the shared row', () => {

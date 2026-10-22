@@ -135,7 +135,7 @@ export async function runCase(f, testCase, directory, options = {}) {
     const running = core.run({ pollMs: 100, signal: abort.signal });
     let coreError;
     running.catch((error) => { coreError = error; });
-    const observation = { id: testCase.id, room, completed: false, calls: [], text: '', execution: 'local-service', bindings };
+    const observation = { id: testCase.id, room, startedAt: new Date().toISOString(), completed: false, calls: [], text: '', execution: 'local-service', bindings };
     try {
         const readyDeadline = Date.now() + 60000;
         while (!core.activeRoomIds().includes(room)) {

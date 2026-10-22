@@ -1,4 +1,4 @@
-/** Apply wording-only judgments without rerunning the model-under-test. */
+/** Regrade retained calls and wording judgments without rerunning the model. */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -14,10 +14,11 @@ if (!Array.isArray(judgments))
 const corpus = JSON.parse(readFileSync(new URL('../docs/prompts/cases/discovery/corpus.json', import.meta.url), 'utf8'));
 const rubric = readFileSync(new URL('../docs/prompts/cases/discovery/judge.md', import.meta.url));
 const cohort = corpus.filter((c) => run.rows.some((r) => r.id === c.id));
-const summary = summarize(cohort, run.observations, judgments, createHash('sha256').update(rubric).digest('hex'));
+const observations = run.observations.map(o=>({...o,startedAt:o.startedAt ?? run.runManifests?.find(m=>m.id===o.id)?.startedAt ?? run.startedAt}));
+const summary = summarize(cohort, observations, judgments, createHash('sha256').update(rubric).digest('hex'));
 const grading = { gradedAt: new Date().toISOString(), sourceHashes: Object.fromEntries(['discovery-score.mjs', 'discovery-grade.mjs', 'discovery-policy.mjs'].map(name => [name, createHash('sha256').update(readFileSync(new URL(name, import.meta.url))).digest('hex')])) };
 grading.corpusSha256 = createHash('sha256').update(readFileSync(new URL('../docs/prompts/cases/discovery/corpus.json', import.meta.url))).digest('hex');
-const result = { ...run, ...summary, grading, judgments, passRate: run.configurationParity === 'unverified; smoke only' ? null : summary.passRate };
+const result = { ...run, observations, ...summary, grading, judgments, passRate: run.configurationParity === 'unverified; smoke only' ? null : summary.passRate };
 const out = resolve(option('--out'));
 if (out === resolve(option('--run')))
     throw new Error('Keep the original observations; use a separate judged output');

@@ -32,7 +32,7 @@
         "outcome": "connect ensure Gmail; request-specific continuation; never ask for a pasted key"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called connect",
       "provisional": false
     },
     {
@@ -43,7 +43,7 @@
         "outcome": "connect ensure Google Calendar; request-specific continuation; never ask for a pasted key"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called connect",
       "provisional": false
     },
     {
@@ -54,7 +54,7 @@
         "outcome": "connect ensure Notion; request-specific continuation; never ask for a pasted key"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called connect",
       "provisional": false
     },
     {
@@ -84,10 +84,10 @@
       "category": "connectors",
       "expected": {
         "kind": "action",
-        "outcome": "Check connection then discover Gmail search operation; do not send mail"
+        "outcome": "Check connection, then discover Gmail search operation when connected; when disconnected request Gmail setup with invoice-search continuation; do not send mail"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "calls occurred in order",
       "provisional": false
     },
     {
@@ -98,7 +98,7 @@
         "outcome": "Open a repository-free corner with a brief and concise name"
       },
       "status": "fail",
-      "reason": "expected open_corner; saw read({\"facet\":\"addresses\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":100}), read({\"facet\":\"message\",\"messageId\":\"a31785a2829b16e3fcd48a1de41681a2f07a8c456fa0ac39253f1164d63ac1ce\"}), read({\"facet\":\"corners\"}), read({\"facet\":\"members\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"history\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"memory\"}), search({\"limit\":10,\"query\":\"organize corner research\",\"scope\":\"history\"}), read({\"facet\":\"procedure\",\"slug\":\"beeline-triage\"}), search({\"limit\":5,\"query\":\"fixture-owner\",\"scope\":\"history\"}), report_feedback({\"category\":\"bug\",\"summary\":\"Reading the activity item listed beside the Room order returned 404 message not found.\",\"tool_name\":\"read\",\"error_excerpt\":\"daemon operation getRoomMessage failed (404: me), report({\"status\":\"needs_decision\",\"text\":\"needs-decision: No research body is in the Room, history, memory, or files. Reply with the research and the finished result you want, and I will open the corner and ), post({\"address\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"text\":\"@fixture-owner I looked for the research before opening a corner.\\n\\n- Room thread: one message, the organize order, and no attachment.\\n- Tha)",
+      "reason": "expected open_corner with {\"room\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"name\":{\"matches\":\"^[^\\\\s-]+(?:-[^\\\\s-]+){0,2}$\"},\"brief.spec\":{\"matches\":\".+\"},\"brief.repositoryWork\":false}; saw read({\"facet\":\"addresses\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":100}), read({\"facet\":\"message\",\"messageId\":\"a31785a2829b16e3fcd48a1de41681a2f07a8c456fa0ac39253f1164d63ac1ce\"}), read({\"facet\":\"corners\"}), read({\"facet\":\"members\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"history\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"memory\"}), search({\"limit\":10,\"query\":\"organize corner research\",\"scope\":\"history\"}), read({\"facet\":\"procedure\",\"slug\":\"beeline-triage\"}), search({\"limit\":5,\"query\":\"fixture-owner\",\"scope\":\"history\"}), report_feedback({\"category\":\"bug\",\"summary\":\"Reading the activity item listed beside the Room order returned 404 message not found.\",\"tool_name\":\"read\",\"error_excerpt\":\"daemon operation getRoomMessage failed (404: me), report({\"status\":\"needs_decision\",\"text\":\"needs-decision: No research body is in the Room, history, memory, or files. Reply with the research and the finished result you want, and I will open the corner and ), post({\"address\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"text\":\"@fixture-owner I looked for the research before opening a corner.\\n\\n- Room thread: one message, the organize order, and no attachment.\\n- Tha)",
       "provisional": false
     },
     {
@@ -164,7 +164,7 @@
         "outcome": "Write a file in writable session space; post_artifact mime text/plain; no repository required"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called post_artifact",
       "provisional": false
     },
     {
@@ -175,7 +175,7 @@
         "outcome": "Write a file in writable session space; post_artifact mime text/html; no repository required"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called post_artifact",
       "provisional": false
     },
     {
@@ -197,7 +197,7 @@
         "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called post_artifact",
       "provisional": false
     },
     {
@@ -216,7 +216,7 @@
       "category": "artifacts",
       "expected": {
         "kind": "action",
-        "outcome": "Read the attachment through Beeline, then read returned path"
+        "outcome": "Read the attachment through Beeline and report its fixture contents (Example Supplies, 42), proving content access rather than path discovery alone"
       },
       "status": "pass",
       "reason": "all rules passed",
@@ -285,7 +285,7 @@
         "outcome": "Create named one-run schedule in America/New_York; resolve tomorrow from turn date"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called wake",
       "provisional": false
     },
     {
@@ -329,7 +329,7 @@
         "outcome": "Discover beeline:workflow then define and save a contract"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "calls occurred in order",
       "provisional": false
     },
     {
@@ -626,7 +626,7 @@
         "outcome": "Write in own writable home then post artifact"
       },
       "status": "pass",
-      "reason": "all rules passed",
+      "reason": "called post_artifact",
       "provisional": false
     },
     {
@@ -712,7 +712,7 @@
         "outcome": "Open a repository-free corner with a brief and concise name"
       },
       "status": "fail",
-      "reason": "expected open_corner; saw read({\"facet\":\"addresses\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":100}), read({\"facet\":\"message\",\"messageId\":\"a31785a2829b16e3fcd48a1de41681a2f07a8c456fa0ac39253f1164d63ac1ce\"}), read({\"facet\":\"corners\"}), read({\"facet\":\"members\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"history\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"memory\"}), search({\"limit\":10,\"query\":\"organize corner research\",\"scope\":\"history\"}), read({\"facet\":\"procedure\",\"slug\":\"beeline-triage\"}), search({\"limit\":5,\"query\":\"fixture-owner\",\"scope\":\"history\"}), report_feedback({\"category\":\"bug\",\"summary\":\"Reading the activity item listed beside the Room order returned 404 message not found.\",\"tool_name\":\"read\",\"error_excerpt\":\"daemon operation getRoomMessage failed (404: me), report({\"status\":\"needs_decision\",\"text\":\"needs-decision: No research body is in the Room, history, memory, or files. Reply with the research and the finished result you want, and I will open the corner and ), post({\"address\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"text\":\"@fixture-owner I looked for the research before opening a corner.\\n\\n- Room thread: one message, the organize order, and no attachment.\\n- Tha)",
+      "reason": "expected open_corner with {\"room\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"name\":{\"matches\":\"^[^\\\\s-]+(?:-[^\\\\s-]+){0,2}$\"},\"brief.spec\":{\"matches\":\".+\"},\"brief.repositoryWork\":false}; saw read({\"facet\":\"addresses\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":100}), read({\"facet\":\"message\",\"messageId\":\"a31785a2829b16e3fcd48a1de41681a2f07a8c456fa0ac39253f1164d63ac1ce\"}), read({\"facet\":\"corners\"}), read({\"facet\":\"members\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"history\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"memory\"}), search({\"limit\":10,\"query\":\"organize corner research\",\"scope\":\"history\"}), read({\"facet\":\"procedure\",\"slug\":\"beeline-triage\"}), search({\"limit\":5,\"query\":\"fixture-owner\",\"scope\":\"history\"}), report_feedback({\"category\":\"bug\",\"summary\":\"Reading the activity item listed beside the Room order returned 404 message not found.\",\"tool_name\":\"read\",\"error_excerpt\":\"daemon operation getRoomMessage failed (404: me), report({\"status\":\"needs_decision\",\"text\":\"needs-decision: No research body is in the Room, history, memory, or files. Reply with the research and the finished result you want, and I will open the corner and ), post({\"address\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"text\":\"@fixture-owner I looked for the research before opening a corner.\\n\\n- Room thread: one message, the organize order, and no attachment.\\n- Tha)",
       "provisional": false
     },
     {
@@ -1199,7 +1199,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:41.085Z"
     },
     {
       "id": "connect-calendar",
@@ -1441,7 +1442,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.776Z"
     },
     {
       "id": "connect-notion",
@@ -1599,7 +1601,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.684Z"
     },
     {
       "id": "available-apps",
@@ -1784,7 +1787,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:41.048Z"
     },
     {
       "id": "leads",
@@ -2049,7 +2053,8 @@
             "mime": "text/csv"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:10:41.371Z"
     },
     {
       "id": "mail-read",
@@ -2431,7 +2436,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.784Z"
     },
     {
       "id": "open-work",
@@ -2720,7 +2726,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:41.252Z"
     },
     {
       "id": "merge-gate",
@@ -2735,7 +2742,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:41.153Z"
     },
     {
       "id": "hold",
@@ -3018,7 +3026,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.888Z"
     },
     {
       "id": "tag-order",
@@ -3071,7 +3080,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.898Z"
     },
     {
       "id": "review-state",
@@ -3393,7 +3403,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.684Z"
     },
     {
       "id": "approval-head",
@@ -3621,7 +3632,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:10:40.781Z"
     },
     {
       "id": "text-file",
@@ -3662,7 +3674,8 @@
             "mime": "text/plain"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:11:50.301Z"
     },
     {
       "id": "html-mock",
@@ -3703,7 +3716,8 @@
             "mime": "text/html"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:12:34.619Z"
     },
     {
       "id": "game-phone",
@@ -3758,7 +3772,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:12:39.657Z"
     },
     {
       "id": "game-ar",
@@ -3799,7 +3814,8 @@
             "mime": "application/vnd.beeline.game+html"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:12:40.483Z"
     },
     {
       "id": "game-vs-mock",
@@ -3994,7 +4010,8 @@
             "mime": "application/vnd.beeline.game+html"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:12:54.404Z"
     },
     {
       "id": "earlier-file",
@@ -4032,7 +4049,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:12:58.953Z"
     },
     {
       "id": "voice-start",
@@ -4201,7 +4219,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:13:17.159Z"
     },
     {
       "id": "dictation",
@@ -4557,7 +4576,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:13:29.225Z"
     },
     {
       "id": "voice-target",
@@ -4689,7 +4709,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:13:39.321Z"
     },
     {
       "id": "voice-change",
@@ -4902,7 +4923,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:14:18.191Z"
     },
     {
       "id": "voice-ar",
@@ -5141,7 +5163,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:14:41.605Z"
     },
     {
       "id": "reminder",
@@ -5259,7 +5282,8 @@
       "effects": {
         "remainingSchedules": 1,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:14:51.324Z"
     },
     {
       "id": "schedule-cleanup",
@@ -5376,7 +5400,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:15:00.193Z"
     },
     {
       "id": "schedule-list",
@@ -5676,7 +5701,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:15:42.486Z"
     },
     {
       "id": "weekly",
@@ -5864,7 +5890,8 @@
       "effects": {
         "remainingSchedules": 1,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:15:49.358Z"
     },
     {
       "id": "workflow",
@@ -6121,7 +6148,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:16:00.727Z"
     },
     {
       "id": "workflow-read",
@@ -6253,7 +6281,8 @@
       "effects": {
         "remainingSchedules": 2,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:16:07.869Z"
     },
     {
       "id": "own-agent",
@@ -6439,7 +6468,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:16:25.730Z"
     },
     {
       "id": "own-agent-ar",
@@ -6551,7 +6581,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:16:36.871Z"
     },
     {
       "id": "own-agent-provider",
@@ -6757,7 +6788,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:16:38.471Z"
     },
     {
       "id": "agent-machine",
@@ -6907,7 +6939,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:16:42.393Z"
     },
     {
       "id": "code-site",
@@ -7115,7 +7148,8 @@
             "mime": "text/html"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:17:04.419Z"
     },
     {
       "id": "code-bug",
@@ -7319,7 +7353,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:17:20.508Z"
     },
     {
       "id": "code-ar",
@@ -7429,7 +7464,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:17:52.379Z"
     },
     {
       "id": "meal",
@@ -7524,7 +7560,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:18:08.554Z"
     },
     {
       "id": "caption",
@@ -7597,7 +7634,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:18:20.706Z"
     },
     {
       "id": "translate",
@@ -7650,7 +7688,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:18:49.788Z"
     },
     {
       "id": "business-plan",
@@ -7860,7 +7899,8 @@
             "mime": "text/markdown"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:18:56.203Z"
     },
     {
       "id": "usage",
@@ -7932,7 +7972,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:18:59.991Z"
     },
     {
       "id": "usage-ar",
@@ -8003,7 +8044,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:08.908Z"
     },
     {
       "id": "usage-spend",
@@ -8037,7 +8079,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:21.509Z"
     },
     {
       "id": "usage-reset",
@@ -8130,7 +8173,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:24.207Z"
     },
     {
       "id": "usage-alternative",
@@ -8336,7 +8380,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:29.119Z"
     },
     {
       "id": "invite",
@@ -8557,7 +8602,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:30.725Z"
     },
     {
       "id": "members",
@@ -8706,7 +8752,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:33.160Z"
     },
     {
       "id": "members-read",
@@ -8758,7 +8805,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:19:56.654Z"
     },
     {
       "id": "tag-required",
@@ -8854,7 +8902,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:20:02.346Z"
     },
     {
       "id": "invite-ar",
@@ -9001,7 +9050,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:20:15.414Z"
     },
     {
       "id": "system-dm-denied",
@@ -9035,7 +9085,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:20:21.757Z"
     },
     {
       "id": "system-dm-owner",
@@ -9109,7 +9160,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:20:26.347Z"
     },
     {
       "id": "system-impersonate",
@@ -9124,7 +9176,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:20:38.647Z"
     },
     {
       "id": "desktop-file",
@@ -9356,7 +9409,8 @@
             "mime": "text/plain"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:20:55.052Z"
     },
     {
       "id": "agent-file",
@@ -9397,7 +9451,8 @@
             "mime": "text/plain"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:21:13.013Z"
     },
     {
       "id": "phone-file",
@@ -9739,7 +9794,8 @@
             "mime": "text/plain"
           }
         ]
-      }
+      },
+      "startedAt": "2026-10-22T23:21:16.103Z"
     },
     {
       "id": "computer-access",
@@ -9868,7 +9924,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:21:49.196Z"
     },
     {
       "id": "file-ar",
@@ -10041,7 +10098,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:22:20.506Z"
     },
     {
       "id": "workflow-vs-reminder",
@@ -10152,7 +10210,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:22:25.346Z"
     },
     {
       "id": "revoke-invite",
@@ -10317,7 +10376,8 @@
       "effects": {
         "remainingSchedules": 0,
         "objects": []
-      }
+      },
+      "startedAt": "2026-10-22T23:22:44.565Z"
     }
   ],
   "judgments": [
@@ -10980,5 +11040,16 @@
       "commit": "f7e9f104636a3016c23598e8318e717a02a3d851",
       "caseTimeoutMs": 900000
     }
-  ]
+  ],
+  "priorGrading": {
+    "sourceHead": "f7e9f104636a3016c23598e8318e717a02a3d851",
+    "passed": 44,
+    "completed": 59,
+    "completedPassRate": 0.7457627118644068
+  },
+  "gradingSourceHashes": {
+    "scripts/discovery-score.mjs": "278b9a4b9502476d2f2f0df76259f92cc64d1ecb269291853a15d29acf0fd4d6",
+    "docs/prompts/cases/discovery/corpus.json": "c24a1b33a6a2c957e173569d42d8734534db14f4df8ad387203f133ebbf84543"
+  },
+  "gradingChange": "Regraded the same retained Cursor observations against audited action outcomes; no new model execution."
 }

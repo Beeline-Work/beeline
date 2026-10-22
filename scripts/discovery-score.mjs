@@ -2,8 +2,35 @@
 import { createHash } from 'node:crypto';
 import { evaluateRule } from './prompt-case-rules.ts';
 import { discoveryResultSucceeded } from './discovery-policy.mjs';
+export function tomorrowCron(startedAt) {
+    const date = new Date(startedAt);
+    if (!Number.isFinite(date.getTime())) return undefined;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',year:'numeric',month:'numeric',day:'numeric'}).formatToParts(date).map(p=>[p.type,p.value]));
+    const tomorrow = new Date(Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day)+1));
+    return `0 9 ${tomorrow.getUTCDate()} ${tomorrow.getUTCMonth()+1} *`;
+}
+function responseText(call) {
+    return (call.response?.content ?? []).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+}
+function createdScheduleId(call) {
+    const text = responseText(call);
+    try { const value=JSON.parse(text); return value.scheduleId ?? value.schedule?.scheduleId; } catch { return text.match(/Schedule ([\w-]+) created:/)?.[1]; }
+}
+function mailBranchProved(calls) {
+    const status = calls.findIndex(c=>c.name==='connect' && c.args.mode==='status');
+    if (status < 0) return false;
+    const later = calls.slice(status+1);
+    // A disconnected fixture must request setup, not pretend schema discovery ran.
+    const readiness = responseText(calls[status]);
+    const disconnected = /Connections .*none.*Apps .*none/s.test(readiness) ||
+        /gmail.{0,30}(disconnected|not connected|not added)/i.test(readiness) ||
+        later.some(c=>c.name==='app_tool' && /gmail/i.test(c.args.app??'') && !c.intendedOnly && !c.succeeded);
+    return disconnected
+        ? later.some(c=>c.name==='connect' && c.args.mode==='ensure' && /gmail/i.test(c.args.service??'') && /invoice|Example Supplies/i.test(c.args.continuation??''))
+        : later.some(c=>c.name==='app_tool' && /gmail/i.test(c.args.app??'') && /search/i.test(responseText(c)));
+}
 export function grade(testCase, observed) {
-    const bindings = { ...(observed.room ? { 'fixture-room': observed.room } : {}), ...observed.bindings };
+    const bindings = { ...(observed.room ? { 'fixture-room': observed.room } : {}), ...(observed.startedAt ? {'fixture-tomorrow-cron':tomorrowCron(observed.startedAt)} : {}), ...observed.bindings };
     if (Object.keys(bindings).length) {
         const bind = value => typeof value === 'string' ? (bindings[value] ?? value) : Array.isArray(value) ? value.map(bind) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, bind(entry)])) : value;
         testCase = bind(testCase);
@@ -13,7 +40,21 @@ export function grade(testCase, observed) {
     if (forbidden)
         return { status: 'fail', reason: `Forbidden behavior: ${JSON.stringify(forbidden)}` };
     const accepted = { ...transcript, calls: transcript.calls.filter((call) => call.intendedOnly === true || (call.succeeded === true && (!call.response || discoveryResultSucceeded(call.response, call.error)))) };
-    const full = evaluateRule(testCase.pass, accepted);
+    let full = evaluateRule(testCase.pass, accepted);
+    if (full.pass && testCase.requiresEffect === 'gmail-search-or-disconnected-setup' && !mailBranchProved(accepted.calls))
+        full = {pass:false,reason:'Gmail search schema or explicitly disconnected setup branch was not proved'};
+    if (full.pass && testCase.id === 'workflow-read') {
+        const read = accepted.calls.findIndex(c=>c.name==='app_tool' && c.args.app==='beeline:workflow' && c.args.tool==='read');
+        const advance = transcript.calls.findIndex(c=>c.name==='app_tool' && c.args.app==='beeline:workflow' && c.args.tool==='advance');
+        const originalRead = transcript.calls.findIndex(c=>c===accepted.calls[read]);
+        if (advance >= 0 && (originalRead < 0 || advance < originalRead)) full = {pass:false,reason:'Workflow outcome chosen before reading the pinned run'};
+    }
+    if (full.pass && testCase.requiresEffect === 'schedule-created-and-deleted') {
+        const create = accepted.calls.findIndex(c=>c.name==='wake' && c.args.action==='create');
+        const id = create >= 0 ? createdScheduleId(accepted.calls[create]) : undefined;
+        if (!id || !accepted.calls.slice(create+1).some(c=>c.name==='wake' && c.args.action==='delete' && c.args.scheduleId===id))
+            full = {pass:false,reason:'Deletion does not prove cleanup of the returned scheduleId'};
+    }
     // Discovery actions are proved by the required call, not by later prose.
     // Preserve provider/startup errors; only the harness deadline can coexist
     // with a successful action already captured in its trace.

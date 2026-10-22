@@ -12,33 +12,20 @@
       "call": "connect"
     },
     "pass": {
-      "all": [
-        {
-          "call": "connect"
+      "call": "connect",
+      "args": {
+        "mode": "ensure",
+        "service": {
+          "matches": "Gmail",
+          "flags": "i"
         },
-        {
-          "all": [
-            {
-              "call": "connect",
-              "args": {
-                "mode": "ensure",
-                "service": {
-                  "matches": "Gmail",
-                  "flags": "i"
-                }
-              }
-            },
-            {
-              "call": "connect",
-              "args": {
-                "continuation": {
-                  "matches": ".+"
-                }
-              }
-            }
-          ]
+        "reason": {
+          "matches": ".+"
+        },
+        "continuation": {
+          "matches": ".+"
         }
-      ]
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts"
   },
@@ -55,33 +42,20 @@
       "call": "connect"
     },
     "pass": {
-      "all": [
-        {
-          "call": "connect"
+      "call": "connect",
+      "args": {
+        "mode": "ensure",
+        "service": {
+          "matches": "Google Calendar",
+          "flags": "i"
         },
-        {
-          "all": [
-            {
-              "call": "connect",
-              "args": {
-                "mode": "ensure",
-                "service": {
-                  "matches": "Google Calendar",
-                  "flags": "i"
-                }
-              }
-            },
-            {
-              "call": "connect",
-              "args": {
-                "continuation": {
-                  "matches": ".+"
-                }
-              }
-            }
-          ]
+        "reason": {
+          "matches": ".+"
+        },
+        "continuation": {
+          "matches": ".+"
         }
-      ]
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts"
   },
@@ -98,33 +72,20 @@
       "call": "connect"
     },
     "pass": {
-      "all": [
-        {
-          "call": "connect"
+      "call": "connect",
+      "args": {
+        "mode": "ensure",
+        "service": {
+          "matches": "Notion",
+          "flags": "i"
         },
-        {
-          "all": [
-            {
-              "call": "connect",
-              "args": {
-                "mode": "ensure",
-                "service": {
-                  "matches": "Notion",
-                  "flags": "i"
-                }
-              }
-            },
-            {
-              "call": "connect",
-              "args": {
-                "continuation": {
-                  "matches": ".+"
-                }
-              }
-            }
-          ]
+        "reason": {
+          "matches": ".+"
+        },
+        "continuation": {
+          "matches": ".+"
         }
-      ]
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts"
   },
@@ -218,21 +179,58 @@
     "language": "en",
     "expected": {
       "kind": "action",
-      "outcome": "Check connection then discover Gmail search operation; do not send mail"
+      "outcome": "Check connection, then discover Gmail search operation when connected; when disconnected request Gmail setup with invoice-search continuation; do not send mail"
     },
     "capability": {
       "call": "connect"
     },
     "pass": {
-      "all": [
+      "any": [
         {
-          "call": "connect"
+          "ordered": [
+            {
+              "call": "connect",
+              "args": {
+                "mode": "status"
+              }
+            },
+            {
+              "call": "app_tool",
+              "args": {
+                "app": {
+                  "matches": "gmail",
+                  "flags": "i"
+                }
+              }
+            }
+          ]
         },
         {
-          "call": "connect",
-          "args": {
-            "mode": "status"
-          }
+          "ordered": [
+            {
+              "call": "connect",
+              "args": {
+                "mode": "status"
+              }
+            },
+            {
+              "call": "connect",
+              "args": {
+                "mode": "ensure",
+                "service": {
+                  "matches": "gmail",
+                  "flags": "i"
+                },
+                "reason": {
+                  "matches": ".+"
+                },
+                "continuation": {
+                  "matches": "invoice|Example Supplies",
+                  "flags": "i"
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -244,8 +242,18 @@
           "app": "beeline:onboarding",
           "tool": "repository"
         }
+      },
+      {
+        "call": "app_tool",
+        "args": {
+          "tool": {
+            "matches": "send|draft",
+            "flags": "i"
+          }
+        }
       }
-    ]
+    ],
+    "requiresEffect": "gmail-search-or-disconnected-setup"
   },
   {
     "id": "open-work",
@@ -260,19 +268,17 @@
       "call": "open_corner"
     },
     "pass": {
-      "all": [
-        {
-          "call": "open_corner"
+      "call": "open_corner",
+      "args": {
+        "room": "fixture-room",
+        "name": {
+          "matches": "^[^\\s-]+(?:-[^\\s-]+){0,2}$"
         },
-        {
-          "call": "open_corner",
-          "args": {
-            "brief": {
-              "matches": "spec"
-            }
-          }
-        }
-      ]
+        "brief.spec": {
+          "matches": ".+"
+        },
+        "brief.repositoryWork": false
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts"
   },
@@ -400,12 +406,15 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "checks"
+          }
+        },
+        {
+          "text": {
+            "matches": "reviewerWake|reviewer.{0,40}(woken|wake)|not.{0,40}woken|No\\.",
+            "flags": "i"
           }
         }
       ]
@@ -458,17 +467,16 @@
       "call": "post_artifact"
     },
     "pass": {
-      "all": [
-        {
-          "call": "post_artifact"
+      "call": "post_artifact",
+      "args": {
+        "path": {
+          "matches": ".+"
         },
-        {
-          "call": "post_artifact",
-          "args": {
-            "mime": "text/plain"
-          }
-        }
-      ]
+        "title": {
+          "matches": ".+"
+        },
+        "mime": "text/plain"
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts",
     "forbidden": [
@@ -494,17 +502,16 @@
       "call": "post_artifact"
     },
     "pass": {
-      "all": [
-        {
-          "call": "post_artifact"
+      "call": "post_artifact",
+      "args": {
+        "path": {
+          "matches": ".+"
         },
-        {
-          "call": "post_artifact",
-          "args": {
-            "mime": "text/html"
-          }
-        }
-      ]
+        "title": {
+          "matches": ".+"
+        },
+        "mime": "text/html"
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts",
     "forbidden": [
@@ -530,17 +537,16 @@
       "call": "post_artifact"
     },
     "pass": {
-      "all": [
-        {
-          "call": "post_artifact"
+      "call": "post_artifact",
+      "args": {
+        "path": {
+          "matches": ".+"
         },
-        {
-          "call": "post_artifact",
-          "args": {
-            "mime": "application/vnd.beeline.game+html"
-          }
-        }
-      ]
+        "title": {
+          "matches": ".+"
+        },
+        "mime": "application/vnd.beeline.game+html"
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts",
     "forbidden": [
@@ -566,17 +572,16 @@
       "call": "post_artifact"
     },
     "pass": {
-      "all": [
-        {
-          "call": "post_artifact"
+      "call": "post_artifact",
+      "args": {
+        "path": {
+          "matches": ".+"
         },
-        {
-          "call": "post_artifact",
-          "args": {
-            "mime": "application/vnd.beeline.game+html"
-          }
-        }
-      ]
+        "title": {
+          "matches": ".+"
+        },
+        "mime": "application/vnd.beeline.game+html"
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts",
     "forbidden": [
@@ -629,7 +634,7 @@
     "language": "en",
     "expected": {
       "kind": "action",
-      "outcome": "Read the attachment through Beeline, then read returned path"
+      "outcome": "Read the attachment through Beeline and report its fixture contents (Example Supplies, 42), proving content access rather than path discovery alone"
     },
     "capability": {
       "call": "read"
@@ -637,14 +642,21 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "attachment",
             "messageId": "fixture-message",
             "attachmentId": "fixture-attachment"
+          }
+        },
+        {
+          "text": {
+            "matches": "Example Supplies"
+          }
+        },
+        {
+          "text": {
+            "matches": "42"
           }
         }
       ]
@@ -829,37 +841,21 @@
       "call": "wake"
     },
     "pass": {
-      "all": [
-        {
-          "call": "wake"
+      "call": "wake",
+      "args": {
+        "action": "create",
+        "trigger": "schedule",
+        "title": {
+          "matches": ".+"
         },
-        {
-          "all": [
-            {
-              "call": "wake",
-              "args": {
-                "action": "create",
-                "trigger": "schedule",
-                "maxRuns": 1
-              }
-            },
-            {
-              "call": "wake",
-              "args": {
-                "cadence.timeZone": "America/New_York"
-              }
-            }
-          ]
-        },
-        {
-          "call": "wake",
-          "args": {
-            "cadence.expression": {
-              "matches": "^0 9 "
-            }
-          }
+        "maxRuns": 1,
+        "cadence.timeZone": "America/New_York",
+        "cadence.expression": "fixture-tomorrow-cron",
+        "prompt": {
+          "matches": "review.{0,20}demo",
+          "flags": "i"
         }
-      ]
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts"
   },
@@ -976,14 +972,29 @@
       "call": "app_tool"
     },
     "pass": {
-      "all": [
-        {
-          "call": "app_tool"
-        },
+      "ordered": [
         {
           "call": "app_tool",
           "args": {
             "app": "beeline:workflow"
+          }
+        },
+        {
+          "call": "app_tool",
+          "args": {
+            "app": "beeline:workflow",
+            "tool": "save",
+            "args.contract.version": 1,
+            "args.contract.name": {
+              "matches": ".+"
+            },
+            "args.contract.start": {
+              "matches": ".+"
+            },
+            "args.contract": {
+              "matches": "(?=.*research)(?=.*review)",
+              "flags": "i"
+            }
           }
         }
       ]
@@ -1430,12 +1441,26 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "usage"
+          }
+        },
+        {
+          "text": {
+            "contains": "Fixture plan"
+          }
+        },
+        {
+          "text": {
+            "matches": "25|75|quarter|ربع",
+            "flags": "i"
+          }
+        },
+        {
+          "text": {
+            "matches": "reset|تجدد|تجديد",
+            "flags": "i"
           }
         }
       ]
@@ -1457,12 +1482,26 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "usage"
+          }
+        },
+        {
+          "text": {
+            "contains": "Fixture plan"
+          }
+        },
+        {
+          "text": {
+            "matches": "25|75|quarter|ربع",
+            "flags": "i"
+          }
+        },
+        {
+          "text": {
+            "matches": "reset|تجدد|تجديد",
+            "flags": "i"
           }
         }
       ]
@@ -1484,12 +1523,26 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "usage"
+          }
+        },
+        {
+          "text": {
+            "contains": "Fixture plan"
+          }
+        },
+        {
+          "text": {
+            "matches": "25|75|quarter|ربع",
+            "flags": "i"
+          }
+        },
+        {
+          "text": {
+            "matches": "reset|تجدد|تجديد",
+            "flags": "i"
           }
         }
       ]
@@ -1511,12 +1564,26 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "usage"
+          }
+        },
+        {
+          "text": {
+            "contains": "Fixture plan"
+          }
+        },
+        {
+          "text": {
+            "matches": "25|75|quarter|ربع",
+            "flags": "i"
+          }
+        },
+        {
+          "text": {
+            "matches": "reset|تجدد|تجديد",
+            "flags": "i"
           }
         }
       ]
@@ -1637,12 +1704,39 @@
     "pass": {
       "all": [
         {
-          "call": "read"
-        },
-        {
           "call": "read",
           "args": {
             "facet": "members"
+          }
+        },
+        {
+          "text": {
+            "contains": "Fixture Owner"
+          }
+        },
+        {
+          "text": {
+            "contains": "@fixture-owner"
+          }
+        },
+        {
+          "text": {
+            "contains": "Fixture Member"
+          }
+        },
+        {
+          "text": {
+            "contains": "@fixture-member"
+          }
+        },
+        {
+          "text": {
+            "contains": "Nerd"
+          }
+        },
+        {
+          "text": {
+            "contains": "@nerd"
           }
         }
       ]
@@ -1903,17 +1997,16 @@
       "call": "post_artifact"
     },
     "pass": {
-      "all": [
-        {
-          "call": "post_artifact"
+      "call": "post_artifact",
+      "args": {
+        "path": {
+          "matches": ".+"
         },
-        {
-          "call": "post_artifact",
-          "args": {
-            "mime": "text/plain"
-          }
-        }
-      ]
+        "title": {
+          "matches": ".+"
+        },
+        "mime": "text/plain"
+      }
     },
     "fixTarget": "apps/body/src/beeline-skill.ts"
   },

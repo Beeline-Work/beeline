@@ -10,7 +10,7 @@ The previous retained baseline used shorter deadlines and a blanket-post interce
 
 - The fixture Room permits local replies, including omitted addresses; the integration test proves persisted local replies and non-execution of outside posts. The corrected live run also retains replies whose exact text appears in `observation.text` (16 proofs, with case IDs and hashes in `cursor-corrected.json`).
 - The System cases permit local refusals while forbidden destinations and audited broadcast operations still fail. The ordinary-member refusal passes. The impersonation refusal is partial because it omits the normal-identity alternative, not because it posts locally.
-- Structured MCP errors and daemon error envelopes inside text count as unsuccessful calls; the regression set covers both and a real success. Discovery tests pass (16). The matching server shard also passed locally (27 files; 630 tests; one skipped), as retained in `server-shard-review.json`. That local result is not a GitHub green verdict.
+- Structured MCP errors and daemon error envelopes inside text count as unsuccessful calls; the regression set covers both and a real success. Discovery tests pass (20). The matching server shard also passed locally (27 files; 630 tests; one skipped), as retained in `server-shard-review.json`. That local result is not a GitHub green verdict.
 
 ## Ranked gaps for Ruby
 
@@ -27,26 +27,30 @@ The previous retained baseline used shorter deadlines and a blanket-post interce
 
 No gap-fix corners were opened. Ruby owns follow-up dispatch after merge. The existing Sunday 04:00 America/New_York replay remains configured for the Cursor route; this report does not assert a production skill regression was fixed.
 
+## Action-rule audit and offline regrade
+
+The preliminary-only false-PASS controls are now rejected. The same retained cohort still scores pass (44/59; 74.6%), with timeout (1) separate. Gmail proves the disconnected setup branch with an invoice-search continuation; workflow proves a real contract save. No model rerun was performed for this rubric repair. Current grading hashes and execution hashes are retained separately. See [the complete action audit](action-rule-review.md) and [all retained cohort regrades](action-rule-regrade.json). Ranked gaps above remain unchanged.
+
 ## Per-case results
 
 | Case | Expected | Result | Evidence / reason |
 | --- | --- | --- | --- |
-| `connect-mail` | action | pass | all rules passed |
-| `connect-calendar` | action | pass | all rules passed |
-| `connect-notion` | action | pass | all rules passed |
+| `connect-mail` | action | pass | called connect |
+| `connect-calendar` | action | pass | called connect |
+| `connect-notion` | action | pass | called connect |
 | `available-apps` | action | pass | all rules passed |
 | `leads` | feature | partial | Uses research and provides leads but infers the user business from the agent host instead of asking the business, ideal customer and geography first. |
-| `mail-read` | action | pass | all rules passed |
-| `open-work` | action | fail | expected open_corner; saw read({"facet":"addresses"}), read({"facet":"messages","from":"oldest","limit":100}), read({"facet":"message","messageId":"a31785a2829b16e3fcd48a1de41681a2f07a8c456fa0ac39253f1164d63ac1ce"}), rea |
+| `mail-read` | action | pass | calls occurred in order |
+| `open-work` | action | fail | expected open_corner with {"room":"62a4451f-5bd6-4b02-b284-facb9b42186f","name":{"matches":"^[^\\s-]+(?:-[^\\s-]+){0,2}$"},"brief.spec":{"matches":".+"},"brief.repositoryWork":false}; saw read({"facet":"addresses"}), rea |
 | `merge-gate` | feature | pass | Requires independent exact-head review, green checks, an explicit merge yes and no hold. |
 | `hold` | feature | pass | Recognizes higher owner authority to clear a member hold and checks that no active hold or corner exists before asking for the target. |
 | `tag-order` | feature | pass | Distinguishes tagging to invite a reply from assigning work with an order. |
 | `review-state` | action | pass | all rules passed |
 | `approval-head` | feature | pass | Explains that approval is tied to the old head and a fresh approval is required for the new SHA. |
-| `text-file` | action | pass | all rules passed |
-| `html-mock` | action | pass | all rules passed |
+| `text-file` | action | pass | called post_artifact |
+| `html-mock` | action | pass | called post_artifact |
 | `game-phone` | action | incomplete | Harness turn timed out |
-| `game-ar` | action | pass | all rules passed |
+| `game-ar` | action | pass | called post_artifact |
 | `game-vs-mock` | feature | pass | Supplies a playable game card and instructions for opening and controlling it. |
 | `earlier-file` | action | pass | all rules passed |
 | `voice-start` | feature | pass | Explains starting voice with the composer microphone hold and distinguishes short-tap dictation. |
@@ -54,11 +58,11 @@ No gap-fix corners were opened. Ruby owns follow-up dispatch after merge. The ex
 | `voice-target` | feature | pass | Names the agent avatar and tapping it to select the voice target. |
 | `voice-change` | feature | pass | Directs the owner to the agent profile Voice section with preview and save. |
 | `voice-ar` | feature | pass | Explains the microphone long press and distinguishes dictation in Arabic. |
-| `reminder` | action | pass | all rules passed |
+| `reminder` | action | pass | called wake |
 | `schedule-cleanup` | action | pass | all rules passed |
 | `schedule-list` | action | pass | all rules passed |
 | `weekly` | action | pass | all rules passed |
-| `workflow` | action | pass | all rules passed |
+| `workflow` | action | pass | calls occurred in order |
 | `workflow-read` | action | pass | all rules passed |
 | `own-agent` | feature | partial | Names the supported own-machine connection command but omits the required Members → Add agent entry point. |
 | `own-agent-ar` | feature | partial | Names the supported own-machine connection command but omits the required Members → Add agent entry point. |
@@ -85,7 +89,7 @@ No gap-fix corners were opened. Ruby owns follow-up dispatch after merge. The ex
 | `system-dm-owner` | feature | pass | Names the audited operator command with exact recipient and notice text. |
 | `system-impersonate` | unsupported | partial | Refuses impersonation but omits the supported alternative of posting under the sender identity. |
 | `desktop-file` | feature | fail | Claims the desktop task is complete on the agent fixture machine without distinguishing the user computer. |
-| `agent-file` | action | pass | all rules passed |
+| `agent-file` | action | pass | called post_artifact |
 | `phone-file` | unsupported | pass | States no direct phone Downloads write path and provides a downloadable file with the save step. |
 | `computer-access` | feature | partial | States the access boundary but omits uploading a file or connecting an agent on the user computer. |
 | `file-ar` | feature | fail | Treats the agent host desktop as the target and offers a host command instead of a download or user-machine agent. |

@@ -270,6 +270,9 @@ it('Reproduction SENTRY-ALERT-WAKE: signed alerts suppress repeats across event 
   expect(prompt).toContain('Post one short visible summary line');
   expect(prompt).toContain('Sentry short ID');
   expect(prompt).toContain('dismissed, existing corner, or new corner');
+  expect(prompt).toContain('When a fix corner you opened from a digest is blocked or needs a decision');
+  expect(prompt).toContain('post the exact blocker in the issues-triage corner (a914716f-cd6c-4663-b42a-6e1044dc2bb9) and tag @ruby');
+  expect(prompt).toContain('Do not only report to yourself.');
   await db.query(`UPDATE sentry_wake_state SET last_wake_at=now()-interval '5 minutes'`);
   await post(alert(2),'event_alert');
   const unresolved = issue('7797705387','unresolved','ongoing');

@@ -31,10 +31,12 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * that pair to exactly one meaning, an agent is alive and working, which is
  * precisely what a turn in progress is.
  *
- * The live line starts with the verb, followed by elapsed minutes and seconds.
- * The animated mark previously collapsed to a stray speck beside the label.
- * The shared gold breath communicates activity without that extra ornament.
- * The counter starts from the server receipt's own
+ * The shape of the line is the status-line idiom: a mark, the verb line, then
+ * elapsed minutes and seconds ticking once per second. The mark is the Beeline
+ * icon (`BeelineMarkSpinner`) painting itself and releasing — never a cycling
+ * text glyph or a row of dots. A glyph whose advance width changes per frame
+ * walks the label's left edge back and forth, so the mark sits in one fixed
+ * `MARK_CELL` square and the label's x never depends on it. The counter starts from the server receipt's own
  * `createdAt` (unix seconds), so it reads correctly even when the app opened
  * mid-turn. The ticking interval lives entirely inside this tiny leaf — it
  * never recreates the transcript.
@@ -91,6 +93,9 @@ export function TurnProgressLine({
       testID={testID}
     >
       <HullLivePulse style={styles.row}>
+        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+          <BeelineMarkSpinner live />
+        </View>
         <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>

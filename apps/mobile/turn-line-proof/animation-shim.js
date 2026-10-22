@@ -1,0 +1,13 @@
+import { View } from 'react-native';
+export default { View, createAnimatedComponent: (component) => component };
+export const Easing = { cubic: (v) => v, inOut: (v) => v, out: (v) => v };
+export const ReduceMotion = { System: 'system' };
+export const cancelAnimation = () => {};
+export const runOnJS = (fn) => fn;
+export const useAnimatedProps = (fn) => fn();
+export const useReducedMotion = () => true;
+export const useSharedValue = (value) => ({ value });
+export const withTiming = (value) => value;
+export const withDelay = (_delay, value) => value;
+export const withRepeat = (value) => value;
+export const withSequence = (...values) => values[0];

@@ -222,6 +222,7 @@ export function IndexRow({
     >
       <HullSwitch
         accessibilityLabel={toggle.accessibilityLabel ?? title}
+        dimWhenDisabled={!disabled}
         disabled={toggle.disabled ?? disabled}
         onValueChange={toggle.onValueChange}
         testID={testID ? `${testID}-toggle` : undefined}

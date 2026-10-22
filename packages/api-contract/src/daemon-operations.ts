@@ -435,7 +435,7 @@ export type DaemonOperationMap = {
    */
   mergeCorner: Operation<
     CornerInput,
-    | { readonly status: 'merge-started'; readonly headSha: string }
+    | { readonly status: 'merge-started' | 'queued'; readonly headSha: string }
     | { readonly status: 'blocked'; readonly blocker: string }
   >;
   /**

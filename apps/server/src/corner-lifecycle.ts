@@ -1413,6 +1413,7 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
      WHERE fact.workflow_state IN ('review','ask_human') AND corner.archived_at IS NULL
        AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
+       AND NOT (fact.lifecycle ? 'mergeQueue')
        AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
        AND (COALESCE((fact.lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision,
              extract(epoch FROM fact.updated_at)+$1) <= extract(epoch FROM clock_timestamp())

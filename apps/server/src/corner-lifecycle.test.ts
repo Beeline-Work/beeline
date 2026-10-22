@@ -78,6 +78,8 @@ let githubApp: {
   openPullRequestsForBranch: ReturnType<typeof vi.fn>;
   deleteBranch: ReturnType<typeof vi.fn>;
   mergePullRequest: ReturnType<typeof vi.fn>;
+  readPullRequestQueue: ReturnType<typeof vi.fn>;
+  dequeuePullRequest: ReturnType<typeof vi.fn>;
   closePullRequest: ReturnType<typeof vi.fn>;
   readPullRequest: ReturnType<typeof vi.fn>;
   readPullRequestDiscussion: ReturnType<typeof vi.fn>;
@@ -127,6 +129,8 @@ beforeAll(async () => {
     openPullRequestsForBranch: vi.fn(async () => []),
     deleteBranch: vi.fn(async () => undefined),
     mergePullRequest: vi.fn(async () => undefined),
+    readPullRequestQueue: vi.fn(async () => ({ id: 'PR_7', headSha: SHA, entry: null })),
+    dequeuePullRequest: vi.fn(async () => undefined),
     closePullRequest: vi.fn(async () => undefined),
     readPullRequestDiscussion: vi.fn(async () => ({
       files: [{ filename: 'widget.ts', status: 'modified', additions: 3, deletions: 1 }],
@@ -198,6 +202,10 @@ beforeEach(async () => {
   await db.query(`UPDATE agents SET yolo_mode=true,wake_batch_minutes=0`);
   githubRollupState = 'pending';
   githubHead = '';
+  githubApp.readPullRequestQueue.mockReset();
+  githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: null });
+  githubApp.dequeuePullRequest.mockReset();
+  githubApp.dequeuePullRequest.mockResolvedValue(undefined);
   githubApp.mergePullRequest.mockReset();
   githubApp.mergePullRequest.mockResolvedValue(undefined);
   githubApp.deleteBranch.mockReset();
@@ -4203,4 +4211,77 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
   });
+});
+
+
+describe('merge queue (Reproduction R1)', () => {
+  const combinedSha = '9'.repeat(40);
+  async function queued() {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue({
+      headSha: SHA, headRef: branchOf(cornerId), baseRef: 'main', baseSha: '8'.repeat(40), merged: false,
+    });
+    githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA,
+      entry: { id: 'MQ_7', headCommit: { oid: combinedSha } } });
+    githubApp.mergePullRequest.mockResolvedValue('queued');
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
+    expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'queued', headSha: SHA });
+    expect(await currentState(cornerId)).toBe('review');
+    const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
+    expect(visible?.lifecycle.mergeQueue).toEqual({ headSha: SHA, combinedSha });
+    return cornerId;
+  }
+
+  it('R1: main advances, combined checks fail, the PR leaves the queue and wakes its implementer once', async () => {
+    const cornerId = await queued();
+    githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: null });
+    githubApp.readCommitCheckRollup.mockImplementation(async (_token, _repo, sha) => ({
+      state: sha === combinedSha ? 'failed' : 'passed', total: 1,
+      failing: sha === combinedSha ? ['TYPECHECK'] : [], checks: [],
+    }));
+    await github.recoverUnfinishedMergeClaims();
+    await github.recoverUnfinishedMergeClaims();
+    expect(await currentState(cornerId)).toBe('implement');
+    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_merge_refused')).toHaveLength(1);
+    expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%Removed from the merge queue%'`, [cornerId])).rows)
+      .toEqual([expect.objectContaining({ text: expect.stringContaining('TYPECHECK') })]);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    console.info('Reproduction R1: advanced main + failed combined TYPECHECK -> returned to implement, no merge, one wake');
+  });
+
+  it('R1: combined checks pass and GitHub confirms the merge through the existing close path', async () => {
+    const cornerId = await queued();
+    githubApp.readPullRequest.mockResolvedValue({ headSha: SHA, headRef: branchOf(cornerId),
+      baseRef: 'main', merged: true, mergedAt: '2026-10-22T15:00:00Z' });
+    await github.recoverUnfinishedMergeClaims();
+    expect(await currentState(cornerId)).toBe('landed');
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('dequeues a queued PR after a human sets a hold', async () => {
+    const cornerId = await queued();
+    const wiredPhone = new PhoneService(db, 'http://test', github);
+    await wiredPhone.execute('setCornerHold', { cornerId }, H);
+    expect(githubApp.dequeuePullRequest).toHaveBeenCalledWith('tok', 'PR_7');
+    expect(await currentState(cornerId)).toBe('implement');
+    expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'not-attempted' });
+  });
+});
+
+it('R1 recovers an accepted enqueue after its response and first queue read are lost', async () => {
+  const cornerId = await approved();
+  githubApp.readPullRequest.mockResolvedValue({ headSha: SHA, headRef: branchOf(cornerId), baseRef: 'main', merged: false });
+  githubApp.mergePullRequest.mockRejectedValueOnce(Object.assign(new Error('response lost'), { queueAttempted: true }));
+  githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
+  expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'refused', reason: 'response lost' });
+  expect(await currentState(cornerId)).toBe('review');
+  await db.query(`UPDATE corner_facts SET updated_at=now()-interval '1 hour' WHERE corner_id=$1`, [cornerId]);
+  githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: { id: 'MQ_7' } });
+  await github.recoverUnfinishedMergeClaims();
+  expect((await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId)?.lifecycle.mergeQueue)
+    .toMatchObject({ headSha: SHA });
+  expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
 });

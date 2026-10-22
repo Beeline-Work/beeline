@@ -33,6 +33,8 @@ name: Desktop
 
 on:
   pull_request: {}
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       variant:
@@ -112,15 +114,22 @@ defaults:
 jobs:
   changes:
     name: Detect desktop changes
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       desktop: ${{ steps.decide.outputs.desktop }}
     steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'merge_group'
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         with:
+          base: ${{ github.event.merge_group.base_sha || '' }}
+          ref: ${{ github.event.merge_group.head_sha || '' }}
           filters: |
             packages:
               - 'packages/**'
@@ -135,7 +144,10 @@ jobs:
       # to desktopModule, whose list is a union of paths.
       - uses: dorny/paths-filter@v3
         id: unmapped
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         with:
+          base: ${{ github.event.merge_group.base_sha || '' }}
+          ref: ${{ github.event.merge_group.head_sha || '' }}
           predicate-quantifier: every
           filters: |
             unmapped:
@@ -146,11 +158,17 @@ jobs:
               - '!apps/mobile/**'
       - id: decide
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          FILTER_OUTCOME: ${{ steps.filter.outcome }}
+          UNMAPPED_OUTCOME: ${{ steps.unmapped.outcome }}
           PACKAGES: ${{ steps.filter.outputs.packages }}
           UNMAPPED: ${{ steps.unmapped.outputs.unmapped }}
           DESKTOP_MODULE: ${{ steps.filter.outputs.desktopModule }}
         run: |
           set -euo pipefail
+          if [ "$EVENT_NAME" = merge_group ] && { [ "$FILTER_OUTCOME" != success ] || [ "$UNMAPPED_OUTCOME" != success ]; }; then
+            DESKTOP_MODULE=true
+          fi
           if [ "$PACKAGES" = true ] || [ "$UNMAPPED" = true ] || [ "$DESKTOP_MODULE" = true ]; then
             echo 'desktop=true' >> "$GITHUB_OUTPUT"
           else
@@ -391,13 +409,13 @@ jobs:
       # cannot prove the OS actually renders the banner"), so a red step here
       # is informational, not a regression signal.
       - name: Capture macOS native notification
-        if: github.event_name == 'pull_request' && runner.os == 'macOS'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os == 'macOS'
         continue-on-error: true
         timeout-minutes: 3
         run: bash scripts/desktop-notification-proof-macos.sh
 
       - name: Capture Windows native notification
-        if: github.event_name == 'pull_request' && runner.os == 'Windows'
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && runner.os == 'Windows'
         continue-on-error: true
         timeout-minutes: 3
         # Windows PowerShell (not pwsh/Core), so the script's WinRT OCR
@@ -405,7 +423,7 @@ jobs:
         run: powershell.exe -File scripts/desktop-notification-proof-windows.ps1
 
       - uses: actions/upload-artifact@v4
-        if: github.event_name == 'pull_request' && (runner.os == 'macOS' || runner.os == 'Windows')
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && (runner.os == 'macOS' || runner.os == 'Windows')
         with:
           name: desktop-native-notification-${{ matrix.label }}
           path: ${{ runner.temp }}/desktop-native-notification-*

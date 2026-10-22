@@ -19,6 +19,7 @@ export function cornerStatusLine(
   const prefix = `PR #${pr.number} · `;
   if (pr.mergedAt || lifecycle.outcome === 'landed') return `${prefix}merged`;
   if (archived) return `${prefix}closed`;
+  if (lifecycle.mergeQueue?.headSha === pr.headSha) return `${prefix}queued · testing on latest main`;
   if (pr.mergeability === 'dirty') return `${prefix}merge conflict`;
 
   const summary = lifecycle.checksSummary;

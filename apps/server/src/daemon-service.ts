@@ -1885,7 +1885,7 @@ export class DaemonService {
       case 'setCornerHold': {
         const hold = input as Input<'setCornerHold'>;
         await this.access(hold.cornerId, authenticatedAgentId);
-        return (await this.database.transaction(async (db) => {
+        const result = await this.database.transaction(async (db) => {
           await lockCornerLifecycle(db, hold.cornerId);
           const command = await authorizeCommandOutput(
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
@@ -1898,7 +1898,11 @@ export class DaemonService {
           )).rows[0];
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
-        })) as Output<Name>;
+        });
+        const reconcile = async () => { await this.github?.reconcileQueuedCorners(hold.cornerId); };
+        if (this.afterCommit) this.afterCommit(reconcile);
+        else await reconcile();
+        return result as Output<Name>;
       }
       case 'orderCornerMerge': {
         const order = input as Input<'orderCornerMerge'>;
@@ -3603,7 +3607,7 @@ export class DaemonService {
     if (landed.status === 'not-attempted')
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
     if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
-    return { status: 'merge-started', headSha: corner.head_sha };
+    return { status: landed.status === 'queued' ? 'queued' : 'merge-started', headSha: corner.head_sha };
   }
 
   /**

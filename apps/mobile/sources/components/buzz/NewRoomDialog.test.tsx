@@ -9,6 +9,7 @@ vi.mock('react-native', async () => {
   return {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     View: host('View'),
+    Pressable: host('Pressable'),
     Text: host('Text'),
     TextInput: host('TextInput'),
     Switch: host('Switch'),
@@ -191,10 +192,10 @@ describe('New Room sheet', () => {
     expect(text('create-room-content')).not.toContain('Name');
     expect(text('create-room-repo-row')).toContain('None');
     expect(host('create-room-repo-mode')).toBeUndefined();
-    expect(host('create-room-public')?.props.value).toBe(true);
+    expect(host('create-room-public-row-toggle')?.props.value).toBe(true);
     // The one switch: brass when on, with a light thumb.
-    expect(host('create-room-public')?.props.thumbColor).toBe(beelineThemes.obsidian.textPrimary);
-    expect(host('create-room-public')?.props.trackColor.true).toBe(beelineThemes.obsidian.accent);
+    expect(host('create-room-public-row-toggle')?.props.thumbColor).toBe(beelineThemes.obsidian.textPrimary);
+    expect(host('create-room-public-row-toggle')?.props.trackColor.true).toBe(beelineThemes.obsidian.accent);
     expect(host('create-room-submit')?.props.disabled).toBe(true);
     expect(load).not.toHaveBeenCalled();
     name('planning');
@@ -206,13 +207,13 @@ describe('New Room sheet', () => {
   it('matches Name and Public: Repository is a flat hairline row, never a box', () => {
     const { renderer, host } = mount();
     const flatten = (style: unknown): Record<string, unknown> =>
-      Object.assign({}, ...(Array.isArray(style) ? style : [style]));
+      Object.assign({}, ...(Array.isArray(typeof style === 'function' ? style({pressed:false}) : style) ? (typeof style === 'function' ? style({pressed:false}) : style).flat(Infinity) : [style]));
     const repoRow = flatten(host('create-room-repo-row')?.props.style);
     const publicRow = flatten(host('create-room-public-row')?.props.style);
     for (const row of [repoRow, publicRow]) {
       expect(row.borderWidth).toBeUndefined();
       expect(row.borderRadius).toBeUndefined();
-      expect(row.borderTopWidth).toBe(1);
+      expect(row.borderBottomWidth).toBe(1);
     }
     act(() => renderer.unmount());
   });
@@ -241,7 +242,7 @@ describe('New Room sheet', () => {
     name('widgets');
     expect(text('create-room-repo-link')).toContain('owner');
     expect(text('create-room-repo-link')).toContain('widgets');
-    expect(host('create-room-public')?.props.value).toBe(true);
+    expect(host('create-room-public-row-toggle')?.props.value).toBe(true);
     act(() => host('create-room-submit')?.props.onPress());
     expect(submit).toHaveBeenCalledWith('widgets', repo, false);
     act(() => renderer.unmount());
@@ -261,7 +262,7 @@ describe('New Room sheet', () => {
     act(() => picker().onSelect(privateRepo));
     expect(sheet().title).toBe('New Room');
     expect(text('create-room-repo-link')).toContain('secret');
-    expect(host('create-room-public')?.props.value).toBe(false);
+    expect(host('create-room-public-row-toggle')?.props.value).toBe(false);
     name('renamed');
     expect(text('create-room-repo-link')).toContain('secret');
     act(() => host('create-room-submit')?.props.onPress());
@@ -276,7 +277,7 @@ describe('New Room sheet', () => {
     press('create-room-repo-mode-create');
     expect(text('create-room-repo-create')).toContain('owner');
     expect(text('create-room-repo-create')).toContain('roadmap');
-    expect(host('create-room-public')?.props.value).toBe(false);
+    expect(host('create-room-public-row-toggle')?.props.value).toBe(false);
     expect(host('create-room-owner-menu')).toBeUndefined();
     press('create-room-repo-owner');
     expect(host('create-room-owner-menu')).toBeDefined();
@@ -332,7 +333,7 @@ describe('New Room sheet', () => {
     press('create-room-repo-owner');
     press('create-room-owner-79');
     expect(text('create-room-repo-create')).toContain('Already exists.');
-    expect(text('create-room-repo-create')).toContain('Link it instead');
+    expect(host('create-room-repo-link-instead').props.label).toBe('Link it instead');
     expect(host('create-room-submit')?.props.disabled).toBe(true);
     press('create-room-repo-link-instead');
     expect(host('create-room-repo-mode-link')?.props.accessibilityState.selected).toBe(true);

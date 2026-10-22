@@ -1,3 +1,4 @@
+vi.mock('./Button', async () => { const R = await import('react'); return {Button: (props:any)=>R.createElement('Button',props)}; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -100,7 +101,7 @@ describe('FacePickerSheet', () => {
   it('can save a face when none is on record', async () => {
     const onSave = vi.fn(async () => undefined);
     const tree = await render(onSave, null);
-    expect(flat(host(tree, 'face-picker-whale').props.style).borderColor).toBe(theme.faint);
+    expect(host(tree, 'face-picker-whale').props.accessibilityState.selected).toBe(false);
     await press(host(tree, 'face-picker-whale'));
     expect(onSave).toHaveBeenCalledWith('whale');
     expect(host(tree, 'host-face').props.children).toBe('whale');
@@ -113,18 +114,18 @@ describe('FacePickerSheet', () => {
     const tree = await render(onSave, null);
     await press(host(tree, 'face-picker-whale'));
     expect(host(tree, 'host-face').props.children).toBeNull();
-    expect(flat(host(tree, 'face-picker-whale').props.style).borderColor).toBe(theme.faint);
+    expect(host(tree, 'face-picker-whale').props.accessibilityState.selected).toBe(false);
   });
 
   it('saves a tapped face immediately and keeps the optimistic choice on success', async () => {
     const onSave = vi.fn(async () => undefined);
     const tree = await render(onSave);
-    expect(flat(host(tree, 'face-picker-fox').props.style).borderColor).toBe(theme.accent);
+    expect(host(tree, 'face-picker-fox').props.accessibilityState.selected).toBe(true);
     await press(host(tree, 'face-picker-moth'));
     expect(onSave).toHaveBeenCalledWith('moth');
     expect(host(tree, 'host-face').props.children).toBe('moth');
-    expect(flat(host(tree, 'face-picker-moth').props.style).borderColor).toBe(theme.accent);
-    expect(flat(host(tree, 'face-picker-fox').props.style).borderColor).toBe(theme.faint);
+    expect(host(tree, 'face-picker-moth').props.accessibilityState.selected).toBe(true);
+    expect(host(tree, 'face-picker-fox').props.accessibilityState.selected).toBe(false);
   });
 
   it('rolls the face back and explains inline when the save is refused', async () => {
@@ -147,7 +148,7 @@ describe('FacePickerSheet', () => {
       rejectSave(new Error('invalid face id'));
     });
     expect(host(tree, 'host-face').props.children).toBe('fox');
-    expect(flat(host(tree, 'face-picker-fox').props.style).borderColor).toBe(theme.accent);
+    expect(host(tree, 'face-picker-fox').props.accessibilityState.selected).toBe(true);
     expect(host(tree, 'face-picker-error').props.children).toContain('invalid face id');
     // Retryable: the next tap saves again and clears the error.
     act(() => {

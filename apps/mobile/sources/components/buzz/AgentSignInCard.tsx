@@ -1,6 +1,8 @@
+import { ErrorBanner } from './ErrorBanner';
+import { InlineRow } from './IndexRow';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useState } from 'react';
-import { Linking, Text, TextInput, View } from 'react-native';
+import { Linking, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   AgentSignInCardView,
@@ -154,10 +156,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
   const sending = busy || card.status === 'signing-in';
 
   const failureLine = failure ? (
-    <View accessibilityRole="alert" style={styles.failure} testID={`${testID}-error`}>
-      <Text style={styles.failureMark}>✗</Text>
-      <Text style={styles.failureText}>{failure}</Text>
-    </View>
+    <ErrorBanner title={failure} testID={`${testID}-error`} />
   ) : null;
 
   const linkStep = (
@@ -167,7 +166,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
     button: string,
     last: boolean,
   ) => (
-    <View style={[styles.step, last && styles.stepLast]}>
+    <InlineRow style={[styles.step, last && styles.stepLast]}>
       <WorkflowStepCircle status={opened ? 'done' : 'current'} />
       <View style={styles.stepBody}>
         <Text style={styles.stepTitle}>{opened ? label.done : label.ahead}</Text>
@@ -179,18 +178,18 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
           <Text style={styles.meta}>{`Made by ${agentName}'s machine · holds no password or token`}</Text>
         ) : null}
       </View>
-    </View>
+    </InlineRow>
   );
 
   const waitLine = (text: string) => (
-    <View style={styles.wait}>
+    <InlineRow style={styles.wait}>
       <StateDot kind="pulse" />
       <Text style={[styles.meta, styles.waitText]}>{text}</Text>
-    </View>
+    </InlineRow>
   );
 
   const field = (placeholder: string, secure: boolean) => (
-    <View style={styles.field}>
+    <InlineRow style={styles.field}>
       <HullDialogInput
         accessibilityLabel={placeholder}
         autoCapitalize="none"
@@ -211,7 +210,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
         testID={`${testID}-paste`}
         variant="secondary"
       />
-    </View>
+    </InlineRow>
   );
 
   let steps: React.ReactNode = null;
@@ -227,7 +226,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
           `Open ${service.site}`,
           false,
         )}
-        <View style={[styles.step, styles.stepLast]}>
+        <InlineRow style={[styles.step, styles.stepLast]}>
           <WorkflowStepCircle status={opened || value ? 'current' : 'pending'} />
           <View style={styles.stepBody}>
             <Text style={[styles.stepTitle, !(opened || value) && styles.stepTitleAhead]}>
@@ -248,7 +247,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
               testID={`${testID}-submit`}
             />
           </View>
-        </View>
+        </InlineRow>
       </>
     );
   } else if (ask && canAct && card.kind === 'device-code' && card.authorizeUrl && card.userCode && service) {
@@ -262,11 +261,11 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
           'Open sign-in page',
           false,
         )}
-        <View style={[styles.step, styles.stepLast]}>
+        <InlineRow style={[styles.step, styles.stepLast]}>
           <WorkflowStepCircle status={opened ? 'current' : 'pending'} />
           <View style={styles.stepBody}>
             <Text style={styles.stepTitle}>Enter this code there</Text>
-            <View style={styles.code}>
+            <InlineRow style={styles.code}>
               <Text selectable style={styles.codeText} testID={`${testID}-code`}>
                 {card.userCode}
               </Text>
@@ -276,13 +275,13 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
                 testID={`${testID}-copy`}
                 variant="secondary"
               />
-            </View>
+            </InlineRow>
             {card.status === 'failed' ? failureLine : waitLine(minutes ? `Waiting for approval · expires in ${minutes} min` : 'Waiting for approval')}
             {card.harness === 'codex' ? (
               <Text style={styles.meta}>Device-code sign-in must be on in ChatGPT → Settings → Security.</Text>
             ) : null}
           </View>
-        </View>
+        </InlineRow>
       </>
     );
   } else if (ask && canAct && card.kind === 'approve-wait' && card.authorizeUrl && service) {
@@ -300,7 +299,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
     );
   } else if (ask && canAct && card.kind === 'api-key' && provider) {
     steps = (
-      <View style={[styles.step, styles.stepLast]}>
+      <InlineRow style={[styles.step, styles.stepLast]}>
         <WorkflowStepCircle status="current" />
         <View style={styles.stepBody}>
           <Text style={styles.stepTitle}>{`Paste your ${provider} API key`}</Text>
@@ -317,7 +316,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
             testID={`${testID}-submit`}
           />
         </View>
-      </View>
+      </InlineRow>
     );
   } else if (ask) {
     steps = failureLine;
@@ -377,7 +376,4 @@ const styles = StyleSheet.create((theme) => ({
   codeText: { ...theme.buzz.type.machine, flex: 1, flexBasis: 120, minWidth: 0, color: theme.buzz.textPrimary },
   wait: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   waitText: { flex: 1, minWidth: 0 },
-  failure: { flexDirection: 'row', gap: theme.buzz.space.sm },
-  failureMark: { ...theme.buzz.type.meta, color: theme.buzz.accent },
-  failureText: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textSecondary },
 }));

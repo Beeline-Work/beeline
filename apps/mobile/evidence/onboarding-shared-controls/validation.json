@@ -1,0 +1,21 @@
+{
+  "mobile": {
+    "filesPassed": 598,
+    "filesSkipped": 4,
+    "testsPassed": 4858,
+    "testsSkipped": 5
+  },
+  "sharedPackageTestsPassed": 642,
+  "typecheck": "passed",
+  "uiPolicy": "passed",
+  "uiPolicyTests": "passed",
+  "deadCode": "passed",
+  "workflowPaths": "passed",
+  "nativeFingerprint": "passed",
+  "androidProductionExport": "passed",
+  "imagePairs": 116,
+  "dimensionMismatches": 0,
+  "legacyAllowancesRemoved": 59,
+  "legacyFilesRemoved": 11,
+  "migratedModulesWithZeroOffences": 15
+}

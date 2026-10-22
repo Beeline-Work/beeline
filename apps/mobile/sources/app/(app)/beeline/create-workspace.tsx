@@ -1,8 +1,9 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router } from 'expo-router';
 import * as Crypto from 'expo-crypto';
@@ -99,15 +100,11 @@ export default function CreateWorkspace() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.column}>
-          <TouchableOpacity
+          <Button label="" variant="quiet"
             accessibilityLabel="Back"
-            accessibilityRole="button"
             onPress={back}
-            style={styles.backButton}
             testID="create-back"
-          >
-            <ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />
-          </TouchableOpacity>
+           icon={<ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />} />
           <View testID="create-step-workspace">
             <Text accessibilityRole="header" style={styles.title}>
               {`Name your ${WORKSPACE_LABEL}`}
@@ -136,9 +133,7 @@ export default function CreateWorkspace() {
             />
           </View>
           {error ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="create-error">
-              {error}
-            </Text>
+            <ErrorBanner title={error} testID="create-error" />
           ) : null}
         </View>
       </ScrollView>
@@ -152,13 +147,6 @@ const styles = StyleSheet.create((theme) => {
     container: { flex: 1, backgroundColor: hull.bgTerminal },
     scroll: { flexGrow: 1, paddingHorizontal: hull.space.lg, paddingTop: hull.space.lg },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.sm },
-    backButton: {
-      width: 44,
-      height: 44,
-      marginLeft: -hull.space.sm,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
     title: {
       ...Typography.default(),
       ...hull.type.hero,
@@ -190,6 +178,5 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textPrimary,
       backgroundColor: hull.bgBase,
     },
-    error: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },
   };
 });

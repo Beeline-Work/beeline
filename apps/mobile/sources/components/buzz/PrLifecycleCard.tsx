@@ -3,12 +3,10 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleSummary, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
+import { TranscriptNavigationRow } from './IndexRow';
 import { LedgerDisclosure } from './LedgerDisclosure';
 import { ChevronGlyph, CHEVRON_ROW_SIZE } from './ChevronGlyph';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
-
-/** A one-line target grows its tap area, not its drawn height. */
-const HIT_SLOP = { top: 6, bottom: 6 } as const;
 
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
@@ -171,7 +169,6 @@ export function RepositoryLifecycleRow({
   onOpenCorner(id: string): void;
   onOpenUrl(url: string): void;
 }) {
-  const { theme } = useUnistyles();
   const state = item.state.replace(/^PR /, '');
   // The call-site line keeps its own closed wording in the shared format.
   const closedCallSite = glyph && state === 'Closed';
@@ -190,89 +187,39 @@ export function RepositoryLifecycleRow({
     </Text>
   );
   const cornerTestID = testID ?? `notification-run-cell-corner-${item.id}`;
-  // A corner with no GitHub link has one destination, so the whole line opens it.
-  if (item.kind === 'corner' && item.cornerId && !item.url)
-    return (
-      <View testID={`notification-run-cell-${item.id}`}>
-        <Pressable
-          style={({ pressed }) => [
-            glyph ? styles.callSiteRow : styles.repositoryRow,
-            pressed && styles.pressed,
-          ]}
-          accessibilityRole="link"
-          accessibilityLabel={`Open corner ${item.title}`}
-          hitSlop={HIT_SLOP}
-          onPress={() => onOpenCorner(item.cornerId!)}
-          testID={cornerTestID}
-        >
-          {glyph ? (
-            <View style={styles.glyph}>
-              <CornerBranchGlyph />
-            </View>
-          ) : null}
-          <View style={styles.copyTarget}>{copy}</View>
-          <View style={styles.cornerTarget}>
-            <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
-          </View>
-        </Pressable>
-      </View>
-    );
   return (
-    <View style={styles.repositoryRow} testID={`notification-run-cell-${item.id}`}>
-      {item.url ? (
-        <Pressable
-          style={styles.copyTarget}
-          accessibilityRole="link"
-          accessibilityLabel={`Open ${item.kindLine}`}
-          onPress={() => onOpenUrl(item.url!)}
-          testID={`notification-run-cell-url-${item.id}`}
-        >
-          {copy}
-        </Pressable>
-      ) : (
-        <View style={styles.copyTarget}>{copy}</View>
-      )}
-      {item.cornerId ? (
-        <Pressable
-          style={styles.cornerTarget}
-          accessibilityRole="link"
-          accessibilityLabel={`Open corner ${item.title}`}
-          onPress={() => onOpenCorner(item.cornerId!)}
-          testID={cornerTestID}
-        >
-          <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
-        </Pressable>
-      ) : null}
-    </View>
+    <TranscriptNavigationRow
+      testID={`notification-run-cell-${item.id}`}
+      singleDestination={item.kind === 'corner' && Boolean(item.cornerId) && !item.url}
+      leading={glyph ? <CornerBranchGlyph /> : undefined}
+      primary={
+        item.url
+          ? {
+              accessibilityLabel: `Open ${item.kindLine}`,
+              onPress: () => onOpenUrl(item.url!),
+              testID: `notification-run-cell-url-${item.id}`,
+            }
+          : undefined
+      }
+      trailing={
+        item.cornerId
+          ? {
+              accessibilityLabel: `Open corner ${item.title}`,
+              onPress: () => onOpenCorner(item.cornerId!),
+              testID: cornerTestID,
+            }
+          : undefined
+      }
+    >
+      {copy}
+    </TranscriptNavigationRow>
   );
 }
+
 const styles = StyleSheet.create(({ buzz }) => ({
   run: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
   header: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: buzz.space.sm },
   summary: { ...buzz.type.meta, color: buzz.textSecondary, flex: 1 },
-  repositoryRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: buzz.border,
-    gap: buzz.space.sm,
-  },
-  // The call-site line: the same row without the rule, so it hangs off its message.
-  callSiteRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: buzz.space.sm,
-  },
-  pressed: { opacity: 0.6 },
-  // Centres the mark on the first line of copy.
-  glyph: {
-    flexShrink: 0,
-    height: buzz.type.body.lineHeight,
-    justifyContent: 'center',
-    marginTop: buzz.space.sm,
-  },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
   number: {
@@ -280,13 +227,6 @@ const styles = StyleSheet.create(({ buzz }) => ({
     fontFamily: buzz.proseMedium,
     color: buzz.accent,
     textDecorationLine: 'underline',
-  },
-  copyTarget: { minHeight: 44, minWidth: 44, flex: 1, paddingVertical: buzz.space.sm },
-  cornerTarget: {
-    minHeight: 44,
-    minWidth: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   more: {
     minHeight: 44,

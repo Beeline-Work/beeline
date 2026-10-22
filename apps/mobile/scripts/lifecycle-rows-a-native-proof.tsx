@@ -193,7 +193,15 @@ function Proof() {
               title="shared-face"
               onOpen={() => setDestination('corner-shared-face')}
             />
+            {card([opened])}
             {card([pr('shared-face', 2742, 'Keep agent lead and body text in the same font face')])}
+            <Text style={{ ...theme.buzz.type.body, color: theme.buzz.textPrimary, marginTop: 24 }}>
+              @ruby open a corner with a long name.
+            </Text>
+            <CornerOpenedMarker
+              title="call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron"
+              onOpen={() => setDestination('corner-long-name')}
+            />
           </>
         ) : (
           anchored.map((message) => (

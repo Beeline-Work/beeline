@@ -5,6 +5,10 @@ import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleSummary, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
 import { LedgerDisclosure } from './LedgerDisclosure';
 import { ChevronGlyph, CHEVRON_ROW_SIZE } from './ChevronGlyph';
+import { CornerBranchGlyph } from './CornerBranchGlyph';
+
+/** A one-line target grows its tap area, not its drawn height. */
+const HIT_SLOP = { top: 6, bottom: 6 } as const;
 
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
@@ -147,28 +151,72 @@ export function isRepositoryLifecycleItem(item: RepositoryItem) {
   );
 }
 
-/** GitHub and corner destinations are separate; the title keeps the remaining width. */
+/**
+ * GitHub and corner destinations are separate; the title keeps the remaining width.
+ * `glyph` draws the same row as the call-site line under the message a corner
+ * was opened from: the branch mark leads it and it hangs off that message
+ * without a rule.
+ */
 export function RepositoryLifecycleRow({
   item,
+  glyph = false,
+  testID,
   onOpenCorner,
   onOpenUrl,
 }: {
   item: RepositoryItem;
+  glyph?: boolean;
+  /** Replaces the corner target's test id. */
+  testID?: string;
   onOpenCorner(id: string): void;
   onOpenUrl(url: string): void;
 }) {
   const { theme } = useUnistyles();
   const state = item.state.replace(/^PR /, '');
-  const verb = state.charAt(0).toUpperCase() + state.slice(1);
+  // The call-site line keeps its own closed wording in the shared format.
+  const closedCallSite = glyph && state === 'Closed';
+  const verb = closedCallSite ? 'Corner closed' : state.charAt(0).toUpperCase() + state.slice(1);
   const number =
     item.url?.match(/\/(?:pull|issues)\/(\d+)/)?.[1] ?? item.kindLine.match(/#(\d+)/)?.[1];
   const copy = (
     <Text style={styles.repositoryTitle} numberOfLines={2} ellipsizeMode="tail">
       <Text style={styles.verb}>{verb} </Text>
       {number && item.url ? <Text style={styles.number}>#{number} </Text> : null}
-      {item.kind === 'corner' ? `corner #${item.title}` : item.title}
+      {closedCallSite
+        ? `· #${item.title}`
+        : item.kind === 'corner'
+          ? `corner #${item.title}`
+          : item.title}
     </Text>
   );
+  const cornerTestID = testID ?? `notification-run-cell-corner-${item.id}`;
+  // A corner with no GitHub link has one destination, so the whole line opens it.
+  if (item.kind === 'corner' && item.cornerId && !item.url)
+    return (
+      <View testID={`notification-run-cell-${item.id}`}>
+        <Pressable
+          style={({ pressed }) => [
+            glyph ? styles.callSiteRow : styles.repositoryRow,
+            pressed && styles.pressed,
+          ]}
+          accessibilityRole="link"
+          accessibilityLabel={`Open corner ${item.title}`}
+          hitSlop={HIT_SLOP}
+          onPress={() => onOpenCorner(item.cornerId!)}
+          testID={cornerTestID}
+        >
+          {glyph ? (
+            <View style={styles.glyph}>
+              <CornerBranchGlyph />
+            </View>
+          ) : null}
+          <View style={styles.copyTarget}>{copy}</View>
+          <View style={styles.cornerTarget}>
+            <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
+          </View>
+        </Pressable>
+      </View>
+    );
   return (
     <View style={styles.repositoryRow} testID={`notification-run-cell-${item.id}`}>
       {item.url ? (
@@ -190,7 +238,7 @@ export function RepositoryLifecycleRow({
           accessibilityRole="link"
           accessibilityLabel={`Open corner ${item.title}`}
           onPress={() => onOpenCorner(item.cornerId!)}
-          testID={`notification-run-cell-corner-${item.id}`}
+          testID={cornerTestID}
         >
           <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
         </Pressable>
@@ -209,6 +257,21 @@ const styles = StyleSheet.create(({ buzz }) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: buzz.border,
     gap: buzz.space.sm,
+  },
+  // The call-site line: the same row without the rule, so it hangs off its message.
+  callSiteRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: buzz.space.sm,
+  },
+  pressed: { opacity: 0.6 },
+  // Centres the mark on the first line of copy.
+  glyph: {
+    flexShrink: 0,
+    height: buzz.type.body.lineHeight,
+    justifyContent: 'center',
+    marginTop: buzz.space.sm,
   },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },

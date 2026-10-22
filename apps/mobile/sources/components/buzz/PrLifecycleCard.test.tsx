@@ -188,9 +188,139 @@ it('shares Space Grotesk across grouped rows, standalone adapters and source mar
   expect(families.length).toBeGreaterThan(5);
   for (const family of families) expect(family).toMatch(/^SpaceGrotesk-/);
   const titles = texts.filter((node: any) => node.props.numberOfLines === 2);
-  expect(titles).toHaveLength(3);
-  const marker = texts.find((node: any) => text(node).startsWith('Corner opened'));
-  expect(flatten(marker.props.style).fontFamily).toBe(theme.buzz.type.meta.fontFamily);
+  expect(titles).toHaveLength(4);
+  const marker = texts.find((node: any) => text(node).startsWith('Opened corner'));
+  expect(flatten(marker.props.style).fontFamily).toMatch(/^SpaceGrotesk-/);
   for (const title of titles)
     expect(flatten(title.props.style).fontFamily).toBe(flatten(marker.props.style).fontFamily);
+});
+
+it('draws the call-site corner line as the Room row with the branch mark in front', () => {
+  const fact: ChatDisplayMessage = {
+    id: 'open',
+    text: '',
+    timestamp: 1,
+    isUser: false,
+    daemonFact: {
+      type: 'corner-open',
+      cornerId: 'corner',
+      name: 'font-check-android',
+      objective: 'Check fonts',
+      sourceMessageId: 'dm-source',
+    },
+  };
+  const room = render(
+    foldPrLifecycleRuns(anchorCornerMarkers([fact]))[0].notificationLifecycleRun!.items as any,
+  );
+  let callSite: any;
+  act(() => {
+    callSite = create(<CornerOpenedMarker title="font-check-android" onOpen={() => undefined} />);
+  });
+  const flatten = (style: any): any =>
+    Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
+  // Words, then font family, size, weight and colour of every run of text.
+  const format = (tree: any) => {
+    const [line] = tree.root.findAll(
+      (node: any) => node.type === 'Text' && node.props.numberOfLines === 2,
+    );
+    return {
+      words: text(line),
+      runs: line
+        .findAll((node: any) => node.type === 'Text')
+        .map((node: any) => {
+          const style = flatten(node.props.style);
+          return [
+            style.fontFamily,
+            style.fontSize,
+            style.lineHeight,
+            style.fontWeight,
+            style.color,
+          ];
+        }),
+    };
+  };
+  expect(format(room.tree).words).toBe('Opened corner #font-check-android');
+  expect(format(callSite)).toEqual(format(room.tree));
+  expect(room.tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
+  expect(callSite.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+});
+
+it('opens the corner when the text of a corner row or call-site line is pressed (Reproduction corner-row-tap-1)', () => {
+  // The press lands on the words, so it opens whatever target holds them.
+  const pressText = (tree: any, words: string) => {
+    let node = tree.root.find(
+      (candidate: any) => candidate.type === 'Text' && text(candidate) === words,
+    );
+    while (node && !(node.type === 'Pressable' && node.props.onPress)) node = node.parent;
+    expect(node).toBeTruthy();
+    act(() => node.props.onPress());
+  };
+  const fact: ChatDisplayMessage = {
+    id: 'open',
+    text: '',
+    timestamp: 1,
+    isUser: false,
+    daemonFact: {
+      type: 'corner-open',
+      cornerId: 'corner-font-check',
+      name: 'font-check-android',
+      objective: 'Check fonts',
+      sourceMessageId: 'dm-source',
+    },
+  };
+  const room = render(
+    foldPrLifecycleRuns(anchorCornerMarkers([fact]))[0].notificationLifecycleRun!.items as any,
+  );
+  pressText(room.tree, 'Opened corner #font-check-android');
+  expect(room.onOpenCorner).toHaveBeenCalledWith('corner-font-check');
+  expect(room.onOpenUrl).not.toHaveBeenCalled();
+
+  const onOpen = vi.fn();
+  let callSite: any;
+  act(() => {
+    callSite = create(<CornerOpenedMarker title="font-check-android" onOpen={onOpen} />);
+  });
+  pressText(callSite, 'Opened corner #font-check-android');
+  expect(onOpen).toHaveBeenCalledTimes(1);
+
+  // A PR row keeps its two targets: the title opens GitHub, the chevron the corner.
+  const pr = render();
+  pressText(pr.tree, `Merged #2742 ${item.title}`);
+  expect(pr.onOpenUrl).toHaveBeenCalledWith(item.url);
+  expect(pr.onOpenCorner).not.toHaveBeenCalled();
+  act(() => pr.get('notification-run-cell-corner-pr').props.onPress());
+  expect(pr.onOpenCorner).toHaveBeenCalledWith('corner');
+});
+
+it('keeps each surface’s closed wording in the shared format', () => {
+  const closed = render([
+    {
+      ...item,
+      id: 'closed',
+      state: 'Closed',
+      kind: 'corner' as const,
+      kindLine: 'corner',
+      url: undefined,
+      title: 'quiet',
+    },
+  ] as any);
+  expect(text(closed.get('notification-run-cell-closed'))).toBe('Closed corner #quiet');
+  let callSite: any;
+  act(() => {
+    callSite = create(<CornerOpenedMarker title="quiet" closed onOpen={() => undefined} />);
+  });
+  const lines = (tree: any) =>
+    tree.root.findAll((node: any) => node.type === 'Text' && node.props.numberOfLines === 2);
+  const [line] = lines(callSite);
+  expect(text(line)).toBe('Corner closed · #quiet');
+  const flatten = (style: any): any =>
+    Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
+  const runs = (node: any) =>
+    node
+      .findAll((n: any) => n.type === 'Text')
+      .map((n: any) => {
+        const style = flatten(n.props.style);
+        return [style.fontFamily, style.fontSize, style.fontWeight, style.color];
+      });
+  expect(runs(line)).toEqual(runs(lines(closed.tree)[0]));
 });

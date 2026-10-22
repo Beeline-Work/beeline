@@ -1,0 +1,94 @@
+[
+  {
+    "frame": "android-bone-corner-line-dm",
+    "texts": [
+      "bone",
+      "DM \u00b7 service-projected call site",
+      "obsidian",
+      "Next frame",
+      "@ruby open a corner for the requested work",
+      "Opened corner #requested-work",
+      "Room record",
+      "Opened corner #requested-work"
+    ]
+  },
+  {
+    "destination": "945a30b6-5922-4049-98c8-2564cfad3a7e"
+  },
+  {
+    "frame": "android-bone-corner-line-room",
+    "texts": [
+      "bone",
+      "Room \u00b7 shared typeface",
+      "obsidian",
+      "Next frame",
+      "\u203a 4 steps \u00b7 12s",
+      "@ruby open a corner to align the reading face.",
+      "Opened corner #shared-face",
+      "Opened corner #dm-unread-clear",
+      "Merged #2742 Keep agent lead and body text in the same font face",
+      "@ruby open a corner with a long name.",
+      "Opened corner #call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron"
+    ]
+  },
+  {
+    "destination": "corner-shared-face"
+  },
+  {
+    "target": "Room row text",
+    "tap": [
+      102,
+      738
+    ],
+    "row": "[42,680][1038,797]"
+  },
+  {
+    "destination": "corner-dm"
+  },
+  {
+    "frame": "android-obsidian-corner-line-dm",
+    "texts": [
+      "bone",
+      "DM \u00b7 service-projected call site",
+      "obsidian",
+      "Next frame",
+      "@ruby open a corner for the requested work",
+      "Opened corner #requested-work",
+      "Room record",
+      "Opened corner #requested-work"
+    ]
+  },
+  {
+    "destination": "945a30b6-5922-4049-98c8-2564cfad3a7e"
+  },
+  {
+    "frame": "android-obsidian-corner-line-room",
+    "texts": [
+      "bone",
+      "Room \u00b7 shared typeface",
+      "obsidian",
+      "Next frame",
+      "\u203a 4 steps \u00b7 12s",
+      "@ruby open a corner to align the reading face.",
+      "Opened corner #shared-face",
+      "Opened corner #dm-unread-clear",
+      "Merged #2742 Keep agent lead and body text in the same font face",
+      "@ruby open a corner with a long name.",
+      "Opened corner #call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron"
+    ]
+  },
+  {
+    "destination": "corner-shared-face"
+  },
+  {
+    "target": "Room row text",
+    "tap": [
+      102,
+      738
+    ],
+    "row": "[42,680][1038,797]"
+  },
+  {
+    "destination": "corner-dm"
+  }
+]

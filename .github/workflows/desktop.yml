@@ -100,8 +100,8 @@ permissions:
 # One build per ref. A newer push supersedes the whole matrix, never one
 # platform of it.
 concurrency:
-  group: desktop-${{ github.ref }}
-  cancel-in-progress: true
+  group: desktop-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:

@@ -20,8 +20,8 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: prompt-cases-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: prompt-cases-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   changes:

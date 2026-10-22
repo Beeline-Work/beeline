@@ -28,10 +28,6 @@ module.exports = function withLatencyRigNativeProbe(config) {
     return super.dispatchTouchEvent(event)
   }`, 'LatencyRigProbe.begin("room-list")');
     edit(path.join(java, 'PushNotificationActivity.kt'), 'super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n    LatencyRigProbe.begin("push")', 'LatencyRigProbe.begin("push")');
-    edit(path.join(java, 'PushNotificationActivity.kt'),
-      'NotificationManager.onNotificationResponseFromExtras(foregroundExtras)',
-      'android.util.Log.w("LATENCY_PHASE", "push-native-response-start")\n      NotificationManager.onNotificationResponseFromExtras(foregroundExtras)\n      android.util.Log.w("LATENCY_PHASE", "push-native-response-end")',
-      'push-native-response-start');
     edit(path.join(dir, 'AndroidManifest.xml'), '</application>', `<receiver android:name=".LatencyRigReceiver" android:exported="true" android:permission="android.permission.DUMP" /></application>`, 'android:name=".LatencyRigReceiver"');
     return mod;
   }]);

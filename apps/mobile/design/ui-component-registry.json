@@ -61,6 +61,7 @@
     "components/buzz/Button.tsx": ["Button"],
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],
+    "components/buzz/ChoicePlate.tsx": ["TranscriptCardChoicePlate", "inner"],
     "components/buzz/CodeBlock.tsx": ["CodeBlock", "PEEK_LINE_COUNT", "body"],
     "components/buzz/CodeHighlighter.tsx": ["CodeHighlighter"],
     "components/buzz/CommunityInviteEntry.tsx": ["CommunityInviteEntry"],
@@ -336,7 +337,6 @@
     "components/buzz/TranscriptCard.tsx": [
       "SettlingText",
       "TranscriptCard",
-      "TranscriptCardChoicePlate",
       "TranscriptCardHandle",
       "TranscriptCardRowView",
       "content",
@@ -855,8 +855,8 @@
     },
     "components/buzz/NeedsYouCell.tsx": {
       "275d6b296040d0aac9ed": 1,
+      "8a8cb9e8de7bfe6da3bc": 1,
       "8d3bdc37c19ac68bc5e5": 1,
-      "92c4ddbbce62373985c8": 1,
       "c2f35f2b261f6df78b5a": 1
     },
     "components/buzz/NewRoomDialog.tsx": {
@@ -994,9 +994,7 @@
       "1efa450b4113d8417e86": 1,
       "1fa19ec112c867eefefc": 1,
       "3c2d9954efbea41554fd": 1,
-      "3cb2d32bd1d1c60f7ef6": 1,
       "4998fccef724c194c07c": 1,
-      "6c5b0bb9abee62727ee4": 1,
       "6f412c2e4e1742dd9d33": 1,
       "a21c2a51ae37e0dc3cc4": 1,
       "c65b4f2969ad6b8bb9f2": 1,
@@ -1106,6 +1104,10 @@
       "7749a9d5e512818eab6e": 1,
       "8f24d47c1aca32d83c54": 1,
       "e6f089b91161a277e95f": 1
+    },
+    "components/buzz/ChoicePlate.tsx": {
+      "23606cee4b7cb19f699c": 1,
+      "6c5b0bb9abee62727ee4": 1
     }
   }
 }

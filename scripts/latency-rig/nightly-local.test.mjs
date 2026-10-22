@@ -75,3 +75,11 @@ test('CLI retains the last pass on skipped runs, advances only on pass, and reco
     assert.match(failing.stdout, /route\/room\/warm: FAIL n=20 .*p95=450ms target<450ms/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('nightly verdict carries the chosen capture push measurement limits', () => {
+  const result = assessNight({ current: { rows: [{ variant: 'push-unseen-1' }],
+    pushMeasurement: { measured: 'Activity entry to target text native frame commit',
+      nativeResponsePhase: 'absent', excluded: 'foreground JS in-app notice' } }, head: 'abc', night: 'test' });
+  assert.match(result.text, /native-response phase absent/);
+  assert.match(result.text, /Unmeasured: foreground JS in-app notice/);
+});

@@ -1,12 +1,10 @@
 import * as React from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { typeRoles } from '@/buzz/groknight';
 import { HULL_SHEET_INSET } from '@/buzz/hull-sheet-layout';
-
 import { Ionicons } from '@expo/vector-icons';
-import { Pressable } from 'react-native';
 
 /** A word beside the label that acts on the whole section (CLEAR). */
 export type SectionHeaderWordAction = {

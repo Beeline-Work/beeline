@@ -573,8 +573,9 @@ const styles = StyleSheet.create((theme) => {
     dialogActions: {
       flexShrink: 0,
       minHeight: hullDialogActionsMinimumHeight(),
-      // The buttons end on the copy's edge, not inside it.
-      paddingHorizontal: hull.space.lg,
+      // Quiet buttons carry their own md padding, so sm here lands their
+      // labels on the copy's lg edge.
+      paddingHorizontal: hull.space.lg - hull.space.md,
       paddingVertical: HULL_DIALOG_LAYOUT.actionPaddingVertical,
       flexDirection: 'row',
       alignItems: 'center',

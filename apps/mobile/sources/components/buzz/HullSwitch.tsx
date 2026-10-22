@@ -26,6 +26,8 @@ export function HullSwitch({ accessibilityLabel, disabled, onValueChange, testID
       // alone and the state cannot be read.
       ios_backgroundColor={hull.textDisabled}
       onValueChange={onValueChange}
+      // Android and iOS dim a disabled switch themselves; the web does not.
+      style={Platform.OS === 'web' && disabled ? styles.webDisabled : undefined}
       testID={testID}
       thumbColor={thumb}
       // react-native-web paints the on thumb from its own prop.
@@ -35,3 +37,5 @@ export function HullSwitch({ accessibilityLabel, disabled, onValueChange, testID
     />
   );
 }
+
+const styles = { webDisabled: { opacity: 0.42 } } as const;

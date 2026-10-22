@@ -114,6 +114,11 @@ const TRAILING_COLUMN = 72;
 /** The 44 pt tap area a quiet-line action reaches without growing the line. */
 const DESCRIPTION_ACTION_SLOP = 12;
 
+/** A described row's vertical padding and title-to-subtitle gap, from the
+ *  approved roomy subtitle rows; both sit between steps of the spacing scale. */
+const DESCRIBED_ROW_PADDING = 14;
+const DESCRIPTION_GAP = 2;
+
 /**
  * The one index row: Settings, sheets and member rosters. One trailing column,
  * one pressed fill, one disabled opacity, on two densities and two insets.
@@ -212,7 +217,8 @@ export function IndexRow({
     <View
       accessibilityElementsHidden={rowIsSwitch}
       importantForAccessibility={rowIsSwitch ? 'no-hide-descendants' : 'auto'}
-      style={[styles.trailingSlot, styles.trailingControl]}
+      // A pressable row is the switch's tap target; a bare switch needs its own 44.
+      style={[styles.trailingSlot, !onPress && styles.trailingControl]}
     >
       <HullSwitch
         accessibilityLabel={toggle.accessibilityLabel ?? title}
@@ -338,7 +344,7 @@ export function IndexRow({
     (divider ?? (density === 'sheet' ? 'top' : 'bottom')) === 'top'
       ? styles.dividerTop
       : styles.dividerBottom,
-    described && styles.describedRow,
+    described && density === 'page' && styles.describedRow,
     appBoard && styles.boardRow,
   ];
 
@@ -388,9 +394,9 @@ const styles = StyleSheet.create((theme) => {
     sheetInset: { paddingHorizontal: HULL_SHEET_INSET },
     dividerTop: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: hull.border },
     dividerBottom: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: hull.border },
-    // A row with a subtitle keeps its text clear of both hairlines; one
+    // A page row with a subtitle keeps its text clear of both hairlines; one
     // without stays exactly its density's height.
-    describedRow: { paddingVertical: 14 },
+    describedRow: { paddingVertical: DESCRIBED_ROW_PADDING },
     boardRow: {
       minHeight: layout.row,
       gap: hull.space.md,
@@ -430,7 +436,7 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.sm,
-      marginTop: 2,
+      marginTop: DESCRIPTION_GAP,
     },
     descriptionLeadRow: { gap: hull.space.xs },
     descriptionLead: {

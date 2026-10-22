@@ -45,6 +45,8 @@ name: Checks
 
 on:
   pull_request: {}
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
     inputs:
       suite:
@@ -79,7 +81,7 @@ permissions:
 jobs:
   changes:
     name: Detect changes
-    if: github.event_name == 'pull_request'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -98,9 +100,16 @@ jobs:
       workflows: ${{ steps.decide.outputs.workflows }}
       authImage: ${{ steps.decide.outputs.authImage }}
     steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'merge_group'
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         with:
+          base: ${{ github.event.merge_group.base_sha || '' }}
+          ref: ${{ github.event.merge_group.head_sha || '' }}
           # Each list is written out flat and explicit per job rather than
           # composed from YAML anchors, so the diff-membership logic never
           # depends on how dorny/paths-filter treats a nested-list merge.
@@ -248,7 +257,10 @@ jobs:
       # so docs/ and .github/ would fail open.
       - uses: dorny/paths-filter@v3
         id: unmapped
+        continue-on-error: ${{ github.event_name == 'merge_group' }}
         with:
+          base: ${{ github.event.merge_group.base_sha || '' }}
+          ref: ${{ github.event.merge_group.head_sha || '' }}
           predicate-quantifier: every
           filters: |
             unmapped:
@@ -260,6 +272,9 @@ jobs:
 
       - id: decide
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          FILTER_OUTCOME: ${{ steps.filter.outcome }}
+          UNMAPPED_OUTCOME: ${{ steps.unmapped.outcome }}
           PACKAGES: ${{ steps.filter.outputs.packages }}
           UNMAPPED: ${{ steps.unmapped.outputs.unmapped }}
           BODY_MODULE: ${{ steps.filter.outputs.bodyModule }}
@@ -278,6 +293,10 @@ jobs:
           run_everything=false
           if [ "$PACKAGES" = true ] || [ "$UNMAPPED" = true ]; then
             run_everything=true
+          fi
+          if [ "$EVENT_NAME" = merge_group ] && { [ "$FILTER_OUTCOME" != success ] || [ "$UNMAPPED_OUTCOME" != success ]; }; then
+            run_everything=true
+            MAC_HELPER=true
           fi
           set_out() {
             local name=$1 module=$2
@@ -309,7 +328,7 @@ jobs:
 
   typecheck:
     name: TYPECHECK
-    if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'typecheck'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck'
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
@@ -321,7 +340,7 @@ jobs:
       - run: npm ci
       - name: Enforce the shared UI component registry
         env:
-          UI_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+          UI_POLICY_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
         run: |
           git fetch --no-tags --depth=1 origin "$UI_POLICY_BASE"
           node --test scripts/mobile-ui-policy.test.mjs
@@ -357,7 +376,7 @@ jobs:
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS
-    if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
@@ -377,7 +396,7 @@ jobs:
 
   dead-code:
     name: DEAD CODE
-    if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'dead-code'
+    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'dead-code'
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
@@ -405,7 +424,7 @@ jobs:
     # was skipped (a dispatch); without it a skipped prerequisite skips this.
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.body == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.body == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'body-suite'))
       )
     runs-on: ubuntu-latest
@@ -466,7 +485,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.macHelper == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.macHelper == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mac-helper-acceptance'))
       )
     runs-on: [self-hosted, macOS, X64, ios-builder]
@@ -509,7 +528,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
     # Vitest hashes file paths before slicing the sorted list. The latest
@@ -540,7 +559,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
     runs-on: ubuntu-latest
@@ -581,7 +600,7 @@ jobs:
     needs: [changes, server-suite-shard, server-claim-latency]
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
     runs-on: ubuntu-latest
@@ -603,7 +622,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
     # One process running all 175 cases exceeded 34 GiB RSS locally. Split
@@ -631,7 +650,7 @@ jobs:
     needs: [changes, server-integration-shard]
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
     runs-on: ubuntu-latest
@@ -650,7 +669,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.mobileSuite == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
@@ -690,7 +709,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.mobileExportReachability == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
@@ -725,7 +744,7 @@ jobs:
     name: PRODUCTION-CORPUS REPLAY
     needs: changes
     if: >-
-      !cancelled() && github.event_name == 'pull_request' &&
+      !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
     timeout-minutes: 10
@@ -788,7 +807,7 @@ jobs:
     name: FRAME-BUDGET
     needs: [changes, mobile-suite]
     if: >-
-      !cancelled() && github.event_name == 'pull_request' &&
+      !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.frameBudget == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -830,7 +849,7 @@ jobs:
     name: STATE-UPGRADE
     needs: [changes, mobile-suite]
     if: >-
-      !cancelled() && github.event_name == 'pull_request' &&
+      !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.stateUpgrade == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -883,7 +902,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.nativeFingerprint == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.nativeFingerprint == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint'))
       )
     runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
@@ -915,7 +934,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.readme == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
     runs-on: ubuntu-latest
@@ -937,7 +956,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.appLinkAssociations == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
     runs-on: ubuntu-latest
@@ -960,7 +979,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.workflows == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.workflows == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'actionlint'))
       )
     runs-on: ubuntu-latest
@@ -1014,7 +1033,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && (
-        (github.event_name == 'pull_request' && needs.changes.outputs.authImage == 'true') ||
+        ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.authImage == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image'))
       )
     runs-on: ubuntu-latest

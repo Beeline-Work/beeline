@@ -54,14 +54,14 @@ export function TrayGlyph({
     </Svg>
   );
   return onPress ? (
-    <Button label="" variant="quiet" testID={testID}
+    <Button label="" iconOnly variant="quiet" testID={testID}
       accessibilityLabel={needsYouCount > 0 ? `Tray, ${needsYouCount} need you` : 'Tray'}
       accessibilityState={{ selected: filled }} onPress={onPress}
-      icon={<>{glyph}{needsYouCount > 0 ? (
+      icon={<View style={{ width: size, height: size }} testID="tray-icon-landmark">{glyph}{needsYouCount > 0 ? (
         <View style={styles.needsCount} testID="tray-needs-you-count">
           <Text style={styles.needsCountText}>{compactNeedsYouCount(needsYouCount)}</Text>
         </View>
-      ) : null}</>} />
+      ) : null}</View>} />
   ) : glyph;
 }
 
@@ -69,8 +69,8 @@ const NEEDS_COUNT_SIZE = 17;
 const styles = StyleSheet.create((theme) => ({
   needsCount: {
     position: 'absolute',
-    top: 8,
-    right: 7,
+    top: -theme.buzz.space.xs,
+    right: -theme.buzz.space.sm,
     minWidth: NEEDS_COUNT_SIZE,
     height: NEEDS_COUNT_SIZE,
     paddingHorizontal: 4,

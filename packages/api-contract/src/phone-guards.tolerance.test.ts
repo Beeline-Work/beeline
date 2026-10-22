@@ -891,3 +891,13 @@ it.each(['approve', 'connect', 'question'] as const)(
     expect(legacy?.corners[0]?.reason).toBeUndefined();
   },
 );
+
+it('preserves validated merge-queue state in a corner response', () => {
+  const mergeQueue = { headSha: 'a'.repeat(40), combinedSha: 'b'.repeat(40) };
+  const corner = { corner: header, state: 'review', lifecycle: { lifecycle: 'in-review', checks: 'passing', mergeQueue } };
+  const response = readCornerListView({ room: header, corners: [corner], viewer, watchFilters: [] });
+  expect(response?.corners[0]?.lifecycle.mergeQueue).toEqual(mergeQueue);
+  const invalid = { ...corner, lifecycle: { ...corner.lifecycle, mergeQueue: { headSha: 'invalid' } } };
+  expect(readCornerListView({ room: header, corners: [invalid], viewer, watchFilters: [] })?.corners[0]?.lifecycle.mergeQueue)
+    .toBeUndefined();
+});

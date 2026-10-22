@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import Svg, { Circle, Defs, Line, Mask, Rect } from 'react-native-svg';
+import Svg, { Circle, Defs, Mask, Rect } from 'react-native-svg';
 import brand from '@/buzz/brand.json';
 import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import { chromeStrokeWidth } from './MembersGlyph';
@@ -32,33 +32,15 @@ export function MembersAgentsGlyph({
       <Defs>
         <Mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={24} height={24}>
           <Rect x={0} y={0} width={24} height={24} fill="white" stroke="none" />
-          <Rect
-            x={2.9}
-            y={8.9}
-            width={12.5}
-            height={10.1}
-            rx={2.2}
-            fill="black"
-            stroke="black"
-            strokeWidth={2.2}
-          />
-          <Line
-            x1={9.1}
-            y1={8.9}
-            x2={9.1}
-            y2={7.2}
-            stroke="black"
-            strokeWidth={strokeWidth + 2.2}
-          />
-          <Circle cx={9.1} cy={6.9} r={2.1} fill="black" stroke="none" />
+          <Rect x={2.2} y={8.6} width={12.2} height={11.2} rx={3.5}
+            fill="black" stroke="black" strokeWidth={strokeWidth + 2.6} />
         </Mask>
       </Defs>
-      <Circle cx={15.8} cy={9.1} r={5} mask={`url(#${maskId})`} />
-      <Line x1={9.1} y1={8.9} x2={9.1} y2={7.2} />
-      <Circle cx={9.1} cy={6.9} r={1} fill={color} stroke="none" />
-      <Rect x={2.9} y={8.9} width={12.5} height={10.1} rx={2.2} />
-      <Circle cx={6.5} cy={13.9} r={0.85} fill={color} stroke="none" />
-      <Circle cx={11.7} cy={13.9} r={0.85} fill={color} stroke="none" />
+      <Circle cx={16.9} cy={8.6} r={4.9 + strokeWidth / 2}
+        fill={color} stroke="none" mask={`url(#${maskId})`} />
+      <Rect x={2.2} y={8.6} width={12.2} height={11.2} rx={3.5} />
+      <Rect x={5.65} y={11.9} width={1.8} height={3.9} rx={0.9} fill={color} stroke="none" />
+      <Rect x={9.15} y={11.9} width={1.8} height={3.9} rx={0.9} fill={color} stroke="none" />
     </Svg>
   );
 }

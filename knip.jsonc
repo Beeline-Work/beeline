@@ -134,6 +134,9 @@
         "scripts/desktop-ui-fixes-proof.tsx",
         "scripts/room-card-spacing-proof.tsx",
         "scripts/render-room-list-proof.mjs",
+        // esbuild and Gradle load the header alignment proof entries by path.
+        "scripts/render-header-alignment-proof.mjs",
+        "scripts/header-alignment-proof/{native,web}.tsx",
         "scripts/room-list-proof.tsx",
         "scripts/room-list-corner-longpress-proof.tsx",
         "scripts/room-list-gestures-proof.tsx",

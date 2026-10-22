@@ -38,7 +38,7 @@ vi.mock('react-native-unistyles', () => {
     agentAccent: '#d7af5f',
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     radius: 3,
-    type: { hero: {}, body: {}, meta: {}, sectionHead: {}, machine: {} },
+    type: { hero: {}, body: {}, meta: {}, sectionHead: {}, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 }, machine: {} },
     layout: { sectionGap: 16, row: 56 },
   };
   return {

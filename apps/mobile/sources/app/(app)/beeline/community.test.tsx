@@ -99,7 +99,7 @@ vi.mock('@/components/buzz/ChevronGlyph', () => ({
   ChevronGlyph: () => null,
 }));
 vi.mock('@/components/buzz/RoomGlyph', () => ({ RoomGlyph: () => null }));
-vi.mock('@/components/buzz/MembersGlyph', () => ({ MembersGlyph: () => null }));
+vi.mock('@/components/buzz/MembersAgentsGlyph', () => ({ MembersAgentsGlyph: () => null }));
 
 import WorkspaceChoice from './community';
 

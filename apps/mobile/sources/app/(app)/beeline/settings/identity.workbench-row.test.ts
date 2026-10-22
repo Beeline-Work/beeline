@@ -1,3 +1,4 @@
+vi.mock('@/components/buzz/WorkspaceSettingsPanel', async () => { const React = await import('react'); return { WORKSPACE_VISIBILITY_LABELS: { public: 'Public', 'invite-only': 'Invite-only' }, default: React.forwardRef((props: object, _ref) => React.createElement('WorkspaceSettings', props)) }; });
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
@@ -47,12 +48,13 @@ const account = vi.hoisted(() => ({
 
 const focus = vi.hoisted(() => ({ refocus: undefined as undefined | (() => void) }));
 const workbench = vi.hoisted(() => ({ readWorkbench: vi.fn() }));
+const routeParams = vi.hoisted(() => ({ value: {} as Record<string, string> }));
 
 // Focus is a counter the test bumps: each bump re-runs the effect, the way
 // expo-router runs a focus effect again when the screen regains focus.
 vi.mock('expo-router', () => ({
   router: navigation,
-  useLocalSearchParams: () => ({}),
+  useLocalSearchParams: () => routeParams.value,
   useFocusEffect: (effect: () => void | (() => void)) => {
     const [generation, setGeneration] = React.useState(0);
     focus.refocus = () => setGeneration((value) => value + 1);
@@ -119,6 +121,7 @@ vi.mock('@beeline/buzz-client', () => ({
   finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
   isWorkspaceListView: () => true,
+  isWorkspaceView: (value: any) => Array.isArray(value?.members),
   lookupRecovery: vi.fn(async () => []),
   lookupManagedIdentity: vi.fn(async () => null),
   normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),
@@ -469,5 +472,68 @@ describe('Settings account actions', () => {
     );
     expect(account.deleteAccount).toHaveBeenCalledOnce();
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/onboarding');
+  });
+});
+
+describe('Workspace tab in Settings', () => {
+  function respond(role: 'owner' | 'admin' | 'member') {
+    workbench.readWorkbench.mockResolvedValue(view('2 connections'));
+    phoneOperation.mockImplementation(async (name: string) => name === 'readIdentitySettings'
+      ? { identity: { personId: VIEWER, face: null, pushLevel: 'attention', handle: null, name: 'Captain' },
+          workspaces: { workspaces: [{ id: 'workspace-1', name: 'Beeline', role, visibility: 'public' }] },
+          workbench: await workbench.readWorkbench() }
+      : {});
+  }
+
+  it.each(['owner', 'admin'] as const)('replaces the Workspace row with a tab for a %s', async (role) => {
+    respond(role);
+    const renderer = await renderScreen();
+    expect(renderer.root.findAllByProps({ testID: 'settings-workspace-row' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('WorkspaceSettings')).toHaveLength(0);
+    expect(headings(renderer)).toEqual(expect.arrayContaining(['CONNECTORS', 'DEVICE', 'ACCOUNT']));
+
+    const tab = renderer.root.findByProps({ testID: 'settings-workspace-tab' });
+    expect(tab.props.accessibilityState).toEqual({ selected: false });
+    act(() => tab.props.onPress());
+
+    expect(renderer.root.findByProps({ testID: 'settings-workspace-tab' }).props.accessibilityState)
+      .toEqual({ selected: true });
+    expect(renderer.root.findByType('WorkspaceSettings').props.workspaceId).toBe('workspace-1');
+    expect(headings(renderer)).not.toContain('CONNECTORS');
+    const caption = renderer.root.findByProps({ testID: 'settings-scope-caption' });
+    const spoken = (node: any): string => typeof node === 'string' ? node
+      : (node?.children ?? []).map(spoken).join('');
+    expect(spoken(caption)).toContain(`Public workspace · you are ${role}`);
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
+  it('opens on the workspace tab from an old Workspace settings link', async () => {
+    respond('owner');
+    routeParams.value = { tab: 'workspace', workspaceId: 'workspace-1' };
+    try {
+      const renderer = await renderScreen();
+      expect(renderer.root.findByType('WorkspaceSettings').props.workspaceId).toBe('workspace-1');
+    } finally {
+      routeParams.value = {};
+    }
+  });
+
+  it('shows a member no workspace settings at all, even from an old Workspace settings link', async () => {
+    respond('member');
+    routeParams.value = { tab: 'workspace', workspaceId: 'workspace-1' };
+    try {
+      const renderer = await renderScreen();
+      const { SettingsScopeTabs } = await import('@/components/buzz/SettingsScopeTabs');
+      const { ProfileIdentity } = await import('@/components/buzz/ProfileIdentity');
+      expect(renderer.root.findAllByType(SettingsScopeTabs)).toHaveLength(0);
+      expect(renderer.root.findAll((node) => node.props.accessibilityRole === 'tab')).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'settings-workspace-tab' })).toHaveLength(0);
+      expect(renderer.root.findAllByProps({ testID: 'settings-workspace-row' })).toHaveLength(0);
+      expect(renderer.root.findAllByType('WorkspaceSettings')).toHaveLength(0);
+      expect(renderer.root.findAllByType(ProfileIdentity)).toHaveLength(1);
+      expect(headings(renderer)).toEqual(expect.arrayContaining(['CONNECTORS', 'DEVICE', 'ACCOUNT']));
+    } finally {
+      routeParams.value = {};
+    }
   });
 });

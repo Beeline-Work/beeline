@@ -324,7 +324,11 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
     const add = renderer.root.findByProps({ testID: 'room-roster-add-members' });
     expect(add.props.accessibilityLabel).toBe('Add members');
-    expect(add.props.style({ pressed: false })[0].minHeight).toBeGreaterThanOrEqual(44);
+    {
+      const box = add.props.style({ pressed: false })[0];
+      expect(box.height + add.props.hitSlop.top + add.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
+      expect(box.width + add.props.hitSlop.left + add.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+    }
     act(() => add.props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);
   });

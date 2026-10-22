@@ -1,0 +1,37 @@
+{
+  "sectionHeaderComponent": "apps/mobile/sources/components/buzz/RoomListSectionHeader.tsx",
+  "sectionRightOffsetsPx": {
+    "android": {
+      "rooms": 16,
+      "directMessages": 16,
+      "people": 16,
+      "agents": 16
+    },
+    "desktop": {
+      "rooms": 16,
+      "directMessages": 16,
+      "people": 16,
+      "agents": 16
+    }
+  },
+  "sectionGlyphBoxRightInsetPx": 30,
+  "sectionActionCenterRightInsetPx": 38,
+  "primaryRow": {
+    "iconSizePx": 22,
+    "buttonWidthPx": 56,
+    "buttonHeightPx": 44,
+    "iconPaddingWithinButtonPx": 17,
+    "rightmostTrayButtonInsetPx": 16,
+    "android": {
+      "membersRight": 340,
+      "trayRight": 396,
+      "surfaceRight": 412
+    },
+    "desktop": {
+      "membersRight": 263,
+      "trayRight": 323,
+      "surfaceRight": 339
+    }
+  },
+  "productionDesktopRoomsCropDifferentPixels": 0
+}

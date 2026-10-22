@@ -32,7 +32,7 @@ const decorativeAccentFills = new Set([
   'components/buzz/RoomUnreadControls.tsx:badge',
   'components/buzz/RoomListToolbar.tsx:selectedRule',
   // The offline band under a Room header; its Retry is text, not a plate.
-  'components/buzz/RoomListToolbar.tsx:needsCount',
+  'components/buzz/TrayGlyph.tsx:needsCount',
   'components/buzz/StateDot.tsx:pulse',
   'components/buzz/TranscriptCard.tsx:initialValues',
   // The arrival halo's three glow layers (the theme brass at falling opacity).

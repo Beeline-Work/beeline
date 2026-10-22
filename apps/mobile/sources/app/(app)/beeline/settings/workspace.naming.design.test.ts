@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-const source = readFileSync(new URL('./workspace.tsx', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../../../components/buzz/WorkspaceSettingsPanel.tsx', import.meta.url), 'utf8');
 
 function styleBlock(text: string, name: string): string {
   const start = text.indexOf(`    ${name}: {`);
@@ -18,30 +18,31 @@ function styleBlock(text: string, name: string): string {
   throw new Error(`unterminated style ${name}`);
 }
 
+const tabs = readFileSync(new URL('../../../../components/buzz/SettingsScopeTabs.tsx', import.meta.url), 'utf8');
+const route = readFileSync(new URL('./workspace.tsx', import.meta.url), 'utf8');
+
 describe('Workspace naming', () => {
-  it('uses Workspace for the page', () => {
-    expect(source).toContain(
-      '<PageHeader onBack={() => router.back()} prominent title={WORKSPACE_LABEL} />',
-    );
+  it('lives in the Settings workspace tab, and the old page redirects there', () => {
+    expect(source).not.toContain('<PageHeader');
     expect(source).not.toContain('{WORKSPACE_LABEL} Settings');
+    expect(route).toContain('<Redirect');
+    expect(route).toContain("tab: 'workspace'");
   });
 
-  it('centres a 2px brass-bezelled workspace tile and drops the WORKSPACE grouping', () => {
-    expect(styleBlock(source, 'ident')).toContain("alignItems: 'center'");
-    // The 2px brass bezel is named once, with the rest of the tile's geometry
+  it('wears the 2px brass bezel on the selected tab tile and drops the WORKSPACE grouping', () => {
+    // The bezel is named once, with the rest of the tile's geometry
     // (`buzz/workspace-tile`, where the picture's seat is derived from it).
-    expect(source).toContain('const PICTURE_TILE = WORKSPACE_SETTINGS_TILE');
-    expect(styleBlock(source, 'tile')).toContain('borderWidth: PICTURE_TILE.borderWidth');
-    expect(styleBlock(source, 'tile')).toContain('borderColor: hull.accent');
-    expect(source).toContain('testID="workspace-picture-change"');
-    expect(source).not.toMatch(/sectionLabel}>{WORKSPACE_LABEL}</);
+    expect(tabs).toContain('const tile = WORKSPACE_SETTINGS_TILE');
+    expect(styleBlock(tabs, 'tile')).toContain('borderWidth: tile.borderWidth');
+    expect(styleBlock(tabs, 'tileSelected')).toContain('borderColor: hull.accent');
+    expect(source).not.toMatch(/title="Workspace"|title={WORKSPACE_LABEL}/);
     expect(source).not.toContain('Danger zone');
   });
 
-  it('keeps Rooms as a headed list and delete as a red row', () => {
-    expect(source).toMatch(/sectionLabel}>{ROOM_LABEL}s</);
-    expect(source).toContain('testID="workspace-delete-row"');
+  it('heads General, People and Rooms and keeps delete as a red row', () => {
+    expect(source).toContain('<RoomListSectionHeader title="General" inset="content" />');
+    expect(source).toContain('<RoomListSectionHeader title="People" inset="content" />');
+    expect(source).toContain('<RoomListSectionHeader title={`${ROOM_LABEL}s`} inset="content" />');
     expect(source).toMatch(/testID="workspace-delete-row"[\s\S]*tone="destructive"/);
-    expect(source).toContain('testID="workspace-census"');
   });
 });

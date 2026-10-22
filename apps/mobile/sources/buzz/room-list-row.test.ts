@@ -138,6 +138,13 @@ describe('Room list sections', () => {
     ]);
   });
 
+  it('keeps empty sections available for creation actions when requested', () => {
+    expect(roomListSections([], true)).toEqual([
+      { kind: 'rooms', title: 'Rooms', data: [] },
+      { kind: 'messages', title: 'Direct messages', data: [] },
+    ]);
+  });
+
   it('hides closed Rooms and DMs from the deck while retaining them in the source view', () => {
     const closedRoom = { ...chat('closed-room', 3), closed: true };
     const closedDm = { ...chat('closed-dm', 4, true), closed: true };

@@ -1,7 +1,7 @@
 import React from 'react';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
-import WorkspaceSettings from '../sources/app/(app)/beeline/settings/workspace';
+import WorkspaceSettings from '../sources/components/buzz/WorkspaceSettingsPanel';
 
 const FANTASTIK = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const GENERAL = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -28,7 +28,7 @@ const state = globalThis as typeof globalThis & {
  * "fantastik", an invite-only Room they have not joined.
  */
 async function read() {
-  createRoot(document.getElementById('root')!).render(<WorkspaceSettings />);
+  createRoot(document.getElementById('root')!).render(<WorkspaceSettings workspaceId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" />);
   await pause();
   await pause();
   const rows = { fantastik: textOf(`room-visibility-${FANTASTIK}`), general: textOf(`room-visibility-${GENERAL}`) };

@@ -1,3 +1,4 @@
+vi.mock('@/components/buzz/WorkspaceSettingsPanel', async () => { const React = await import('react'); return { WORKSPACE_VISIBILITY_LABELS: { public: 'Public', 'invite-only': 'Invite-only' }, default: React.forwardRef((props: object, _ref) => React.createElement('WorkspaceSettings', props)) }; });
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
@@ -83,6 +84,7 @@ vi.mock('@beeline/buzz-client', () => ({
   finishOidcBind: vi.fn(),
   fallbackPersonName: (pubkey: string) => `Person ${pubkey.slice(0, 4)}`,
   isWorkspaceListView: () => true,
+  isWorkspaceView: (value: any) => Array.isArray(value?.members),
   lookupRecovery: vi.fn(async () => []),
   lookupManagedIdentity: vi.fn(async () => null),
   normalizeNip05Identifier: (value: string) => value.trim().toLowerCase(),

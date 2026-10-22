@@ -40,7 +40,7 @@ export function roomRowShowsCornerMark(
 }
 
 /** Rooms lead the index; direct messages follow in their own newest-first section. */
-export function roomListSections(chats: readonly ChatListItem[]): RoomListSection[] {
+export function roomListSections(chats: readonly ChatListItem[], includeEmpty = false): RoomListSection[] {
   const visibleChats = chats.filter((item) => !item.closed);
   const rooms = visibleChats.filter((item) => !item.directMessage);
   const messages = visibleChats
@@ -51,8 +51,8 @@ export function roomListSections(chats: readonly ChatListItem[]): RoomListSectio
         (left.latestMessage?.createdAt ?? left.room.updatedAt ?? 0),
     );
   return [
-    ...(rooms.length ? [{ kind: 'rooms' as const, title: 'Rooms' as const, data: rooms }] : []),
-    ...(messages.length
+    ...(rooms.length || includeEmpty ? [{ kind: 'rooms' as const, title: 'Rooms' as const, data: rooms }] : []),
+    ...(messages.length || includeEmpty
       ? [{ kind: 'messages' as const, title: 'Direct messages' as const, data: messages }]
       : []),
   ];

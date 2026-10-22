@@ -13,11 +13,14 @@ package.json or lockfile):
 
     npm install --no-save --package-lock=false --ignore-scripts react-native-svg@15.15.3
 
-Start with `../node_modules/.bin/expo start --go --localhost --port 8099`.
+Start with `../node_modules/.bin/expo start --go --localhost --port 8099 --clear`.
 Boot an isolated leased emulator with `beeline emulator -avd buzzy_api36
 -no-window -gpu swiftshader_indirect`. Select it with `adb -s emulator-<port>`;
 reverse tcp:8099 and open exp://127.0.0.1:8099 in Expo Go. Dismiss its first-run
 menu. Set proof-theme.ts to bone or obsidian and reload for each screenshot.
+
+Clear Metro’s cache after switching the production source between broken and fixed;
+verify that the displayed row has the intended cell before saving a screenshot.
 
 Before capture: omit only the live glyphCell (as #2757 did), reload and observe
 that the label begins at 8dp. Restore the cell and reload: the fixed 18dp mark

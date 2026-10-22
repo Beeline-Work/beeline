@@ -5895,11 +5895,6 @@ export function BuzzChatSurface({
         return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
-      if (item.daemonFact?.type === 'corner-open' || (item.daemonFact && item.systemEvent?.kind === 'corner-opened')) {
-        // Its source message is not resident, so the marker stands on its own row.
-        return renderCornerMarker(item);
-      }
-
       if (item.daemonFact) {
         return (
           <View>
@@ -6267,7 +6262,9 @@ export function BuzzChatSurface({
                     state={cornerHeaderDisplay?.status}
                     headerSuffix={cornerHeaderDisplay?.headerSuffix}
                     waitingReason={cornerHeaderSource?.reason}
-                    onReasonPress={cornerHeaderSource?.itemId ? () => {
+                    blocker={cornerHeaderSource?.blocker}
+                    viewerId={viewerPubkey}
+                    onReasonPress={cornerHeaderSource?.itemId && (!cornerHeaderSource.blocker || cornerHeaderSource.blocker.kind === 'message') ? () => {
                       requestMessageJump(scrollController, cornerHeaderSource.itemId!, jumpToTranscriptMessage);
                     } : undefined}
                     style={[

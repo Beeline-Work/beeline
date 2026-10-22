@@ -2363,3 +2363,30 @@ it('excludes concurrent avatar jobs across rooms and refuses non-owner generatio
   expect((await phone.readAgent(W, A, H))?.avatarGenerationPending).toBe(false);
   await expect(send('@hoots /draw-avatar', R)).resolves.toBeDefined();
 });
+
+
+it.each([
+  ['NUL', 'before\0after', 'before\uFFFDafter'],
+  ['high surrogate', 'before\uD800after', 'before\uFFFDafter'],
+  ['low surrogate', 'before\uDC00after', 'before\uFFFDafter'],
+  ['valid Unicode', 'café 😀 𝄞', 'café 😀 𝄞'],
+  ['literal escapes', String.raw`\u0000 \ud800 \\u0000`, String.raw`\u0000 \ud800 \\u0000`],
+])('Reproduction R-ACTIVITY-UNICODE: persists and reads %s tool output with stable replay', async (_label, output, expected) => {
+  await send('@hoots inspect output', C);
+  const [command] = await commands(A, C);
+  await claim(command!);
+  const activity = [{ kind: 'tool' as const, title: 'Inspect', operation: 'read', status: 'completed', output,
+    files: [{ path: output }], plan: { items: [{ step: output, status: 'completed' as const }] } }];
+  const input = { roomId: C, requestId: command!.turnRequestId!, generationId: 'g1',
+    cornerActivityKey: 'unicode-proof', activity };
+  const first = await daemon.execute('postAgentActivity', input, A);
+  expect(await daemon.execute('postAgentActivity', input, A)).toEqual(first);
+  const stored = [{ ...activity[0], output: expected, files: [{ path: expected }],
+    plan: { items: [{ step: expected, status: 'completed' }] } }];
+  expect((await db.query('SELECT activity FROM messages WHERE id=$1', [first.id])).rows[0]?.activity).toEqual(stored);
+  const view = await phone.readRoom(C, H);
+  expect(view?.toolRows?.find(row => row.id === first.id)?.activity).toEqual(stored);
+  expect(activity[0]?.output).toBe(output);
+  await expect(daemon.execute('postAgentActivity', { ...input,
+    activity: [{ ...activity[0]!, output: 'different output' }] }, A)).rejects.toThrow('conflicts');
+});

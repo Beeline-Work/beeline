@@ -354,23 +354,13 @@ describe('one helper process hosts every agent on the machine', () => {
     const { configPaths, env, signals } = await machine(2);
     const restarting = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const sibling = (await readRuntimeRecord(configPaths[1]!)).agent.publicKey;
-    let requestRestart!: (reason: AgentExitReason) => void;
-    const firstExit = new Promise<AgentExitReason>((resolveExit) => { requestRestart = resolveExit; });
     const fake = fakeRuntimes((agentId, run) =>
-      agentId === restarting && run === 1 ? firstExit : undefined);
+      agentId === restarting && run === 1 ? Promise.resolve('restart-requested') : undefined);
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
-    // Startup reads are independent: one agent can restart before its sibling
-    // has entered runAgent. Exercise the restart only once both are serving.
-    await vi.waitFor(() => {
-      expect(fake.runs.get(restarting)).toBe(1);
-      expect(fake.runs.get(sibling)).toBe(1);
-    });
-    const siblingSignal = fake.signals.get(sibling);
-    requestRestart('restart-requested');
     await vi.waitFor(() => expect(fake.runs.get(restarting)).toBe(2));
-    expect(fake.runs.get(sibling)).toBe(1);
-    expect(fake.signals.get(sibling)).toBe(siblingSignal);
-    expect(siblingSignal!.aborted).toBe(false);
+    // Agent startup is concurrent; the restarting agent can finish first.
+    await vi.waitFor(() => expect(fake.runs.get(sibling)).toBe(1));
+    expect(fake.signals.get(sibling)!.aborted).toBe(false);
     signals.emit('SIGTERM');
     expect((await running).reason).toBe('stopped');
   });
@@ -558,7 +548,6 @@ describe('one update drain for every hosted agent', () => {
     await symlink('beeline-releases/old', layout.libDir);
     env.BEELINE_LIB_DIR = layout.libDir;
     // Local archive and server only: no service-unit writes or production Workspace.
-    const helperEnv = { ...env, BEELINE_UPDATE_DISABLE: '1' };
     const archiveRoot = resolve(root, 'published');
     const publishedLib = resolve(archiveRoot, 'lib/beeline');
     await mkdir(resolve(publishedLib, 'codegraph/bin'), { recursive: true });
@@ -683,9 +672,11 @@ describe('one update drain for every hosted agent', () => {
     try {
       await send('held', 'long-room');
       if (handoff !== 'quiet gap') vi.useFakeTimers({ toFake: ['Date'] });
-      running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
+      // Registration notices use a no-op worker; the published archive arrives only through the local manifest below.
+      running = runMachineHelper({ configPaths, env, signals, runAgent,
+        runUpdateWorker: async () => undefined, exitProcess: () => undefined });
       await vi.waitFor(() => expect(claims.has('held')).toBe(true));
-      const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...helperEnv,
+      const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...env,
         BEELINE_UPDATE_MANIFEST_URL: `${origin}/manifest.json` }, logger: () => undefined });
       await manager.checkAndApply();
       await requestMachine(root, { operation: 'update', releaseId: 'new' }, () => true);
@@ -727,7 +718,7 @@ describe('one update drain for every hosted agent', () => {
       // Arrives with no serving helper. The successor's initial GET claims it.
       await send('during-restart');
       const queuedAt = Date.now();
-      running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
+      running = runMachineHelper({ configPaths, env, signals, runAgent, exitProcess: () => undefined });
       await vi.waitFor(() => expect(replies).toContain('during-restart'), { timeout: 2_000 });
       const successorClaimMs = claims.get('during-restart')! - queuedAt;
       const successorAnswerMs = Date.now() - queuedAt;

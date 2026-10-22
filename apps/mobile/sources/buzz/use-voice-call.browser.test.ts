@@ -3,6 +3,38 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
+it.skipIf(!existsSync(CHROME))('MOBILE-C: rendered Stop cancels a pending connection without a failure report', async () => {
+  const mobile = process.cwd();
+  const { result, status, stderr } = await runBrowserProof({ mobile, width: 480, height: 300,
+    entry: path.join(mobile, 'scripts/call-feedback-proof.tsx'), budgetMs: 5000,
+    shims: {
+      ...webProofShims(mobile),
+      '@/constants/Typography': 'export const Typography = { default: () => ({}) };',
+      './client-error-report': `export const errorDiagnostic = e => ({ message: String(e) });
+        export const reportClientError = async (...args) => globalThis.__callFeedback.reports.push(args);`,
+      '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async () => () => {}, subscribeConnected: () => () => {} });',
+      'livekit-client': `export const RoomEvent = { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels', AudioPlaybackStatusChanged: 'audio-ready' }; export const Track = {};`,
+      './voice-transport': `let rejectConnect;
+        const fixture = globalThis.__callFeedback = { cancelConnect: true, reports: [], closed: 0, leaves: 0 };
+        const room = { on() {}, remoteParticipants: new Map(), localParticipant: {},
+          connect: () => new Promise((_, reject) => { rejectConnect = reject; }),
+          disconnect: async () => rejectConnect(new Error('Client initiated disconnect')) };
+        export const subscribeVoiceMicrophone = () => () => {};
+        export const subscribeVoiceResume = () => () => {};
+        export const voiceFetch = async url => {
+          if (url.endsWith('/leave')) fixture.leaves++;
+          return new Response(JSON.stringify({ sessionId: 'proof-session',
+            call: { id: 'proof-call', roomId: 'proof-room', participants: [] }, url: 'wss://proof', token: 'proof', agents: [] }));
+        };
+        export const createVoiceRoom = async () => ({ room, configureStop: async () => {}, closeAudio: async () => { fixture.closed++; } });`,
+      './runtime-config': 'export const getBuzzRuntimeConfig = () => ({ monolithUrl: "http://proof" });',
+    },
+  });
+  console.log(result);
+  expect(status, stderr).toBe(0);
+  expect(result).toContain('RESULT PASS');
+}, 90_000);
+
 it.skipIf(!existsSync(CHROME))('call-feedback-1: mic levels move the rendered composer waveform in Chrome', async () => {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({ mobile, width: 480, height: 300,

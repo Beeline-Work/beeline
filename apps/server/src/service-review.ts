@@ -1,7 +1,5 @@
 import type { SqlDatabase } from './database.js';
 
-export const SERVICE_REVIEW_EFFECTIVE_AT = '2026-10-18T00:00:00-04:00';
-
 /** These SQL reads are executable with the operator's read-only Neon route. */
 export const SERVICE_REVIEW_READ_SCHEMA = `
 CREATE OR REPLACE FUNCTION service_review_targets(review_agent text,review_run text)
@@ -10,9 +8,7 @@ BEGIN
   RETURN QUERY SELECT v.workspace_id FROM service_review_visits v
     JOIN workspaces w ON w.id=v.workspace_id
     WHERE v.agent_id=review_agent AND v.run_id=review_run AND w.allow_fix_sweep=true
-      AND v.visited_at>now()-interval '1 day'
-      AND EXISTS(SELECT 1 FROM service_review_rollout rollout WHERE rollout.id=1
-        AND effective_at<=now());
+      AND v.visited_at>now()-interval '1 day';
 END $$;
 CREATE OR REPLACE FUNCTION service_review_page(review_agent text,review_run text,review_workspace uuid,after_id text DEFAULT '')
 RETURNS TABLE(id text,room_id uuid,text text,activity jsonb) LANGUAGE plpgsql STABLE AS $$
@@ -23,8 +19,6 @@ BEGIN
       WHERE w.id=review_workspace AND w.allow_fix_sweep=true
         AND EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=w.id AND v.agent_id=review_agent AND v.run_id=review_run
           AND v.visited_at > now()-interval '1 day')
-        AND EXISTS(SELECT 1 FROM service_review_rollout rollout WHERE rollout.id=1
-          AND effective_at<=now())
     ), content AS (
       SELECT m.id,m.room_id,m.text,
         coalesce(m.activity,'{}'::jsonb) || jsonb_build_object('createdAt',m.created_at,'rowKind','message') activity FROM messages m
@@ -43,7 +37,7 @@ BEGIN
 END $$;
 `;
 
-/** Reserve opted-in workspaces once the policy is effective. */
+/** Reserve opted-in workspaces. */
 export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string, daily = false): Promise<string[]> {
   return database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
@@ -54,7 +48,6 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
           coalesce((SELECT max(v.read_through) FROM service_review_visits v
             WHERE v.workspace_id=w.id AND v.completed_at IS NOT NULL),now()-interval '24 hours'),now()
         FROM workspaces w WHERE w.allow_fix_sweep=true
-          AND EXISTS(SELECT 1 FROM service_review_rollout WHERE id=1 AND effective_at<=now())
           AND EXISTS(SELECT 1 FROM messages m JOIN rooms r ON r.id=m.room_id
             JOIN identities i ON i.id=m.author_id
             WHERE r.workspace_id=w.id AND i.kind='human' AND m.presentation='message'
@@ -64,12 +57,9 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
       return result.rows.map(row => row.workspace_id);
     }
     const result = await db.query<{ workspace_id: string }>(`
-      WITH rollout AS (
-        SELECT 1 FROM service_review_rollout
-        WHERE id=1 AND effective_at <= now()
-      ), candidates AS (
+      WITH candidates AS (
         SELECT w.id FROM workspaces w
-        WHERE w.allow_fix_sweep=true AND EXISTS(SELECT 1 FROM rollout)
+        WHERE w.allow_fix_sweep=true
           AND NOT EXISTS(SELECT 1 FROM service_review_visits v
             WHERE v.workspace_id=w.id AND v.visited_at > now()-interval '14 days')
         ORDER BY (w.created_at > now()-interval '7 days') DESC,

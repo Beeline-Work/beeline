@@ -63,9 +63,9 @@ describe('Workspace session scheduler', () => {
   });
 
   it('accepts a positive per-Room env override and safely ignores invalid values', () => {
-    expect(resolvePerRoomLiveSessions({ BUZZY_BODY_MAX_SESSIONS_PER_ROOM: '7' })).toBe(7);
+    expect(resolvePerRoomLiveSessions({ BEELINE_BODY_MAX_SESSIONS_PER_ROOM: '7' })).toBe(7);
     for (const value of ['', '0', '-1', '1.5', 'nope', 'Infinity']) {
-      expect(resolvePerRoomLiveSessions({ BUZZY_BODY_MAX_SESSIONS_PER_ROOM: value })).toBe(10);
+      expect(resolvePerRoomLiveSessions({ BEELINE_BODY_MAX_SESSIONS_PER_ROOM: value })).toBe(10);
     }
   });
 
@@ -263,13 +263,13 @@ describe('Workspace session scheduler', () => {
   });
 
   it('reads both retention ceilings from env and ignores invalid values', () => {
-    expect(resolveMaxWarmSessions({ BUZZY_BODY_MAX_WARM_SESSIONS: '3' })).toBe(3);
-    expect(resolveSessionIdleMs({ BUZZY_BODY_SESSION_IDLE_MS: '90000' })).toBe(90_000);
+    expect(resolveMaxWarmSessions({ BEELINE_BODY_MAX_WARM_SESSIONS: '3' })).toBe(3);
+    expect(resolveSessionIdleMs({ BEELINE_BODY_SESSION_IDLE_MS: '90000' })).toBe(90_000);
     for (const value of ['', '0', '-1', '1.5', 'nope', 'Infinity']) {
-      expect(resolveMaxWarmSessions({ BUZZY_BODY_MAX_WARM_SESSIONS: value })).toBe(
+      expect(resolveMaxWarmSessions({ BEELINE_BODY_MAX_WARM_SESSIONS: value })).toBe(
         DEFAULT_MAX_WARM_SESSIONS,
       );
-      expect(resolveSessionIdleMs({ BUZZY_BODY_SESSION_IDLE_MS: value })).toBe(
+      expect(resolveSessionIdleMs({ BEELINE_BODY_SESSION_IDLE_MS: value })).toBe(
         DEFAULT_SESSION_IDLE_MS,
       );
     }

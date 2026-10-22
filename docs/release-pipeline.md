@@ -43,8 +43,8 @@ A receipt says "requested"; it does not prove GitHub accepted the request.
 No credentials, tokens or recovery input values are stored in the receipt.
 
 The server passes `dispatched_by` with these fields and the audit message id.
-The workflow requires that attribution, shows it in its run name and summary,
-and preserves it on automatic retries. Anonymous agent dispatches are refused.
+The workflow requires that attribution and shows it in its run name and
+summary. Anonymous agent dispatches are refused.
 Recovery operators cannot override the server-supplied attribution.
 
 An explicitly human-commanded recurring release may use the same tool on each
@@ -70,9 +70,7 @@ the ordinary command-grant rules.
 
 A person can cancel a stuck run in GitHub Actions → Unified production release
 → the run → Cancel workflow, or run `gh-axi run cancel <run-id>`. Wait for
-cancellation to finish before dispatching recovery. Automatic same-identity
-retries remain inside the workflow and queue behind their parent as it ends;
-they skip redispatch if another release is active.
+cancellation to finish before dispatching recovery.
 
 Keep the v0.1.90–v0.1.94 draft releases and their assets intact. They represent
 partially shipped attempts, not verified successful releases. On an explicit
@@ -123,23 +121,47 @@ IPA's bundle, version, build number, runtime and required photo purpose string
 (`scripts/ios-build-evidence.py`), then verifies the exact Apple delivery UUID
 and a new `VALID` build under App Store app `6803948500`
 (`scripts/ios-store-build.mjs`). Apple processing errors fail immediately;
-missing or unfinished builds fail after 20 minutes. The native checkpoint keeps
+missing or unfinished builds fail after 20 minutes. The native build evidence keeps
 the delivery UUID and App Store build ID. Transport success alone does not
-authorize the native checkpoint or OTA promotion. Android store binaries
+authorize the native component or OTA promotion. Android store binaries
 build locally on the Linux runner and use the existing Google Play authentication
-and upload path. Three legs now contend for that single machine: the iOS store
-build, the helper `darwin-x64` bundle, and the `MAC HELPER ACCEPTANCE` PR gate -
-that queueing is why the release budget was widened for attempts that build the
-macOS helper (or deliver on a reused artifact so it never had to).
+and upload path. The helper `darwin-x64` bundle builds on GitHub's hosted
+`macos-15-intel` image, so it never queues behind an iOS store build.
 
 Selected jobs build immutable artifacts named with both release version and
-source SHA, promote them, run bounded checks, and publish a component
-checkpoint. Unselected entries retain the prior release's version, SHA, and
-artifact reference; an older component SHA is correct when none of that
-component's inputs changed. All selected component jobs run concurrently. Shared
-protocol and UI changes select every real consumer, while their deploy
-contracts stay independently backward-compatible; no fleet-convergence or
-artificial cross-component gate serializes them.
+source SHA, promote them, and run bounded checks. A component job that succeeds
+checks its component: `release_result` turns the job results into checkpoints
+(`unified-release.mjs job-checkpoints`) and writes the one release record.
+Unselected entries retain the prior release's version, SHA, and artifact
+reference; an older component SHA is correct when none of that component's
+inputs changed. All selected component jobs run concurrently. Shared protocol
+and UI changes select every real consumer, while their deploy contracts stay
+independently backward-compatible; no fleet-convergence or artificial
+cross-component gate serializes them.
+
+Two path rules keep releases small. Editing the release workflow or
+`scripts/unified-release.mjs` selects only the fast legs (server, mobile OTA,
+website), never the helper or desktop. Shared UI and protocol edits
+(`apps/mobile/sources/`, `apps/mobile/assets/`, `packages/api-contract/`,
+`packages/buzz-client/`, `packages/nostr/`) ship by OTA and the website at
+once. The desktop app bundles the web export, so it rebuilds for its own shell
+and package inputs, for an explicit `selection`, or once its bundled UI is a
+week behind (`DESKTOP_UI_REFRESH_SECONDS`, measured between the commit desktop
+last shipped and the release commit).
+
+Planning and the release record run on GitHub-hosted runners. Jobs that need
+production host tools run on the `beeline-prod-host` pool, which has two
+runners (`beeline-production`, `beeline-production-squire-2`), so the server
+and the mobile OTA run side by side. With an unchanged runtime pin and no
+requested device proof, `mobile_ota` starts as soon as the plan exists;
+`mobile_ota_after_native` waits for store binaries or the proof otherwise.
+
+Each job sets up Node 22 once and installs once with `scripts/npm-ci-timed.sh`,
+which prints the install's wall time, cache misses, and slowest registry
+fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile. Helper
+builds cache `buzz-agent` and `buzz-dev-mcp` per pinned block/buzz commit,
+rustc, and platform. Typecheck and tests ran in CI and do not rerun inside the
+release.
 
 ### Server migration, canary, and rollback
 
@@ -152,11 +174,14 @@ that marker and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
 migration behind live traffic.
 
-The promotion records the two current Machine image refs, builds one tagged
-Fly image, and chooses the lexically first Machine as the canary. It updates
-only that Machine, pinning probes to it with `fly-force-instance-id`. Every 15
-seconds for five minutes it requires `/health`, the exact `/version`, and an
-authenticated read of `SERVER_CANARY_ROOM_ID`. Immediately before the watch,
+The promotion records the two current Machine image refs, builds and pushes one
+tagged Fly image (the image that ships; there is no separate build), and
+chooses the lexically first Machine as the canary. The Dockerfile stamps the
+release identity after the dependency layers, so a new version reuses the
+cached `npm ci`. The promotion updates only the canary, pinning probes to it
+with `fly-force-instance-id`. Seven samples, 15 seconds apart (90 seconds),
+require `/health`, the exact `/version`, and an authenticated read of
+`SERVER_CANARY_ROOM_ID`. Immediately before the watch,
 the action redeems the repository secret `SERVER_CANARY_REVIEW_SECRET` once at
 `/v1/auth/review/exchange`, masks the returned access token, and uses that fresh
 token for every Room read. The repository secret `SERVER_CANARY_PHONE_TOKEN` is
@@ -166,33 +191,35 @@ two secrets must be configured. The self-protection pool snapshot (`size`, `inUs
 sample; missing or malformed metrics and any nonzero waiter count fail the
 canary before the second Machine can update.
 
-Server promotion keeps its eighteen-minute job timeout. Free starter image
-publishing runs after the release result in a separate best-effort job, outside
-migration, canary observation, server checkpoints and release-result dependencies.
-Waiting for the result also keeps the shared production runner available to
-finish the release record. Its
-helper staging can compile Rust binaries; that independent work cannot consume
-the server promotion's time or prevent the release record.
+The server job has a fifteen-minute timeout. Free starter image publishing runs
+in its own `Free starter agent image` workflow after a successful release that
+shipped the server. It is best effort and never holds the release open.
 
-Only a clean window permits the second Machine update. Any failed update or
-sample restores the canary to the exact `previousImageRef` and fails the
-release. `server-image-ledger-<release>` retains the previous and candidate
+Only a clean window permits the second Machine update. Each Machine must then
+answer `/readyz` and serve this exact `/version` before the job succeeds; no
+second smoke check or convergence wait repeats that proof. A failed Machine
+update gets one retry. Any failed update or sample restores the canary to the
+exact `previousImageRef` and fails the release. A fleet left split by an
+interrupted release converges on the new image the same way, and on failure
+each Machine returns to the image it ran before. `server-image-ledger-<release>` retains the previous and candidate
 image refs for 90 days. The `Server image rollback recovery` workflow can
 redeploy an explicitly named `registry.fly.io` image, or the latest ledger's
 predecessor; it defaults to `dry_run=true`.
 
-For a production-free workflow proof, dispatch Unified production release with
-`plan_only=true`. It prints both `migrate -> canary -> watch -> second` and
-`canary failed -> previous image -> fail-release` using synthetic Machine refs;
-all release jobs are skipped. The same local proof is covered by:
+The canary ordering and rollback plan are covered without production by:
 
 ```sh
 node --test scripts/unified-release.test.mjs
 ```
 
-A failed attempt stores its release state. Up to two automatic retries use the
-same version and SHA, skip checked components, reuse successful immutable build
-artifacts, and rerun only unfinished component work. When an earlier attempt at
+A failed attempt stores its release state. The release never redispatches
+itself. An explicit recovery dispatch with the same `release_version` and
+`release_sha` skips checked components, reuses successful immutable build
+artifacts, and reruns only unfinished component work. A mobile OTA whose
+earlier attempt never started production promotion publishes its exact beta
+candidate as a first attempt; one whose promotion started (recorded as
+`promoted`) only recovers that exact promotion and refuses partial or
+superseded production groups. When an earlier attempt at
 this identity already merged the three-platform daemon artifact, `initialize`
 resolves the run holding it once and the helper leg promotes those exact bytes,
 so neither macOS bundle is rebuilt. When no reusable artifact resolves - it
@@ -203,50 +230,35 @@ absent selected artifacts fail closed. Helper fleet uptake is recorded once as
 post-release observability; installed-helper convergence never gates delivery.
 
 Routine version allocation skips every version already held by a GitHub release
-record, including unpublished drafts from terminated or partially shipped
+record, including unpublished drafts from failed or partially shipped
 attempts. Those records and assets remain intact; the next routine dispatch
-gets a fresh version without deleting a draft or retrying a terminated identity.
-Explicit recovery keeps the existing identity and can resume a terminated
-attempt; termination suppresses automatic self-redispatch only. A release
-listing failure stops initialization before anything ships.
+gets a fresh version without deleting a draft. Explicit recovery keeps the
+existing identity. A release listing failure stops initialization before
+anything ships.
 
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
 or send a duplicate client notification.
 
-The desktop leg signs, notarizes, staples, and strictly verifies the macOS disk
-image whenever the complete credential set is available. Until the Developer
+The desktop leg signs the app, notarizes and staples the macOS disk image once
+(that one submission covers the app inside it), and strictly verifies both
+whenever the complete credential set is available. The release keeps only the
+stable installer names, not the whole bundle folder. Until the Developer
 ID certificate is provisioned, it preserves the existing unsigned release path
 and marks both reports **macOS artifact UNSIGNED: signing secrets absent**.
 Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 
-Normal selective attempts spend their 20-minute budget from dispatch to the
-`mobile_ota` **completion** checkpoint, not to the end of the whole run: the
-native, desktop, and website legs finish after the phone can already receive the
-update, so they no longer count against the fix-to-phone promise. An attempt
-that built a store binary or ran the emulator proof is allowed 60 minutes, and
-one whose helper leg either built the macOS bundles or delivered on a reused
-artifact 150 - a cold `cargo build --release` on the one self-hosted Intel Mac
-that the iOS leg also holds is queue time, not a missed budget, and a retry that
-delivered on reused bytes is not a budget failure just because that Mac never
-had to run. When no OTA completion checkpoint exists the whole-run elapsed time
-stands in for it. Separately the whole run has a 45-minute soft limit: exceeding
-it never fails the attempt or blocks the release record, it only marks the
-attempt **slow** in the summary. Component jobs otherwise have shorter explicit
-timeouts and network smoke checks have second-scale limits. The final index
-records outcome, duration, selected/carried components, and a failure class
-(`budget` or the unfinished component list).
-
-## Reliability measurement
-
-The workflow summary reports failed attempts over the latest 20 completed
-manual `unified-release.yml` runs, using GitHub Actions run conclusions. It
-surfaces the percentage only after at least 10 completed attempts; before that,
-it reports the sample as insufficient. The target is fewer than 10% failed
-attempts. This is an operating metric, not a claim that one change or one
-successful release proves the target.
+A release that shipped every selected component is a success, however long it
+took. Duration never fails an attempt. The summary reports the fix-to-phone time
+(dispatch to the `mobile_ota` completion checkpoint, or the whole run when no
+OTA completion checkpoint exists) and the whole-run time. A whole run over the
+45-minute soft limit is marked **slow** in the summary; it still publishes the
+release record. Component jobs have explicit timeouts and network smoke checks
+have second-scale limits. The final index records outcome, duration,
+selected/carried components, and, for a failed attempt, the unfinished
+component list as its failure class.
 
 Review the planner without deploying by running:
 
@@ -256,8 +268,8 @@ node --test scripts/unified-release.test.mjs
 
 Those fixtures cover canary ordering and window verdicts, rollback selection,
 the server image ledger, no-input defaults, per-component published-input drift,
-shared-path fanout, carry-forward, same-identity no-op and retry continuation,
-missing artifacts, completion/publication checks, and the workflow time budget.
+shared-path fanout, carry-forward, same-identity no-op and recovery continuation,
+missing artifacts, and completion/publication checks.
 
 ## Compatibility and signing invariants
 
@@ -295,11 +307,10 @@ needs a new store build/verified pin restore. Scheduled and manual preflights
 remain strict. No signing, promotion, deployment or
 store submission runs in preflight.
 
-Every shell-bearing self-hosted unified-release job installs repository Node
-before commands or composite actions. Existing component toolchain upgrades
-(including npm publishing's Node 24 and mobile composites' Node 22) still apply.
-The iOS signing/build steps preserve the installed Node path while retaining the
-system rsync precedence required by Xcode.
+Every shell-bearing self-hosted unified-release job installs Node 22 once
+before commands or composite actions. The iOS signing/build steps preserve the
+installed Node path while retaining the system rsync precedence required by
+Xcode.
 
 `Release failure triage` listens for completed unified-release and preflight runs,
 including cancellations before initialization. It uses trusted default-branch

@@ -902,7 +902,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     description: 'Dispatch a production Beeline release only when explicitly commanded by a workspace owner or admin in this turn. Routine releases use no inputs. Recovery inputs require an explicit recovery instruction. Returns the audit receipt; creates no command approval card.',
     inputSchema: { type: 'object', properties: {
       inputs: { type: 'object', properties: Object.fromEntries(
-        ['release_sha', 'release_version', 'retry_attempt', 'selection', 'store_track', 'plan_only', 'run_release_proof', 'allow_pin_restore']
+        ['release_sha', 'release_version', 'selection', 'store_track', 'run_release_proof', 'allow_pin_restore']
           .map(key => [key, { type: 'string', maxLength: 256 }])
       ), additionalProperties: false },
     }, additionalProperties: false },
@@ -1179,7 +1179,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "wake",
-    "description": "Manage your own wake sources. List, update and delete your schedules across the current Workspace by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
+    "description": "Manage your own wake sources. List, update and delete your schedules across every Room you belong to by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
     "inputSchema": {
       "type": "object",
       "properties": {

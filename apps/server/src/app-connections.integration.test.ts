@@ -387,6 +387,25 @@ describe('connect_app', () => {
     expect(provider.link).not.toHaveBeenCalled();
   });
 
+  it('Reproduction registry-down-1: a Registry outage still routes GitHub to its managed sign-in', async () => {
+    const registry = fakeRegistry([], true);
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'github');
+    const result = await daemonWith(registry.client, provider).execute('connect',
+      { ...turn, service: 'GitHub', reason: 'Read issues' }, HELPER);
+    expect(registry.transport).toHaveBeenCalled();
+    expect(result).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
+    expect(result.next).not.toContain('Registry could not be checked');
+  });
+
+  it.each(['link my repository', 'GitHub'])('R-REPO-CARD: %s bypasses a Registry outage for repository linking', async service => {
+    const registry = fakeRegistry([], true);
+    const result = await daemonWith(registry.client, fakeComposio()).execute('connect',
+      { ...turn, service, reason: `Connect ${service}`, continuation: `Connect my ${service} account.` }, HELPER);
+    expect(result).toMatchObject({ status: 'ready', app: 'beeline:onboarding' });
+    expect(registry.transport).not.toHaveBeenCalled();
+  });
+
   it('connect installs a no-sign-in Registry remote to ready with no owner card', async () => {
     const registry = fakeRegistry([{ ...linearServer, name: 'org.example/echo', title: 'Echo', websiteUrl: 'https://echo.test' }]);
     const daemon = daemonWith(registry.client);
@@ -689,7 +708,7 @@ describe('connect_app', () => {
       signIn: { method: 'oauth', url: 'https://github.com/login/oauth/authorize?state=fixture',
         attemptId: 'github-owner-sign-in' } }, HELPER);
     const started = await daemon.execute('connect', { ...turn, service: 'GitHub',
-      reason: 'connect personal GitHub' }, HELPER);
+      reason: 'Read account issues' }, HELPER);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client);
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)

@@ -476,7 +476,7 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(nodeVersionAtLeast('21.0.0', [20, 11, 0])).toBe(true);
   });
 
-  it('lets an explicit update apply even when automatic checks are disabled', async () => {
+  it('applies an explicit update', async () => {
     const v2 = await buildFixtureBundle('c5optin', '1.6.0');
     serveManifest(v2);
     const { layout } = await makeLegacyInstall('c1alpha', '1.0.0');
@@ -484,13 +484,10 @@ describe('self-update end to end against a local fixture manifest', () => {
     const manager = new SelfUpdateManager({
       layout,
       env: {
-        BEELINE_UPDATE_DISABLE: '1',
         BEELINE_UPDATE_MANIFEST_URL: `${baseUrl}/dl/manifest.json`,
       },
       logger: () => undefined,
     });
-
-    // The automatic path is disabled, but an explicit update still works.
 
     // `beeline update` invokes this one apply path directly. There is no
     // per-runtime request file for a later daemon to consume.

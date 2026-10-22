@@ -1,0 +1,12 @@
+# The release's one eas-cli: installed from tools/eas-cli's lockfile and
+# exported as EAS_CLI_PATH, which apps/mobile/scripts/ota-release.mjs honors.
+name: Install the pinned eas-cli
+description: npm ci the locked eas-cli and export EAS_CLI_PATH
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        bash scripts/npm-ci-timed.sh --prefix tools/eas-cli
+        echo "EAS_CLI_PATH=$GITHUB_WORKSPACE/tools/eas-cli/node_modules/.bin/eas" >> "$GITHUB_ENV"

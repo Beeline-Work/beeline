@@ -21,28 +21,40 @@ export function voiceFetch(input: string, init: RequestInit): Promise<Response> 
   return monolithSession.fetch(input, init);
 }
 
-/** Sample local captured audio each frame; remote audio never drives the mic meter. */
+/** Sample every audio source each frame; the loudest speaker drives the waveform. */
 export function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {
-  let release = () => {};
+  const context = new AudioContext();
+  const meters = new Map<Track, { source: MediaStreamAudioSourceNode; analyser: AnalyserNode; samples: Float32Array<ArrayBuffer> }>();
   const update = () => {
-    release(); release = () => {}; onLevel(0);
-    const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-    if (!track || track.isMuted) return;
-    const context = new AudioContext();
-    const source = context.createMediaStreamSource(new MediaStream([track.mediaStreamTrack]));
-    const analyser = context.createAnalyser(); analyser.fftSize = 256; analyser.smoothingTimeConstant = 0;
-    source.connect(analyser);
-    const samples = new Float32Array(analyser.fftSize);
-    let frame = 0;
-    const sample = () => {
-      analyser.getFloatTimeDomainData(samples);
-      onLevel(Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length));
-      frame = requestAnimationFrame(sample);
-    };
-    sample();
-    release = () => { cancelAnimationFrame(frame); source.disconnect(); void context.close(); };
+    const tracks = [room.localParticipant, ...room.remoteParticipants.values()]
+      .flatMap(participant => [...participant.audioTrackPublications.values()])
+      .flatMap(publication => publication.track && !publication.track.isMuted ? [publication.track] : []);
+    const active = new Set<Track>(tracks);
+    for (const [track, meter] of meters) if (!active.has(track)) {
+      meter.source.disconnect(); meters.delete(track);
+    }
+    for (const track of tracks) if (!meters.has(track)) {
+      const source = context.createMediaStreamSource(new MediaStream([track.mediaStreamTrack]));
+      const analyser = context.createAnalyser(); analyser.fftSize = 256; analyser.smoothingTimeConstant = 0;
+      source.connect(analyser);
+      meters.set(track, { source, analyser, samples: new Float32Array(analyser.fftSize) });
+    }
   };
-  const events = [RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted];
-  events.forEach(event => room.on(event, update)); update();
-  return () => { events.forEach(event => room.off(event, update)); release(); release = () => {}; };
+  let frame = 0;
+  const sample = () => {
+    let loudest = 0;
+    for (const meter of meters.values()) {
+      meter.analyser.getFloatTimeDomainData(meter.samples);
+      loudest = Math.max(loudest, Math.sqrt(meter.samples.reduce((sum, value) => sum + value * value, 0) / meter.samples.length));
+    }
+    onLevel(loudest); frame = requestAnimationFrame(sample);
+  };
+  const events = [RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.TrackSubscribed,
+    RoomEvent.TrackUnsubscribed, RoomEvent.ParticipantDisconnected, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted];
+  events.forEach(event => room.on(event, update)); update(); sample();
+  return () => {
+    events.forEach(event => room.off(event, update)); cancelAnimationFrame(frame);
+    for (const meter of meters.values()) meter.source.disconnect();
+    meters.clear(); void context.close();
+  };
 }

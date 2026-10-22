@@ -1,0 +1,39 @@
+# buzz-agent and buzz-dev-mcp depend only on the pinned block/buzz commit, the
+# Rust toolchain, and the platform. A cache hit hands build-beeline-bundle.mjs
+# the exact binaries a cold cargo build would produce; a miss builds them in
+# place and the cache saves them when the job ends.
+name: Restore the native agent binaries
+description: Cache buzz-agent and buzz-dev-mcp per pinned upstream commit, rustc, and platform
+inputs:
+  platform:
+    description: linux-x64 | darwin-arm64 | darwin-x64
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: key
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        ref="${BEELINE_BUZZ_REF:-$(sed -n "s/.*BEELINE_BUZZ_REF ?? '\([0-9a-f]\{40\}\)'.*/\1/p" scripts/build-beeline-bundle.mjs | head -n 1)}"
+        test -n "$ref" || { echo 'could not read the pinned block/buzz commit' >&2; exit 1; }
+        rustc_id=$(rustc -vV | git hash-object --stdin)
+        dir=".beeline-tools/target/$PLATFORM/release"
+        echo "key=buzz-agent-$PLATFORM-$ref-${rustc_id:0:16}" >> "$GITHUB_OUTPUT"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ steps.key.outputs.dir }}/buzz-agent
+          ${{ steps.key.outputs.dir }}/buzz-dev-mcp
+        key: ${{ steps.key.outputs.key }}
+    - if: steps.cache.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        DIR: ${{ steps.key.outputs.dir }}
+      run: |
+        echo "BUZZ_AGENT_BIN=$GITHUB_WORKSPACE/$DIR/buzz-agent" >> "$GITHUB_ENV"
+        echo "BUZZ_DEV_MCP_BIN=$GITHUB_WORKSPACE/$DIR/buzz-dev-mcp" >> "$GITHUB_ENV"

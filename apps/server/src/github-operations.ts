@@ -1,4 +1,3 @@
-import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import type { RepositorySignals } from './repository-onboarding.js';
 import { enqueueCornerBranchDeletion, retryCornerBranchDeletions } from './corner-branch-cleanup.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -408,7 +407,7 @@ export class GitHubOperations {
   async beginInstallation(viewerId: string, input: Input<'beginGitHubInstallation'>) {
     const credential = await this.userCredential(viewerId, this.database);
     const binding = input.reconnect === true || !credential?.token;
-    const state = `${binding ? 'github_bind_' : await onboardingEnabledForViewer(this.database, viewerId) ? 'repository_install_' : ''}${randomBytes(32).toString('base64url')}`;
+    const state = `${binding ? 'github_bind_' : 'repository_install_'}${randomBytes(32).toString('base64url')}`;
     await this.database.query(
       `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
       [hash(state), viewerId, input.redirectUri],
@@ -417,7 +416,8 @@ export class GitHubOperations {
       await this.assertInstallationAccess(viewerId, input.installationId);
       await this.syncInstallation(viewerId, input.installationId);
     }
-    return { url: this.app.installationUrl(state) };
+    // Use the App's registered OAuth callback, not the final client return URL.
+    return { url: binding ? this.oauth.authorizationUrl({ state, codeChallenge: challenge(state) }) : this.app.installationUrl(state) };
   }
 
   async completeInstallation(state: string, installationId?: number, code?: string, callbackUri?: string) {
@@ -429,10 +429,9 @@ export class GitHubOperations {
         )
       ).rows[0];
       if (!flow) throw new Error('GitHub installation flow not found or expired');
-      if (state.startsWith('repository_install_') && !await onboardingEnabledForViewer(database, flow.identity_id)) throw new Error('repository onboarding unavailable');
       if (state.startsWith('github_bind_')) {
         if (!code || !callbackUri) throw new Error('github_connection_canceled');
-        const identity = await this.oauth.exchangeCode(code, callbackUri);
+        const identity = await this.oauth.exchangeCode(code, callbackUri, state);
         await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`github:${identity.subject}`]);
         await database.query(`SELECT id FROM identities WHERE id=$1 FOR UPDATE`, [flow.identity_id]);
         const links = (await database.query<{ subject: string; identity_id: string }>(
@@ -460,7 +459,16 @@ export class GitHubOperations {
         const credential = await this.userCredential(flow.identity_id, database);
         if (!credential?.token) throw new Error('GitHub installation access denied');
         installationIds = [...(await this.listAdministeredInstallations(credential.token) ?? [])];
-        if (!installationIds.length) throw new Error('GitHub installation access denied');
+        if (!installationIds.length) {
+          if (!state.startsWith('github_bind_')) throw new Error('GitHub installation access denied');
+          const nextState = `github_bind_${randomBytes(32).toString('base64url')}`;
+          await database.query(
+            `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
+            [hash(nextState), flow.identity_id, flow.redirect_uri],
+          );
+          await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [hash(state)]);
+          return this.app.installationUrl(nextState);
+        }
       }
       let installed = 0;
       for (const id of installationIds) {

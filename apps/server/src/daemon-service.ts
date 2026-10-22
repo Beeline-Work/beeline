@@ -2,8 +2,7 @@ import { approvalCardSource } from './approval-card-source.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
-import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
-import { onboardingEnabledForViewer } from './onboarding-rollout.js';
+import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
@@ -1359,7 +1358,7 @@ export class DaemonService {
         return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
-        )), ...(owner && await onboardingEnabledForViewer(this.database, owner) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
+        )), ...(owner ? { repositoryOnboarding: true } : {}) } as Output<Name>;
       }
       case 'noteEmptyRoomRepository': {
         const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
@@ -1763,7 +1762,7 @@ export class DaemonService {
         const requester = await this.grantRequester();
         const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
           `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
-        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
+        if (!owner) throw new Error('repository onboarding unavailable');
         if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
         if (request.kind === 'repository') await this.github?.refresh(owner);
         const card = await postRepositoryOnboarding(this.database, this.github, {
@@ -3805,7 +3804,7 @@ export class DaemonService {
         `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
       )).rowCount > 0;
       const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
-      if (owner && await onboardingEnabledForViewer(this.database, owner))
+      if (owner)
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
     const isReviewer =
@@ -4636,6 +4635,12 @@ export class DaemonService {
           .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
           .digest('hex')
       : id();
+    // PostgreSQL jsonb cannot store NUL or lone UTF-16 surrogates. Replace
+    // only those string characters, including nested fields, with U+FFFD.
+    // Unicode mode keeps valid surrogate pairs (emoji, for example) intact.
+    const serializedActivity = JSON.stringify(input.activity, (_key, value: unknown) =>
+      typeof value === 'string' ? value.replace(/[\u0000\uD800-\uDFFF]/gu, '\uFFFD') : value,
+    );
     const activity = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity,agent_model)
@@ -4649,7 +4654,7 @@ export class DaemonService {
           input.roomId,
           agentId,
           input.requestId,
-          JSON.stringify(input.activity),
+          serializedActivity,
           input.agentModel !== undefined,
           input.agentModel ?? null,
         ],
@@ -4661,7 +4666,7 @@ export class DaemonService {
             `SELECT id,created_at FROM messages
              WHERE id=$1 AND room_id=$2 AND author_id=$3 AND request_id=$4
                AND presentation='activity' AND activity=$5::jsonb`,
-            [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
+            [messageId, input.roomId, agentId, input.requestId, serializedActivity],
           )
         ).rows[0];
       if (!row) throw new Error('corner activity ID conflicts with another message');
@@ -5203,7 +5208,7 @@ export class DaemonService {
         nextRunAt,
         workflowName ?? null,
         ownerId ?? null,
-        title ?? scheduleFallbackTitle(workflowName),
+        title ?? scheduleDisplayTitle({ workflow: workflowName, prompt: input.prompt }),
       ],
     );
     await this.recordScheduleAuthorization(db, scheduleId, input.roomId, agentId, requestId,
@@ -5366,10 +5371,12 @@ export class DaemonService {
     return { id: line.id, createdAt: Math.floor(Date.now() / 1_000) };
   }
   /**
-   * Self-only wake reads span the current Workspace. Legacy Room tools list
-   * the schedules an agent in this Room may manage: every schedule that
-   * mentions it, and every schedule any agent created for itself here. A
-   * schedule a person created for another agent stays that person's.
+   * Self-only wake reads span every Room the agent belongs to, in any
+   * Workspace, so the agent that created a schedule can find and edit it from
+   * any chat. Legacy Room tools list the schedules an agent in this Room may
+   * manage: every schedule that mentions it, and every schedule any agent
+   * created for itself here. A schedule a person created for another agent
+   * stays that person's.
    */
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
@@ -5391,7 +5398,10 @@ export class DaemonService {
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
        JOIN rooms room ON room.id=schedule.room_id
-       WHERE (schedule.room_id=$1 OR ($3::boolean AND schedule.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$1)))
+       WHERE (schedule.room_id=$1 OR ($3::boolean AND EXISTS (
+           SELECT 1 FROM memberships self_membership
+           WHERE self_membership.room_id=schedule.room_id
+             AND self_membership.identity_id=$2 AND self_membership.removed_at IS NULL)))
          AND schedule.workflow_run IS NULL
          AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
@@ -5407,7 +5417,7 @@ export class DaemonService {
         const activeRunIds = [...new Set([...workflowRunIds, ...scheduleRunIds])];
         return {
           ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
-          title: row.title ?? scheduleFallbackTitle(row.workflow_slug),
+          title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
           scheduleId: row.id,
           ...(input.selfOnly ? { roomId: row.room_id, roomName: row.room_name } : {}),
           agentId: row.agent_id,
@@ -5427,7 +5437,10 @@ export class DaemonService {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
        WHERE id=$1
-         AND (room_id=$2 OR ($4::boolean AND workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)))
+         AND (room_id=$2 OR ($4::boolean AND EXISTS (
+           SELECT 1 FROM memberships self_membership
+           WHERE self_membership.room_id=agent_schedules.room_id
+             AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
          AND workflow_run IS NULL
          AND (agent_id=$3 OR creator_id=agent_id)
          AND (NOT $4::boolean OR agent_id=$3)`,
@@ -5471,7 +5484,10 @@ export class DaemonService {
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null; room_id: string }>(
         `SELECT message,workflow_slug,room_id FROM agent_schedules WHERE id=$1
-           AND (room_id=$2 OR ($4::boolean AND workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)))
+           AND (room_id=$2 OR ($4::boolean AND EXISTS (
+             SELECT 1 FROM memberships self_membership
+             WHERE self_membership.room_id=agent_schedules.room_id
+               AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
            AND workflow_run IS NULL
            AND (NOT $4::boolean OR agent_id=$3)`,
         [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
@@ -5487,6 +5503,12 @@ export class DaemonService {
       )) ?? existing.workflow_slug;
     const nextRunAt =
       input.cadence === undefined ? null : nextScheduleOccurrence(input.cadence, new Date());
+    // Keep the stored name in step with the prompt it now runs.
+    const resolvedTitle =
+      title ??
+      (input.prompt === undefined
+        ? undefined
+        : scheduleDisplayTitle({ workflow: workflowName, prompt: input.prompt }));
     const updated = await db.query<{ next_run_at: Date }>(
       `UPDATE agent_schedules SET message=COALESCE($3,message),
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
@@ -5504,7 +5526,7 @@ export class DaemonService {
         workflowName ?? null,
         agentId,
         input.selfOnly === true,
-        title ?? null,
+        resolvedTitle ?? null,
       ],
     );
     const row = updated.rows[0];
@@ -6527,7 +6549,6 @@ export class DaemonService {
   }
 
   private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
-    if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
     const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
       ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId)
       : undefined);
@@ -6970,7 +6991,7 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('service and reason are required');
-    const builtin = builtinBeelineApp(service);
+    const builtin = builtinBeelineApp(service, `${reason} ${input.continuation ?? ''}`);
     if (builtin) {
       await this.access(input.roomId, agentId);
       return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };
@@ -7070,9 +7091,13 @@ export class DaemonService {
       const key = appIdentity(service)?.key;
       const existing = key && await hasExistingAppRoute(this.database, context.owner.pubkey, key);
       if (!existing) {
+        // The public Registry is only a route preference; when it is slow or down, the managed route still serves the app.
         let manifests;
         try { manifests = await this.mcpRegistry.search(service); }
-        catch { return { status: 'unavailable', app: service, next: 'The Registry could not be checked. Try again shortly.' }; }
+        catch (error) {
+          console.warn(`[connect] Registry search failed for ${service}; using the managed route`, error);
+          manifests = [];
+        }
         const match = manifests.find(entry => entry.name.toLowerCase() === normalized
           || entry.title?.toLowerCase() === normalized || entry.websiteUrl && appIdentity(entry.websiteUrl)?.key === key);
         if (match) {
@@ -7963,20 +7988,36 @@ export class DaemonService {
            ON CONFLICT(watcher_room_id,agent_id,corner_id) DO NOTHING`,
           [commandRoomId, agentId, cornerId, parentCommand.id],
         );
-      // One durable open marker in the parent Room; the phone renders this as
-      // a daemon-fact card. Corner lifecycle is outside the push ceiling
-      // (`background.ts`), so this marker never notifies a device.
-      await systemLine(db, {
-        roomId,
-        subject: { kind: 'agent', id: agentId, name: opener.name },
-        verb: 'opened a corner',
-        kind: 'corner-opened',
-        // The NAME titles the corner everywhere; the objective is the card body.
-        object: { text: name, id: cornerId },
-        presentation: 'card',
-        cardType: 'daemon-fact',
-        card: { type: 'corner-open', cornerId, name, objective },
-      });
+      // Only a real message in the command's transcript is a call site. Private
+      // orders/reports have no message row; automatic wakes must not borrow a root.
+      const source = (
+        await db.query<{ id: string }>(
+          `SELECT id FROM messages WHERE id=$1 AND room_id=$2
+             AND presentation='message' AND system_event IS NULL AND deleted_at IS NULL`,
+          [parentCommand.source_message_id, commandRoomId],
+        )
+      ).rows[0];
+      const destinations = [
+        { roomId, sourceMessageId: commandRoomId === roomId ? source?.id : undefined },
+        ...(source && commandRoomId !== roomId
+          ? [{ roomId: commandRoomId, sourceMessageId: source.id }] : []),
+      ];
+      // The parent record never carries a private origin. Only that origin's
+      // own transcript receives its source id, with no second lifecycle wake.
+      for (const destination of destinations) {
+        await systemLine(db, {
+          roomId: destination.roomId,
+          subject: { kind: 'agent', id: agentId, name: opener.name },
+          verb: 'opened a corner',
+          kind: destination.roomId === roomId ? 'corner-opened' : undefined,
+          object: { text: name, id: cornerId },
+          presentation: 'card',
+          cardType: 'daemon-fact',
+          card: { type: 'corner-open', cornerId, name, objective,
+            ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },
+          afterMessageId: destination.sourceMessageId,
+        });
+      }
       await advanceCorner(db, cornerId, {
         kind: 'open',
         workspaceId: parent.workspace_id,

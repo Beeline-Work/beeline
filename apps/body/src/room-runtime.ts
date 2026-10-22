@@ -1,4 +1,3 @@
-import { readEnv } from './env.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -689,12 +688,12 @@ export class RoomRuntimeCoordinator {
       );
     });
     this.drainDeadlineMs = options.drainDeadlineMs ?? DEFAULT_DRAIN_DEADLINE_MS;
-    const fixedWorkspaceCeiling = readEnv(process.env, 'BODY_MAX_SESSIONS');
+    const fixedWorkspaceCeiling = process.env.BEELINE_BODY_MAX_SESSIONS;
     this.scheduler = new SessionScheduler({
       ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
       perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
       workspaceFloor: Number(
-        readEnv(process.env, 'BODY_MAX_SESSIONS_FLOOR') ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
+        process.env.BEELINE_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
       ),
       activeRoomCount: () => this.activeRoomCount(),
       idleMs: resolveSessionIdleMs(process.env),
@@ -1114,10 +1113,8 @@ export class RoomRuntimeCoordinator {
   }
 
   private roomAgentHomeRoot(workspaceRoot: string, required = false): string | undefined {
-    const flag = readEnv(process.env, 'BODY_ROOM_HOME');
-    if (!required && flag === '0') return undefined;
     const home = resolve(workspaceRoot, 'agent-home');
-    if (!required && flag !== '1' && !existsSync(home) && existsSync(workspaceRoot))
+    if (!required && !existsSync(home) && existsSync(workspaceRoot))
       return undefined;
     try {
       mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -1133,9 +1130,7 @@ export class RoomRuntimeCoordinator {
     return {
       ...this.baseConfig,
       workspaceRoot,
-      ...(process.env.BEELINE_SHARED_ASSETS_ENABLED === '0'
-        ? { agentSharedAssetRoot: undefined }
-        : { agentSharedAssetRoot: workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId) }),
+      agentSharedAssetRoot: workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId),
       agentPrivateRoot: resolve(workspaceRoot, 'agent-private'),
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),

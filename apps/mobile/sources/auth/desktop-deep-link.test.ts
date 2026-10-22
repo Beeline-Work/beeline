@@ -42,10 +42,7 @@ describe('desktop native deep-link delivery', () => {
     expect(replace).toHaveBeenCalledWith({ pathname: '/beeline/browser-share', params: { id } });
   });
 
-  it('enrolls a desktop preview without passing the token to the router', () => {
-    const replace = vi.fn();
-    expect(deliverDesktopDeepLink(`beeline://beeline/onboarding?google_preview=${'p'.repeat(43)}`, { replace } as never)).toBe(true);
-    expect(replace).toHaveBeenCalledWith('/beeline/onboarding');
+  it('routes the desktop Google callback', () => {
     expect(desktopDeepLinkDestination('beeline://beeline/google-callback?completed=1&state=test')).toEqual({
       kind: 'google-callback', href: '/beeline/google-callback?completed=1&state=test',
     });

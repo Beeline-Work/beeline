@@ -151,7 +151,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
       const stopMeter = subscribeVoiceMicrophone(room, amplitude => {
-        if (current()) setLevel(quotaRef.current || mutedRef.current ? 0 : voiceWaveformLevel(amplitude));
+        if (current()) setLevel(quotaRef.current ? 0 : voiceWaveformLevel(amplitude));
       });
       const closeAudio = transport.closeAudio;
       transport.closeAudio = async () => { stopMeter(); await closeAudio(); };
@@ -280,7 +280,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       const disconnectListener = live.subscribeConnected(reconcile);
       liveCleanup.current = () => { dispose(); disconnectListener(); };
     } catch (cause) {
-      void reportClientError('voice-join', cause);
+      if (version === revision.current) void reportClientError('voice-join', cause);
       await release();
       if (joined) await voiceRequest(joined.call.id, 'leave', joined.sessionId).catch(() => {});
       if (version === revision.current) { setError(errorDiagnostic(cause).message); setConnecting(false); }

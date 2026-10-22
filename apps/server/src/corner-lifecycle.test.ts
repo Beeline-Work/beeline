@@ -4234,6 +4234,22 @@ describe('merge queue (Reproduction R1)', () => {
     return cornerId;
   }
 
+  it('R1: closing a queued PR keeps the corner open without queue state or further GitHub reads', async () => {
+    const cornerId = await queued();
+    await github.closeCornerPullRequest(cornerId);
+    const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
+    expect(visible).toBeDefined();
+    expect(visible?.lifecycle.pr).toBeUndefined();
+    expect(visible?.lifecycle.mergeQueue).toBeUndefined();
+    expect(await currentState(cornerId)).toBe('implement');
+    githubApp.readPullRequest.mockClear();
+    githubApp.readPullRequestQueue.mockClear();
+    await github.reconcileQueuedCorners();
+    await github.recoverUnfinishedMergeClaims();
+    expect(githubApp.readPullRequest).not.toHaveBeenCalled();
+    expect(githubApp.readPullRequestQueue).not.toHaveBeenCalled();
+  });
+
   it('R1: main advances, combined checks fail, the PR leaves the queue and wakes its implementer once', async () => {
     const cornerId = await queued();
     githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: null });
@@ -4260,6 +4276,36 @@ describe('merge queue (Reproduction R1)', () => {
     expect(await currentState(cornerId)).toBe('landed');
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['agent close', 'GitHub close', 'missed close webhook'] as const)(
+    'R1: %s clears queued state before reconciling the open corner', async path => {
+      const cornerId = await queued();
+      if (path === 'agent close') {
+        await github.closeCornerPullRequest(cornerId);
+      } else if (path === 'GitHub close') {
+        await github.processWebhook('pull_request', {
+          action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
+          pull_request: { number: 7, html_url: 'https://github.com/owner/widgets/pull/7', title: 'Widget', merged: false,
+            head: { ref: branchOf(cornerId), sha: SHA }, base: { ref: 'main' } },
+        });
+      } else {
+        githubApp.readPullRequest.mockResolvedValue({ number: 7, headSha: SHA, headRef: branchOf(cornerId),
+          merged: false, state: 'closed' });
+        await github.reconcileMergedCorners();
+      }
+      const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
+      expect(visible?.lifecycle.pr).toBeUndefined();
+      expect(visible?.lifecycle.mergeQueue).toBeUndefined();
+      expect(await currentState(cornerId)).toBe('implement');
+      expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
+
+      githubApp.readPullRequest.mockClear();
+      githubApp.readPullRequestQueue.mockClear();
+      await github.recoverUnfinishedMergeClaims(cornerId);
+      expect(githubApp.readPullRequest).not.toHaveBeenCalled();
+      expect(githubApp.readPullRequestQueue).not.toHaveBeenCalled();
+    },
+  );
 
   it('dequeues a queued PR after a human sets a hold', async () => {
     const cornerId = await queued();

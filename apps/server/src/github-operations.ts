@@ -1259,7 +1259,7 @@ export class GitHubOperations {
       await lockCornerLifecycle(db, cornerId);
       const removed = await db.query<{ archived: boolean }>(
         `UPDATE corner_facts fact SET merge_attempt_head=NULL,
-           lifecycle=(lifecycle-'pr'-'mergeRecovery'-'checksSummary')||
+           lifecycle=(lifecycle-'pr'-'mergeQueue'-'mergeRecovery'-'checksSummary')||
              CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
                ELSE '{}'::jsonb END,
            updated_at=now()

@@ -107,7 +107,7 @@ import {
 import { surfaceForRoom } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import type { GitHubOperations, LandCornerOutcome } from './github-operations.js';
@@ -8156,7 +8156,7 @@ export class DaemonService {
     const { cornerId } = input;
     // The generic gate checks the turn's roomId; the target corner needs its own check.
     await this.reach(cornerId, agentId);
-    await this.database.transaction(async (database) => {
+    const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, cornerId);
       if (input.requestId) {
         const command = await authorizeCommandOutput(database, input.roomId ?? cornerId,
@@ -8170,6 +8170,11 @@ export class DaemonService {
       )).rowCount) {
         throw new CommandRefusalError('This corner is locked. A person must unlock it before agents can close it.', 409);
       }
+    };
+    await this.database.transaction(authorize);
+    await closeCornerPullRequestBestEffort(this.database, cornerId, this.closePullRequest);
+    await this.database.transaction(async database => {
+      await authorize(database);
       await closeCornerState(database, cornerId);
     });
     return this.writeResult();

@@ -62,11 +62,6 @@ async function refusal(operation: 'archiveCorner' | 'approveCornerMerge', messag
   return error;
 }
 
-it('Reproduction SENTRY-B: close_corner with a PR returns unchanged refusal without Sentry capture', async () => {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
-  await refusal('archiveCorner', 'close the corner pull request with close_corner_pr before closing the corner');
-});
-
 it.each([
   ['NOT_CONFIGURED_REVIEWER', "only this corner's configured reviewer or its zero-check commander can record PASS"],
   ['NO_PULL_REQUEST', 'corner has no pull request'],
@@ -135,5 +130,18 @@ it('Reproduction SENTRY-R: start workflow with missing starter returns unchanged
   });
   expect(await response.json()).toEqual({ error: 'role binding is missing for starter' });
   expect(response.status).toBe(503);
+  expect(captureException).not.toHaveBeenCalled();
+});
+
+it('R1 / SENTRY-B: close_corner still archives when GitHub is not configured', async () => {
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
+  vi.mocked(captureException).mockClear();
+  const response = await fetch(`${origin}/v1/daemon/operations/archiveCorner`, {
+    method: 'POST', headers: { authorization: 'Bearer bdt_refusal_fixture_123456789', 'content-type': 'application/json' },
+    body: JSON.stringify({ cornerId: corner }),
+  });
+  expect(response.status).toBe(200);
+  expect((await db.query('SELECT archived_at FROM rooms WHERE id=$1', [corner])).rows[0].archived_at).not.toBeNull();
+  expect((await db.query(`SELECT lifecycle->'pr'->>'number' number FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0].number).toBe('7');
   expect(captureException).not.toHaveBeenCalled();
 });

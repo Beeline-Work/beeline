@@ -242,7 +242,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { cancelCornerAgentCommands, closeCornerState } from './corner-close.js';
+import { cancelCornerAgentCommands, closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -6140,7 +6140,7 @@ export class PhoneService {
    * A lock change preserves the corner's assignments; a close cancels them.
    */
   private async requestCornerClose(roomId: string, viewerId: string, locked?: boolean) {
-    await this.database.transaction(async (database) => {
+    const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, roomId);
       const access = await database.query<{ workspace_role: string }>(
         `SELECT workspace_member.role workspace_role FROM memberships room_member
@@ -6172,7 +6172,13 @@ export class PhoneService {
         throw new Error(
           'corner close access denied: only the creator or a workspace owner or admin can close this corner',
         );
-
+    };
+    await this.database.transaction(authorize);
+    if (locked === undefined)
+      await closeCornerPullRequestBestEffort(this.database, roomId,
+        this.github ? id => this.github!.closeCornerPullRequest(id) : undefined);
+    await this.database.transaction(async database => {
+      await authorize(database);
       if (locked !== undefined) {
         await database.query(
           `UPDATE corner_facts SET locked=$2,updated_at=now() WHERE corner_id=$1`,

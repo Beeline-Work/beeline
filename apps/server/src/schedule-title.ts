@@ -1,3 +1,5 @@
+import { ExpectedRefusalError } from './command-refusal.js';
+
 /** The generic label a schedule shows when nothing names it. */
 export const SCHEDULE_FALLBACK_TITLE = 'Scheduled task';
 
@@ -53,9 +55,9 @@ export function scheduleDisplayTitle(input: {
 
 export function validateScheduleTitle(value: unknown): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== 'string') throw new Error('title must be one to four words');
+  if (typeof value !== 'string') throw new ExpectedRefusalError('title must be one to four words');
   const title = value.trim().replace(/\s+/g, ' ');
   if (!title || title.length > 80 || title.split(' ').length > 4)
-    throw new Error('title must be one to four words, at most 80 characters');
+    throw new ExpectedRefusalError('title must be one to four words, at most 80 characters');
   return title;
 }

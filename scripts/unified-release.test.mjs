@@ -2162,3 +2162,20 @@ test('release-dispatch-attribution: workflow refuses missing provenance', async 
     else process.env.DISPATCHED_BY = previous;
   }
 });
+
+test('missing-sourcemap: web hosting waits for private map upload before deployment', () => {
+  const action = parse(readFileSync('.github/actions/web-app-leg/action.yml', 'utf8'));
+  const steps = action.runs.steps;
+  const exportIndex = steps.findIndex(step => step.run?.includes('expo export'));
+  const uploadIndex = steps.findIndex(step => step.run?.includes('prepare-web-sourcemaps.mjs'));
+  const deployIndex = steps.findIndex(step => step.run?.includes('deploy --prod'));
+  assert.match(steps[exportIndex].run, /--source-maps/);
+  assert.ok(exportIndex < uploadIndex && uploadIndex < deployIndex);
+  assert.equal(steps[uploadIndex]['continue-on-error'], undefined);
+  assert.equal(steps[uploadIndex].env.SENTRY_AUTH_TOKEN, '${{ inputs.sentry_auth_token }}');
+  assert.equal(steps[exportIndex].env.SENTRY_AUTH_TOKEN, undefined);
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const web = workflow.jobs.website.steps.find(step => step.uses === './.github/actions/web-app-leg');
+  assert.equal(web.with.sentry_auth_token, '${{ secrets.SENTRY_AUTH_TOKEN }}');
+  assert.deepEqual(COMPONENT_PATH_RULES.find(rule => rule.exact === 'apps/mobile/scripts/prepare-web-sourcemaps.mjs').components, ['website']);
+});

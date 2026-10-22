@@ -200,3 +200,34 @@ org:ci)** into repository Actions secret `SENTRY_AUTH_TOKEN`. The personal
 GitHub connection needs repository Actions secrets access. Do not print or
 copy the token through an agent prompt. Only the secret name is wired here; secure provisioning and a live
 symbolicated Android event remain pending.
+
+## Web source maps
+
+Reproduction `missing-sourcemap`: the production web HTML references
+`index-90db1025ae81559600056833506ddeb2.js`, the exact bundle from
+BEELINE-MOBILE-F. The web export path omitted `--source-maps` and had no upload
+step. The OTA uploader does not handle EAS Hosting exports.
+
+The unified release's `web-app-leg` exports with `--source-maps`, then runs
+`apps/mobile/scripts/prepare-web-sourcemaps.mjs` before EAS Hosting deployment.
+Every generated web JavaScript chunk must have a matching map and debug ID.
+The existing uploader normalizes Expo's `debugId` to Sentry's `debug_id`, uploads
+bundle/map pairs to `beeline-bt/beeline-mobile` under the full release SHA, and
+waits for server processing. Missing credentials, invalid maps, timeout or upload
+failure abort the website job before promotion. The web path uses the existing
+Actions secret `SENTRY_AUTH_TOKEN`, backed by the vaulted org:ci release token.
+The token is present only in the upload step, never in the export environment.
+
+After successful upload, the preparation script deletes every `.map` file from
+the hosting export. JavaScript bytes, including their debug IDs, remain unchanged.
+Source maps must never be deployed publicly. OTA and embedded-native behavior
+are unchanged by this web-path fix.
+
+For the next nightly release (do not dispatch a release from this fix corner),
+record a generated bundle's debug ID and query through the vaulted release token:
+`GET /api/0/projects/beeline-bt/beeline-mobile/files/artifact-bundles/?query=<debug-id>`.
+Require HTTP 200 and a non-empty list. Check a new event's resolved frames or run
+`sentry-cli sourcemaps explain <event-id>` with an appropriately scoped token.
+Old events are not reprocessed after maps arrive. Leave BEELINE-MOBILE-F unresolved.
+The original missing-map query is confirmed; the new production artifact and
+resolved-frame proof remain pending that release.

@@ -6,9 +6,12 @@ read -r registration_token
 # executable workspace, removed with the unit, without opening host /tmp.
 mkdir -p /tmp/beeline-ci-job
 cd /tmp/beeline-ci-job
+# Chrome is copied outside hidden /opt without exposing any other host data.
+export CHROME_BIN=/usr/local/lib/beeline-ci/chrome/google-chrome
 export HOME=/tmp/beeline-ci-job/home
 export RUNNER_TOOL_CACHE=/tmp/beeline-ci-job/toolcache
 mkdir -p "$HOME" "$RUNNER_TOOL_CACHE"
+"$CHROME_BIN" --version
 tar -xzf /usr/local/lib/beeline-ci/runner.tar.gz
 ./config.sh --unattended --ephemeral --disableupdate --url https://github.com/Beeline-Work/beeline --token "$registration_token" --name "$1" --labels squire-ci --no-default-labels --work _work
 unset registration_token

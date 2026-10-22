@@ -27,7 +27,7 @@ async function slot(index) {
       { encoding: 'utf8', timeout: 60000 })).token;
       if (!token && !proving) throw new Error('GitHub supplied no registration token');
       const args = ['-n', 'systemd-run', '--quiet', '--wait', '--pipe',
-        `--unit=beeline-ci-${index}`, '--collect',
+        `--unit=${proving ? `beeline-ci-proof-${randomUUID()}` : `beeline-ci-${index}`}`, '--collect',
         '-p', 'User=beeline-ci', '-p', 'Group=beeline-ci',
         '-p', `RuntimeDirectory=beeline-ci-${index}`, '-p', 'RuntimeDirectoryMode=0700',
         '-p', 'CPUQuota=150%', '-p', 'MemoryMax=6G', '-p', 'MemorySwapMax=0',

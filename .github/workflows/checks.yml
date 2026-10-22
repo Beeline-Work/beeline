@@ -634,7 +634,8 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    # Keep memory-intensive integration and latency gates on hosted capacity.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -749,7 +750,8 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
-    runs-on: ${{ (vars.SQUIRE_CI_DISABLED != 'true' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && 'squire-ci' || 'ubuntu-latest' }}
+    # Keep memory-intensive integration and latency gates on hosted capacity.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

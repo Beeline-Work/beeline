@@ -6,9 +6,11 @@ This is a capacity feature, not a defect report.
 
 ## Routing and rollback
 
-Nine Linux job definitions in `checks.yml` can use `squire-ci`: typecheck,
-shared packages, dead code, server suite shards, server integration shards,
-mobile suite, mobile export, production corpus and native fingerprint.
+Seven Linux job definitions in `checks.yml` can use `squire-ci`: typecheck,
+shared packages, dead code, server suite shards, mobile suite, mobile export
+and native fingerprint. Integration shards and the production corpus latency
+gate use GitHub-hosted capacity: integration exceeded the slot memory cap,
+and CPU throttling invalidated the corpus latency measurements.
 Fork PRs, dispatches, pushes and other events use `ubuntu-latest`. Body's
 sudo setup, Docker-dependent jobs, verdict-only jobs, desktop, prompt cases
 and all release workflows retain their existing runners.
@@ -201,3 +203,48 @@ existing `production-corpus-width.test.ts` room-list latency assertions
 suite result; CI still needs to confirm the bounded runner path.
 An immediate standalone rerun of that file with one worker passed all tests
 (4) in seconds (15), confirming the latency failures vary with host load.
+
+
+## Failure investigation on head 043754174 (22 October)
+
+The authenticated personal GitHub API returned each job log; signed log
+redirects were downloaded to `/tmp/jellybean-ci-<job-id>.log`.
+
+- SERVER INTEGRATION SHARD 5 (job 120101891886): exit 143 and runner shutdown;
+  host systemd logs show the overflow memory cap being reached. Additional
+  integration shards (1, 3 and 7) failed the same way at 22:16 UTC with
+  `oom-kill` and 6.0G peaks. Route these jobs to hosted runners rather than
+  weaken tests or increase the overflow budget.
+- MOBILE SUITE (job 120101891659): browser proofs failed with EACCES launching
+  `/usr/bin/google-chrome`, whose target is under inaccessible `/opt`.
+  Install a root-owned copy of only Chrome outside that hidden directory and
+  set CHROME_BIN in the ephemeral runner. No private host paths are exposed.
+- PRODUCTION-CORPUS REPLAY (job 120101891654): corner-facts p95 was 181.2ms
+  against its 100ms budget. Keep this timing gate on hosted runners rather
+  than measure it under overflow CPU throttling or loosen its threshold.
+  Hosted CI must confirm whether any application failure remains.
+- FRAME-BUDGET (job 120116852489): failed closed because MOBILE SUITE failed.
+- STATE-UPGRADE (job 120116852565): failed closed because MOBILE SUITE failed.
+
+Additional host commands executed, using the same operator wrapper:
+
+```sh
+systemd-run --user --wait --pipe /usr/bin/sudo -n journalctl -u beeline-ci-1 -u beeline-ci-2 -u beeline-ci-3 -u beeline-ci-4 --since '2026-10-22 22:02:00 UTC' --no-pager -n 90
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/cp -a /opt/google/chrome /usr/local/lib/beeline-ci/chrome
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/install -m 0755 "$ci_tree/scripts/squire-ci/verify-isolation.sh" /usr/local/lib/beeline-ci/verify-isolation.sh
+systemd-run --user --wait --pipe "$ci_node" "$ci_tree/scripts/squire-ci/supervisor.mjs" --prove
+```
+
+The first probe refused to start because its old fixed unit name collided
+with a running overflow slot; no running job was stopped. Proof units now
+use unique names. The corrected probe rendered a real HTML page through
+Chrome in the exact service sandbox and passed every existing isolation
+check. Workflow selectors and path references passed their regressions.
+The updated run-once and supervisor scripts were then installed for future
+launches with these commands. No supervisor restart or running job stop was
+performed; the live supervisor continues to launch the updated run-once.
+
+```sh
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/install -m 0755 "$ci_tree/scripts/squire-ci/run-once.sh" /usr/local/lib/beeline-ci/run-once.sh
+systemd-run --user --wait --pipe /usr/bin/sudo -n /usr/bin/install -m 0755 "$ci_tree/scripts/squire-ci/supervisor.mjs" /usr/local/lib/beeline-ci/supervisor.mjs
+```

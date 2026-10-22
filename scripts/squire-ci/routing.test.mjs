@@ -15,7 +15,7 @@ test('server shards fit overflow memory with one worker and retain hosted concur
   assert.ok(step.run.includes('--maxWorkers="$SERVER_TEST_WORKERS" --minWorkers="$SERVER_TEST_WORKERS"'));
 });
 test('overflow jobs exclude forks, dispatch, pushes, missing PRs and disabled overflow', () => {
-  assert.ok([0, 9].includes(overflow.length), 'routing is entirely enabled or reverted');
+  assert.ok([0, 7].includes(overflow.length), 'routing is entirely enabled or reverted');
   for (const job of overflow) {
     const expression = job['runs-on'].slice(3, -2);
     const evaluate = (event, head, disabled = '') => runInNewContext(expression, {
@@ -31,5 +31,11 @@ test('overflow jobs exclude forks, dispatch, pushes, missing PRs and disabled ov
       assert.equal(evaluate(event, 'Beeline-Work/beeline'), 'ubuntu-latest');
     }
     assert.equal(evaluate('pull_request', 'Beeline-Work/beeline', 'true'), 'ubuntu-latest');
+  }
+});
+
+test('memory-intensive integration and latency gates retain hosted capacity', () => {
+  for (const name of ['server-integration-shard', 'production-corpus-replay']) {
+    assert.equal(workflow.jobs[name]['runs-on'], 'ubuntu-latest');
   }
 });

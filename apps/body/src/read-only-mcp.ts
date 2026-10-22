@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
-import { Check } from 'typebox/value';
+import { Check, Errors } from 'typebox/value';
 import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
 import { nonhumanSilentWake } from './silent-wake.js';
@@ -1011,7 +1011,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call read(facet:checks) again in this turn.',
+          next: 'No PR is recorded for this corner yet. Continue the assigned work; when it is ready, push the corner branch and open a PR. If you already opened one, print its actual full URL as your final response so it can be recorded, then end the turn. Do not invent a PR URL or reread checks before a PR exists.',
         }
       : {}),
   });
@@ -1758,7 +1758,7 @@ export async function createSchedule(
     (maxRuns !== undefined ? `, ${maxRuns} run${maxRuns === 1 ? '' : 's'}` : '') +
     `; the prompt runs as a mention to you in this Room.` +
     floorNote +
-    ' Use delete_schedule with this scheduleId to remove it.'
+    ' Use wake(action:delete, scheduleId) to remove it.'
   );
 }
 
@@ -2494,7 +2494,7 @@ export async function workbenchStatus(
     const route = github.transport === 'squire-api'
       ? `call Squire use_credential (${github.connectionReference ? `reference ${JSON.stringify(github.connectionReference)}` : 'service "github"'})`
       : `use app_tool(app:"${github.appId}")`;
-    lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult beeline-connecting-services for checkout and merge boundaries.`);
+    lines.push('', `GitHub operation identity: in Room, corner and DM sessions, use the Beeline GitHub App for linked-repository code, branch and PR writes, including Git Data API pushes, even when personal GitHub is connected. Without an App checkout, use a corner of the linked Room. This owner's personal GitHub connection (app ${github.appId}, ${github.transport}) serves general lookups, repositories without App access and person-scoped actions; ${route}. Report denials with the exact error and route. Never fall back from App to personal for linked-repository writes or retry person-scoped actions as the App. A mistaken personal-route denial on a linked-repository write does not prevent using the authorized App route. Consult beeline-connecting-services for checkout and merge boundaries.`);
   }
   if (deps.tailscaleReach) {
     const enabled = Boolean(
@@ -2727,11 +2727,22 @@ function advertisedAgentTool(name: string): ToolDefinition {
   return tool;
 }
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
+  const requestedAction = args.action;
   if (!Check(tool.inputSchema, args)) {
     const required = tool.inputSchema.required as string[] | undefined;
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));
-    throw new Error(`${tool.name}: invalid arguments${missing?.length ? `; required: ${missing.join(', ')}` : ''}${extra.length ? `; unknown fields: ${extra.join(', ')}` : ''}; follow the advertised schema`);
+    const diagnosticSchema = tool.name === 'wake'
+      ? { ...tool.inputSchema, anyOf: (tool.inputSchema.anyOf as JsonObject[]).filter(schema => {
+        const action = asObject(schema.properties).action;
+        return !action || Check(action, requestedAction);
+      }) }
+      : tool.inputSchema;
+    const details = tool.name === 'wake'
+      ? Errors(diagnosticSchema, args).filter(error => error.keyword !== 'anyOf')
+        .map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
+      : '';
+    throw new Error(`${tool.name}: invalid arguments${details ? `; ${details}` : ''}${missing?.length ? `; required: ${missing.join(', ')}` : ''}${extra.length ? `; unknown fields: ${extra.join(', ')}` : ''}; follow the advertised schema`);
   }
 }
 
@@ -2848,8 +2859,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return execute(operation);
     }
     case 'wake': {
+      if (args.action === 'delete' && args.trigger === undefined && args.scheduleId !== undefined)
+        args = { ...args, trigger: 'schedule' };
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
-      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'when', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
       if (args.trigger !== 'lifecycle' && args.address !== undefined) throw new Error('address is only supported for lifecycle wakes; schedules and events belong to this place');
       if (args.trigger === 'lifecycle' && !args.address) throw new Error('lifecycle wake requires address');
@@ -3557,6 +3570,7 @@ async function executeAgentOperation(
       if (!prompt) throw new Error('prompt is required');
       const result = await daemonExecute('createAgentSubscription', {
         roomId: agentScheduleRoomId(), source, event, prompt,
+        title: args.title, when: args.when,
         ...(typeof args.repository === 'string' ? { repository: args.repository } : {}),
         ...(typeof args.channelId === 'string' ? { channelId: args.channelId } : {}),
         ...(typeof args.channelName === 'string' ? { channelName: args.channelName } : {}),

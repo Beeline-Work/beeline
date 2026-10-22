@@ -187,7 +187,7 @@ describe('server-mediated connected app tools', () => {
     expect(calls).toEqual([]);
   });
 
-  it('discovers and executes a connected app with turn authority and no provider secret', async () => {
+  it.each([appId, 'github', 'web'])('discovers and executes connected app %s with turn authority and no provider secret', async (appId) => {
     expect(agentToolsFor(true, false).map((tool) => tool.name))
       .toEqual(expect.arrayContaining(['app_tool']));
     answer = (name) => Response.json(name === 'listAppTools'
@@ -250,14 +250,16 @@ describe('server-mediated connected app tools', () => {
     expect(text.match(/app:slack/g)).toHaveLength(1);
   });
 
-  it.each(['connected', 'error'].flatMap(status => ['squire-api', 'composio'].map(transport => ({ status, transport }))))('R2594: gives the personal GitHub API route priority with App checkout available ($status, $transport)', async ({ status, transport }) => {
+  it.each(['connected', 'error'].flatMap(status => ['squire-api', 'composio'].map(transport => ({ status, transport }))))('R-GHROUTE: keeps linked-repository writes on the App with personal GitHub available ($status, $transport)', async ({ status, transport }) => {
     const text = await workbenchStatus({ roomId: 'room-1', execute: async () => ({
       apps: [{ appId, appKey: 'github', name: 'GitHub', transport,
         status, ...(status === 'error' ? { errorMessage: 'Permission denied' } : {}) }],
     }) });
     expect(text).toContain(`personal GitHub connection (app ${appId}, ${transport})`);
     expect(text).toContain('including Git Data API pushes');
-    expect(text).toContain('never switching to the App identity');
+    expect(text).toContain('use the Beeline GitHub App for linked-repository code, branch and PR writes');
+    expect(text).toContain('Never fall back from App to personal');
+    expect(text).toContain('or retry person-scoped actions as the App');
     expect(text).toContain(transport === 'squire-api'
       ? 'call Squire use_credential (service "github")' : `use app_tool(app:"${appId}")`);
     if (status === 'error') expect(text).toContain('Permission denied');

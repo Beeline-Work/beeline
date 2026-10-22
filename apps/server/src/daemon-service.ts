@@ -5176,6 +5176,7 @@ export class DaemonService {
       throw new Error('schedule prompt is required');
     }
     const title = validateScheduleTitle(input.title);
+    if (!title) throw new Error('title is required when creating a schedule');
     validateScheduleCadence(input.cadence);
     if (
       input.maxRuns !== undefined &&
@@ -7321,9 +7322,11 @@ export class DaemonService {
   }
 
   private async connectedAppForTool(appId: string, roomId: string, agentId: string, discovery = false) {
-    if (typeof appId !== 'string' || !/^[0-9a-f-]{36}$/i.test(appId))
-      throw new Error('App id is invalid');
-    const row = (await this.database.query<{ id: string; app_key: string;
+    if (typeof appId !== 'string' || !appId.trim())
+      throw new CommandRefusalError('App id or key is required', 400);
+    const selector = appId.trim();
+    const isId = /^[0-9a-f-]{36}$/i.test(selector);
+    const rows = (await this.database.query<{ id: string; app_key: string;
       display_name: string; domain: string | null; transport: AppTransport;
       owner_identity_id: string; composio_account_id: string | null;
       composio_link_expires_at: Date | null;
@@ -7337,11 +7340,15 @@ export class DaemonService {
        LEFT JOIN memberships owner_member ON owner_member.workspace_id=room.workspace_id
          AND owner_member.room_id IS NULL AND owner_member.identity_id=app.owner_identity_id
          AND owner_member.removed_at IS NULL
-       WHERE app.id=$1::uuid
+       WHERE ${isId ? 'app.id=$1::uuid' : 'app.app_key=$1'}
          AND (app.owner_identity_id=agent.owner_id OR owner_member.identity_id IS NOT NULL)
-         AND app.state='active'`,
-      [appId, roomId, agentId],
-    )).rows[0];
+         AND app.state='active'
+       ORDER BY app.id`,
+      [isId ? selector : selector.replace(/^app:/, ''), roomId, agentId],
+    )).rows;
+    if (rows.length > 1)
+      throw new CommandRefusalError(`Connected app key is ambiguous; use an exact app id: ${rows.map(row => row.id).join(', ')}`, 400);
+    const row = rows[0];
     if (!row) throw new ExpectedRefusalError('Connected app is unavailable in this Room');
     if (row.transport !== 'composio') {
       // Only managed-OAuth apps run through app tools; name the route that serves this one.

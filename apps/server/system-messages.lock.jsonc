@@ -1,3 +1,4 @@
+// Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
 // Merge-refusal notification ID change approved by lunchboxfortwo in Room message 1c880c7a; wording unchanged.
@@ -1580,6 +1581,7 @@
     "literals": [
       "''",
       "'1 minute'",
+      "'\\n'",
       "'corner_'",
       "'failing'",
       "'hex'",
@@ -1598,6 +1600,7 @@
       "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
       "`${sourceText ?? ''}${note}`",
       "`: ${queued.error}`",
+      "`Prior reviewer verdict and evidence (historical context):\\n${prior}`",
       "`Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`",
       "`\\n${input.wakeNote}`",
       "`the reviewer command could not be queued on ${headSha ?? 'this head'}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`"
@@ -1732,6 +1735,7 @@
       "'NFKD'",
       "'Use your passkey for'",
       "'Vouch for'",
+      "'\\n'",
       "'_'",
       "'a Room event'",
       "'access to'",
@@ -1791,6 +1795,7 @@
       "`Allow ${grant.kind === 'command' ? 'running' : 'access to'} ${grant.target}?`",
       "`Approve ${card.purpose === 'squire-spending' ? 'spending with ' + field('tool') : 'write access to ' + field('repository')}?`",
       "`Connect ${field('connectorName')}?`",
+      "`Prior reviewer verdict and evidence (historical context):\\n${prior}`",
       "`Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`",
       "`Sign in to ${AGENT_SIGN_IN_SERVICE_LABELS[field('harness') as AgentSignInHarness] ?? field('harness')}?`",
       "`Sign in to ${field('name')}?`",
@@ -1803,13 +1808,15 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:dce69b3c211c9e96",
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:71b9ed9302bf48c9",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, 'the review ended without a PASS on the current head')",
+    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`)",
     "literals": [
-      "'the review ended without a PASS on the current head'",
-      "`${pr.headSha}:${ended}`"
+      "''",
+      "`${pr.headSha}:${ended}`",
+      "`; prior verdict and evidence: ${evidence}`",
+      "`the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`"
     ],
     "occurrences": 1
   },
@@ -1975,6 +1982,7 @@
     "literals": [
       "''",
       "'1 minute'",
+      "'\\n'",
       "'corner_'",
       "'headSha'",
       "'hex'",
@@ -1991,6 +1999,7 @@
       "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
       "`${sourceText ?? ''}${note}`",
       "`: ${queued.error}`",
+      "`Prior reviewer verdict and evidence (historical context):\\n${prior}`",
       "`Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`",
       "`\\n${input.wakeNote}`",
       "`the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`"

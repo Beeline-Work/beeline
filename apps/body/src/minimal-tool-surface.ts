@@ -717,7 +717,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "open_corner",
-    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically.",
+    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically. Keep the Room's designated reviewer out of implementation unless necessary, then name a different corner reviewer.",
     "inputSchema": {
       "type": "object",
       "required": ["room", "brief", "implementer"],
@@ -1117,7 +1117,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "connect",
-    "description": "mode discover searches integrations; status silently reads readiness; ensure connects/reconnects through the approved route. Setup never grants use authority. Never show secrets/sign-in links or switch routes after denial. Also advertises optional first-party app_tool capabilities.",
+    "description": "mode discover searches integrations; status silently reads readiness; ensure connects/reconnects through the approved route. Setup never grants use authority. Never show secrets/sign-in links. Linked-repository writes use the Beeline GitHub App; personal GitHub serves lookups and person-scoped actions. Report exact denials; never fall back from App to personal for linked-repository writes or retry person-scoped actions as App. Also advertises optional first-party app_tool capabilities.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1163,7 +1163,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "app_tool",
-    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id, or beeline:workflow, beeline:wallet, beeline:browser_share, beeline:corner_app. First-party routes preserve each operation’s original authority. Discover before use.",
+    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id or key from connect status, or beeline:workflow, beeline:wallet, beeline:browser_share, beeline:corner_app. First-party routes preserve each operation’s original authority. Discover before use.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1189,7 +1189,8 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "type": "string",
           "description": "Required lifecycle corner address; rejected for local schedule/event management."
         },
-        "title": {"type": "string", "description": "Plain schedule label in one to four words.", "maxLength": 80},
+        "title": {"type": "string", "description": "Required for schedule and event creation: plain name in one to four words.", "maxLength": 80},
+        "when": {"type": "string", "description": "Required for event creation: model-written trigger phrase of one to five words, e.g. On corner checks failing."},
         "workflowName": {
           "type": "string",
           "description": "Saved workflow targeted by this subscription, if the action starts one."
@@ -1237,11 +1238,15 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "required": ["action"],
       "additionalProperties": false,
       "anyOf": [
+        {"properties": {"action": {"const": "create"}, "trigger": {"const": "schedule"}}, "required": ["action", "trigger", "title"]},
+        {"properties": {"action": {"const": "create"}, "trigger": {"const": "event"}}, "required": ["action", "trigger", "title", "when"]},
+        {"properties": {"action": {"const": "create"}, "trigger": {"const": "lifecycle"}}, "required": ["action", "trigger", "address"]},
         {"properties": {"action": {"enum": ["list", "events"]}}, "required": ["action"]},
         {
-          "properties": {"action": {"enum": ["create", "update", "delete"]}},
+          "properties": {"action": {"enum": ["update", "delete"]}},
           "required": ["action", "trigger"]
         },
+        {"properties": {"action": {"const": "delete"}, "trigger": {"const": "schedule"}}, "required": ["action", "scheduleId"]},
         {"properties": {"action": {"const": "replace_events"}}, "required": ["action", "kinds"]}
       ]
     }

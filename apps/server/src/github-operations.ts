@@ -1963,12 +1963,21 @@ export class GitHubOperations {
         const url = text(pullRequest?.html_url);
         const merged = body.action === 'closed' && pullRequest?.merged === true;
         const number = integer(pullRequest?.number);
-        // A branch can carry a second pull request once its first was closed:
-        // never let an event for a different number replace the pull
-        // association the corner recorded. A corner that never recorded a
-        // number (its opened webhook was lost) keeps the branch match.
+        // A replacement can arrive before the previous close webhook.
+        // Confirm both live states before replacing the association; delayed
+        // events for an older PR must never displace its newer replacement.
         const recordedPrNumber = target.pr_number ? Number(target.pr_number) : undefined;
-        if (recordedPrNumber && number && recordedPrNumber !== number) continue;
+        if (recordedPrNumber && number && recordedPrNumber !== number) {
+          if (number < recordedPrNumber || !['opened', 'reopened'].includes(String(body.action))) continue;
+          const token = await this.app.installationToken(Number(target.installation_id), {
+            repositoryIds: [Number(target.repository_id)],
+          });
+          const previous = await this.app.readPullRequest(token.token, repository, recordedPrNumber);
+          if (previous.state !== 'closed' || previous.merged) continue;
+          const replacement = await this.app.readPullRequest(token.token, repository, number);
+          if (replacement.state !== 'open' || replacement.headRef !== branch) continue;
+          await this.recordClosedCornerPullRequest(target.corner_id, recordedPrNumber, database);
+        }
         const targetBranch = text(record(pullRequest?.base)?.ref);
         const webhookBaseSha = text(record(pullRequest?.base)?.sha);
         let headSha = text(record(pullRequest?.head)?.sha);
@@ -2224,7 +2233,11 @@ export class GitHubOperations {
         const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
           ? await retryGitHubRead(() => this.app.readPullRequest(token.token, repository, Number(target.pr_number)))
           : undefined;
-        if (livePr && livePr.headSha !== checkHeadSha) return;
+        if (livePr?.state === 'closed' && !livePr.merged) {
+          await this.recordClosedCornerPullRequest(target.corner_id, Number(target.pr_number), database);
+          return;
+        }
+        if (livePr && (livePr.merged || livePr.headSha !== checkHeadSha)) return;
         const beforeFetch = await this.lifecycle(target.corner_id, database);
         if (beforeFetch.pr?.headSha && beforeFetch.pr.headSha !== checkHeadSha) return;
         const oldReport = beforeFetch.checksSummary as (typeof beforeFetch.checksSummary & {

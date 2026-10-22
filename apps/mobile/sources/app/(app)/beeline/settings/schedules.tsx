@@ -6,20 +6,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import { roomTitle, type RoomScheduleView, type RoomSubscriptionView } from '@beeline/api-contract/phone';
+import { cornerShortTitle, roomTitle, type RoomScheduleView, type RoomSubscriptionView } from '@beeline/api-contract/phone';
 import {
   scheduleTitle,
+  scheduleTrigger,
   subscriptionTitle,
   subscriptionWhen,
-  subscriptionWhere,
+  scheduleWhere,
   useScheduledWork,
 } from '@/buzz/scheduled-work';
-import { CORNER_META_SIZE } from '@/components/buzz/CornerGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { ScheduledWorkWhere } from '@/components/buzz/ScheduledWorkWhere';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { WorkflowGlyph } from '@/components/buzz/WorkflowGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -29,7 +28,7 @@ type WorkEntry =
   | { kind: 'schedule'; value: RoomScheduleView }
   | { kind: 'subscription'; value: RoomSubscriptionView };
 
-/** This Room, then each child corner; timers by next run before event triggers. */
+/** Timers by next run across all call sites, then event triggers. */
 export function orderScheduledWork(
   schedules: readonly RoomScheduleView[],
   subscriptions: readonly RoomSubscriptionView[],
@@ -38,41 +37,28 @@ export function orderScheduledWork(
     ...schedules.map((value): WorkEntry => ({ kind: 'schedule', value })),
     ...subscriptions.map((value): WorkEntry => ({ kind: 'subscription', value })),
   ].sort((a, b) => {
-    const aCorner = a.value.corner;
-    const bCorner = b.value.corner;
-    if (!aCorner || !bCorner) {
-      if (aCorner) return 1;
-      if (bCorner) return -1;
-    } else {
-      const cornerOrder = aCorner.name.localeCompare(bCorner.name) || aCorner.id.localeCompare(bCorner.id);
-      if (cornerOrder) return cornerOrder;
-    }
     if (a.kind !== b.kind) return a.kind === 'schedule' ? -1 : 1;
     if (a.kind === 'schedule' && b.kind === 'schedule') return a.value.nextRunAt - b.value.nextRunAt;
     return 0;
   });
 }
 
-function ListTail({ agent, corner, compact }: {
+function ListAttribution({ agent, corner, roomName }: {
+  roomName?: string | null;
   agent: string;
   corner?: { id: string; name: string } | null;
-  compact: boolean;
 }) {
-  const shownAgent = compact ? (Array.from(agent)[0] ?? agent ) : agent;
-  return (
-    <View style={styles.listTail}>
-    <Text style={styles.listDot}>{'\u2009·\u2009'}</Text>
-    <Text numberOfLines={1} style={styles.listAgent}>@{shownAgent}</Text>
-    <Text style={styles.listDot}>{'\u2009·\u2009'}</Text>
-    <ScheduledWorkWhere corner={corner} />
-  </View>);
+  return <>
+    <Text numberOfLines={1} style={styles.listAgent}>@{agent}</Text>
+    <Text style={styles.listDot}>{' · '}</Text>
+    <ScheduledWorkWhere corner={corner ? { ...corner, name: cornerShortTitle(roomName, corner.name, corner.id) } : undefined} />
+  </>;
 }
 
 /**
  * Everything that wakes the Room's agents without a human tag: timers and
- * subscriptions. Agents set both up. A flat list orders this Room before its
- * corners, schedules by next run before subscriptions. Schedule rows name the work;
- * subscriptions name their trigger. Each opens its own detail page.
+ * subscriptions. Agents set both up. Timers order by next run before subscriptions.
+ * Each row names the work, trigger, agent and call site, and opens its detail page.
  */
 export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules');
@@ -97,13 +83,12 @@ export default function ScheduledWork() {
   const renderSchedule = (schedule: RoomScheduleView) => (
     <SettingsRow
       chevron="right"
-      description={schedule.maxRuns === 1 ? 'Once' : undefined}
+      description={scheduleTrigger(schedule)}
+      descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{scheduleTrigger(schedule)}</Text>}
+      descriptionDetail={`@${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName)}`}
+      descriptionDetailContent={<ListAttribution
+        roomName={work?.roomName} agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'} corner={schedule.corner} />}
       key={schedule.id}
-      leading={<View style={styles.leadingSlot}>
-        {schedule.workflowSlug ? (
-          <WorkflowGlyph color={styles.workflowGlyph.color} size={CORNER_META_SIZE} testID={`scheduled-work-glyph-${schedule.id}`} />
-        ) : null}
-      </View>}
       onPress={() => openSchedule(schedule)}
       testID={`scheduled-work-${schedule.id}`}
       title={scheduleTitle(schedule)}
@@ -113,16 +98,12 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={`· @${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${subscriptionWhere(subscription, work?.roomName)}`}
-      descriptionContent={<ListTail agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'}
-        compact={subscriptionWhen(subscription).length > 24} corner={subscription.corner} />}
-      descriptionLead={subscriptionWhen(subscription)}
+      description={subscriptionWhen(subscription)}
+      descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{subscriptionWhen(subscription)}</Text>}
+      descriptionDetail={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${scheduleWhere(subscription, work?.roomName)}`}
+      descriptionDetailContent={<ListAttribution
+        roomName={work?.roomName} agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'} corner={subscription.corner} />}
       key={subscription.id}
-      leading={<View style={styles.leadingSlot}>
-        {subscription.workflowSlug ? (
-          <WorkflowGlyph color={styles.workflowGlyph.color} size={CORNER_META_SIZE} testID={`subscription-glyph-${subscription.id}`} />
-        ) : null}
-      </View>}
       onPress={() =>
         router.push({
           pathname: '/beeline/settings/subscription',
@@ -187,9 +168,7 @@ const styles = StyleSheet.create((theme) => ({
   loading: { padding: theme.buzz.space.xl, alignItems: 'center', justifyContent: 'center' },
   // SettingsRow pads by `space.sm`; keep the flat list on the 16pt page axis.
   rows: { paddingHorizontal: theme.buzz.space.sm },
-  leadingSlot: { width: CORNER_META_SIZE, alignItems: 'center', justifyContent: 'center' },
-  workflowGlyph: { color: theme.buzz.accent },
-  listTail: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' },
+  listTrigger: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, flexShrink: 1 },
   listDot: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   listAgent: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, flexShrink: 1, minWidth: 0 },
   emptyBlock: { padding: theme.buzz.space.xl, alignItems: 'flex-start', justifyContent: 'center' },

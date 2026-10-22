@@ -34,6 +34,14 @@ const roomPrompt = (context: Partial<SessionPromptContext> = {}) =>
 const dmPrompt = (context: Partial<SessionPromptContext> = {}) =>
   sessionPrompt({ surface: 'dm', ...context }).systemPrompt;
 
+describe('GitHub routing across sessions', () => {
+  it.each(PROMPT_SURFACES)('keeps linked-repository writes on the App in %s', (surface) => {
+    const prompt = sessionPrompt({ surface }).systemPrompt;
+    expect(prompt).toContain('Beeline App writes linked repos');
+    expect(prompt).not.toContain('prefer personal GitHub over the repository App');
+  });
+});
+
 describe('Room guidance', () => {
   it('describes Room mentions and the mounted corner action', () => {
     const files = beelineFilesSkillMarkdown('test-release');
@@ -99,6 +107,7 @@ describe('Room guidance', () => {
   it('teaches self-only wake management and event discovery', () => {
     const markdown = beelineWakesSkillMarkdown('test-release');
     expect(markdown).toContain('wake manages only your own wake sources');
+    expect(markdown).toContain('delete with wake(action:delete, scheduleId), without a trigger');
     expect(markdown).toContain('wake(action:events) lists the catalog');
     expect(markdown).toContain('wake(action:replace_events, kinds) sets the complete room-kind list');
     for (const kind of PER_ITEM_EVENT_KINDS) expect(markdown).not.toContain(`${kind} `);
@@ -231,7 +240,7 @@ describe('Room guidance', () => {
     for (const surface of ['room', 'dm'] as const) {
       const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
       expect(context.systemPrompt).toContain(
-        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
+        'Services: use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
       );
       expect(context.systemPrompt).not.toContain('For every user request');
       expect(context.systemPrompt).not.toContain('sign up for an account');

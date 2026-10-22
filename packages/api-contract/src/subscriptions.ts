@@ -4,6 +4,7 @@ import type { SystemEvent } from './system-events.js';
 /** A standing, event-driven wake for one agent in one Room. */
 export type SubscriptionSource = 'room' | 'repository' | 'service';
 export type RoomSubscriptionView = {
+  readonly title?: string;
   readonly id: string;
   readonly roomId: string;
   readonly agentId: string;

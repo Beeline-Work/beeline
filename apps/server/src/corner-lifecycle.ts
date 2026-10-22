@@ -847,23 +847,23 @@ async function ensureReviewDispatch(
     `SELECT command.id,command.state FROM agent_commands command
      JOIN rooms corner ON corner.id=command.room_id
      JOIN rooms parent ON parent.id=corner.parent_id
-     LEFT JOIN agent_turns turn ON turn.room_id=command.room_id
-       AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
      WHERE command.room_id=$1 AND command.action='input'
        AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
        AND command.agent_id IS DISTINCT FROM $3
-       AND (command.state IN ('pending','claimed')
-            OR (command.state='complete' AND turn.status='complete'))
-       AND command.created_at>=(
-         SELECT created_at FROM messages WHERE room_id=$1 AND card_type=$2
-           AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1)
+       AND command.state IN ('pending','claimed')
+       AND ((command.review_context->>'headSha'=(SELECT lifecycle->'pr'->>'headSha' FROM corner_facts WHERE corner_id=$1)
+           AND command.review_context->'pullRequest'=(SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1)
+           AND (command.review_context->>'briefRevision')::int=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0))
+         OR (command.review_context IS NULL AND command.created_at>=(
+           SELECT created_at FROM messages WHERE room_id=$1 AND card_type=$2
+             AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1)))
      ORDER BY (command.state IN ('pending','claimed')) DESC,command.created_at DESC,command.id DESC
      LIMIT 1`,
     [cornerId, CORNER_LIFECYCLE_CARD_TYPE, corner.worker_agent_id],
   );
   const reviewed = outstanding.rows[0];
   if (reviewed?.state === 'pending' || reviewed?.state === 'claimed') return OK;
-  const ended = reviewed?.id ?? await blockingReview(db, cornerId, pr.headSha);
+  const ended = await blockingReview(db, cornerId, pr.headSha);
   if (ended) {
     const implementerWorking = await db.query(
       `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
@@ -871,8 +871,12 @@ async function ensureReviewDispatch(
       [cornerId, corner.worker_agent_id],
     );
     if (implementerWorking.rowCount) return OK;
+    const evidence = (await db.query<{ text: string }>(
+      `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
+       WHERE command.id=$1`, [ended],
+    )).rows[0]?.text;
     return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
-      'the review ended without a PASS on the current head');
+      `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`);
   }
   const sourceId = transition.lastCardId ?? (
     await db.query<{ id: string }>(
@@ -911,10 +915,15 @@ async function ensureReviewDispatch(
   return { ok: true, wake: { queued: true, agentId: reviewerAgentId } };
 }
 
+// Compare check results, not refresh timestamps, attempts or run URLs.
+const reviewChecksSql = `jsonb_build_object('status',lifecycle->>'checks','checks',
+  (SELECT jsonb_agg(jsonb_build_object('name',item->>'name','status',item->>'status') ORDER BY item->>'name')
+   FROM jsonb_array_elements(COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb)) item))`;
+
 /**
  * The reviewer's finished review of this head, dispatched since the current
- * brief revision, that ended without a PASS (callers have already checked
- * for a yes on the head) while the corner was still in review. Another
+ * brief revision and check results (callers have already checked for an
+ * approval on the head), while the corner was still in review. Another
  * review wake for the same head and brief revision would only repeat that
  * verdict. A turn that ended after the corner left review (checks re-ran)
  * gave no verdict.
@@ -938,9 +947,17 @@ async function blockingReview(
          AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
          AND (command.reason='corner_review_dispatch'
            OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
-         AND source.system_event->'object'->>'headSha'=$2
-         AND command.created_at>=COALESCE(
-           (SELECT max(created_at) FROM corner_brief_revisions WHERE corner_id=$1),'-infinity')
+         AND COALESCE(command.review_context->>'headSha',source.system_event->'object'->>'headSha',
+           (SELECT COALESCE(card->'contents'->>'headSha',card->>'headSha') FROM messages
+            WHERE room_id=$1 AND card_type=$3 AND card->>'runId'=$1::text AND created_at<=command.created_at
+            ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
+         AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
+           SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1))
+         AND (command.review_context IS NULL OR command.review_context->'checks'=(
+           SELECT ${reviewChecksSql} FROM corner_facts WHERE corner_id=$1))
+         AND CASE WHEN command.review_context IS NOT NULL THEN
+           (command.review_context->>'briefRevision')::int=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0)
+           ELSE command.created_at>=COALESCE((SELECT max(created_at) FROM corner_brief_revisions WHERE corner_id=$1),'-infinity') END
          AND NOT EXISTS (
            SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
              AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
@@ -964,6 +981,19 @@ async function queueReviewerCommand(
       [input.roomId],
     )
   ).rows[0];
+  const context = (await db.query<{ context: unknown }>(
+    `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
+       THEN jsonb_build_object('headSha',lifecycle->'pr'->>'headSha',
+       'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
+       'checks',${reviewChecksSql}) ELSE NULL END context
+     FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0],
+  )).rows[0]?.context;
+  const prior = (await db.query<{ text: string }>(
+    `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
+     WHERE command.room_id=$1 AND command.agent_id=$2 AND command.review_context IS NOT NULL
+       AND command.state='complete' ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+    [input.roomId, input.agentId],
+  )).rows[0]?.text;
   // A rejected insert must leave this transaction usable so the failure line
   // can commit. A broken connection still propagates rather than pretending
   // the reviewer was woken.
@@ -971,8 +1001,11 @@ async function queueReviewerCommand(
   try {
     const command = await createAgentCommand(db, {
       ...input,
-      ...(brief ? { wakeNote: `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.` } : {}),
+      wakeNote: [brief ? `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.` : '',
+        prior ? `Prior reviewer verdict and evidence (historical context):\n${prior}` : ''].filter(Boolean).join('\n'),
     });
+    if (command) await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1',
+      [command.id, context ? JSON.stringify(context) : null]);
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { command };
   } catch (error) {

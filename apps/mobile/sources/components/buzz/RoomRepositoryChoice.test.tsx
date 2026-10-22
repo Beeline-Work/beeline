@@ -12,6 +12,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     View: host('View'),
+    Pressable: host('Pressable'),
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
     ScrollView: host('ScrollView'),
@@ -186,7 +187,7 @@ describe('Room header Repository control', () => {
     );
     act(() => list().onSelect(castellan));
     expect(title()).toBe('#thecollector');
-    expect(text('room-repo-link')).toBe('trusty-squirecastellan');
+    expect(text('room-repo-link')).toBe('castellantrusty-squire');
     expect(calls.link).not.toHaveBeenCalled();
     act(() => save().onPress());
     expect(calls.link).toHaveBeenCalledWith(castellan);
@@ -197,7 +198,7 @@ describe('Room header Repository control', () => {
     const { renderer, text, press, save } = mount({ candidates: [castellan, collector] });
     press('room-repo-row');
     press('room-repo-mode-link');
-    expect(text('room-repo-link')).toBe('trusty-squirethecollector');
+    expect(text('room-repo-link')).toBe('thecollectortrusty-squire');
     expect(save().disabled).toBe(false);
     act(() => renderer.unmount());
   });
@@ -250,13 +251,14 @@ describe('Room header Repository control', () => {
   });
 
   it('blocks a taken name and links it instead (H7)', () => {
-    const { renderer, text, press, save } = mount({ candidates: [collector] });
+    const { renderer, host, text, press, save } = mount({ candidates: [collector] });
     press('room-repo-row');
     press('room-repo-mode-create');
-    expect(text('room-repo-create')).toContain('Already exists.Link it instead');
+    expect(text('room-repo-create')).toContain('Already exists.');
+    expect(host('room-repo-link-instead').props.label).toBe('Link it instead');
     expect(save().disabled).toBe(true);
     press('room-repo-link-instead');
-    expect(text('room-repo-link')).toBe('trusty-squirethecollector');
+    expect(text('room-repo-link')).toBe('thecollectortrusty-squire');
     expect(save().disabled).toBe(false);
     act(() => renderer.unmount());
   });
@@ -279,7 +281,7 @@ describe('Room header Repository control', () => {
     });
     press('room-repo-row');
     expect(host('room-repo-mode-link')?.props.accessibilityState.selected).toBe(true);
-    expect(text('room-repo-link')).toBe('trusty-squirecastellan');
+    expect(text('room-repo-link')).toBe('castellantrusty-squire');
     expect(save().disabled).toBe(true);
     press('room-repo-mode-none');
     expect(save().disabled).toBe(false);

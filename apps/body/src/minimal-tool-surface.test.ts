@@ -316,6 +316,22 @@ describe('minimal agent surface', () => {
       'unavailable',
     );
   });
+  it('requires creation names and event trigger words, and forwards them', async () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'wake')!.inputSchema;
+    const schedule = { action: 'create', trigger: 'schedule', prompt: 'Check work',
+      cadence: { kind: 'interval', everyMinutes: 60 } };
+    const event = { action: 'create', trigger: 'event', source: 'room', event: 'check-failed',
+      prompt: 'Fix checks', title: 'Fix failing checks' };
+    expect(Check(schema as never, schedule)).toBe(false);
+    expect(Check(schema as never, { ...schedule, title: 'Check work' })).toBe(true);
+    expect(Check(schema as never, event)).toBe(false);
+    expect(Check(schema as never, { ...event, when: 'On corner checks failing' })).toBe(true);
+    await callAgentTool('wake', { ...event, when: 'On corner checks failing' }, 'w');
+    expect(calls).toContainEqual(expect.objectContaining({
+      operation: 'createAgentSubscription',
+      input: expect.objectContaining({ title: event.title, when: 'On corner checks failing' }),
+    }));
+  });
   it('wake cannot choose messaging operations or another agent', async () => {
     for (const forged of [
       { agent: 'other' },
@@ -341,6 +357,45 @@ describe('minimal agent surface', () => {
         },
       },
     ]);
+  });
+  it('R-WAKEDEL creates then deletes a schedule without trigger through the advertised tool', async () => {
+    const schedules = new Set<string>();
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      const input = JSON.parse(String(init.body));
+      const operation = url.pathname.split('/').pop()!;
+      calls.push({ operation, input });
+      if (operation === 'createAgentSchedule') {
+        schedules.add('created');
+        return Response.json({ scheduleId: 'created' });
+      }
+      if (operation === 'deleteAgentSchedule') {
+        expect(schedules.delete(input.scheduleId)).toBe(true);
+        return Response.json({ ok: true });
+      }
+      throw new Error(`Unexpected operation ${operation}`);
+    });
+    const created = await callAgentTool('wake', {
+      action: 'create', trigger: 'schedule', title: 'Check work', prompt: 'Check work',
+      cadence: { kind: 'interval', everyMinutes: 60 },
+    }, 'create');
+    expect(created).toContain('Schedule created created');
+    expect(await callAgentTool('wake', { action: 'delete', scheduleId: 'created' }, 'delete'))
+      .toBe('Schedule created deleted.');
+    expect(schedules.size).toBe(0);
+    expect(calls[1]).toMatchObject({ operation: 'deleteAgentSchedule', input: {
+      roomId: 'corner', scheduleId: 'created', selfOnly: true,
+    } });
+  });
+  it.each([
+    [{ action: 'create' }, 'trigger'],
+    [{ action: 'delete', trigger: 'schedule' }, 'scheduleId'],
+    [{ action: 'delete', scheduleId: 42 }, 'scheduleId'],
+    [{ action: 'delete', scheduleId: 'mine', trigger: 'bad' }, 'trigger'],
+    [{ action: 'create', trigger: 'schedule', cadence: { kind: 'interval', everyMinutes: 'bad' } }, 'everyMinutes'],
+    [{ action: 'replace_events' }, 'kinds'],
+  ])('names the invalid or missing wake field for %j', async (args, field) => {
+    await expect(callAgentTool('wake', args, 'invalid')).rejects.toThrow(field);
+    expect(calls).toEqual([]);
   });
   it('forces self-only schedule management and rejects legacy calls', async () => {
     await callAgentTool('wake', { action:'update', trigger:'schedule', scheduleId:'mine', prompt:'Inspect my work' }, 'own');

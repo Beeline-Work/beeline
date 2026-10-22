@@ -1,3 +1,5 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
+import { EmptyState } from '@/components/buzz/EmptyState';
 import { githubConnectionErrorMessage } from '@/auth/github-connection-error';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -69,6 +71,8 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
     subline={card.canLink ? card.repository ?? 'Create a private repo or link one you already own.' : undefined}
     body={card.kind === 'repository' ? card.canLink ? card.githubLinked === false && !card.installationId ? 'Connect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.' : `New repo: ${card.defaultName}` : card.ownerHandle ? `Ask @${card.ownerHandle} to link a repository for this Room` : 'Ask a Workspace owner or admin to choose a repository for this Room.' : undefined}
     choices={choices} actions={actions}
-    footerNote={error ?? (busy ? 'Working…' : card.selected ? `Selected · ${card.selected}` : picker && !card.repositories.length ? 'No repositories found. Install Beeline, then try again.' : undefined)}
-    footerNoteTone={error ? 'failed' : 'quiet'} />;
+    footerNote={busy ? 'Working…' : card.selected ? `Selected · ${card.selected}` : undefined}>
+    {error ? <ErrorBanner title={error} /> : picker && !card.repositories.length ?
+      <EmptyState title="No repositories found. Install Beeline, then try again." /> : null}
+  </TranscriptCard>;
 }

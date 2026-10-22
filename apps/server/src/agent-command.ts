@@ -107,6 +107,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_commands_one_avatar_job ON agent_command
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS renudged_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS review_context jsonb;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS cancellation_reason text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS recovery_context text;
@@ -254,7 +255,12 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     SELECT command.id FROM recovery_scope command
     JOIN corner_facts fact ON fact.corner_id=command.room_id
     LEFT JOIN messages source ON source.id=command.source_message_id
-    WHERE (command.reason IN ('corner_merge_conflict','corner_review_dispatch','subscribed_event')
+    WHERE (command.review_context IS NOT NULL AND (
+        command.review_context->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
+        OR command.review_context->'pullRequest' IS DISTINCT FROM fact.lifecycle->'pr'->'number'
+        OR (command.review_context->>'briefRevision')::int IS DISTINCT FROM
+          COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id),0)))
+      OR (command.reason IN ('corner_merge_conflict','corner_review_dispatch','subscribed_event')
         AND source.system_event->'object'->>'headSha' IS NOT NULL
         AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
       OR (EXISTS (SELECT 1 FROM corner_brief_revisions brief

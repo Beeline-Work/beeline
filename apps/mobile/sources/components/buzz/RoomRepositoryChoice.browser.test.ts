@@ -35,7 +35,7 @@ describe.skipIf(!existsSync(CHROME))('Room header Repository control in the brow
     );
     expect(lines[4]).toBe('H4-search: Search repos');
     expect(lines[5]).toBe(
-      'H3-picked: #thecollector Repository None Link Create trusty-squire castellan Cancel Save',
+      'H3-picked: #thecollector Repository None Link Create castellan trusty-squire Cancel Save',
     );
     expect(lines[7]).toBe(
       'H5: #thecollector Repository None Link Create trusty-squire thecollector Cancel Save',

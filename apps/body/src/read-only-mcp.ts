@@ -2809,7 +2809,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       const capabilities = builtin || args.mode === 'discover' || args.mode === 'status'
         ? await availableCapabilities(!builtin || builtin === 'beeline:onboarding') : [];
       if (builtin === 'beeline:onboarding' && !capabilities.includes(builtin))
-        return JSON.stringify({ status: 'unavailable', app: builtin, next: 'Repository cards are unavailable on this surface. Check repository onboarding is enabled and use an active Room with current members.' });
+        return JSON.stringify({ status: 'unavailable', app: builtin, next: 'Repository cards are unavailable on this surface. Use an active Room with current members and retry the repository card.' });
       if (builtin && capabilities.includes(builtin) && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
         return JSON.stringify({ status: 'ready', app: builtin,
           next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` });

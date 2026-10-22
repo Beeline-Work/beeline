@@ -47,7 +47,6 @@ export function repositoryStarters(signals: RepositorySignals): RepositoryStarte
 
 export async function postRepositoryOnboarding(database: SqlDatabase, github: GitHubOperations | undefined,
   input: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' }): Promise<RepositoryOnboardingCard> {
-  if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') throw new Error('repository onboarding unavailable');
   const room = (await database.query<{ repository_name: string | null; name: string; can_link: boolean; owner_handle: string | null; github_linked: boolean }>(
     `SELECT r.repository_name,i.name,(w.role IN ('owner','admin')) can_link,
      (SELECT owner.handle FROM memberships membership JOIN identities owner ON owner.id=membership.identity_id

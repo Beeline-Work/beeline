@@ -2,7 +2,7 @@
 
 This is a feature, not a defect report. The acceptance target is the approved A–F mock: install and authorize GitHub, explicitly join/create a Workspace, create/link a Room repository, choose a history-based starter, merge its PR through the normal gate, then switch repositories.
 
-Use an isolated Android emulator with the candidate app installed and a browser already signed into a **dedicated test GitHub account**. Never use lunchboxfortwo's repositories. Run against production after the flagged implementation is released. The test account receives its own All repositories Beeline App installation during each run; OAuth during installation stays enabled with the existing production callback. The owner handles any GitHub security-key confirmation through the live browser card. No release pipeline changes are involved.
+Use an isolated Android emulator with the candidate app installed and a browser already signed into a **dedicated test GitHub account**. Never use lunchboxfortwo's repositories. Run against production after the implementation is released. The test account receives its own All repositories Beeline App installation during each run; OAuth during installation stays enabled with the existing production callback. The owner handles any GitHub security-key confirmation through the live browser card. No release pipeline changes are involved.
 
 Run `npm run prove:onboarding` with:
 
@@ -20,17 +20,17 @@ Live App settings and the dedicated account are external prerequisites. A locall
 
 Repository changes keep the existing Workspace owner/admin authority. A joined ordinary member can select a starter for a linked repository; they cannot change the Room's binding. The server returns `canLink` on the card, so the phone shows this limit instead of offering a control that will refuse. Removed free agents stay removed when another member joins.
 
-## Revision 2 rollout
+## Repository onboarding
 
-Set `BEELINE_REPOSITORY_ONBOARDING=1` on the server to enable repository cards for every user, including Google-only identities without a GitHub link. The flag is the kill switch; no account allowlists apply.
+Repository cards are always available to every user, including Google-only identities without a GitHub link. No feature flags or account allowlists apply.
 
-An unknown first-time user initially sees the existing sign-in UI. OAuth verifies their GitHub id before any Beeline identity is created. Every account receives the Beeline install pre-screen when the kill switch is enabled; installation authorization must verify personal All repositories access before the native ticket is issued. A signed, expiring browser account cookie permits direct install-first routing on later attempts; the callback still verifies the returned GitHub account.
+An unknown first-time user initially sees the existing sign-in UI. OAuth verifies their GitHub id before any Beeline identity is created. Every account receives the Beeline install pre-screen; installation authorization must verify personal All repositories access before the native ticket is issued. A signed, expiring browser account cookie permits direct install-first routing on later attempts; the callback still verifies the returned GitHub account.
 
 Review and merge the implementation first, then ship through the release corner. Live acceptance runs on production after that release under the approved brief. Before each run, uninstall the App from the test account and unlink its Beeline identity, retaining a log of each reset. Use the verified `methoxine-debug` Squire session without signing it out. Record the initial OAuth identification action when present; the target of four actions is not a claimed result.
 
 ## Google sign-in acceptance
 
-Google sign-in uses the same Workspace, Room, repository and starter flow. The Google test subject must already be eligible under `BEELINE_GOOGLE_SIGN_IN` and `BEELINE_GOOGLE_SIGN_IN_SUBJECTS`. Enroll the test device once with `beeline://beeline/onboarding?google_preview=<token>` (web: `/?google_preview=<token>`), using the staged preview secret privately. Keep `BEELINE_GOOGLE_SIGN_IN_EVERYONE` unset. The token reveals the button only and never grants sign-in. Repository cards require only `BEELINE_REPOSITORY_ONBOARDING=1`; Google-only users receive the `install_missing` card. This does not link accounts by email or change the Google sign-in rollout.
+Google sign-in uses the same Workspace, Room, repository and starter flow. The Google test subject must already be eligible under `BEELINE_GOOGLE_SIGN_IN` and `BEELINE_GOOGLE_SIGN_IN_SUBJECTS`. Enroll the test device once with `beeline://beeline/onboarding?google_preview=<token>` (web: `/?google_preview=<token>`), using the staged preview secret privately. Keep `BEELINE_GOOGLE_SIGN_IN_EVERYONE` unset. The token reveals the button only and never grants sign-in. Repository cards need no feature configuration; Google-only users receive the `install_missing` card. This does not link accounts by email or change the Google sign-in rollout.
 
 To select the Google variant of `scripts/onboarding-walkthrough.mjs`, supply `ONBOARDING_PROVIDER=google` and `ONBOARDING_GOOGLE_EMAIL` in addition to the dedicated GitHub account, device and switch-repository values above. The emulator browser must already have the dedicated Google session. `apps/mobile/e2e/google-repository-onboarding.yaml` signs in with Google, connects GitHub from the repository card, links or creates a repository, chooses a starter and waits for the normal merged result. The runner preserves recordings for all three passes. The Google account must remain the same identity after connecting GitHub; inspect its name, handle and provider rows before and after the run.
 

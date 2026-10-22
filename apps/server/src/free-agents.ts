@@ -194,9 +194,6 @@ export const FREE_AGENT_JOIN_GREETING =
   "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
 
 export const FREE_AGENT_HELLO =
-  `@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try "@<handle> draft a welcome note for this Workspace" to start. If you don't want me here, open Members and remove me from the Workspace.`;
-
-export const FREE_AGENT_ONBOARDING_HELLO =
   `@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Choose or create a repository on the card below, and I’ll suggest a starting task. If you don't want me here, open Members and remove me from the Workspace.`;
 
 /**
@@ -345,15 +342,14 @@ export async function createFreeAgentInWorkspace(
   const owner = (await database.query<{ handle: string }>(
     `SELECT COALESCE(handle,id) handle FROM identities WHERE id=$1`, [input.creatorId],
   )).rows[0]!;
-  const enabled = (process.env.BEELINE_REPOSITORY_ONBOARDING === '1');
-  const hello = (enabled ? FREE_AGENT_ONBOARDING_HELLO : FREE_AGENT_HELLO).replace('<owner>', owner.handle).replace('<handle>', handle);
+  const hello = FREE_AGENT_HELLO.replace('<owner>', owner.handle).replace('<handle>', handle);
   // An ordinary agent-authored message: the existing mention/push path notifies the owner.
   await database.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
     [createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex'),
       input.roomId, agent.publicKey, hello],
   );
-  if (enabled) await postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' });
+  await postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' });
   await recordFreeAgentEvent(database, agent.publicKey, 'created', {
     workspaceId: input.workspaceId,
   });

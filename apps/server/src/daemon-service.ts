@@ -1358,7 +1358,7 @@ export class DaemonService {
         return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
-        )), ...(owner && (process.env.BEELINE_REPOSITORY_ONBOARDING === '1') ? { repositoryOnboarding: true } : {}) } as Output<Name>;
+        )), ...(owner ? { repositoryOnboarding: true } : {}) } as Output<Name>;
       }
       case 'noteEmptyRoomRepository': {
         const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
@@ -1762,7 +1762,7 @@ export class DaemonService {
         const requester = await this.grantRequester();
         const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
           `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
-        if (!owner || process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') throw new Error('repository onboarding unavailable');
+        if (!owner) throw new Error('repository onboarding unavailable');
         if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
         if (request.kind === 'repository') await this.github?.refresh(owner);
         const card = await postRepositoryOnboarding(this.database, this.github, {
@@ -3804,7 +3804,7 @@ export class DaemonService {
         `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
       )).rowCount > 0;
       const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
-      if (owner && (process.env.BEELINE_REPOSITORY_ONBOARDING === '1'))
+      if (owner)
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
     const isReviewer =
@@ -6526,7 +6526,6 @@ export class DaemonService {
   }
 
   private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
-    if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
     const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
       ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId)
       : undefined);
@@ -6972,8 +6971,6 @@ export class DaemonService {
     const builtin = builtinBeelineApp(service);
     if (builtin) {
       await this.access(input.roomId, agentId);
-      if (builtin === 'beeline:onboarding' && process.env.BEELINE_REPOSITORY_ONBOARDING !== '1')
-        return { status: 'unavailable', app: builtin, next: 'Repository onboarding is disabled. Ask the workspace operator to enable repository onboarding, then retry in this Room.' };
       return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };
     }
     const continuation = normalizeAppContinuation(input.continuation);

@@ -407,7 +407,7 @@ export class GitHubOperations {
   async beginInstallation(viewerId: string, input: Input<'beginGitHubInstallation'>) {
     const credential = await this.userCredential(viewerId, this.database);
     const binding = input.reconnect === true || !credential?.token;
-    const state = `${binding ? 'github_bind_' : (process.env.BEELINE_REPOSITORY_ONBOARDING === '1') ? 'repository_install_' : ''}${randomBytes(32).toString('base64url')}`;
+    const state = `${binding ? 'github_bind_' : 'repository_install_'}${randomBytes(32).toString('base64url')}`;
     await this.database.query(
       `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
       [hash(state), viewerId, input.redirectUri],
@@ -428,7 +428,6 @@ export class GitHubOperations {
         )
       ).rows[0];
       if (!flow) throw new Error('GitHub installation flow not found or expired');
-      if (state.startsWith('repository_install_') && process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') throw new Error('repository onboarding unavailable');
       if (state.startsWith('github_bind_')) {
         if (!code || !callbackUri) throw new Error('github_connection_canceled');
         const identity = await this.oauth.exchangeCode(code, callbackUri);

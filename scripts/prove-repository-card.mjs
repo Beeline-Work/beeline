@@ -14,7 +14,6 @@ import { claimAgentCommand } from '../apps/server/dist/agent-command.js';
 import { CommandExecutionContext } from '../apps/body/dist/server-command-intake.js';
 import { callAgentTool } from '../apps/body/dist/read-only-mcp.js';
 
-process.env.BEELINE_REPOSITORY_ONBOARDING = '1';
 const db = new PgliteDatabase();
 const scratch = await mkdtemp(join(tmpdir(), 'repo-card-proof-'));
 const originalFetch = globalThis.fetch;

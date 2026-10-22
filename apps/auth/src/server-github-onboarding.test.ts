@@ -1,12 +1,9 @@
 import { onboardingCookie } from './onboarding-rollout.js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { alphaTenant, app, startCookie, state as fixture, useAuthServerFixture } from './server-test-fixture.js';
 
 describe('install-first native GitHub onboarding', () => {
   useAuthServerFixture();
-  beforeEach(() => {
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-  });
   afterEach(() => vi.unstubAllEnvs());
   const cookie = () => `beeline_onboarding=${onboardingCookie('123', 'github-secret', Date.now())}`;
   it('starts installation, accepts its OAuth callback with browser binding, and issues the native ticket', async () => {
@@ -72,15 +69,6 @@ describe('install-first native GitHub onboarding', () => {
       url:`/auth/github/callback?state=${installState}&code=install-code`});
     expect(installed.statusCode).toBe(302);
     expect(installed.headers.location).toContain('ticket=');
-  });
-  it('keeps sign-in unchanged when OFF even with onboarding requested and an eligibility cookie', async () => {
-    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
-    const start = await app.inject({ method:'GET',headers:{host:alphaTenant.host,cookie:cookie()},
-      url:`/auth/github/start?onboarding=1&app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'f'.repeat(43)}` });
-    expect(new URL(start.headers.location!).pathname).toBe('/authorize');
-    expect(new URL(start.headers.location!).searchParams.get('state')).not.toMatch(/^onboarding_/);
-    const caps = await app.inject({method:'GET',url:'/auth/capabilities',headers:{host:alphaTenant.host,cookie:cookie()}});
-    expect(caps.json()).not.toHaveProperty('repositoryOnboarding');
   });
   it('advertises repository onboarding to every user without an eligibility cookie', async () => {
     for (const cookieValue of ['', 'beeline_onboarding=123.forged', cookie()]) {

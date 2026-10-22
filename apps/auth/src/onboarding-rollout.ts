@@ -13,5 +13,5 @@ export function onboardingCookieSubject(cookie: string | undefined, secret: stri
   if (!/^\d+$/.test(subject) || !/^\d+$/.test(issued) || !/^[a-f0-9]{64}$/.test(signature)) return undefined;
   if (Number(issued) > now || now - Number(issued) > 86_400_000) return undefined;
   const expected = onboardingCookie(subject, secret, Number(issued)).split('.')[2]!;
-  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected)) && (process.env.BEELINE_REPOSITORY_ONBOARDING === '1') ? subject : undefined;
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected)) ? subject : undefined;
 }

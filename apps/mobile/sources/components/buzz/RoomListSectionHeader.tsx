@@ -26,6 +26,7 @@ export function RoomListSectionHeader({
   onAction,
   actionDisabled,
   wordAction,
+  tapLineHeight = false,
   testID,
 }: {
   title: string;
@@ -49,6 +50,8 @@ export function RoomListSectionHeader({
   onAction?: () => void;
   /** A word action such as CLEAR, before the + option. */
   wordAction?: SectionHeaderWordAction;
+  /** Preserve the desktop sidebar tap line. */
+  tapLineHeight?: boolean;
 }) {
   return (
     <View
@@ -84,18 +87,20 @@ export function RoomListSectionHeader({
         </Pressable>
       ) : null}
       {onAction ? (
-        <Pressable
-          accessibilityLabel={actionAccessibilityLabel}
-          accessibilityRole="button"
-          onPress={onAction}
-          disabled={actionDisabled}
-          accessibilityState={{ disabled: actionDisabled }}
-          hitSlop={ACTION_HIT_SLOP}
-          style={({ pressed }) => [styles.sectionHeaderAction, pressed && styles.pressed]}
-          testID={actionTestID}
-        >
-          <Ionicons name="add" size={ACTION_GLYPH} color={styles.sectionHeaderActionGlyph.color} />
-        </Pressable>
+        <View style={tapLineHeight && styles.tapLine}>
+          <Pressable
+            accessibilityLabel={actionAccessibilityLabel}
+            accessibilityRole="button"
+            onPress={onAction}
+            disabled={actionDisabled}
+            accessibilityState={{ disabled: actionDisabled }}
+            hitSlop={ACTION_HIT_SLOP}
+            style={({ pressed }) => [styles.sectionHeaderAction, pressed && styles.pressed]}
+            testID={actionTestID}
+          >
+            <Ionicons name="add" size={ACTION_GLYPH} color={styles.sectionHeaderActionGlyph.color} />
+          </Pressable>
+        </View>
       ) : null}
     </View>
   );
@@ -136,6 +141,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textMuted,
       flex: 1,
     },
+    tapLine: { minHeight: 44, justifyContent: 'center' },
     sectionHeaderAction: {
       width: ACTION_GLYPH,
       height: LABEL_LINE,

@@ -99,6 +99,7 @@ describe('Room guidance', () => {
   it('teaches self-only wake management and event discovery', () => {
     const markdown = beelineWakesSkillMarkdown('test-release');
     expect(markdown).toContain('wake manages only your own wake sources');
+    expect(markdown).toContain('delete with wake(action:delete, scheduleId), without a trigger');
     expect(markdown).toContain('wake(action:events) lists the catalog');
     expect(markdown).toContain('wake(action:replace_events, kinds) sets the complete room-kind list');
     for (const kind of PER_ITEM_EVENT_KINDS) expect(markdown).not.toContain(`${kind} `);

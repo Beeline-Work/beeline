@@ -107,6 +107,15 @@ async function render(props: Partial<React.ComponentProps<typeof Button>> = {}) 
 }
 
 describe('the primary button', () => {
+  it('gives icon-only controls a square target without label padding', async () => {
+    const { frame, pressable } = await render({ label: '', iconOnly: true,
+      accessibilityLabel: 'Members', icon: React.createElement('Text', null, '+') });
+    expect(frame().width).toBe(44);
+    expect(frame().height).toBe(44);
+    expect(frame().paddingHorizontal).toBe(0);
+    expect(pressable.props.accessibilityLabel).toBe('Members');
+  });
+
   it('is cream with ink text in dark mode', async () => {
     active.theme = 'obsidian';
     const { frame, text } = await render();

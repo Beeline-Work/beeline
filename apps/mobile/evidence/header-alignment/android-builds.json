@@ -1,0 +1,20 @@
+{
+  "before": {
+    "sha256": "df70c6d38ad66119af1e6dd910e00be76a83898413af35fed4448c2417952eaa",
+    "entry": "scripts/header-alignment-proof/native.tsx",
+    "architectures": [
+      "x86_64"
+    ],
+    "updatesEnabled": false,
+    "source": "b82f0f7fb"
+  },
+  "after": {
+    "sha256": "f1737b9f256e8d8ac88396abc2849ca315eead93b9397580f3196312d5bc32b9",
+    "entry": "scripts/header-alignment-proof/native.tsx",
+    "architectures": [
+      "x86_64"
+    ],
+    "updatesEnabled": false,
+    "source": "final working tree before commit"
+  }
+}

@@ -132,8 +132,6 @@ CREATE INDEX IF NOT EXISTS agent_commands_result_message_idx ON agent_commands(r
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
 -- Retired: nothing reads or writes command_check_state; drop it in a later release.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS command_check_state text;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS output_authority_stalled_sequence bigint;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS output_authority_resumed_sequence bigint NOT NULL DEFAULT 0;
 -- Handbacks to the corner's worker, counted per pull-request head so a push
 -- resets them and a review/fix loop over one commit cannot run forever.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_head text;
@@ -333,14 +331,6 @@ export async function expiredWakeDigestSources(db: SqlDatabase, roomId: string, 
      SELECT id FROM stale_wakes`, [roomId, agentId, ids])).rows.map(row => row.id);
 }
 
-/** A rejected output quiets the entire corner until fresh work explicitly resumes it. */
-function outputAuthorityReadySql(command: string): string {
-  return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
-    SELECT 1 FROM corner_facts stalled WHERE stalled.corner_id=${command}.room_id
-      AND stalled.output_authority_stalled_sequence IS NOT NULL
-  ))`;
-}
-
 /** Automatic work cannot answer a worker's explicit waiting report. */
 function waitingReportSql(command: string): string {
   return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
@@ -433,8 +423,8 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; wake_batch_minutes: number; human_input: boolean; is_corner: boolean }>(
-    `SELECT r.parent_id IS NOT NULL is_corner, (SELECT to_jsonb(opened) FROM agent_commands opened
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; wake_batch_minutes: number; human_input: boolean }>(
+    `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text,
@@ -453,11 +443,6 @@ export async function createAgentCommand(
   if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
       input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input &&
       await cornerReportWaiting(db, input.roomId))
-    return undefined;
-  const resumesOutput = member.rows[0]!.human_input || input.privatePayload?.kind === 'order' || input.action === 'resume';
-  if (!resumesOutput && (input.action === undefined || input.action === 'input') &&
-      (await db.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1
-        AND output_authority_stalled_sequence IS NOT NULL`, [input.roomId])).rowCount)
     return undefined;
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
@@ -483,7 +468,7 @@ export async function createAgentCommand(
     (input.action === undefined || input.action === 'input' || input.action === 'resume');
   // Capture known offline presence at dispatch. An absent connection record
   // stays unknown and uses the overdue-claim fallback during recovery.
-  const result = await db.query<CommandRow & { inbox_sequence: string }>(
+  const result = await db.query<CommandRow>(
     `INSERT INTO agent_commands
  (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,wake_after,created_offline)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
@@ -513,11 +498,6 @@ export async function createAgentCommand(
       minutes,
     ],
   );
-  if (result.rowCount && resumesOutput && member.rows[0]!.is_corner) {
-    await db.query(`UPDATE corner_facts SET output_authority_stalled_sequence=NULL,
-      output_authority_resumed_sequence=$2 WHERE corner_id=$1`,
-      [input.roomId, result.rows[0]!.inbox_sequence]);
-  }
   const command = result.rows[0] ?? (await db.query<CommandRow>(
     `SELECT * FROM agent_commands WHERE id=$1 OR (room_id=$2 AND source_message_id=$3
       AND agent_id=$4 AND action=$5) LIMIT 1`,
@@ -1157,7 +1137,7 @@ export async function claimAgentCommand(
                (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
                AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
                AND NOT EXISTS(SELECT 1 FROM digest_refresh)
-               AND ${reviewerQuietSql('agent_commands')} AND ${waitingReportSql('agent_commands')} AND ${outputAuthorityReadySql('agent_commands')}
+               AND ${reviewerQuietSql('agent_commands')} AND ${waitingReportSql('agent_commands')}
                AND (${ordinaryWakeSql('agent_commands')} OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
                  SELECT 1 FROM agent_commands human WHERE human.room_id=$2 AND human.agent_id=$3
                    AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
@@ -1448,7 +1428,7 @@ export async function readAgentCommands(
        AND (requested.state='pending' OR (requested.state='claimed' AND requested.lease_expires_at>now()))
    ))
    AND workflow_latest.card->'cancellation' IS NULL
-   AND ${reviewerQuietSql('c')} AND ${waitingReportSql('c')} AND ${outputAuthorityReadySql('c')}
+   AND ${reviewerQuietSql('c')} AND ${waitingReportSql('c')}
    ))
  ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,CASE WHEN ${ordinaryWakeSql('c')} THEN 0 ELSE 1 END,c.created_at,c.id
  LIMIT CASE WHEN $3::text[] IS NULL THEN 100 ELSE NULL END`,
@@ -1738,25 +1718,9 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
      ) stuck
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
-       AND fact.output_authority_stalled_sequence IS NULL
        AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND (stuck.held OR (NOT EXISTS (
-         SELECT 1 FROM jsonb_array_elements(
-           CASE WHEN jsonb_typeof(fact.lifecycle->'checksSummary'->'checks')='array'
-                THEN fact.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
-         WHERE running->>'status'='pending'
-       ) AND EXISTS (
-         SELECT 1 FROM agent_commands command
-         JOIN messages source ON source.id=command.source_message_id
-         WHERE command.room_id=fact.corner_id AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
-           AND command.reason='corner_check' AND command.state IN ('complete','cancelled')
-           AND command.id=(SELECT newest.id FROM agent_commands newest
-             WHERE newest.room_id=fact.corner_id AND newest.agent_id=command.agent_id
-               AND newest.reason='corner_check' ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1)
-           AND command.completed_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
-           AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-       )))
+       AND stuck.held
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands working
          WHERE working.room_id=fact.corner_id AND working.agent_id=${cornerImplementerSql('fact', 'corner')}
@@ -1772,7 +1736,6 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
           AND fact.lifecycle->'pr'->>'headSha'=$2 AND fact.lifecycle->>'checks'='failing'
           AND ${cornerImplementerSql('fact', 'corner')}=$3
           AND fact.lifecycle=$4::jsonb
-          AND fact.output_authority_stalled_sequence IS NULL
           AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
           AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
             AND newest.agent_id=$3 AND newest.reason='corner_check'
@@ -1784,18 +1747,16 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
       await ensureSystemIdentity(db);
       const pullRequest = row.title ?? (row.number ? `pull request #${row.number}` : 'this head');
       const line = await systemLine(db, {
-        // One source per completed attempt; concurrent sweeps share the same wake.
+        // One wake per stuck-check snapshot; completing it cannot start another.
         id: createHash('sha256')
-          .update(`beeline:${row.corner_id}:checks-retry:${row.head_sha}:${row.last_command_id ?? 'no-command'}`)
+          .update(`beeline:${row.corner_id}:checks-retry:${row.head_sha}:${JSON.stringify(row.lifecycle)}`)
           .digest('hex'),
         roomId: row.corner_id,
         authorId: row.implementer_id,
         subject: GITHUB_SUBJECT,
         verb: 'requested another check of',
         object: { text: pullRequest, headSha: row.head_sha, ...(row.url ? { url: row.url } : {}) },
-        consequence: row.check_stuck
-          ? `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`
-          : `checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`,
+        consequence: `checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`,
       });
       await advanceCorner(db, row.corner_id, {
         kind: 'checks', result: 'failing', sourceMessageId: line.id, followup: true,
@@ -1823,9 +1784,7 @@ export async function noteCornerAgentUnreachable(
       LEFT JOIN LATERAL (SELECT id,generation_id,claimed_at FROM agent_commands
         WHERE room_id=corner.id AND agent_id=$2 AND claimed_at IS NOT NULL AND action IN ('input','resume')
         ORDER BY claimed_at DESC,id DESC LIMIT 1) ran ON true
-      WHERE corner.id=$1 AND corner.archived_at IS NULL
-        AND NOT EXISTS(SELECT 1 FROM corner_facts stalled WHERE stalled.corner_id=corner.id
-          AND stalled.output_authority_stalled_sequence IS NOT NULL)`,
+      WHERE corner.id=$1 AND corner.archived_at IS NULL`,
       [cornerId, agentId, command?.id ?? sourceMessageId, sourceMessageId])).rows[0];
     if (!failure || failure.recovered) return;
     // A claimed turn ends the failure span. Different failed wakes before
@@ -2121,51 +2080,4 @@ export async function reconcileConfiguredCornerReviewers(
     if (outcome.wake?.queued || routed.rowCount) commands += 1;
   }
   return { subscriptions: subscriptions.rowCount, commands };
-}
-
-/** Commit recovery state after the rejected write rolled back, retaining the original refusal. */
-export async function noteCornerOutputAuthorityLost(
-  db: SqlDatabase, roomId: string, agentId: string, generation: unknown, requestId: unknown,
-): Promise<void> {
-  if (typeof generation !== 'string' || !generation) return;
-  await db.transaction(async db => {
-    await lockCommanderWakes(db, roomId, agentId);
-    await lockAgentCommandQueue(db, roomId, agentId);
-    // Only this helper's latest execution may stop a corner. Delayed output
-    // from a predecessor must never stop a successor or a newly accepted input.
-    const command = (await db.query<CommandRow & { corner_name: string; inbox_sequence: string }>(
-      `SELECT command.*,corner.name corner_name FROM agent_commands command
-       JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
-       JOIN corner_facts fact ON fact.corner_id=corner.id
-       WHERE command.room_id=$1 AND command.agent_id=$2
-         AND (command.generation_id=$3 OR (command.turn_request_id=$4
-           AND command.state='pending' AND command.generation_id IS NULL))
-         AND command.action IN ('input','resume') AND command.state IN ('pending','claimed','complete')
-         AND command.inbox_sequence>=fact.output_authority_resumed_sequence
-         AND (command.turn_request_id=$4 OR NOT EXISTS (
-           SELECT 1 FROM agent_commands requested WHERE requested.room_id=$1 AND requested.agent_id=$2
-             AND requested.turn_request_id=$4))
-         AND NOT EXISTS (SELECT 1 FROM agent_commands successor
-           WHERE successor.room_id=$1 AND successor.agent_id=$2 AND successor.action IN ('input','resume')
-             AND successor.claimed_at IS NOT NULL AND successor.inbox_sequence>command.inbox_sequence)
-       ORDER BY command.inbox_sequence DESC LIMIT 1`, [roomId, agentId, generation, typeof requestId === 'string' ? requestId : null])).rows[0];
-    if (!command) return;
-    const episode = await db.query(`UPDATE corner_facts SET output_authority_stalled_sequence=$2
-      WHERE corner_id=$1 AND output_authority_stalled_sequence IS NULL
-        AND output_authority_resumed_sequence<=$2 RETURNING corner_id`,
-      [roomId, command.inbox_sequence]);
-    if (!episode.rowCount) return;
-    // Withdraw queued automatic work as well as refusing future dispatch and claim.
-    await db.query(`WITH cancelled AS (
-      UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='output_authority_lost'
-      WHERE room_id=$1 AND state='pending' AND action IN ('input','resume') RETURNING *
-    ) UPDATE agent_turns turn SET status='cancelled',created_at=now()
-      FROM cancelled command WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
-        AND turn.request_id=command.turn_request_id AND turn.status='working'`, [roomId]);
-    const notice = await reportToCommander(db, roomId, agentId,
-      `blocked: ${command.corner_name} (${roomId}) stopped after the server rejected a turn's output authority. Send a new message, order, or explicit resume to continue.`,
-      undefined, createHash('sha256').update(`output-authority:${roomId}:${command.inbox_sequence}`).digest('hex'),
-      { automatic: true, digestSource: true });
-    if (notice.delivered === false) console.error('[commander] rejected-output notice could not reach commander', { roomId });
-  });
 }

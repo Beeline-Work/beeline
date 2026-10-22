@@ -1447,68 +1447,25 @@ it.each([
 });
 
 
-it.each(['human', 'order', 'resume'])('Reproduction R1: rejected output stops check recovery once until new %s input', async input => {
-  const opened = await open();
-  const initial = await worker(opened.cornerId);
-  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), status: 'complete' }, WORKER);
-  const head = '1'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
-    JSON.stringify({ state: 'implement', checks: 'failing', pr: { headSha: head, number: 123, title: 'Widget' } })]);
-  const source = await systemLine(db, { roomId: opened.cornerId, authorId: WORKER, subject: GITHUB_SUBJECT,
-    verb: 'reported', object: { text: 'failed checks', headSha: head }, kind: 'check-failed' });
-  await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: source.id, reason: 'corner_check' });
-  const turn = await worker(opened.cornerId);
-  const queuedAuto = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null, reason: 'schedule' });
-  const reject = () => daemon.execute('postAgentDraft', { ...authority(turn), requestId: 'stale-harness-request',
-    agentId: WORKER, turnId: 'stale-harness-request', text: 'rejected draft' }, WORKER);
-  await expect(reject()).rejects.toThrow('command output authority rejected');
-  await expect(reject()).rejects.toThrow('command output authority rejected');
-  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), status: 'complete' }, WORKER);
-  await db.query(`UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`, [turn.id]);
-  // This is the production starter: another check-recovery source after every completed turn.
-  expect(await noteBlockedCornerChecks(db)).toBe(0);
-  expect(await noteBlockedCornerChecks(db)).toBe(0);
-  await advanceCorner(db, opened.cornerId, { kind: 'checks', result: 'failing', sourceMessageId: source.id, followup: true });
-  await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, source.id);
-  expect(await commands(opened.cornerId, WORKER)).toEqual([]);
-  await expect(daemon.execute('claimAgentCommand', { roomId: opened.cornerId, commandId: queuedAuto!.id, generationId: 'restarted-helper' }, WORKER)).rejects.toThrow();
-  expect(await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null, reason: 'schedule' })).toBeUndefined();
-  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
-  expect(reports).toHaveLength(1);
-  expect(reports[0]!.source.body).toContain('Widget');
-  expect(reports[0]!.source.body).toContain('output authority');
-  // Other places on the same worker remain available.
-  const other = await createAgentCommand(db, { roomId: ROOM, agentId: WORKER, sourceMessageId: null, reason: 'system' });
-  expect((await commands(ROOM, WORKER)).some(c => c.id === other!.id)).toBe(true);
-  if (input === 'human') await phone.execute('sendRoomMessage', { roomId: opened.cornerId, text: '@worker Continue' }, HUMAN);
-  else if (input === 'order') await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Continue' }, RUBY);
-  else await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null, reason: 'explicit_resume', action: 'resume' });
-  const next = (await commands(opened.cornerId, WORKER))[0]!;
-  expect(next).toBeDefined();
-  // A late rejection from the stopped command must not silence this fresh input.
-  await expect(reject()).rejects.toThrow('command output authority rejected');
-  await claim(next);
-  await daemon.execute('postAgentDraft', { ...authority(next), agentId: WORKER, turnId: next.turnRequestId, text: 'fresh output' }, WORKER);
-  await expect(daemon.execute('postAgentDraft', { ...authority(turn), agentId: WORKER, turnId: turn.turnRequestId, text: 'late old output' }, WORKER)).rejects.toThrow('command output authority rejected');
-  await expect(daemon.execute('postAgentDraft', { ...authority(next), generationId: 'old-helper-generation', agentId: WORKER, turnId: next.turnRequestId, text: 'old helper' }, WORKER)).rejects.toThrow('command output authority rejected');
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
-  // A genuinely resumed execution can enter a new stopped episode, with one new notice.
-  await expect(daemon.execute('postAgentDraft', { ...authority(next), requestId: 'new-stale-request', agentId: WORKER, turnId: 'new-stale-request', text: 'new rejection' }, WORKER)).rejects.toThrow('command output authority rejected');
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(2);
-  console.info('Reproduction R1 demonstrated: rejected draft → no repeated check turns; one named commander notice; fresh input and other places work');
-});
-
-
-it('Reproduction R1: a revoked generation cannot reclaim its pending command after helper restart', async () => {
+it.each(['human', 'order'])('Reproduction R1: silent completion preserves fresh %s input without a pause', async input => {
   const opened = await open();
   const turn = await worker(opened.cornerId);
-  await db.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL WHERE id=$1`, [turn.id]);
-  await expect(daemon.execute('postAgentTurnReceipt', { ...authority(turn), status: 'complete' }, WORKER))
+  // The old tool completed the command while the helper still had draft writes.
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), status: 'complete', completionKind: 'no-reply' }, WORKER);
+  await expect(daemon.execute('postAgentDraft', { ...authority(turn), agentId: WORKER, turnId: turn.turnRequestId, text: 'late' }, WORKER))
     .rejects.toThrow('command output authority rejected');
-  expect(await commands(opened.cornerId, WORKER)).toEqual([]);
-  await expect(daemon.execute('claimAgentCommand', { roomId: opened.cornerId, commandId: turn.id, generationId: 'after-restart' }, WORKER)).rejects.toThrow();
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
-  await phone.execute('sendRoomMessage', { roomId: opened.cornerId, text: '@worker New request' }, HUMAN);
+  if (input === 'human') {
+    await phone.execute('sendRoomMessage', { roomId: opened.cornerId, text: '@worker Continue the widget' }, HUMAN);
+  } else {
+    await daemon.execute('order', { ...authority(order), address: opened.cornerId, agent: 'worker', text: 'Continue the widget' }, RUBY);
+  }
   const next = await worker(opened.cornerId);
-  await daemon.execute('postAgentDraft', { ...authority(next), agentId: WORKER, turnId: next.turnRequestId, text: 'Fresh turn works' }, WORKER);
+  // The helper now owns completion: queued presentation writes finish first.
+  await daemon.execute('postAgentDraft', { ...authority(next), agentId: WORKER, turnId: next.turnRequestId, text: 'Checking the widget' }, WORKER);
+  await daemon.execute('retractAgentLiveOutput', { ...authority(next), agentId: WORKER, turnId: next.turnRequestId, kind: 'draft' }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(next), status: 'complete', completionKind: 'no-reply' }, WORKER);
+  expect((await db.query(`SELECT state,generation_id FROM agent_commands WHERE id=$1`, [next.id])).rows[0])
+    .toMatchObject({ state: 'complete', generation_id: authority(next).generationId });
+  expect(await commands(opened.cornerId, WORKER)).toEqual([]);
+  expect((await commands(DM, RUBY)).filter(command => command.reason === 'report')).toEqual([]);
 });

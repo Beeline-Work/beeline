@@ -139,8 +139,62 @@ describe('one helper process hosts every agent on the machine', () => {
     } finally { signals.emit('SIGTERM'); await running; }
   }, 15_000);
 
+  it('ends a free-agent pre-serving retry loop once at the startup deadline', async () => {
+    const { configPaths, env, signals } = await machine(1);
+    const exit = vi.fn();
+    const capture = vi.spyOn(sentry, 'captureHelperError');
+    const runAgent = vi.fn(async (_path: string, _host: AgentRuntimeHost, signal: AbortSignal) => {
+      await new Promise<void>(done => signal.addEventListener('abort', () => done(), { once: true }));
+      return 'stopped' as const;
+    });
+    const running = runMachineHelper({ configPaths, env, signals, runAgent, exitProcess: exit,
+      freeAgentIdle: { idleMs: 60_000, startupTimeoutMs: 500, requestSleep: async () => false } });
+    try {
+      expect((await running).reason).toBe('failed');
+      expect(exit).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(78);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(runAgent).toHaveBeenCalledTimes(1);
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
+
+  it('records free-agent readiness and cancels the startup deadline once serving', async () => {
+    const { root, configPaths, env, signals } = await machine(1);
+    const ready = resolve(root, 'ready');
+    const exit = vi.fn();
+    const fake = fakeRuntimes();
+    const running = runMachineHelper({ configPaths, env: { ...env, BEELINE_FREE_AGENT_READY_FILE: ready },
+      signals, runAgent: fake.runAgent, exitProcess: exit,
+      freeAgentIdle: { idleMs: 60_000, startupTimeoutMs: 500, requestSleep: async () => false } });
+    try {
+      await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready\n'));
+      await new Promise(done => setTimeout(done, 600));
+      expect(exit).not.toHaveBeenCalled();
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
+
+  it('does not reapply the expired boot budget after a serving helper restarts', async () => {
+    const { root, configPaths, env, signals } = await machine(1);
+    const ready = resolve(root, 'ready');
+    await writeFile(ready, 'ready\n');
+    const exit = vi.fn();
+    const runAgent = vi.fn(async (_path: string, _host: AgentRuntimeHost, signal: AbortSignal) => {
+      await new Promise<void>(done => signal.addEventListener('abort', () => done(), { once: true }));
+      return 'stopped' as const;
+    });
+    const running = runMachineHelper({ configPaths, env: { ...env,
+      BEELINE_FREE_AGENT_READY_FILE: ready, BEELINE_FREE_AGENT_START_DEADLINE: '1' },
+      signals, runAgent, exitProcess: exit,
+      freeAgentIdle: { idleMs: 60_000, requestSleep: async () => false } });
+    try {
+      await vi.waitFor(() => expect(runAgent).toHaveBeenCalledTimes(1));
+      await new Promise(done => setTimeout(done, 100));
+      expect(exit).not.toHaveBeenCalled();
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
+
   // Reproduction legacy-owner-handoff: real owner process and persisted helper status.
-  it.skipIf(process.platform !== 'linux').each(['graceful', 'ignores SIGTERM', 'reused PID', 'helper PID', 'cancelled'] as const)(
+  it.skipIf(process.platform !== 'linux').each(['graceful', 'ignores SIGTERM', 'reused PID', 'previous boot', 'legacy collision', 'helper PID', 'cancelled'] as const)(
     'takes over a legacy owner: %s', async (mode) => {
       const { root, configPaths, env, signals } = await machine(1);
       const configPath = configPaths[0]!;
@@ -152,6 +206,10 @@ describe('one helper process hosts every agent on the machine', () => {
       const pid = mode === 'helper PID' ? process.pid : child.pid!;
       await writeDaemonPidRecord(configPath, pid);
       if (mode === 'reused PID') await writeFile(daemonBirthPath(configPath), 'recycled-pid');
+      if (mode === 'previous boot' || mode === 'legacy collision') {
+        const ticks = runtime.processBirthIdentity(pid)!;
+        await writeFile(daemonBirthPath(configPath), mode === 'previous boot' ? `old-boot:${ticks}` : ticks!);
+      }
       const capture = vi.spyOn(sentry, 'captureHelperError');
       const kill = vi.spyOn(process, 'kill');
       const fake = fakeRuntimes();
@@ -185,7 +243,7 @@ describe('one helper process hosts every agent on the machine', () => {
           .map(([, signal]) => signal);
         expect(delivered).toEqual(mode === 'graceful' ? ['SIGTERM'] :
           mode === 'ignores SIGTERM' ? ['SIGTERM', 'SIGKILL'] : []);
-        if (mode === 'reused PID' || mode === 'helper PID') expect(child.exitCode).toBeNull();
+        if (mode === 'reused PID' || mode === 'previous boot' || mode === 'legacy collision' || mode === 'helper PID') expect(child.exitCode).toBeNull();
         else await vi.waitFor(() => expect(child.exitCode !== null || child.signalCode !== null).toBe(true));
         expect(capture).not.toHaveBeenCalled();
       } finally {

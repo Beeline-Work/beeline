@@ -112,7 +112,10 @@ it('E21: Google owners can issue a helper pairing code without a GitHub account'
 it.each([true, false])('E5: an existing org installation changes owner only after an explicit admin proof (%s)', async admin => {
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_login,account_type,repository_selection,status)
     VALUES(77,$1,'organization','Organization','all','active')`, [member]);
-  const oauth = { exchangeCode: async () => ({subject:'42',login:'alex-dev',issuer:'https://github.com',audience:'test',accessToken:'test-user-grant'}) } as unknown as GitHubOAuthClient;
+  const oauth = {
+    authorizationUrl: ({ state }: { state: string }) => `https://github.test/authorize?state=${state}`,
+    exchangeCode: async () => ({subject:'42',login:'alex-dev',issuer:'https://github.com',audience:'test',accessToken:'test-user-grant'}),
+  } as unknown as GitHubOAuthClient;
   const app = {
     installationUrl: (state: string) => `https://github.test/install?state=${state}`,
     installationAccount: async () => ({id:'84',login:'organization',type:'Organization',repositorySelection:'all'}),

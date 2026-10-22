@@ -1,5 +1,6 @@
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { resolveAgentCommand } from './agent-command.js';
 import { loadBodyConfig, parseEnvFile } from './config.js';
@@ -168,32 +169,49 @@ async function freeAgentPiCommand(env: NodeJS.ProcessEnv) {
   return resolveAgentCommand({ kind: 'pi', env });
 }
 
-/** Upgrade persisted OpenCode installations before starting any Room sessions. */
+/** Reconcile persisted environment before starting sessions, including existing Pi runtimes. */
 async function upgradeFreeAgentHarness(configPath: string, env: NodeJS.ProcessEnv): Promise<void> {
   const runtime = await readRuntimeRecord(configPath);
-  if (runtime.agentKind === 'pi') return;
-  if (runtime.agentKind !== 'opencode' || !runtime.llmEnvFile)
+  if ((runtime.agentKind !== 'pi' && runtime.agentKind !== 'opencode') || !runtime.llmEnvFile)
     throw new Error('unsupported persisted free agent harness');
+  const original = await readFile(runtime.llmEnvFile, 'utf8');
   const previous = parseEnvFile(runtime.llmEnvFile);
-  const provider = JSON.parse(previous.OPENCODE_CONFIG_CONTENT ?? '{}').provider?.beeline;
-  if (!provider?.options?.baseURL || !previous.BEELINE_FREE_AGENT_MODEL_TOKEN)
+  const canonicalName = (name: string) => name.replace(/^BUZZY_/, 'BEELINE_');
+  const normalized = { ...previous };
+  for (const [name, value] of Object.entries(previous)) {
+    if (!name.startsWith('BUZZY_')) continue;
+    normalized[canonicalName(name)] ??= value;
+    delete normalized[name];
+  }
+  const passthrough = new Set(
+    [previous.BUZZY_BODY_AGENT_ENV_PASSTHROUGH, previous.BEELINE_BODY_AGENT_ENV_PASSTHROUGH]
+      .filter(Boolean).join(',').split(',').map(name => canonicalName(name.trim())).filter(Boolean),
+  );
+  passthrough.add('BEELINE_FREE_AGENT_MODEL_TOKEN');
+  passthrough.add('BEELINE_FREE_AGENT_MAX_TURN_SECONDS');
+  normalized.BEELINE_BODY_AGENT_ENV_PASSTHROUGH = [...passthrough].join(',');
+  normalized.BEELINE_FREE_AGENT_MAX_TURN_SECONDS ??= '900';
+  if (!normalized.BEELINE_FREE_AGENT_MODEL_TOKEN)
     throw new Error('free agent proxy configuration is missing');
-  const model = runtime.modelSelection?.model;
-  if (!model?.startsWith('beeline/')) throw new Error('free agent proxy model is missing');
-  const agent = await freeAgentPiCommand(env);
-  await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig({
-    modelBaseUrl: provider.options.baseURL,
-    upstreamModel: model.slice('beeline/'.length),
-  }));
-  runtime.agentKind = agent.kind;
-  runtime.agentCommand = agent.command;
-  runtime.agentBinary = agent.command;
-  runtime.agentArgs = agent.args;
-  await writeRuntimeRecord(runtime);
-  await writePrivate(runtime.llmEnvFile, freeAgentModelEnv({
-    modelToken: previous.BEELINE_FREE_AGENT_MODEL_TOKEN,
-    maxTurnSeconds: Number(previous.BEELINE_FREE_AGENT_MAX_TURN_SECONDS ?? 900),
-  }));
+  if (runtime.agentKind === 'opencode') {
+    const provider = JSON.parse(previous.OPENCODE_CONFIG_CONTENT ?? '{}').provider?.beeline;
+    if (!provider?.options?.baseURL) throw new Error('free agent proxy configuration is missing');
+    const model = runtime.modelSelection?.model;
+    if (!model?.startsWith('beeline/')) throw new Error('free agent proxy model is missing');
+    const agent = await freeAgentPiCommand(env);
+    await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig({
+      modelBaseUrl: provider.options.baseURL,
+      upstreamModel: model.slice('beeline/'.length),
+    }));
+    runtime.agentKind = agent.kind;
+    runtime.agentCommand = agent.command;
+    runtime.agentBinary = agent.command;
+    runtime.agentArgs = agent.args;
+    await writeRuntimeRecord(runtime);
+    delete normalized.OPENCODE_CONFIG_CONTENT;
+  }
+  const reconciled = `${Object.entries(normalized).map(([name, value]) => `${name}=${value}`).join('\n')}\n`;
+  if (reconciled !== original) await writePrivateFileAtomically(runtime.llmEnvFile, reconciled);
 }
 
 /**

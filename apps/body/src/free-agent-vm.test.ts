@@ -1,4 +1,7 @@
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { createServer } from 'node:http';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -102,6 +105,71 @@ describe('free agent Machine entry', () => {
       await runFreeAgentCommand(env);
       expect((await readRuntimeRecord(path)).agentKind).toBe('pi');
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('boots a persisted Pi runtime from the legacy release and authenticates a child model request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'free-agent-legacy-pi-'));
+    const requests: string[] = [];
+    const server = createServer(async (request, response) => {
+      requests.push(request.headers.authorization ?? '');
+      for await (const _ of request) { /* Consume the model request. */ }
+      if (request.headers.authorization !== `Bearer ${GRANT.modelToken}`) {
+        response.writeHead(401).end('Authentication required');
+        return;
+      }
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ choices: [{ message: { content: 'UPGRADE_ENV_PROOF_OK' } }] }));
+    });
+    await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+    try {
+      const stored = (secret: string) => ({
+        name: 'test', secretKeyHex: secret, publicKey: identityFromKey(secret, 'test').publicKey,
+      });
+      const agent = stored('1'.repeat(64));
+      const envFile = join(root, 'model.env');
+      // The persisted allowlist name emitted by release 6d908054.
+      await writeFile(envFile, `BEELINE_FREE_AGENT_MODEL_TOKEN=${GRANT.modelToken}\n` +
+        'BEELINE_FREE_AGENT_MAX_TURN_SECONDS=321\n' +
+        'BUZZY_BODY_AGENT_ENV_PASSTHROUGH=BEELINE_FREE_AGENT_MODEL_TOKEN,BEELINE_FREE_AGENT_MAX_TURN_SECONDS,BUZZY_CUSTOM\n' +
+        'BUZZY_CUSTOM=preserved\nUNRELATED_SETTING=keep\n');
+      await writeRuntimeRecord({
+        version: 2, communityId: GRANT.workspaceId, pairedBy: GRANT.pairedBy,
+        agent, body: stored('2'.repeat(64)), rooms: [], supervisorRoot: root,
+        agentKind: 'pi', agentBinary: 'pi-acp', agentCommand: 'pi-acp', agentArgs: [],
+        mcpBinary: 'beeline-readonly-mcp', llmEnvFile: envFile,
+        modelSelection: { model: GRANT.model },
+        transport: { kind: 'monolith', baseUrl: GRANT.monolithBaseUrl, daemonToken: 'bdt_test' },
+      });
+      await mkdir(join(root, 'beeline/free-agent'), { recursive: true });
+      await writeFile(join(root, 'beeline/free-agent/settings.json'), JSON.stringify({ idleSeconds: 60 }));
+      const env = { HOME: root, PATH: process.env.PATH, XDG_STATE_HOME: root,
+        BEELINE_FREE_AGENT_ID: agent.publicKey, BEELINE_SERVER_URL: GRANT.monolithBaseUrl };
+      await runFreeAgentCommand(env);
+      const reconciled = await readFile(envFile, 'utf8');
+      const parsed = parseEnvFile(envFile);
+      expect(parsed.BUZZY_BODY_AGENT_ENV_PASSTHROUGH).toBeUndefined();
+      expect(parsed).toMatchObject({ BEELINE_CUSTOM: 'preserved', UNRELATED_SETTING: 'keep' });
+      const childEnv = buildAgentEnv(env, envFile);
+      expect(childEnv.BEELINE_CUSTOM).toBe('preserved');
+      expect(childEnv.BEELINE_FREE_AGENT_MAX_TURN_SECONDS).toBe('321');
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('model server did not bind');
+      const script = `const response = await fetch('http://127.0.0.1:${address.port}/chat/completions', {
+        method: 'POST', headers: { authorization: 'Bearer ' + process.env.BEELINE_FREE_AGENT_MODEL_TOKEN },
+        body: JSON.stringify({ messages: [{ role: 'user', content: 'Reply hello' }] }) });
+        if (!response.ok) throw new Error(await response.text());
+        console.log((await response.json()).choices[0].message.content);`;
+      const child = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', script], { env: childEnv });
+      expect(child.stdout.trim()).toBe('UPGRADE_ENV_PROOF_OK');
+      expect(requests).toEqual([`Bearer ${GRANT.modelToken}`]);
+      await runFreeAgentCommand(env);
+      expect(await readFile(envFile, 'utf8')).toBe(reconciled);
+      expect((await readRuntimeRecord(runtimeConfigPath(root, agent.publicKey))).agentKind).toBe('pi');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(done => server.close(() => done()));
       await rm(root, { recursive: true, force: true });
     }
   });

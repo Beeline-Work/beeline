@@ -93,7 +93,11 @@ reaped_idle, deleted_idle and allowance_reached.
 
 Existing free agents switch to Pi on their next cold boot. The helper upgrades
 the persisted runtime and writes a private Pi provider configuration before
-starting sessions. The image supplies Pi and pi-acp; the helper reports a missing program instead
+starting sessions. Every boot also reconciles the persisted model environment,
+including runtimes already using Pi: legacy `BUZZY_*` names and passthrough
+entries become `BEELINE_*`, the scoped model token stays available to the child,
+and replacement is atomic. The environment reader accepts the legacy allowlist
+spelling until migration completes. The image supplies Pi and pi-acp; the helper reports a missing program instead
 of downloading a replacement. Prior OpenCode harness session history does not carry over;
 Workspace messages remain available. Pi and pi-acp state directories are covered
 by the existing sandbox binds. The provider pins a 1,000,000-token context window

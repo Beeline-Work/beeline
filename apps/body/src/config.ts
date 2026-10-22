@@ -489,8 +489,8 @@ export function buildAgentEnv(
   const model = merged.OPENAI_COMPAT_MODEL ?? merged.BEELINE_LLM_MODEL ?? merged.OPENAI_MODEL;
 
   const extraPassthrough = new Set(
-    (merged.BEELINE_BODY_AGENT_ENV_PASSTHROUGH ?? '')
-      .split(',')
+    [merged.BUZZY_BODY_AGENT_ENV_PASSTHROUGH, merged.BEELINE_BODY_AGENT_ENV_PASSTHROUGH]
+      .filter(Boolean).join(',').split(',')
       .map((name) => name.trim())
       .filter(Boolean),
   );

@@ -95,6 +95,19 @@ describe('buildAgentEnv passthrough boundary', () => {
     expect(agentEnv.MISSING_VAR).toBeUndefined();
   });
 
+  it('accepts the legacy passthrough spelling alongside the canonical list', () => {
+    const agentEnv = buildAgentEnv({
+      ...daemonEnv,
+      BUZZY_BODY_AGENT_ENV_PASSTHROUGH: 'BEELINE_FREE_AGENT_MODEL_TOKEN',
+      BEELINE_BODY_AGENT_ENV_PASSTHROUGH: 'EXPLICIT_EXTRA',
+      BEELINE_FREE_AGENT_MODEL_TOKEN: 'test-model-token',
+      EXPLICIT_EXTRA: 'configured',
+    });
+    expect(agentEnv.BEELINE_FREE_AGENT_MODEL_TOKEN).toBe('test-model-token');
+    expect(agentEnv.EXPLICIT_EXTRA).toBe('configured');
+    expect(agentEnv.UNRELATED_DEPLOY_SECRET).toBeUndefined();
+  });
+
   it('does not copy ambient GitHub tokens unless explicitly configured', () => {
     const agentEnv = buildAgentEnv({
       ...daemonEnv,

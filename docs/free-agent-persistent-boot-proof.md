@@ -59,3 +59,41 @@ the result; the API confirmed deletion.
 - Body `machine-helper.test.ts`: the same stale-owner collisions reach serving
   without signaling the unrelated live process; an unestablished free agent
   reports once and exits with status 78, while readiness cancels the deadline.
+
+## Legacy Pi environment upgrade
+
+Reproduction `free-agent-legacy-model-env`, October 22, 2026. Before the fix,
+calling the built environment reader with the allowlist emitted by release
+`6d908054` omitted `BEELINE_FREE_AGENT_MODEL_TOKEN` from the child environment.
+The existing Pi boot path returned before reconciling that persisted file.
+
+Created disposable Fly Machine `84ee330a422398` on the existing free-agent image,
+with persistent rootfs and a private test server/database. Seeded a Pi runtime
+and its environment using the exact `freeAgentModelEnv` serializer extracted
+from `6d908054`. The test server issued its own revocable bootstrap, daemon
+and model grants. Current staging code created the runtime; the old helper
+binary itself was not executed. No production identity or user's Machine was
+used.
+
+Before the cold stop/start, the runtime was already Pi, the legacy allowlist was
+present, the canonical allowlist was absent, and the boot ID was
+`dff04f5e-3192-40dc-9910-d1ebed355eae`. After stop/start, the changed entrypoint
+installed the candidate helper through the real recovery installer and verified
+bundle download. The boot ID became `825edba8-7879-4ac0-b601-a04c7f977b4a`, the
+canonical allowlist was present, and the legacy one was absent.
+
+The actual Pi/ACP runtime then claimed queued user work, authenticated through
+the real server's free-agent model proxy, made one upstream model request and
+published `UPGRADE_ENV_PROOF_OK` to the Room. The committed reply ID was
+`c2747695800aa519a8a7e0b187f9370e5990399c482379956508ceda63b536b3`.
+A deterministic local streaming model substituted for the external provider;
+Fly, the cold reboot, installer, helper, Pi, command claim, token checks and
+transcript publication were real. The candidate archive SHA-256 was
+`e429685c643629e94a716e95ed8b55c04955abaeba8346599a3805df3be7b87c`.
+
+The first preparation attempt hit a proof-harness deadline while fixing seed
+startup dependencies; a fresh queued mention after the cold restart produced
+the passing result above. Destroyed the Fly Machine and stopped the disposable
+server, tunnels and database afterward. The regression test also spawns a real
+child process, sends an authenticated HTTP model request after Pi boot migration,
+and checks migration idempotence and retention of explicitly configured values.

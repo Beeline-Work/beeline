@@ -1,7 +1,6 @@
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { readAuthCapabilities, watchGooglePreview } from '@/auth/google-preview';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { Button } from '@/components/buzz/Button';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
@@ -14,6 +13,7 @@ import {
   fallbackPersonName,
   personHandle,
   isWorkspaceListView,
+  isWorkspaceView,
   type Identity,
 } from '@beeline/buzz-client';
 import type { PushLevel } from '@beeline/api-contract/phone';
@@ -44,7 +44,17 @@ import {
 } from '@/push/buzz-push-registration';
 import { buzzPushPhaseDetail, pushSwitchValue } from '@/push/buzz-push-status';
 import { getPushPermissionInfo, type PushPermissionInfo } from '@/sync/pushRegistration';
+import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { PROFILE_IDENTITY_PICTURE_SIZE, ProfileIdentity } from '@/components/buzz/ProfileIdentity';
+import {
+  SETTINGS_SCOPE_PICTURE_SIZE,
+  SettingsScopeTabs,
+  type SettingsScope,
+} from '@/components/buzz/SettingsScopeTabs';
+import WorkspaceSettings, {
+  WORKSPACE_VISIBILITY_LABELS,
+  type WorkspaceSettingsHandle,
+} from '@/components/buzz/WorkspaceSettingsPanel';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
 import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
@@ -62,6 +72,7 @@ import { reconcilePresentedNotificationBadge } from '@/push/presented-notificati
 import { loadAppConfig } from '@/sync/appConfig';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { PageHeader } from '@/components/buzz/PageHeader';
+import { WORKSPACE_LABEL } from '@/buzz/vocabulary';
 import {
   createManualUpdateState,
   isManualUpdateBusy,
@@ -70,12 +81,20 @@ import {
   manualUpdateReducer,
 } from './manual-update-state';
 
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const PRIVACY_URL = 'https://usebeeline.app/privacy/';
 const TERMS_URL = 'https://usebeeline.app/terms/';
 const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
 export default function BuzzIdentitySettings() {
   useLatencyRouteFrame('/beeline/settings/identity');
-  const { githubReconnect, githubConnectionError } = useLocalSearchParams<{ githubReconnect?: string; githubConnectionError?: string }>();
+  const { githubReconnect, githubConnectionError, tab, workspaceId: linkedWorkspaceId } = useLocalSearchParams<{
+    githubReconnect?: string; githubConnectionError?: string; tab?: string; workspaceId?: string;
+  }>();
+  const [scope, setScope] = useState<SettingsScope>(tab === 'workspace' ? 'workspace' : 'you');
+  useEffect(() => {
+    if (tab === 'workspace') setScope('workspace');
+  }, [tab, linkedWorkspaceId]);
+  const workspaceSettings = useRef<WorkspaceSettingsHandle>(null);
   const insets = useSafeAreaInsets();
   const [error, setError] = useState<string | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<Identity | null>(null);
@@ -101,8 +120,17 @@ export default function BuzzIdentitySettings() {
     workspaces: workspaceListView.workspaces,
     confirmed: workspaceListConfirmed,
   };
-  const selectedWorkspace = workspaceList?.workspaces.find((item) => item.id === currentWorkspaceId) ??
+  // A link to one workspace's settings names it; otherwise Settings shows the current one.
+  const selectedWorkspace = workspaceList?.workspaces.find((item) => item.id === linkedWorkspaceId) ??
+    workspaceList?.workspaces.find((item) => item.id === currentWorkspaceId) ??
     workspaceList?.workspaces[0];
+  const selectedWorkspaceAddress = useMemo(() => profileRelay && profilePubkey && selectedWorkspace
+    ? surfaceAddress(profileRelay, profilePubkey, '/workspace/:id', { workspaceId: selectedWorkspace.id }) : null,
+    [profileRelay, profilePubkey, selectedWorkspace?.id]);
+  // The tab's own read, when it has one, is fresher than the list (a new picture or name).
+  const selectedWorkspaceView = useSurfaceSnapshot(selectedWorkspaceAddress, isWorkspaceView);
+  const headerWorkspace = selectedWorkspace && selectedWorkspaceView?.workspace.id === selectedWorkspace.id
+    ? { ...selectedWorkspace, ...selectedWorkspaceView.workspace } : selectedWorkspace;
   const workspaceRole = selectedWorkspace?.role ?? null;
   const workbenchScope = selectedWorkspace && workspaceListConfirmed && profilePubkey
     ? { workspaceId: selectedWorkspace.id, viewerId: profilePubkey } : null;
@@ -373,7 +401,9 @@ export default function BuzzIdentitySettings() {
     [applyPushResult, profileIdentity, pushOn, pushRegistration, pushWorking],
   );
 
+  const shownPushLevel = managedProjection?.pushLevel ?? pushLevel;
   const pushRegistrationFailed =
+    shownPushLevel !== 'off' &&
     pushEnabled === true &&
     pushRegistration !== null &&
     !pushRegistration.registered &&
@@ -407,6 +437,26 @@ export default function BuzzIdentitySettings() {
     void openExternalUrl(`https://github.com/${githubLogin}`).catch(() => undefined);
   }, [githubLogin]);
 
+  // Only owners and admins see workspace settings; a member's Settings is theirs alone.
+  const canManageWorkspace = workspaceRole === 'owner' || workspaceRole === 'admin';
+  const workspaceTab = headerWorkspace && workspaceListConfirmed && canManageWorkspace ? {
+    accessibilityLabel: `${headerWorkspace.name} ${WORKSPACE_LABEL.toLowerCase()} settings`,
+    label: headerWorkspace.name,
+    picture: (
+      <IdentityMark
+        kind="workspace"
+        seed={headerWorkspace.id}
+        avatarUrl={headerWorkspace.avatar}
+        name={headerWorkspace.name}
+        size={SETTINGS_SCOPE_PICTURE_SIZE}
+        testID="workspace-picture-mark"
+      />
+    ),
+    selectedAction: { accessibilityHint: 'Change picture', onPress: () => workspaceSettings.current?.changePicture() },
+    testID: 'settings-workspace-tab',
+    tileTestID: 'workspace-picture-change',
+  } : null;
+
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <PageHeader
@@ -419,6 +469,51 @@ export default function BuzzIdentitySettings() {
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <View testID="identity-settings">
+          {workspaceTab ? (
+          <SettingsScopeTabs
+            scope={scope}
+            onScopeChange={setScope}
+            you={{
+              accessibilityLabel: 'Your settings',
+              label: 'You',
+              // Until a face is saved, the tile shows the Beeline mark.
+              picture: displayFace ? (
+                <IdentityMark
+                  kind="human"
+                  seed={profilePubkey ?? 'pending-profile'}
+                  name={displayName || 'You'}
+                  face={displayFace}
+                  size={SETTINGS_SCOPE_PICTURE_SIZE}
+                  testID="identity-face-mark"
+                />
+              ) : <BeelineMark size={SETTINGS_SCOPE_PICTURE_SIZE} />,
+              selectedAction: profilePubkey
+                ? { accessibilityHint: 'Change face', onPress: () => setFacePickerOpen(true) }
+                : undefined,
+              testID: 'settings-you-tab',
+              tileTestID: 'identity-face-setting',
+            }}
+            workspace={workspaceTab}
+            caption={scope === 'workspace' && workspaceTab && headerWorkspace ? (
+              <>
+                {headerWorkspace.visibility ? `${WORKSPACE_VISIBILITY_LABELS[headerWorkspace.visibility]} ${WORKSPACE_LABEL.toLowerCase()} · ` : ''}
+                you are <Text style={styles.captionStrong}>{headerWorkspace.role}</Text>
+              </>
+            ) : managedHandle ? (
+              <>
+                <Text
+                  accessibilityRole={githubLogin ? 'link' : undefined}
+                  onPress={githubLogin ? openGitHubProfile : undefined}
+                  style={styles.captionHandle}
+                  testID="identity-managed-handle"
+                >
+                  {`@${managedHandle}`}
+                </Text>
+                {workspaceRole ? ` · ${workspaceRole}` : ''}
+              </>
+            ) : workspaceRole ?? undefined}
+          />
+          ) : (
           <ProfileIdentity
             avatarAccessibilityLabel="Change face"
             avatarFallback={displayFace ? undefined : <BeelineMark size={PROFILE_IDENTITY_PICTURE_SIZE} />}
@@ -440,8 +535,13 @@ export default function BuzzIdentitySettings() {
             onHandlePress={githubLogin ? openGitHubProfile : undefined}
             role={workspaceRole ?? undefined}
           />
+          )}
         </View>
 
+        {scope === 'workspace' && workspaceTab && headerWorkspace ? (
+          <WorkspaceSettings key={headerWorkspace.id} ref={workspaceSettings} workspaceId={headerWorkspace.id} />
+        ) : (
+        <>
         <View style={styles.section} testID="workbench-section">
           <RoomListSectionHeader title="Connectors" inset="content" />
           <SettingsRow
@@ -463,15 +563,6 @@ export default function BuzzIdentitySettings() {
           />
         </View>
 
-        {selectedWorkspace && workspaceListConfirmed && (workspaceRole === 'owner' || workspaceRole === 'admin') ? (
-          <View style={styles.section} testID="workspace-settings-section">
-            <RoomListSectionHeader title="Workspace" inset="content" />
-            <SettingsRow title="Workspace" value={selectedWorkspace.name} chevron="right"
-              testID="settings-workspace-row"
-              onPress={() => router.push({ pathname: '/beeline/settings/workspace', params: { communityId: selectedWorkspace.id } } as never)} />
-          </View>
-        ) : null}
-
         <View style={styles.section} testID="appearance-section">
           <RoomListSectionHeader title="Device" inset="content" />
           {pushSupported ? (
@@ -479,15 +570,17 @@ export default function BuzzIdentitySettings() {
               <PushLevelSetting
                 disabled={pushEnabled === null || pushWorking}
                 onSave={changePushLevel}
-                value={managedProjection?.pushLevel ?? pushLevel}
+                value={shownPushLevel}
               />
-              {pushRegistrationFailed ? (
-                <Button
-                  label={pushWorking ? 'Retrying…' : 'Retry'}
-                  variant="secondary"
+              {pushRegistrationFailed && pushRegistration ? (
+                <SettingsRow
+                  action={pushWorking ? 'Retrying…' : 'Retry'}
+                  description={capitalize(buzzPushPhaseDetail(pushRegistration.phase) ?? '')}
+                  descriptionTone="danger"
                   disabled={pushWorking}
                   onPress={() => void retryPushRegistration()}
                   testID="push-retry-registration"
+                  title="Push not reaching this device"
                 />
               ) : null}
             </View>
@@ -502,7 +595,7 @@ export default function BuzzIdentitySettings() {
                     ? 'Disable room open trace overlay'
                     : 'Enable room open trace overlay'
                 }
-                description="Show Room-open timings on screen"
+                description="Show open timings on screen"
                 onPress={() => setRoomOpenTrace(!roomOpenTrace)}
                 testID="debug-room-open-trace"
                 title="Room open trace"
@@ -526,7 +619,7 @@ export default function BuzzIdentitySettings() {
                 />
               ))}
           {managedProjection && !managedProjection.providers?.some(link => link.provider === 'github') ? (
-            <SettingsRow title="GitHub" description="Needed only to link repositories" value="Connect"
+            <SettingsRow title="GitHub" description="Needed to link repositories" value="Connect"
               onPress={() => void connectGitHub()} disabled={githubBusy} testID="settings-provider-github" />
           ) : null}
           {googleAvailable && managedProjection && !managedProjection.providers?.some(link => link.provider === 'google') ? (
@@ -636,6 +729,8 @@ export default function BuzzIdentitySettings() {
             </TouchableOpacity>
           )}
         </View>
+        </>
+        )}
       </ScrollView>
 
       {profilePubkey ? (
@@ -665,6 +760,8 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     section: {},
+    captionHandle: { ...Typography.default('semiBold'), color: hull.accent },
+    captionStrong: { ...Typography.default('semiBold'), color: hull.accent },
     disabled: { opacity: 0.42 },
     notice: {
       ...Typography.default(),

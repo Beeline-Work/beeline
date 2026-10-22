@@ -31,7 +31,7 @@ const LOADING_SURFACES: readonly LoadingSurface[] = [
   { id: 'members', file: 'app/(app)/beeline/members.tsx', treatment: 'glyph' },
   {
     id: 'workspace-settings',
-    file: 'app/(app)/beeline/settings/workspace.tsx',
+    file: 'components/buzz/WorkspaceSettingsPanel.tsx',
     treatment: 'glyph',
   },
   { id: 'community', file: 'app/(app)/beeline/community.tsx', treatment: 'glyph' },

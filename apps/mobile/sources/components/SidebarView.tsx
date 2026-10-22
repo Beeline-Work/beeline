@@ -367,11 +367,10 @@ export const SidebarView = React.memo(function SidebarView() {
   const viewerIsAgent = surface?.viewer.kind === 'agent';
   const canCreateRoom = !viewerIsAgent && canManageWorkspace;
   const workbenchSelected = pathname.startsWith('/beeline/settings/workbench');
-  const workspaceSettingsSelected = pathname.startsWith('/beeline/settings/workspace');
   const traySelected = pathname.startsWith('/beeline/tray');
   const needsYouCount = useNeedsYouCount(workspaceId, surface);
   const profileSettingsSelected =
-    pathname.startsWith('/beeline/settings') && !workbenchSelected && !workspaceSettingsSelected;
+    pathname.startsWith('/beeline/settings') && !workbenchSelected;
   const otherWorkspaceNeedsAttention = [...attentionWorkspaceIds].some((id) => id !== workspaceId);
   const openRoom = React.useCallback(
     (roomId: string) => {

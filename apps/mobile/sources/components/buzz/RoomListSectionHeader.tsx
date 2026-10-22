@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
+import { typeRoles } from '@/buzz/groknight';
 
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable } from 'react-native';
@@ -56,16 +57,27 @@ export function RoomListSectionHeader({
           onPress={onAction}
           disabled={actionDisabled}
           accessibilityState={{ disabled: actionDisabled }}
-          hitSlop={8}
+          hitSlop={ACTION_HIT_SLOP}
           style={({ pressed }) => [styles.sectionHeaderAction, pressed && { opacity: 0.7 }]}
           testID={actionTestID}
         >
-          <Ionicons name="add" size={16} color={styles.sectionHeaderActionGlyph.color} />
+          <Ionicons name="add" size={ACTION_GLYPH} color={styles.sectionHeaderActionGlyph.color} />
         </Pressable>
       ) : null}
     </View>
   );
 }
+
+/** The +'s box is one label line tall, so it never makes the header taller;
+ *  the slop carries the rest of its 44 px tap area. */
+const ACTION_GLYPH = 16;
+const LABEL_LINE = typeRoles.sectionHead.lineHeight;
+const ACTION_HIT_SLOP = {
+  top: (44 - LABEL_LINE) / 2,
+  bottom: (44 - LABEL_LINE) / 2,
+  left: (44 - ACTION_GLYPH) / 2,
+  right: (44 - ACTION_GLYPH) / 2,
+};
 
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
@@ -89,12 +101,14 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     sectionHeaderAction: {
-      minHeight: 44,
-      minWidth: 44,
+      width: ACTION_GLYPH,
+      height: LABEL_LINE,
       alignItems: 'center',
       justifyContent: 'center',
     },
     sectionHeaderActionGlyph: { color: hull.accent },
-    sectionCount: { ...hull.type.meta, color: hull.ledgerQuiet, marginRight: hull.space.sm },
+    // Held to the label's line so the count never makes the header taller.
+    sectionCount: { ...hull.type.meta, lineHeight: LABEL_LINE,
+      color: hull.ledgerQuiet, marginRight: hull.space.sm },
   };
 });

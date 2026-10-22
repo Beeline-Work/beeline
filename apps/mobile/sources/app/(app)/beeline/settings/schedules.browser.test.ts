@@ -192,7 +192,8 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.loadedFonts).toEqual(expect.arrayContaining(['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold']));
     expect(page.listAxes).toEqual([[45], [45], [45, 45], [45, 45]]);
     expect(page.listPolygonCounts).toEqual([0, 1, 0, 2]);
-    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true })]);
+    // Subtitled rows: 14 + title 23 + 2 + subtitle 19 + 14, plus the hairline.
+    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 73, leadVisible: true, sameLine: true, tailOneLine: true })]);
     expect(page.text.join(' ')).not.toMatch(/LAST|NEVER FIRED|STOP|REVOKE/);
     expect(page.pushed).toEqual([
       { pathname: '/beeline/settings/schedule', params: { roomId: 'room-1', scheduleId: 'daily' } },
@@ -225,7 +226,8 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
   it('uses dark brass workflow marks on the light list', async () => {
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&theme=light');
     expect(page.workflowFills).toEqual(['#8a6323', '#8a6323']);
-    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 64, leadVisible: true, sameLine: true, tailOneLine: true })]);
+    // Subtitled rows: 14 + title 23 + 2 + subtitle 19 + 14, plus the hairline.
+    expect(page.listLines).toEqual([null, null, ...Array(2).fill({ height: 73, leadVisible: true, sameLine: true, tailOneLine: true })]);
   }, 120_000);
 
   it('opens a prompt schedule with When, Agent, Where, Does, then Stop', async () => {

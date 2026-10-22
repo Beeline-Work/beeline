@@ -4,7 +4,6 @@ import { createRoot } from 'react-dom/client';
 import TrayScreen from '../sources/app/(app)/beeline/tray';
 import WorkbenchScreen from '../sources/app/(app)/beeline/settings/workbench';
 import BuzzCorners from '../sources/app/(app)/beeline/corners/[roomId]';
-import WorkspaceSettings from '../sources/app/(app)/beeline/settings/workspace';
 import ChangelogScreen from '../sources/app/(app)/changelog';
 import ScheduledWork from '../sources/app/(app)/beeline/settings/schedules';
 import { cornerSectionsView } from './corner-sections-fixture';
@@ -14,7 +13,7 @@ import { cornerSectionsView } from './corner-sections-fixture';
   cornerSectionsView;
 
 /**
- * Paints one real section page (`?page=tray|workbench|corners|workspace|changelog|schedules`)
+ * Paints one real section page (`?page=tray|workbench|corners|changelog|schedules`)
  * and reports
  * how its top header is drawn: where the back chevron sits, the title,
  * eyebrow and trailing type, and the divider under the header. The browser test compares
@@ -28,7 +27,6 @@ const screens: Record<
   tray: { Screen: TrayScreen, title: 'Tray', eyebrow: 'Workspace' },
   workbench: { Screen: WorkbenchScreen, title: 'Connectors', eyebrow: 'Settings' },
   corners: { Screen: BuzzCorners, title: 'Corners', eyebrow: '#alpha' },
-  workspace: { Screen: WorkspaceSettings, title: 'Workspace' },
   changelog: { Screen: ChangelogScreen, title: "What's New" },
   schedules: { Screen: ScheduledWork, title: 'Schedules and subscriptions', eyebrow: '#alpha' },
 };

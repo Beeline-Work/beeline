@@ -57,10 +57,9 @@ describe('the one page header', () => {
       expect(source).toContain('<PageHeader');
       expect(source).toContain('prominent');
     }
-    for (const source of [agentProfile, humanProfile, settings]) {
-      expect(source).toContain('<ProfileIdentity');
-      expect(source).toContain('<SettingsRow');
-    }
+    for (const source of [agentProfile, humanProfile, settings]) expect(source).toContain('<SettingsRow');
+    for (const source of [agentProfile, humanProfile]) expect(source).toContain('<ProfileIdentity');
+    expect(settings).toContain('<SettingsScopeTabs');
     expect(agentProfile).not.toContain('headerActions');
     expect(humanProfile).not.toContain('<Button label="Back"');
     expect(portrait).not.toContain('avatar-direction');

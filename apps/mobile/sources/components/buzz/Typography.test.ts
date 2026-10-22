@@ -10,7 +10,7 @@ const sources = [
   '../../app/(app)/beeline/onboarding.tsx',
   '../../app/(app)/beeline/settings/index.tsx',
   '../../app/(app)/beeline/settings/identity.tsx',
-  '../../app/(app)/beeline/settings/workspace.tsx',
+  './WorkspaceSettingsPanel.tsx',
   './CommunityInviteEntry.tsx',
   './CommunityRail.tsx',
   './EmptyLedgerState.tsx',

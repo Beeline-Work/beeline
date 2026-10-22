@@ -234,7 +234,7 @@ export function SettingsRow({
             ) : null}
             {descriptionContent ?? (
               <Text
-              numberOfLines={descriptionLead || descriptionAction ? 1 : undefined}
+              numberOfLines={descriptionLead || descriptionAction ? 1 : DESCRIPTION_LINES}
               style={[descriptionLead ? styles.descriptionTail : styles.description,
                 descriptionTone === 'danger' && styles.descriptionDanger]}
             >
@@ -256,7 +256,7 @@ export function SettingsRow({
         ) : null}
         {descriptionDetail ? (
           <View style={styles.descriptionRow}>
-            <Text style={styles.description}>{descriptionDetail}</Text>
+            <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>{descriptionDetail}</Text>
           </View>
         ) : null}
       </View>
@@ -299,6 +299,9 @@ export function SettingsRow({
   );
 }
 
+/** A subtitle is one short phrase; a long one stops at two lines. */
+const DESCRIPTION_LINES = 2;
+
 /** The reserved width of a row's trailing column (DESIGN.md → Index rows). */
 const TRAILING_COLUMN = 72;
 
@@ -315,7 +318,9 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.border,
     },
-    describedRow: { paddingVertical: hull.space.sm },
+    // A row with a subtitle keeps its text clear of both hairlines; one
+    // without stays exactly `layout.row` tall.
+    describedRow: { paddingVertical: 14 },
     boardRow: { minHeight: 64, gap: 16, paddingHorizontal: 0,
       borderBottomWidth: 1, borderBottomColor: board.border },
     toggleOff: { backgroundColor: hull.borderStrong },
@@ -331,7 +336,7 @@ const styles = StyleSheet.create((theme) => {
     quiet: { color: hull.textMuted },
     actionTitle: { color: hull.accent },
     destructive: { color: hull.dialogDanger },
-    descriptionRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
+    descriptionRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm, marginTop: 2 },
     descriptionLeadRow: { gap: hull.space.xs },
     descriptionLead: {
       ...Typography.default(), ...hull.type.meta,

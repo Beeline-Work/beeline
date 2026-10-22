@@ -580,7 +580,7 @@ export default function BuzzIdentitySettings() {
                   disabled={pushWorking}
                   onPress={() => void retryPushRegistration()}
                   testID="push-retry-registration"
-                  title="Push not reaching this device"
+                  title="Push not working"
                 />
               ) : null}
             </View>

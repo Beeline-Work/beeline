@@ -10,6 +10,9 @@ export type SettingsScope = 'you' | 'workspace';
 const tile = WORKSPACE_SETTINGS_TILE;
 const seat = workspacePictureSeat(tile);
 export const SETTINGS_SCOPE_PICTURE_SIZE = seat.pictureSize;
+// Both tabs share one fixed width so the control stays compact and centred
+// rather than stretching across wide screens.
+const TAB_WIDTH = 120;
 
 type ScopeTab = {
   /** The picture, drawn at `SETTINGS_SCOPE_PICTURE_SIZE`. */
@@ -81,7 +84,7 @@ export function SettingsScopeTabs({
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
-    header: { alignItems: 'stretch', gap: hull.space.sm, paddingTop: hull.space.lg, paddingBottom: hull.space.sm },
+    header: { alignItems: 'center', gap: hull.space.sm, paddingTop: hull.space.lg, paddingBottom: hull.space.sm },
     track: {
       flexDirection: 'row',
       gap: hull.space.xs,
@@ -90,8 +93,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: hull.bgRaised,
     },
     tab: {
-      flex: 1,
-      minWidth: 0,
+      width: TAB_WIDTH,
       alignItems: 'center',
       gap: hull.space.xs,
       paddingVertical: hull.space.sm,

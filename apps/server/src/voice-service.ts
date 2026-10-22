@@ -1,3 +1,6 @@
+import type { ObjectService } from './object-service.js';
+import { mediaIdFromUrl } from './media-ttl.js';
+import { voiceContextText, type VoiceContextRow } from './voice-context.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { VoiceBudgetStore } from './voice-budget.js';
@@ -18,7 +21,7 @@ import { VoiceRoomRuntime } from './voice-room-runtime.js';
 import type { SpeechMember } from './markdown-to-speech.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
-  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal) => Promise<string>; budgetLimitMs?: number };
+  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal) => Promise<string>; budgetLimitMs?: number; objects?: ObjectService };
 type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null; end_reason?: string | null };
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
 const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
@@ -421,6 +424,28 @@ export class VoiceService {
     if (!(await this.agents(source.room_id, source.author_id)).some(agent => agent.id === agentId))
       throw new Error('Voice agent is no longer available');
     if (signal.aborted) throw signal.reason;
+    if (request.name === 'read_posted_item') {
+      const reference = request.query.trim();
+      const messageId = /^#beeline\/[^\s/()<>]+\/([0-9a-f]{64})$/.exec(reference)?.[1] ?? reference;
+      const row = (await this.db.query<VoiceContextRow>(
+        `SELECT m.id,left(m.text,6000) text,m.author_id,i.name,i.handle,m.attachments,m.card_type,m.card
+         FROM messages m JOIN identities i ON i.id=m.author_id
+         WHERE m.room_id=$1 AND m.deleted_at IS NULL AND m.presentation IN ('message','card')
+           AND (m.id=$2 OR EXISTS (SELECT 1 FROM jsonb_array_elements(m.attachments) a WHERE a->>'url'=$3))
+         LIMIT 1`, [source.room_id, messageId, reference])).rows[0];
+      if (!row) throw new Error('Posted item is not available in this conversation');
+      const attachment = row.attachments.find(item => item.url === reference);
+      if (attachment) {
+        const objectId = mediaIdFromUrl(reference);
+        const file = objectId && await this.config.objects?.readRoomObject(source.room_id, agentId, objectId, this.db);
+        if (!file || !/^(text\/|application\/(json|xml))/.test(file.mimeType) || file.size > 256_000)
+          throw new Error('Posted attachment text is unavailable');
+        const bytes = await file.read();
+        if (signal.aborted) throw signal.reason;
+        return JSON.stringify({ title: file.name, text: new TextDecoder().decode(bytes).slice(0, 6000) });
+      }
+      return JSON.stringify({ item: voiceContextText(row), text: row.text.slice(0, 4000), card: JSON.stringify(row.card).slice(0, 2000) });
+    }
     if (request.name === 'search_history') {
       return JSON.stringify(await searchInstitutionalHistory(this.db, {
         room_id: source.room_id, root_source_message_id: sourceId, agent_id: agentId, turn_request_id: sourceId,

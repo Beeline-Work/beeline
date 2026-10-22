@@ -151,7 +151,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
       const stopMeter = subscribeVoiceMicrophone(room, amplitude => {
-        if (current()) setLevel(quotaRef.current || mutedRef.current ? 0 : voiceWaveformLevel(amplitude));
+        if (current()) setLevel(quotaRef.current ? 0 : voiceWaveformLevel(amplitude));
       });
       const closeAudio = transport.closeAudio;
       transport.closeAudio = async () => { stopMeter(); await closeAudio(); };

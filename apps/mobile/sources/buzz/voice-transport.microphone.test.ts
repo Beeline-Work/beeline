@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import { RoomEvent, type Room } from 'livekit-client';
 
 const native = vi.hoisted(() => ({
-  createVolumeProcessor: vi.fn(() => 'mic-processor'),
+  createVolumeProcessor: vi.fn((_connection: number, mediaId: string) => mediaId + '-processor'),
   deleteVolumeProcessor: vi.fn(),
   remove: vi.fn(),
   receive: undefined as undefined | ((event: { id: string; volume: number }) => void),
@@ -22,25 +22,32 @@ vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({}) }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: {} }));
 import { subscribeVoiceMicrophone } from './voice-transport.native';
 
-it('meters only captured microphone frames immediately and releases native capture on mute and leave', () => {
-  const track = { isMuted: false, mediaStreamTrack: { id: 'local-mic' } };
+it('meters the loudest local, agent or other human track, retaining remote audio while muted and releasing on unsubscribe', () => {
+  const track = (id: string, connection = -1) => ({ isMuted: false, mediaStreamTrack: { id, _peerConnectionId: connection } });
+  const mic = track('mic'), agent = track('agent', 7), human = track('human', 8);
+  const remotes = new Map([['agent', { track: agent }], ['human', { track: human }]]);
   const room = Object.assign(new EventEmitter(), {
-    localParticipant: { getTrackPublication: () => ({ track }) },
+    localParticipant: { audioTrackPublications: new Map([['mic', { track: mic }]]) },
+    remoteParticipants: new Map([['remote', { audioTrackPublications: remotes }]]),
   });
   const level = vi.fn();
   const stop = subscribeVoiceMicrophone(room as unknown as Room, level);
-  expect(native.createVolumeProcessor).toHaveBeenCalledWith(-1, 'local-mic');
-  level.mockClear();
-  native.receive!({ id: 'remote-agent', volume: 1 });
-  expect(level).not.toHaveBeenCalled();
+  expect(native.createVolumeProcessor).toHaveBeenCalledWith(-1, 'mic');
+  expect(native.createVolumeProcessor).toHaveBeenCalledWith(7, 'agent');
   native.receive!({ id: 'mic-processor', volume: .4 });
-  native.receive!({ id: 'mic-processor', volume: 0 });
-  expect(level.mock.calls).toEqual([[.4], [0]]);
-  track.isMuted = true;
-  room.emit(RoomEvent.TrackMuted);
-  expect(native.remove).toHaveBeenCalledOnce();
-  expect(native.deleteVolumeProcessor).toHaveBeenCalledWith('mic-processor', -1, 'local-mic');
+  native.receive!({ id: 'agent-processor', volume: .8 });
+  native.receive!({ id: 'human-processor', volume: .9 });
+  expect(level).toHaveBeenLastCalledWith(.9);
+  native.receive!({ id: 'human-processor', volume: 0 });
+  expect(level).toHaveBeenLastCalledWith(.8);
+  mic.isMuted = true; room.emit(RoomEvent.TrackMuted);
+  expect(native.deleteVolumeProcessor).toHaveBeenCalledWith('mic-processor', -1, 'mic');
+  expect(level).toHaveBeenLastCalledWith(.8);
+  remotes.delete('agent'); room.emit(RoomEvent.TrackUnsubscribed);
   expect(level).toHaveBeenLastCalledWith(0);
   stop();
+  expect(native.deleteVolumeProcessor).toHaveBeenCalledWith('agent-processor', 7, 'agent');
+  expect(native.deleteVolumeProcessor).toHaveBeenCalledWith('human-processor', 8, 'human');
+  expect(native.remove).toHaveBeenCalledOnce();
   expect(room.eventNames()).toEqual([]);
 });

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { assignVoiceAgents, fluxFactory, AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
+import { assignVoiceAgents, fluxFactory, AuraSpeech, OpenRouterVoiceBrain, openRouterWebSearch, VoiceQuotaError } from './voice-providers.js';
 import { voiceConfigFromEnv } from './voice-service.js';
 import { namedVoiceTarget } from './voice-room-runtime.js';
 
@@ -210,7 +210,7 @@ describe('quick call search', () => {
       [{ role: 'user', content: 'Find the release' }], vi.fn(), new AbortController().signal, { announce, search });
     expect(answer).toEqual({ text: 'The release is ready.', order: false });
     expect(announce).toHaveBeenCalledWith('Let me look.');
-    expect(search.mock.calls[0]?.[0]).toEqual({ name, query: 'release' });
+    expect(search.mock.calls[0]?.[0]).toEqual({ name, query: 'release', ...(name === 'search_web' ? { currentTime: expect.any(Number) } : {}) });
     expect(fetcher).toHaveBeenCalledTimes(2);
     const second = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
     expect(second.tools).toBeUndefined();
@@ -413,4 +413,45 @@ it.each([
   const brain = new OpenRouterVoiceBrain('test', async () => new Response(wire));
   const reply = await brain.answer({ id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' }, [], () => {}, new AbortController().signal);
   expect(reply.text).toBe(expected);
+});
+
+
+describe('voice date grounding', () => {
+  it('anchors both voice passes and web search to the injected turn clock across midnight', async () => {
+    const currentTime = Date.parse('2026-10-22T23:59:00Z');
+    const date = 'Today is Thursday, 22 October 2026 at 23:59 UTC.';
+    const bodies: { stream?: boolean; messages: { content: string }[]; plugins?: unknown[] }[] = [];
+    const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if (!body.stream) return Response.json({ choices: [{ message: {
+        content: 'Market report dated 22 October 2026.', annotations: [{ url: 'https://example.com/market' }],
+      } }] });
+      const delta = bodies.length === 1 ? { tool_calls: [{ function: {
+        name: 'search_web', arguments: JSON.stringify({ query: 'stock market today 22 October 2026', spoken_line: 'Let me look.' }),
+      } }] } : { content: 'The market report is for 22 October 2026.' };
+      return new Response(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`);
+    });
+    const searchWeb = openRouterWebSearch('test', fetcher, () => currentTime + 120_000);
+    const answer = await new OpenRouterVoiceBrain('test', fetcher, () => currentTime).answer(
+      { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' },
+      [{ role: 'user', content: 'what happened in the stock market today' }], vi.fn(), new AbortController().signal,
+      { announce: async () => {}, search: (request, signal) => searchWeb(request.query, signal, request.currentTime) });
+    expect(answer.order).toBe(false);
+    expect(bodies).toHaveLength(3);
+    for (const body of bodies) expect(body.messages[0].content).toContain(date);
+    expect(bodies[1].messages[0].content).toContain('prefer sources from this date');
+    expect(bodies[1].messages[0].content).toContain('state each source’s date');
+    expect(bodies[1].plugins).toEqual([{ id: 'web', engine: 'parallel', mode: 'turbo', max_results: 3 }]);
+  });
+  it('reads a fresh injected clock for each date question', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response('data: {"choices":[{"delta":{"content":"Today."}}]}\n\n'));
+    const now = vi.fn().mockReturnValueOnce(Date.parse('2026-10-22T17:40:00Z')).mockReturnValueOnce(Date.parse('2026-10-23T00:01:00Z'));
+    const brain = new OpenRouterVoiceBrain('test', fetcher, now);
+    for (let i = 0; i < 2; i++) await brain.answer(
+      { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' },
+      [{ role: 'user', content: "what's today's date" }], vi.fn(), new AbortController().signal);
+    expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body)).messages[0].content).toContain('Thursday, 22 October 2026 at 17:40 UTC');
+    expect(JSON.parse(String(fetcher.mock.calls[1]![1]!.body)).messages[0].content).toContain('Friday, 23 October 2026 at 00:01 UTC');
+  });
 });

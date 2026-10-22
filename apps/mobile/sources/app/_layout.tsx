@@ -27,11 +27,10 @@ import { WarmComputerSessionHost } from '@/components/buzz/ComputerSession';
 import { PostHogProvider } from 'posthog-react-native';
 import { tracking } from '@/track/tracking';
 import { useTrackScreens } from '@/track/useTrackScreens';
-import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
+import { KeyboardShortcutsProvider } from '@/components/KeyboardShortcutsProvider';
 import { StatusBarProvider } from '@/components/StatusBarProvider';
 // import * as SystemUI from 'expo-system-ui';
-import { initConsoleLogging, setConsoleOutputEnabled } from '@/utils/consoleLogging';
-import { useLocalSetting } from '@/sync/storage';
+import { initConsoleLogging } from '@/utils/consoleLogging';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/lock';
 import {
@@ -501,12 +500,6 @@ export default function RootLayout() {
   // Track the screens
   useTrackScreens();
 
-  // Sync console output toggle from Dev screen
-  const consoleLoggingEnabled = useLocalSetting('consoleLoggingEnabled');
-  React.useEffect(() => {
-    setConsoleOutputEnabled(consoleLoggingEnabled);
-  }, [consoleLoggingEnabled]);
-
   //
   // Not inited
   //
@@ -533,11 +526,11 @@ export default function RootLayout() {
               <ModalProvider>
                 <DesktopDeepLinkBridge />
                 <BrowserNavigationShortcuts />
-                  <CommandPaletteProvider>
+                  <KeyboardShortcutsProvider>
                     <HorizontalSafeAreaWrapper>
                       <SidebarNavigator />
                     </HorizontalSafeAreaWrapper>
-                  </CommandPaletteProvider>
+                  </KeyboardShortcutsProvider>
                 <WarmComputerSessionHost />
               </ModalProvider>
               <UpdateReadyPrompt />

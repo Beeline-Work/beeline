@@ -250,8 +250,7 @@ pagination are rechecked server-side; raw table reads are not a fallback.
 Legacy feedback-triage browse runs retain their original capped reservations.
 New workspace-walk runs reserve every eligible active workspace.
 
-The `service_review_rollout` row enables browsing from 18 October 2026.
-No notice record or waiting period is required. No email, UI banner or System
+Browsing is always on. No notice record or waiting period is required. No email, UI banner or System
 message is sent. Workspaces with Allow fix sweep off remain excluded.
 
 The daily walk uses the same privacy-filtered SQL functions, with a window from

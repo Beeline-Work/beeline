@@ -3,7 +3,6 @@ import {
     formatShortcut,
     formatShortcutChord,
     getGlobalShortcutId,
-    getPreferredShortcutModifier,
     getPressedShortcutModifier,
     getRecentSessionShortcutIndex,
     matchesShortcutChord,
@@ -24,8 +23,6 @@ function keyboardEvent(overrides: Partial<Parameters<typeof getGlobalShortcutId>
 
 describe('getGlobalShortcutId', () => {
     it.each([
-        ['k', 'commandPalette'],
-        ['K', 'commandPalette'],
         ['n', 'newSession'],
         [',', 'settings'],
     ] as const)('maps %s to %s', (key, expected) => {
@@ -65,13 +62,6 @@ describe('shortcut modifier helpers', () => {
         expect(getPressedShortcutModifier({ key: 'Control', altKey: false })).toBe('control');
         expect(getPressedShortcutModifier({ key: 'Meta', altKey: true })).toBeNull();
         expect(getPressedShortcutModifier({ key: 'k', altKey: false })).toBeNull();
-    });
-
-    it('prefers Command for Apple platforms and Control elsewhere', () => {
-        expect(getPreferredShortcutModifier({ platform: 'MacIntel' })).toBe('meta');
-        expect(getPreferredShortcutModifier({ userAgentData: { platform: 'macOS' } })).toBe('meta');
-        expect(getPreferredShortcutModifier({ platform: 'Win32' })).toBe('control');
-        expect(getPreferredShortcutModifier({ platform: 'Linux x86_64' })).toBe('control');
     });
 
     it('formats platform-appropriate labels', () => {

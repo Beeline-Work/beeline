@@ -83,19 +83,19 @@ describe('web app CORS', () => {
     expect(redeem).toHaveBeenCalledWith('review-secret', '127.0.0.1');
   });
 
-  it('allows preview capability preflight only for a configured web origin', async () => {
+  it('allows capability preflight only for a configured web origin', async () => {
     const handler = vi.fn((_request, response) => { response.writeHead(404); response.end(); });
     const { origin } = await start([deployedWebOrigin], handler);
     for (const browserOrigin of [deployedWebOrigin, 'https://attacker.example']) {
       const response = await fetch(`${origin}/auth/capabilities`, {
         method: 'OPTIONS', headers: { origin: browserOrigin,
           'access-control-request-method': 'GET',
-          'access-control-request-headers': 'x-beeline-google-preview' },
+          'access-control-request-headers': 'content-type' },
       });
       if (browserOrigin === deployedWebOrigin) {
         expect(response.status).toBe(204);
         expect(response.headers.get('access-control-allow-origin')).toBe(browserOrigin);
-        expect(response.headers.get('access-control-allow-headers')).toContain('x-beeline-google-preview');
+        expect(response.headers.get('access-control-allow-headers')).not.toContain('x-beeline-google-preview');
         expect(handler).not.toHaveBeenCalled();
       } else {
         expect(response.headers.get('access-control-allow-origin')).toBeNull();

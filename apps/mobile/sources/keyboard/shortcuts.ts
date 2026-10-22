@@ -1,4 +1,4 @@
-export type GlobalShortcutId = 'commandPalette' | 'newSession' | 'settings';
+export type GlobalShortcutId = 'newSession' | 'settings';
 export type ShortcutModifier = 'meta' | 'control';
 
 export interface KeyboardShortcutEvent {
@@ -11,14 +11,6 @@ export interface KeyboardShortcutEvent {
     isComposing?: boolean;
     repeat?: boolean;
     getModifierState?: (key: string) => boolean;
-}
-
-export interface NavigatorPlatformLike {
-    platform?: string;
-    userAgent?: string;
-    userAgentData?: {
-        platform?: string;
-    };
 }
 
 export type SessionActionShortcutId =
@@ -62,7 +54,6 @@ export const GLOBAL_SHORTCUTS: ReadonlyArray<{
     code: string;
     keyLabel: string;
 }> = [
-    { id: 'commandPalette', key: 'k', code: 'KeyK', keyLabel: 'K' },
     { id: 'newSession', key: 'n', code: 'KeyN', keyLabel: 'N' },
     { id: 'settings', key: ',', code: 'Comma', keyLabel: ',' },
 ];
@@ -119,15 +110,6 @@ export function getPressedShortcutModifier(event: Pick<KeyboardShortcutEvent, 'k
         return 'control';
     }
     return null;
-}
-
-export function getPreferredShortcutModifier(navigatorValue?: NavigatorPlatformLike): ShortcutModifier {
-    const platform = navigatorValue?.userAgentData?.platform
-        || navigatorValue?.platform
-        || navigatorValue?.userAgent
-        || '';
-
-    return /Mac|iPhone|iPad|iPod/i.test(platform) ? 'meta' : 'control';
 }
 
 export function getShortcutModifierLabel(modifier: ShortcutModifier): string {

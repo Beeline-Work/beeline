@@ -14,7 +14,6 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { institutionalWorkspaceRolloutStage, rolloutAllowsLive } from './institutional-rollout.js';
 import { scheduleEmbedWorkspaceSkillVersion, memoryEnvLimit, createDefaultEmbedFn,
   withDeadline, pgvectorLiteral, runAfterCommit, type AfterCommit, type EmbedFn,
 } from './institutional-memory-embeddings.js';
@@ -571,9 +570,6 @@ export async function loadWorkspaceSkill(
       ])
     ).rows[0];
     if (!room) throw new Error('workspace skill room is unavailable');
-    if (!rolloutAllowsLive(await institutionalWorkspaceRolloutStage(db, room.workspace_id))) {
-      throw new Error('workspace skill is not enabled for this Workspace');
-    }
     const skill = (
       await db.query<SkillRow>(
         `SELECT skill.id,skill.slug,skill.description,skill.current_version,

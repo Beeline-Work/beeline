@@ -1,4 +1,3 @@
-import { readEnv } from './env.js';
 /**
  * Per-room-instance harness state directories.
  *
@@ -99,7 +98,7 @@ import {
 import { extractTomlSections, tomlChildTableNames } from './toml-section.js';
 import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
-const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
+const AGENT_PRIVATE_STATE_ENV = 'BEELINE_AGENT_PRIVATE_DIR';
 
 /**
  * Credential files shared back into an isolated harness state directory,
@@ -1822,7 +1821,7 @@ export function harnessStateDirsFromEnv(env: Record<string, string | undefined>)
 } {
   const stateDirs: string[] = [];
   for (const name of HARNESS_STATE_ENV_VARS) {
-    const value = name === AGENT_PRIVATE_STATE_ENV ? readEnv(env, 'AGENT_PRIVATE_DIR') : env[name];
+    const value = env[name];
     if (value) stateDirs.push(resolve(value));
   }
   const tmp = env.TMPDIR;

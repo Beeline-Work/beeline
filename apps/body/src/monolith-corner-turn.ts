@@ -19,7 +19,6 @@ import {
   markWorkspaceLayoutLive,
   prepareWorkspaceAssets,
   prepareWorkspaceAvdBase,
-  sharedAssetsEnabled,
   workspaceAssetPaths,
   workspaceCacheEnv,
   isolatedSharedAssetCategories,
@@ -1050,7 +1049,7 @@ export class MonolithCornerTurnLoop {
       githubEnv = launchers.env;
       this.cornerGitHubCli = launchers.githubCli;
     }
-    let assets = sharedAssetsEnabled() && this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
+    let assets = this.options.config.agentSharedAssetRoot && this.options.config.bwrapPath && homeOverlay.HOME &&
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;

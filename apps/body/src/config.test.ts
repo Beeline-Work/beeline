@@ -84,10 +84,10 @@ describe('buildAgentEnv passthrough boundary', () => {
     expect(agentEnv.BEELINE_COMPOSIO_API_KEY).toBeUndefined();
   });
 
-  it('extends the boundary through BUZZY_BODY_AGENT_ENV_PASSTHROUGH without a code change', () => {
+  it('extends the boundary through BEELINE_BODY_AGENT_ENV_PASSTHROUGH without a code change', () => {
     const agentEnv = buildAgentEnv({
       ...daemonEnv,
-      BUZZY_BODY_AGENT_ENV_PASSTHROUGH: 'UNRELATED_DEPLOY_SECRET, MISSING_VAR',
+      BEELINE_BODY_AGENT_ENV_PASSTHROUGH: 'UNRELATED_DEPLOY_SECRET, MISSING_VAR',
     });
 
     expect(agentEnv.UNRELATED_DEPLOY_SECRET).toBe('do-not-leak');
@@ -112,7 +112,7 @@ describe('buildAgentEnv passthrough boundary', () => {
   it('allows an explicit operator passthrough now that the credential denylist is gone', () => {
     const agentEnv = buildAgentEnv({
       ...daemonEnv,
-      BUZZY_BODY_AGENT_ENV_PASSTHROUGH: 'GITHUB_TOKEN,GH_TOKEN,SSH_AUTH_SOCK',
+      BEELINE_BODY_AGENT_ENV_PASSTHROUGH: 'GITHUB_TOKEN,GH_TOKEN,SSH_AUTH_SOCK',
       GITHUB_TOKEN: 'github-token',
       GH_TOKEN: 'gh-token',
       SSH_AUTH_SOCK: '/tmp/ssh.sock',
@@ -202,16 +202,16 @@ describe('resolveCodegraphCommand', () => {
 });
 
 describe('sandbox mask configuration', () => {
-  it('parses BUZZY_BODY_SANDBOX_MASK as a comma/newline-separated path list', () => {
+  it('parses BEELINE_BODY_SANDBOX_MASK as a comma/newline-separated path list', () => {
     expect(
-      parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: '/srv/secrets, /etc/creds\n/home/op/.envs' }),
+      parseSandboxMaskEnv({ BEELINE_BODY_SANDBOX_MASK: '/srv/secrets, /etc/creds\n/home/op/.envs' }),
     ).toEqual(['/srv/secrets', '/etc/creds', '/home/op/.envs']);
   });
 
   it('is absent when unset or empty', () => {
     expect(parseSandboxMaskEnv({})).toBeUndefined();
-    expect(parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: '  ' })).toBeUndefined();
-    expect(parseSandboxMaskEnv({ BUZZY_BODY_SANDBOX_MASK: ',,' })).toBeUndefined();
+    expect(parseSandboxMaskEnv({ BEELINE_BODY_SANDBOX_MASK: '  ' })).toBeUndefined();
+    expect(parseSandboxMaskEnv({ BEELINE_BODY_SANDBOX_MASK: ',,' })).toBeUndefined();
   });
 
   it('loadBodyConfig carries the mask list through', () => {
@@ -220,7 +220,7 @@ describe('sandbox mask configuration', () => {
       env: {
         ...binaryEnv,
         PATH: process.env.PATH ?? '',
-        BUZZY_BODY_SANDBOX_MASK: '/srv/operator-secrets',
+        BEELINE_BODY_SANDBOX_MASK: '/srv/operator-secrets',
       },
     });
     expect(config.sandboxMaskPaths).toEqual(['/srv/operator-secrets']);

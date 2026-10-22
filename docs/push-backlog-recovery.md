@@ -42,10 +42,10 @@ per-device collapse is introduced because that would discard unrelated asks.
 
 ## Proof
 
-After `npm run build -w @beeline/server`, run:
+Run the package command to build the affected service and exercise the proof:
 
 ```sh
-node --import tsx scripts/prove-push-backlog.mjs
+npm run prove:push-backlog
 ```
 
 The built service runs against an isolated PGlite database and a provider stand-in.

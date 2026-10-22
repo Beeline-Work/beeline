@@ -183,9 +183,6 @@ export function RepositoryLifecycleRow({
       {item.kind === 'corner' ? `corner #${item.title}` : item.title}
     </Text>
   );
-  const chevron = (
-    <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
-  );
   const cornerTestID = testID ?? `notification-run-cell-corner-${item.id}`;
   // A corner with no GitHub link has one destination, so the whole line opens it.
   if (item.kind === 'corner' && item.cornerId && !item.url)
@@ -208,7 +205,9 @@ export function RepositoryLifecycleRow({
             </View>
           ) : null}
           <View style={styles.copyTarget}>{copy}</View>
-          <View style={styles.cornerTarget}>{chevron}</View>
+          <View style={styles.cornerTarget}>
+            <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
+          </View>
         </Pressable>
       </View>
     );
@@ -235,7 +234,7 @@ export function RepositoryLifecycleRow({
           onPress={() => onOpenCorner(item.cornerId!)}
           testID={cornerTestID}
         >
-          {chevron}
+          <ChevronGlyph color={theme.buzz.accent} direction="right" size={CHEVRON_ROW_SIZE} />
         </Pressable>
       ) : null}
     </View>

@@ -33,8 +33,6 @@ beforeEach(async () => {
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Beebee','beebee')`, [agent]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, member]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [workspaceId, agent, roomId]);
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', `${owner},${member}`);
 });
 afterEach(async () => { vi.unstubAllEnvs(); installationToken.mockClear(); await db.close(); });
 
@@ -114,7 +112,10 @@ it('E21: Google owners can issue a helper pairing code without a GitHub account'
 it.each([true, false])('E5: an existing org installation changes owner only after an explicit admin proof (%s)', async admin => {
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_login,account_type,repository_selection,status)
     VALUES(77,$1,'organization','Organization','all','active')`, [member]);
-  const oauth = { exchangeCode: async () => ({subject:'42',login:'alex-dev',issuer:'https://github.com',audience:'test',accessToken:'test-user-grant'}) } as unknown as GitHubOAuthClient;
+  const oauth = {
+    authorizationUrl: ({ state }: { state: string }) => `https://github.test/authorize?state=${state}`,
+    exchangeCode: async () => ({subject:'42',login:'alex-dev',issuer:'https://github.com',audience:'test',accessToken:'test-user-grant'}),
+  } as unknown as GitHubOAuthClient;
   const app = {
     installationUrl: (state: string) => `https://github.test/install?state=${state}`,
     installationAccount: async () => ({id:'84',login:'organization',type:'Organization',repositorySelection:'all'}),

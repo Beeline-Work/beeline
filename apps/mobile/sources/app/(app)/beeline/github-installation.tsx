@@ -1,7 +1,8 @@
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet } from 'react-native-unistyles';
 import { Redirect, type Href, useLocalSearchParams } from 'expo-router';
 import { Button } from '@/components/buzz/Button';
@@ -16,19 +17,23 @@ function EnhancedGitHubInstallation() {
   const [returnPath, setReturnPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [recoveryPath, setRecoveryPath] = useState('/beeline/channels');
   useEffect(() => {
     let alive = true;
     setError(null);
     void (async () => {
       try {
-        const path = await githubInstallationReturnPath();
-        if (!path) throw new Error('This installation was not started on this device. Return to your Room and install Beeline again.');
-        if (installed === '0' && connectionError) {
+        const savedPath = await githubInstallationReturnPath();
+        const path = savedPath ?? '/beeline/channels';
+        if (alive) setRecoveryPath(path);
+        if (Platform.OS !== 'web' && !savedPath) throw new Error('This installation was not started on this device. Return to your Room and install Beeline again.');
+        if (Platform.OS !== 'web' && installed === '0' && connectionError) {
           if (alive) setReturnPath(`${path}${path.includes('?') ? '&' : '?'}githubConnectionError=${encodeURIComponent(connectionError)}`);
           return;
         }
         await completeGitHubInstallationRoute(installed, connectionError);
         await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
+        if (Platform.OS === 'web') WebBrowser.maybeCompleteAuthSession();
         if (alive) setReturnPath(path);
       } catch (reason) {
         if (alive) setError(reason instanceof Error ? reason.message : String(reason));
@@ -42,7 +47,10 @@ function EnhancedGitHubInstallation() {
     <Text style={styles.copy} accessibilityRole={error ? 'alert' : undefined}>
       {error ?? 'Checking your installation and loading the repositories Beeline can work in.'}
     </Text>
-    {error ? <Button label="Retry" variant="secondary" onPress={() => setAttempt(value => value + 1)} /> : null}
+    {error ? <Button label="Retry" variant="secondary" onPress={() => {
+      if (installed !== '1' || connectionError) setReturnPath(recoveryPath);
+      else setAttempt(value => value + 1);
+    }} /> : null}
   </View>;
 }
 const styles = StyleSheet.create(theme => ({

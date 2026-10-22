@@ -32,13 +32,13 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
   const warning = voice.endingWarning ?? voice.budgetWarning;
   return <>
     <View style={styles.controls} testID="voice-bar">
-      <View style={styles.waveform} accessibilityLabel={voice.muted ? 'Microphone muted' : voice.speaker
-        ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'} testID="voice-waveform">
+      <View style={styles.waveform} accessibilityLabel={voice.speaker
+        ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : voice.muted ? 'Microphone muted' : 'Listening'} testID="voice-waveform">
         {voice.connecting ? <SurfaceGlyphLoader compact testID="voice-startup-loader" /> : warning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
           style={styles.warning} testID="conversation-tip">{warning}</Text>
           : voice.error ? <Text accessibilityRole="alert" style={styles.error}
             testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
-          : <DictationWaveform key={voice.muted ? 'muted' : 'live'} level={voice.muted ? 0 : voice.level} live={!voice.connecting} flat={voice.muted} />}
+          : <DictationWaveform level={voice.level} live={!voice.connecting} flat={voice.muted && voice.level === 0} />}
       </View>
       <Pressable onPress={() => void voice.toggleMute()} disabled={voice.connecting || voice.quotaExhausted}
         accessibilityLabel={voice.muted ? 'Unmute microphone' : 'Mute microphone'} accessibilityRole="button"

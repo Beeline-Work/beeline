@@ -34,12 +34,19 @@ function closeSpelling(left: string, right: string): boolean {
   return previous[right.length] === 1;
 }
 
-/** The agent named at the start of the speech, optionally after a greeting. Ambiguous names match nobody. */
+const LEADING_VOICE_FILLERS = new Set(['um', 'uh', 'er', 'erm', 'ah', 'oh', 'so', 'well',
+  'okay', 'ok', 'alright', 'right', 'hey', 'hi', 'hello', 'yo']);
+
+/** The agent named at the start of speech, optionally after leading fillers. Ambiguous names match nobody. */
 export function openingVoiceName(text: string, agents: readonly VoiceAgent[]): VoiceAgent | undefined {
   const transcript = words(text);
-  if (/^(hey|hi|hello|okay|ok|yo)$/.test(transcript[0] ?? '')) transcript.shift();
   const aliases = agents.flatMap(agent => [agent.name, agent.handle].map(name => ({ agent, parts: words(name) })))
     .filter(alias => alias.parts.length > 0);
+  for (let skipped = 0; skipped < 4 && LEADING_VOICE_FILLERS.has(transcript[0] ?? ''); skipped++) {
+    // A member's exact name or handle takes priority over treating it as filler.
+    if (aliases.some(({ parts }) => parts.every((part, i) => part === transcript[i]))) break;
+    transcript.shift();
+  }
   const exact = aliases.filter(({ parts }) => parts.every((part, i) => part === transcript[i]));
   // Prefer a full display name over another member's shorter alias.
   const longest = Math.max(0, ...exact.map(alias => alias.parts.length));

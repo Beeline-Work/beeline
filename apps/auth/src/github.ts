@@ -189,10 +189,10 @@ export class GitHubOAuthClient {
     };
   }
 
-  authorizationUrl(input: { state: string; codeChallenge: string; redirectUri: string }): string {
+  authorizationUrl(input: { state: string; codeChallenge: string; redirectUri?: string }): string {
     const url = new URL(this.config.authorizationEndpoint);
     url.searchParams.set('client_id', this.config.clientId);
-    url.searchParams.set('redirect_uri', input.redirectUri);
+    if (input.redirectUri) url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('state', input.state);
     url.searchParams.set('code_challenge', input.codeChallenge);
     url.searchParams.set('code_challenge_method', 'S256');

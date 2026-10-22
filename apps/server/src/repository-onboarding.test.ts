@@ -19,8 +19,6 @@ const github = { onboardingSignals: vi.fn(async () => signals), refresh: vi.fn(a
 } as unknown as GitHubOperations;
 
 beforeAll(async () => {
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '296966200,123');
   db = new PgliteDatabase();
 
   await migrate(db);
@@ -114,15 +112,11 @@ it('lets an invited Room member start work without granting repository-managemen
   expect((await db.query(`SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '%Make the README useful%'`,[R,OTHER])).rowCount).toBe(1);
 });
 
-it('turns off cards and actions without changing the existing Room or calling GitHub', async () => {
-  const card = await postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' });
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
-  try {
-    expect((await phone.execute('getAuthCapabilities', {}, H))).not.toHaveProperty('repositoryOnboarding');
-    expect((await phone.readRoom(R,H))?.messages.some(m => m.onboarding)).toBe(false);
-    await expect(postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' })).rejects.toThrow('unavailable');
-    await expect(phone.execute('actOnRepositoryCard', {roomId:R,cardId:card.id,action:'create'},H)).rejects.toThrow('unavailable');
-  } finally { vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1'); }
+it('advertises cards to Google-only viewers without feature configuration', async () => {
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [W,R,OTHER]);
+  expect(await phone.execute('getAuthCapabilities', {}, OTHER)).toHaveProperty('repositoryOnboarding', true);
+  const card = await postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
+  expect((await phone.readRoom(R, OTHER))?.messages.some(message => message.id === card.id)).toBe(true);
 });
 
 it('keeps another requester\'s unanswered card open when onboarding an invitee', async () => {
@@ -147,13 +141,9 @@ it('R-onb-22: public rollout keeps personal repository choices private in reads 
   expect(await phone.readLiveDelta(R,OTHER,{type:'message',messageId:card.id})).toBeNull();
 });
 
-it('E19/E20: allows a Google identity by Beeline id only while the rollout is enabled', async () => {
+it('E19/E20: allows any Google-only identity without configuration', async () => {
   await db.query(`UPDATE identities SET github_subject=NULL WHERE id=$1`, [OTHER]);
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_IDENTITY_IDS', OTHER);
   const card = await postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
   expect(card.githubLinked).toBe(false);
   expect(card.repositories).toEqual([]);
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
-  await expect(postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' })).rejects.toThrow('unavailable');
-  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
 });

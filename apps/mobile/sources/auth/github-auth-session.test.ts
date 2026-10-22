@@ -22,6 +22,7 @@ const {
   githubInstallationRedirectUri,
   githubRepositoryRefreshFeedback,
   githubInstallationReturnPath,
+  completeGitHubInstallationRoute,
   githubSignInRedirectUri,
   loadPendingGitHubBindChallenge,
   persistGitHubInstallationReturnPath,
@@ -751,6 +752,31 @@ describe('GitHub auth session redirects', () => {
       subscribeToUrls:()=>({remove(){}}),
     })).rejects.toMatchObject({code:'github_account_already_linked',
       message:'That GitHub account belongs to another Beeline account. Sign out and continue with GitHub to use it.'});
+  });
+
+  it.each(['cancel', 'dismiss'])('keeps the web Room path when the opener reports %s before its landing tab finishes', async (type) => {
+    createURL.mockImplementationOnce((path) => `https://web.usebeeline.app/${path}`);
+    await expect(runGitHubInstallationSession({
+      returnPath: '/beeline/chat/room-1',
+      startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
+      openAuthSession: async () => ({ type }),
+      subscribeToUrls: () => ({ remove: () => undefined }),
+      callbackGraceMs: 0,
+    })).rejects.toMatchObject({ code: 'browser_canceled' });
+    await expect(githubInstallationReturnPath()).resolves.toBe('/beeline/chat/room-1');
+  });
+
+  it('acknowledges a successful web landing without any pending installation key', async () => {
+    storage.clear();
+    createURL.mockImplementationOnce((path) => `https://web.usebeeline.app/${path}`);
+    createURL.mockImplementationOnce((path) => `https://web.usebeeline.app/${path}`);
+    await expect(completeGitHubInstallationRoute('1')).resolves.toBeUndefined();
+    expect(storage.size).toBe(0);
+  });
+
+  it('continues to require pending state for native installation completion', async () => {
+    storage.clear();
+    await expect(completeGitHubInstallationRoute('1')).rejects.toMatchObject({ code: 'invalid_installation' });
   });
 
   it('refreshes repositories on foreground return and treats dismissal as an unknown completion', async () => {

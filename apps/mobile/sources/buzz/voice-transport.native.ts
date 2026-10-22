@@ -161,23 +161,37 @@ export async function voiceFetch(input: string, init: RequestInit): Promise<Resp
   return monolithSession.fetch(input, init, { fetchImpl: fetch as typeof globalThis.fetch });
 }
 
-/** Read captured microphone frames locally, without the server's speaker cadence. */
+/** Use the same native processor for the microphone and every remote audio track. */
 export function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {
   const native = NativeModules.LivekitReactNativeModule;
-  let release = () => {};
+  const meters = new Map<Track, { id: string; connection: number; mediaId: string; level: number }>();
+  const publish = () => onLevel(Math.max(0, ...[...meters.values()].map(meter => meter.level)));
   const update = () => {
-    release(); release = () => {}; onLevel(0);
-    const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-    if (!track || track.isMuted) return;
-    const media = track.mediaStreamTrack as unknown as { id: string; _peerConnectionId?: number };
-    const connection = media._peerConnectionId ?? -1;
-    const id = native.createVolumeProcessor(connection, media.id) as string;
-    const listener = new NativeEventEmitter(native).addListener('LK_VOLUME_PROCESSED', (event: { id: string; volume: number }) => {
-      if (event.id === id) onLevel(event.volume);
-    });
-    release = () => { listener.remove(); native.deleteVolumeProcessor(id, connection, media.id); };
+    const tracks = [room.localParticipant, ...room.remoteParticipants.values()]
+      .flatMap(participant => [...participant.audioTrackPublications.values()])
+      .flatMap(publication => publication.track && !publication.track.isMuted ? [publication.track] : []);
+    const active = new Set<Track>(tracks);
+    for (const [track, meter] of meters) if (!active.has(track)) {
+      native.deleteVolumeProcessor(meter.id, meter.connection, meter.mediaId); meters.delete(track);
+    }
+    for (const track of tracks) if (!meters.has(track)) {
+      const media = track.mediaStreamTrack as unknown as { id: string; _peerConnectionId?: number };
+      const connection = media._peerConnectionId ?? -1;
+      const id = native.createVolumeProcessor(connection, media.id) as string;
+      meters.set(track, { id, connection, mediaId: media.id, level: 0 });
+    }
+    publish();
   };
-  const events = [RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted];
+  const listener = new NativeEventEmitter(native).addListener('LK_VOLUME_PROCESSED', (event: { id: string; volume: number }) => {
+    for (const meter of meters.values()) if (event.id === meter.id) meter.level = event.volume;
+    publish();
+  });
+  const events = [RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.TrackSubscribed,
+    RoomEvent.TrackUnsubscribed, RoomEvent.ParticipantDisconnected, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted];
   events.forEach(event => room.on(event, update)); update();
-  return () => { events.forEach(event => room.off(event, update)); release(); release = () => {}; };
+  return () => {
+    events.forEach(event => room.off(event, update)); listener.remove();
+    for (const meter of meters.values()) native.deleteVolumeProcessor(meter.id, meter.connection, meter.mediaId);
+    meters.clear();
+  };
 }

@@ -161,3 +161,18 @@ it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and 
     expect(outline('Goosey')).not.toBe('transparent');
   } finally { await act(async () => renderer.unmount()); }
 });
+
+it('VOICE-CONTEXT-1: remote speech animates the waveform and keeps its speaker label with a muted microphone', async () => {
+  const { DictationWaveform } = await import('./DictationWaveform');
+  let renderer: any;
+  await act(async () => { renderer = create(<VoiceBar voice={{call:null,
+    agents:[{pubkey:'ruby',kind:'agent',name:'Ruby'}],target:'ruby',speaker:'ruby',level:.7,
+    connecting:false,error:null,endingWarning:undefined,quotaExhausted:false,budgetWarning:null,muted:true,toggleMute:async()=>{},
+    firstAudioMs:null,humans:1,unaddressed:0,join:vi.fn(),end:vi.fn(),aim:vi.fn()}} />); });
+  try {
+    expect(renderer.root.findByProps({testID:'voice-waveform'}).props.accessibilityLabel).toBe('Ruby speaking');
+    const waveform = renderer.root.findByType(DictationWaveform);
+    expect(waveform.props.level).toBe(.7);
+    expect(waveform.props.flat).toBe(false);
+  } finally { await act(async () => renderer.unmount()); }
+});

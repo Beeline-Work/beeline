@@ -135,3 +135,19 @@ it.each(['approve', 'connect', 'question'] as const)(
     expect(texts[0]!.props.children[2]).toBe(' · checks failed');
   },
 );
+
+
+it.each([
+  [{ kind: 'merge-hold', personId: viewer, personName: 'Viewer' }, ' on your merge hold'],
+  [{ kind: 'merge-hold', personId: candy, personName: 'Candy' }, " on Candy's merge hold"],
+  [{ kind: 'report' }, ' on a report'],
+] as const)('R1: renders %j as plain text even if a stale jump callback exists', (blocker, copy) => {
+  const jump = vi.fn();
+  let tree: ReturnType<typeof create>;
+  act(() => { tree = create(<CornerHeaderAgentText name="Jellybean" state="waiting"
+    waitingReason="approve" blocker={blocker} viewerId={viewer} onReasonPress={jump} />); });
+  const texts = tree!.root.findAllByType('Text' as never);
+  expect(texts.some((node: any) => node.props.accessibilityRole === 'link' || node.props.onPress)).toBe(false);
+  expect(texts[0]!.props.children[1]).toBe(copy);
+  expect(jump).not.toHaveBeenCalled();
+});

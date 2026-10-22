@@ -5730,6 +5730,7 @@ describe('monolith integration', () => {
 
     await expect((await operation('getAuthCapabilities')).json()).resolves.toEqual({
       github: true,
+      repositoryOnboarding: true,
     });
     await expect((await operation('getManagedIdentity')).json()).resolves.toEqual({
       personId: HUMAN,

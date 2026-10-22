@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { TextDraft, textDraftKey } from './text-draft-store';
 const chunk = 'https://web.usebeeline.app/_expo/static/js/web/room-page-observation-deadbeef0000.js';
+const exportHtml = (version: string) => `<script defer src="/_expo/static/js/web/index-${version}.js"></script>`;
+beforeEach(() => {
+  document.head.innerHTML = exportHtml('old');
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => exportHtml('new') }));
+});
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
 
 it('STALE-CHUNK-1: parse failure flushes the composer, reloads once, and survives remount', async () => {
@@ -61,7 +66,7 @@ it('installs capture listeners that recover caught chunk parse errors without hi
   const ordinary = new ErrorEvent('error', { filename: chunk, message: 'render failed', error: new TypeError('render failed'), cancelable: true });
   window.dispatchEvent(ordinary);
   expect(ordinary.defaultPrevented).toBe(false);
-  window.sessionStorage.setItem('beeline.web-chunk-reload.v1', '1');
+  window.sessionStorage.setItem('beeline.web-chunk-reload.v1', '/_expo/static/js/web/index-new.js');
   const parse = new ErrorEvent('error', { filename: chunk, message: "Unexpected token '<'", error: new SyntaxError("Unexpected token '<'"), cancelable: true });
   window.dispatchEvent(parse);
   expect(parse.defaultPrevented).toBe(true);
@@ -80,14 +85,50 @@ it('filters stale chunks at the Sentry boundary but preserves application errors
   vi.doMock('./web-chunk-recovery', () => import('./web-chunk-recovery.web'));
   vi.stubGlobal('__DEV__', false);
   vi.stubEnv('EXPO_PUBLIC_SENTRY_DSN', 'https://public@fixture.ingest.sentry.io/1');
-  window.sessionStorage.setItem('beeline.web-chunk-reload.v1', '1');
+  window.sessionStorage.setItem('beeline.web-chunk-reload.v1', '/_expo/static/js/web/index-new.js');
   await import('./sentry');
   const { beforeSend } = init.mock.calls[0]![0];
   const event = { exception: { values: [{ type: 'SyntaxError', value: "Unexpected token '<'", stacktrace: { frames: [{ filename: chunk }] } }] } };
   expect(beforeSend(event, {})).toBeNull();
+  const originalException = new SyntaxError("Unexpected token '<'");
+  window.dispatchEvent(new ErrorEvent('error', { filename: chunk, message: originalException.message, error: originalException }));
+  const rewritten = { exception: { values: [{ type: 'SyntaxError', value: originalException.message, stacktrace: { frames: [{ filename: 'app:///room-page-observation-deadbeef0000.js' }] } }] } };
+  expect(beforeSend(rewritten, { originalException })).toBeNull();
+  expect(beforeSend(rewritten, { originalException: new SyntaxError(originalException.message) })).not.toBeNull();
   expect(beforeSend({ message: 'import failed' }, { originalException: new Error(`Loading module ${chunk} failed.`) })).toBeNull();
   event.exception.values[0]!.type = 'TypeError';
   event.exception.values[0]!.value = 'render failed';
   expect(beforeSend(event, {})).not.toBeNull();
   vi.unstubAllEnvs();
+});
+
+it('STALE-CHUNK-HTML-1: an earlier recovery does not block a new export; unchanged or retried exports never reload', async () => {
+  const reload = vi.fn();
+  const sessionStorage = window.sessionStorage;
+  sessionStorage.setItem('beeline.web-chunk-reload.v1', '1');
+  vi.stubGlobal('window', { sessionStorage, location: { reload, href: 'https://web.usebeeline.app/room' } });
+  const recovery = await import('./web-chunk-recovery.web');
+  expect(recovery.recoverWebChunk({ request: chunk })).toBe(true);
+  await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+  vi.resetModules();
+  document.head.innerHTML = exportHtml('new');
+  const afterReload = await import('./web-chunk-recovery.web');
+  afterReload.recoverWebChunk({ request: chunk });
+  await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(reload).toHaveBeenCalledOnce();
+  // A subsequent deployment is independently recoverable in this same session.
+  vi.mocked(fetch).mockResolvedValue({ ok: true, text: async () => exportHtml('newer') } as Response);
+  afterReload.recoverWebChunk({ request: chunk });
+  await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(2));
+});
+
+it('keeps the draft and page when checking the export fails', async () => {
+  const reload = vi.fn();
+  vi.stubGlobal('window', { sessionStorage: window.sessionStorage, location: { reload } });
+  vi.mocked(fetch).mockRejectedValue(new Error('offline'));
+  const recovery = await import('./web-chunk-recovery.web');
+  recovery.recoverWebChunk({ request: chunk });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(reload).not.toHaveBeenCalled();
 });

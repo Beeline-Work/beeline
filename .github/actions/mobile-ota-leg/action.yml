@@ -1,12 +1,11 @@
 # App leg of the unified release (was .github/workflows/mobile-ota.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
-# phase=build validates the app beside the immutable `beta` export and stores
-# the exact candidate ledger for the all-artifacts gate; phase=promote
-# republishes that exact beta group to `production` and records the owner
-# device receipt when one already exists. It cannot promote on its own: only
-# the governor calls it, after the shared gate and the confirmed
-# server -> daemon chain. The caller checks out the release SHA
-# (fetch-depth 0) first and owns runner and timeout.
+# phase=build publishes the immutable `beta` export and stores the exact
+# candidate ledger; phase=promote republishes that exact beta group to
+# `production` and records the owner device receipt when one already exists.
+# Typecheck and tests already ran in CI on the merged commit. The caller checks
+# out the release SHA (fetch-depth 0), installs Node 22 and the pinned eas-cli,
+# and owns runner and timeout.
 name: Mobile OTA release leg
 description: Build the exact app candidate or promote it to production
 
@@ -19,6 +18,7 @@ inputs:
   release_version:
     required: true
   retry_attempt:
+    description: 1 for a first attempt; above 1 when this release identity ran before, so promotion never republishes blindly
     default: '1'
     required: false
   expo_token:
@@ -28,10 +28,6 @@ inputs:
     description: Sentry release upload token; never exposed to the app
     required: false
     default: ''
-  room_open_trace:
-    description: "1 turns on the on-device Room-open timing readout in this bundle; empty leaves it off, which is every ordinary release"
-    required: false
-    default: ""
   embedded_anchor_platforms:
     description: comma list of platforms whose store binary was built in this release (their current runtime pin may use the embedded update as its rollback anchor)
     required: false
@@ -53,6 +49,9 @@ outputs:
   production_group_id:
     description: The production group republished by phase=promote
     value: ${{ steps.promotion.outputs.production_group_id }}
+  completed_at:
+    description: Epoch seconds when phase=promote proved the rollback ledger
+    value: ${{ steps.ledger.outputs.completed_at }}
 
 runs:
   using: composite
@@ -121,12 +120,6 @@ runs:
         path: ${{ runner.temp }}/previous-index
         run-id: ${{ steps.previous_index.outputs.run_id }}
         github-token: ${{ github.token }}
-    - uses: actions/setup-node@v4
-      if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
-      with:
-        node-version: '22'
-        cache: npm
-        cache-dependency-path: apps/mobile/package-lock.json
     - name: Initialize every merge before setup
       if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
       shell: bash
@@ -149,9 +142,9 @@ runs:
       shell: bash
       working-directory: apps/mobile
       run: |
-        npm ci
+        bash ../../scripts/npm-ci-timed.sh
         npm run eas-build-post-install
-    - name: Validate while exporting and publishing the beta candidate
+    - name: Export and publish the beta candidate
       if: inputs.phase == 'build' && steps.reuse.outputs.run_id == ''
       shell: bash
       working-directory: apps/mobile
@@ -162,41 +155,17 @@ runs:
         RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ inputs.release_sha }}
-        EXPO_PUBLIC_ROOM_OPEN_TRACE: ${{ inputs.room_open_trace }}
         OTA_EMBEDDED_ANCHOR_PLATFORMS: ${{ inputs.embedded_anchor_platforms }}
       run: |
         set -euo pipefail
         if [ -n "$EXPO_TOKEN_SECRET" ]; then export EXPO_TOKEN="$EXPO_TOKEN_SECRET"; fi
         test -n "${EXPO_TOKEN:-}" || { echo "EXPO_TOKEN is unavailable" >&2; exit 2; }
-        validation_started="$(date +%s)"
-        (
-          npm run typecheck && npx vitest run \
-            sources/config/appBranding.test.ts \
-            sources/config/mobileOtaRelease.test.ts \
-            sources/config/nativeRuntimeImports.test.ts \
-            sources/buzz/voice-transport.ios-compat.test.ts \
-            sources/push/update-receipt.test.ts \
-            && node scripts/ota-release.mjs publish --dry-run \
-              --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --ref main \
-              --ledger "$RUN_LEDGER"
-        ) > "$RUNNER_TEMP/mobile-ota-validation.log" 2>&1 &
-        validation_pid=$!
+        started="$(date +%s)"
         OTA_TMPDIR="$(mktemp -d)"
-        set +e
-        # Publish output goes straight to the job log so a slow or stuck
-        # target is visible while the job runs; validation runs beside it
-        # and is printed once it finishes.
         TMPDIR="$OTA_TMPDIR" node scripts/ota-release.mjs publish \
           --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --ref main \
           --ledger "$RUN_LEDGER" --index "$DELIVERY_INDEX" 2>&1
-        publish_status=$?
-        wait "$validation_pid"
-        validation_status=$?
-        set -e
-        cat "$RUNNER_TEMP/mobile-ota-validation.log"
-        printf 'parallel_candidate_wall\t%s\n' "$(( $(date +%s) - validation_started ))" > "$TIMINGS_FILE"
-        test "$validation_status" -eq 0
-        test "$publish_status" -eq 0
+        printf 'candidate_publish\t%s\n' "$(( $(date +%s) - started ))" > "$TIMINGS_FILE"
     - name: Store the exact app candidate for the aligned gate
       if: inputs.phase == 'build'
       uses: actions/upload-artifact@v4
@@ -217,19 +186,14 @@ runs:
         path: ${{ runner.temp }}
         run-id: ${{ steps.reuse.outputs.run_id }}
         github-token: ${{ github.token }}
-    - uses: actions/setup-node@v4
-      if: inputs.phase == 'promote'
-      with:
-        node-version: '22'
-        cache: npm
-        cache-dependency-path: apps/mobile/package-lock.json
     # EAS loads app.config.js and its local Expo plugins before it can issue
-    # update:republish, so a promotion checkout needs the mobile dependency graph.
+    # update:republish, so promotion needs the mobile dependency graph. A
+    # build phase in this job already installed it.
     - name: Install mobile dependencies for EAS project context
       if: inputs.phase == 'promote'
       shell: bash
       working-directory: apps/mobile
-      run: npm ci
+      run: test -d node_modules || bash ../../scripts/npm-ci-timed.sh
     - name: Promote the exact beta group to production
       if: inputs.phase == 'promote'
       id: promotion
@@ -302,3 +266,10 @@ runs:
           ${{ runner.temp }}/mobile-ota-promotion-proof.txt
         if-no-files-found: error
         retention-days: 90
+    - name: Require the rollback ledger
+      if: inputs.phase == 'promote'
+      id: ledger
+      shell: bash
+      run: |
+        test -f "$RUN_LEDGER" || { echo 'mobile OTA promotion produced no rollback ledger' >&2; exit 1; }
+        echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"

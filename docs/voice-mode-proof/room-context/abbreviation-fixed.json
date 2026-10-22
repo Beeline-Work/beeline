@@ -1,0 +1,7 @@
+{
+  "reproduction": "VOICE-CONTEXT-1",
+  "input": "The appointment is confirmed. Dr. Smith will explain the",
+  "finishReason": "length",
+  "synthesis": "The appointment is confirmed.",
+  "path": "Production provider and voice runtime, disposable PGlite database, real local LiveKit RTC, controlled SSE and PCM"
+}

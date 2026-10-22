@@ -68,7 +68,7 @@ describe('voice providers', () => {
     expect(body.reasoning).toEqual({ effort: 'none', exclude: true });
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
-    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history']);
+    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history', 'read_posted_item']);
     expect(body.messages[0].content).toContain('Answer conversation, knowledge, history, explanations, opinions');
     expect(body.messages[0].content).toContain('Use search_history');
     expect(body.messages[0].content).toContain('Never claim results, progress, stopping points or reasons');
@@ -200,7 +200,7 @@ it('CALL-ERROR-1: late brain headers cannot emit text after timeout', async () =
 describe('quick call search', () => {
   const agent = { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' };
   const stream = (delta: unknown) => new Response(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`);
-  it.each(['search_web', 'search_history'] as const)('announces %s, bounds results and makes exactly one answer call', async name => {
+  it.each(['search_web', 'search_history', 'read_posted_item'] as const)('announces %s, bounds results and makes exactly one answer call', async name => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(stream({ content: 'Let me look.', tool_calls: [{ index: 0, function: { name, arguments: '{"query":"release"}' } }] }))
       .mockResolvedValueOnce(stream({ content: 'The release is ready.' }));
@@ -396,4 +396,21 @@ it('VOICE-TIMEOUT-1: playback pauses preserve the remaining provider budget rath
     expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1); await failed;
   } finally { vi.useRealTimers(); }
+});
+
+it.each([
+  ['First sentence. A trailing fragment', 'First sentence.'],
+  ['An unfinished opening', ''],
+  ['The appointment is confirmed. Dr. Smith will explain the', 'The appointment is confirmed.'],
+  ['The appointment is confirmed. Dr.', 'The appointment is confirmed.'],
+  ['Ready. Ask Mr. Smith about the', 'Ready.'],
+  ['Ready. Ask J. Smith about the', 'Ready.'],
+  ['Ready. Try e.g. the', 'Ready.'],
+  ['Dr. Smith confirmed it. Then a fragment', 'Dr. Smith confirmed it.'],
+  ['Finished! “Also done.” unfinished', 'Finished! “Also done.”'],
+])('VOICE-CONTEXT-1: capped stream %s never sends a partial sentence to synthesis', async (content, expected) => {
+  const wire = `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}\n\ndata: [DONE]\n\n`;
+  const brain = new OpenRouterVoiceBrain('test', async () => new Response(wire));
+  const reply = await brain.answer({ id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' }, [], () => {}, new AbortController().signal);
+  expect(reply.text).toBe(expected);
 });

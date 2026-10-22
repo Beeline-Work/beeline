@@ -3,7 +3,6 @@ import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
-import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
@@ -1359,7 +1358,7 @@ export class DaemonService {
         return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
-        )), ...(owner && await onboardingEnabledForViewer(this.database, owner) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
+        )), ...(owner ? { repositoryOnboarding: true } : {}) } as Output<Name>;
       }
       case 'noteEmptyRoomRepository': {
         const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
@@ -1763,7 +1762,7 @@ export class DaemonService {
         const requester = await this.grantRequester();
         const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
           `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
-        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
+        if (!owner) throw new Error('repository onboarding unavailable');
         if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
         if (request.kind === 'repository') await this.github?.refresh(owner);
         const card = await postRepositoryOnboarding(this.database, this.github, {
@@ -3805,7 +3804,7 @@ export class DaemonService {
         `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
       )).rowCount > 0;
       const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
-      if (owner && await onboardingEnabledForViewer(this.database, owner))
+      if (owner)
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
     const isReviewer =
@@ -4655,6 +4654,12 @@ export class DaemonService {
           .update(JSON.stringify(['corner-activity', input.roomId, agentId, input.requestId, key]))
           .digest('hex')
       : id();
+    // PostgreSQL jsonb cannot store NUL or lone UTF-16 surrogates. Replace
+    // only those string characters, including nested fields, with U+FFFD.
+    // Unicode mode keeps valid surrogate pairs (emoji, for example) intact.
+    const serializedActivity = JSON.stringify(input.activity, (_key, value: unknown) =>
+      typeof value === 'string' ? value.replace(/[\u0000\uD800-\uDFFF]/gu, '\uFFFD') : value,
+    );
     const activity = await this.database.transaction(async (database) => {
       const inserted = await database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,request_id,activity,agent_model)
@@ -4668,7 +4673,7 @@ export class DaemonService {
           input.roomId,
           agentId,
           input.requestId,
-          JSON.stringify(input.activity),
+          serializedActivity,
           input.agentModel !== undefined,
           input.agentModel ?? null,
         ],
@@ -4680,7 +4685,7 @@ export class DaemonService {
             `SELECT id,created_at FROM messages
              WHERE id=$1 AND room_id=$2 AND author_id=$3 AND request_id=$4
                AND presentation='activity' AND activity=$5::jsonb`,
-            [messageId, input.roomId, agentId, input.requestId, JSON.stringify(input.activity)],
+            [messageId, input.roomId, agentId, input.requestId, serializedActivity],
           )
         ).rows[0];
       if (!row) throw new Error('corner activity ID conflicts with another message');
@@ -6563,7 +6568,6 @@ export class DaemonService {
   }
 
   private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
-    if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
     const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
       ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId)
       : undefined);
@@ -7006,7 +7010,7 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('service and reason are required');
-    const builtin = builtinBeelineApp(service);
+    const builtin = builtinBeelineApp(service, `${reason} ${input.continuation ?? ''}`);
     if (builtin) {
       await this.access(input.roomId, agentId);
       return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };

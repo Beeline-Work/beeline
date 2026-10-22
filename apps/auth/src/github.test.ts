@@ -14,6 +14,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('uses the registered GitHub callback when no redirect override is supplied', () => {
+  const oauth = new GitHubOAuthClient({ clientId: 'client', clientSecret: 'secret' });
+  const url = new URL(oauth.authorizationUrl({ state: 'github_bind_state', codeChallenge: 'challenge' }));
+  expect(url.origin + url.pathname).toBe('https://github.com/login/oauth/authorize');
+  expect(Object.fromEntries(url.searchParams)).toEqual({
+    client_id: 'client', state: 'github_bind_state', code_challenge: 'challenge', code_challenge_method: 'S256',
+  });
+});
+
 const retryHead = 'a'.repeat(40);
 const passingRollupResponse = () => new Response(JSON.stringify({ data: { repository: { object: {
   oid: retryHead, statusCheckRollup: { state: 'SUCCESS', contexts: { totalCount: 1, nodes: [
@@ -1188,7 +1197,7 @@ it('release-dispatch-attribution: passes attribution and recovery fields only af
   const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ workflow_runs: [] }));
   vi.stubGlobal('fetch', fetchMock);
   const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
-  const inputs = { dispatched_by: '{"handle":"jellybean"}', retry_attempt: '2', release_version: 'v0.1.94' };
+  const inputs = { dispatched_by: '{"handle":"jellybean"}', selection: 'server', release_version: 'v0.1.94' };
   await app.dispatchProductionWorkflow('secret-token', 'Beeline-Work/beeline', inputs);
   expect(fetchMock).toHaveBeenCalledTimes(6);
   expect(JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body))).toEqual({ ref: 'main', inputs });

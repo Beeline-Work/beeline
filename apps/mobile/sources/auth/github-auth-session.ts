@@ -701,14 +701,14 @@ export async function clearPendingGitHubInstallation(): Promise<void> {
   ]);
 }
 
-async function completeGitHubInstallationCallback(callbackUrl: string): Promise<string> {
+async function completeGitHubInstallationCallback(callbackUrl: string, requirePending = true): Promise<string> {
   const redirectUri = githubInstallationRedirectUri();
   if (!isCallbackFor(callbackUrl, redirectUri)) {
     throw new OidcBindError('invalid_installation', 'Unexpected GitHub installation callback');
   }
   const url = new URL(callbackUrl);
   const connectionError = url.searchParams.get('error');
-  if (url.searchParams.get('installed') === '0' && connectionError && await githubInstallationReturnPath()) {
+  if (url.searchParams.get('installed') === '0' && connectionError && (!requirePending || await githubInstallationReturnPath())) {
     const message = githubConnectionErrorMessage(connectionError);
     throw new OidcBindError(connectionError, message);
   }
@@ -717,7 +717,8 @@ async function completeGitHubInstallationCallback(callbackUrl: string): Promise<
   if (installed.length !== 1 || installed[0] !== '1' || unexpected.length > 0) {
     throw new OidcBindError('invalid_installation', 'GitHub App installation did not complete');
   }
-  if (!(await githubInstallationReturnPath())) {
+  const pendingPath = await githubInstallationReturnPath();
+  if (requirePending && !pendingPath) {
     throw new OidcBindError(
       'invalid_installation',
       'This GitHub installation does not match one started on this device.',
@@ -726,7 +727,7 @@ async function completeGitHubInstallationCallback(callbackUrl: string): Promise<
   // Keep the return path until the destination screen acknowledges it. A warm
   // Linking event also navigates Expo Router, and clearing here can race the
   // callback route before it has read where the repo picker came from.
-  await AsyncStorage.setItem(PENDING_INSTALLATION_COMPLETED_KEY, '1');
+  if (pendingPath) await AsyncStorage.setItem(PENDING_INSTALLATION_COMPLETED_KEY, '1');
   return callbackUrl;
 }
 
@@ -735,7 +736,9 @@ export async function completeGitHubInstallationRoute(installed: unknown, error?
   const completion = new URL(redirectUri);
   if (typeof installed === 'string') completion.searchParams.set('installed', installed);
   if (error) completion.searchParams.set('error', error);
-  await completeGitHubInstallationCallback(completion.toString());
+  // Web returns can outlive their opener. This only acknowledges the callback;
+  // repository access is still read from the signed-in user's server session.
+  await completeGitHubInstallationCallback(completion.toString(), !/^https?:/.test(redirectUri));
 }
 
 /** Browser return and warm Linking events share one completion path. */
@@ -751,6 +754,7 @@ export async function runGitHubInstallationSession({
 }: GitHubInstallationSessionInput): Promise<string | null> {
   await persistGitHubInstallationReturnPath(returnPath);
   const redirectUri = githubInstallationRedirectUri();
+  const webReturn = /^https?:/.test(redirectUri);
   const returnMonitor =
     subscribeToAppState && refreshRepositories
       ? createRepositoryReturnMonitor(subscribeToAppState, refreshRepositories, onRefreshPhase)
@@ -764,17 +768,19 @@ export async function runGitHubInstallationSession({
       subscribeToUrls,
       ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
     });
-    const callbackUrl = await completeGitHubInstallationCallback(callback.url);
+    const callbackUrl = await completeGitHubInstallationCallback(callback.url, !webReturn);
     await returnMonitor?.refresh();
-    if (callback.source === 'browser') await clearPendingGitHubInstallation();
+    // Both web tabs share storage. The landing tab may still need the Room
+    // path even after the opener receives the callback or gives up waiting.
+    if (callback.source === 'browser' && !webReturn) await clearPendingGitHubInstallation();
     return callbackUrl;
   } catch (error) {
     if (returnMonitor && error instanceof OidcBindError && error.code === 'browser_canceled') {
       await returnMonitor.refresh();
-      await clearPendingGitHubInstallation();
+      if (!webReturn) await clearPendingGitHubInstallation();
       return null;
     }
-    await clearPendingGitHubInstallation();
+    if (!webReturn) await clearPendingGitHubInstallation();
     throw error;
   } finally {
     returnMonitor?.remove();

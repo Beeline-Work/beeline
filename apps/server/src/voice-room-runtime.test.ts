@@ -2218,6 +2218,19 @@ it.each(['stay', 'turn', 'leave'] as const)('reports wait for human quiet and re
   } finally { await runtime.close(); }
 });
 
+it('VOICE-CONTEXT-1: a capped abbreviation fragment never reaches synthesis', async () => {
+  const { OpenRouterVoiceBrain } = await import('./voice-providers.js');
+  const { service, speech } = conversationService(1);
+  const content = 'The appointment is confirmed. Dr. Smith will explain the';
+  const brain = new OpenRouterVoiceBrain('test', async () => new Response(
+    'data: ' + JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'length' }] }) + '\n\n'));
+  const runtime = await VoiceRoomRuntime.connect({ ...service, config: { ...service.config, brain } } as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby confirm the appointment');
+    expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual(['The appointment is confirmed.']);
+  } finally { await runtime.close(); }
+});
+
 it.each(['fast', 'failed', 'slow'] as const)('call search %s reaches audio or exactly one ordinary order', async mode => {
   const { OpenRouterVoiceBrain } = await import('./voice-providers.js');
   const { service, speech } = conversationService(1);
@@ -2545,4 +2558,51 @@ it('VOICE-TIMEOUT-1: a real stalled Aura request still publishes a plain retry m
     const signals = state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)));
     expect(signals).toContainEqual({ type: 'error', message: 'Voice reply unavailable; please try again' });
   } finally { vi.useRealTimers(); await runtime.close(); capture.mockRestore(); }
+});
+
+
+it('Reproduction VOICE-DISPOSE-1: ending a call while synthesis unwinds never clears disposed audio', async () => {
+  const { service, speech } = conversationService(1);
+  const release = deferred<void>();
+  const entered = deferred<void>();
+  speech.synthesize.mockImplementation(async function* () {
+    entered.resolve();
+    await release.promise;
+    throw new DOMException('Interrupted', 'AbortError');
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  let disposed = false;
+  const audio = state.audio;
+  audio.close = vi.fn(async () => { disposed = true; });
+  audio.clearQueue.mockImplementation(() => {
+    if (disposed) throw new Error('Invalid request: handle not found: ClearAudioBuffer source_handle 1');
+  });
+  const work = runtime.utterance('human', 'Ruby explain this');
+  const outcome = work.catch(error => error);
+  try {
+    await entered.promise;
+    await runtime.close();
+    expect(disposed).toBe(true);
+    const clears = audio.clearQueue.mock.calls.length;
+    (runtime as any).interruptPlayback();
+    release.resolve();
+    expect(await outcome).toMatchObject({ name: 'AbortError' });
+    await (runtime as any).speechIdle;
+    expect((runtime as any).speaking).toBeUndefined();
+    expect(audio.clearQueue).toHaveBeenCalledTimes(clears);
+    expect(service.runtimeClosed).toHaveBeenCalledOnce();
+  } finally { release.resolve(); await outcome; await runtime.close(); }
+});
+
+
+it('VOICE-DISPOSE-1: live audio failures remain observable and release turn cleanup', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const failure = new Error('unexpected live audio failure');
+  state.audio.clearQueue.mockImplementationOnce(() => {}).mockImplementationOnce(() => { throw failure; });
+  try {
+    await expect(runtime.utterance('human', 'Ruby explain this')).rejects.toBe(failure);
+    await (runtime as any).speechIdle;
+    expect((runtime as any).speaking).toBeUndefined();
+  } finally { await runtime.close(); }
 });

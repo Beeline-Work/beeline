@@ -84,7 +84,7 @@ it.each([
   const delivery = send.mock.calls.slice(before).find(([, message]) => message.messageId === notificationId)![1];
   const payload = pushMessageData(delivery);
   expect(JSON.parse(payload.cornerState!)).toEqual(reason
-    ? { state, reason, itemId: messageId } : { state });
+    ? { state, reason, itemId: messageId, blocker: { kind: 'message', personId: human, personName: 'Owner' } } : { state });
   expect(firebasePushMessage('device', delivery).data?.cornerState).toBe(payload.cornerState);
   expect(apnsPushRequest('device', delivery, 'app.usebeeline', 'test-provider').payload.cornerState).toBe(payload.cornerState);
   expect(header.reason).toBe(reason);
@@ -103,7 +103,7 @@ it.each([
   });
   let tree: ReturnType<typeof create>;
   act(() => { tree = create(React.createElement(CornerHeaderAgentText, {
-    name: 'Jellybean', stateWord: header.state, waitingReason: header.reason,
+    name: 'Jellybean', stateWord: header.state, waitingReason: header.reason, blocker: header.blocker, viewerId: human,
     onReasonPress: header.itemId ? () => requestMessageJump(controller, header.itemId!, read) : undefined,
   })); });
   const texts = tree!.root.findAllByType('Text' as never);
@@ -117,3 +117,26 @@ it.each([
   } else expect(link).toBeUndefined();
   console.log(`R1 ${reason ?? 'done-only'}: header=${header.state}, Room=${row.state}, Corners=${page.state}, push=${JSON.parse(payload.cornerState!).state}`);
 }, 30_000);
+
+
+it('R1: a real hold reaches the header through server reads without becoming a message link', async () => {
+  const corner = '33333333-3333-4333-8333-000000000099';
+  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
+    VALUES($1,$2,$3,'Held corner',$4)`, [corner, workspace, room, human]);
+  await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing)
+    VALUES($1,$2,'owner')`, [corner, human]);
+  const page = readCornerListView(await phone.readCorners(room, human))!.corners.find(item => item.corner.id === corner)!;
+  const row = readChatListView(await phone.readChats(workspace, human))!.chats.find(item => item.room.id === room)!.openCorners!.find(item => item.id === corner)!;
+  expect(page.blocker).toEqual({ kind: 'merge-hold', personId: human, personName: 'Owner' });
+  expect(row.blocker).toEqual(page.blocker);
+  expect(page.itemId).toBeUndefined();
+  expect(row.itemId).toBeUndefined();
+  let tree: ReturnType<typeof create>;
+  const jump = vi.fn();
+  act(() => { tree = create(React.createElement(CornerHeaderAgentText, { name: 'Ruby', state: page.state,
+    waitingReason: page.reason, blocker: page.blocker, viewerId: human, onReasonPress: jump })); });
+  const texts = tree!.root.findAllByType('Text' as never);
+  expect(texts[0]!.props.children[1]).toBe(' on your merge hold');
+  expect(texts.some((node: any) => node.props.onPress || node.props.accessibilityRole === 'link')).toBe(false);
+  expect(jump).not.toHaveBeenCalled();
+});

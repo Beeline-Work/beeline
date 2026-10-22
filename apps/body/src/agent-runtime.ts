@@ -1,3 +1,4 @@
+import { createUsageRefresh } from './agent-usage-refresh.js';
 import { requireInstalledAgentProgram } from './agent-command.js';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
@@ -243,6 +244,9 @@ export async function runAgentRuntime(
       );
     } else host.progress(agentId, 'degraded: machine link reconnecting');
   });
+  const refreshUsage = createUsageRefresh({ api: daemonApi, agentId,
+    kind: config.agentKind, env: config.agentEnv, free: host.freeAgent });
+  daemonApi.setUsageRefreshListener(() => { void refreshUsage(); });
   let connectorLoop: ConnectorAssignmentLoop | undefined;
   let agentSignIn: AgentSignIn | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;

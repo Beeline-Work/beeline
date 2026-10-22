@@ -641,6 +641,10 @@ export class PostgresLiveListener {
         (payload.table === 'agent_turns' && payload.operation === 'UPDATE'))
       this.pushWake?.();
     if (pushOnly) return;
+    if (payload.table === 'agent_usage_refresh' && payload.agentId) {
+      this.live.publish({ type: 'usage-refresh', roomId: '', agentId: payload.agentId });
+      return;
+    }
     if (payload.table === AGENT_SIGN_IN_TABLE) {
       // No database work: publish now, and never queue or log the payload.
       const event = decodeAgentSignInNotification(raw);

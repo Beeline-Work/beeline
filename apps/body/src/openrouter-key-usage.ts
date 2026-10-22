@@ -81,11 +81,11 @@ async function fetchKeySpend(apiKey: string, fetchImpl: typeof fetch): Promise<U
  */
 export async function readOpenRouterKeyUsage(
   apiKey: string,
-  options: { fetchImpl?: typeof fetch; now?: () => number; refused?: boolean } = {},
+  options: { fetchImpl?: typeof fetch; now?: () => number; refused?: boolean; force?: boolean } = {},
 ): Promise<AgentUsage | undefined> {
   const now = options.now?.() ?? Date.now();
   const id = createHash('sha256').update(apiKey).digest('hex');
-  const throttled = now - (lastRead.get(id) ?? -Infinity) < OPENROUTER_KEY_MIN_INTERVAL_MS;
+  const throttled = !options.force && now - (lastRead.get(id) ?? -Infinity) < OPENROUTER_KEY_MIN_INTERVAL_MS;
   if (throttled && !options.refused) return undefined;
   let read: UsageSpend | undefined;
   if (!throttled) {

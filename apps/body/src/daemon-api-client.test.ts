@@ -598,10 +598,14 @@ describe('DaemonApiClient', () => {
       ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
     );
     const frames: unknown[] = [];
+    const refresh = vi.fn();
+    client.setUsageRefreshListener(refresh);
     client.setAgentSignInListener((frame) => frames.push(frame));
     const release = client.liveSubscribe('room-1', undefined, () => undefined, () => undefined);
     const socket = FakeWebSocket.instances[0]!;
     socket.open();
+    socket.message({ type: 'usage-refresh' });
+    expect(refresh).toHaveBeenCalledTimes(1);
     socket.message({ type: 'agent-sign-in', step: 'start', attemptId: 'a1', cardId: 'card-1' });
     socket.message({ type: 'agent-sign-in', step: 'start', attemptId: 'a1' });
     socket.message({ type: 'agent-sign-in', step: 'code', attemptId: 'a1', code: 'c#s' });

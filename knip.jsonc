@@ -27,6 +27,7 @@
       "entry": [
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
+        "scripts/prove-agent-usage-refresh.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/check-acp-adapters.mjs",
@@ -204,6 +205,7 @@
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
         "scripts/agent-profile-usage-native-proof.tsx",
+        "scripts/agent-usage-refresh-native-proof.tsx",
         // Invoked by path or selected as Metro aliases for the Android screenshot proof.
         "scripts/search-cell-proof/*.{cjs,ts,tsx}",
       ],

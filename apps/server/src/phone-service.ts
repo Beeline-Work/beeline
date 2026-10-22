@@ -4467,6 +4467,15 @@ export class PhoneService {
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
         return (await this.readAgent((input as Input<'updateAgentModelSelection'>).workspaceId,
           (input as Input<'updateAgentModelSelection'>).agentId, viewerId)) as Output<Name>;
+      case 'refreshAgentUsage': {
+        const request = input as Input<'refreshAgentUsage'>;
+        await this.requireWorkspaceAgent(request.workspaceId, request.agentId, viewerId);
+        await this.database.query(`SELECT pg_notify($1, $2)`, [
+          POSTGRES_LIVE_CHANNEL,
+          JSON.stringify({ table: 'agent_usage_refresh', operation: 'UPDATE', roomId: '', agentId: request.agentId }),
+        ]);
+        return;
+      }
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
         return undefined as Output<Name>;
@@ -10631,6 +10640,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'claimAgentPairing',
   'updateAgentSoul',
   'updateAgentModelSelection',
+  'refreshAgentUsage',
   'refreshAgentModelCatalog',
   'completeAgentSignIn',
   'updateAgentYolo',

@@ -797,7 +797,13 @@ describe('visit output through daemon completion and phone GET', () => {
     // authorize a new execution merely to fill in its historical final reply.
     await database.query(`UPDATE agent_commands SET state='pending',generation_id=NULL WHERE id=$1`, [held.id]);
     await expect(final(held, 'Refused stale final')).rejects.toThrow();
-    const retried = await claimAgentCommand(database, CORNER, TRIAGER, held.id, 'retry-generation');
+    await expect(claimAgentCommand(database, CORNER, TRIAGER, held.id, 'automatic-retry'))
+      .rejects.toThrow('command claim conflict');
+    // Rejected output now pauses automatic recovery; explicitly resume this visit.
+    const resumed = (await createAgentCommand(database, { roomId: CORNER, agentId: TRIAGER,
+      sourceMessageId: held.source_message_id, action: 'resume', reason: 'resume', parent: held,
+      retainDepth: true, turnRequestId: 'resumed-workflow-visit' }))!;
+    const retried = await claimAgentCommand(database, CORNER, TRIAGER, resumed.id, 'retry-generation');
     await handoff(database, retried, { runId, outcome: 'retry', contents: {} });
     await final(retried, 'Recovered final.');
     expect((await read(runId)).history[0]!.finalReply?.text).toBe('Recovered final.');

@@ -433,8 +433,8 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; wake_batch_minutes: number; human_input: boolean }>(
-    `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; wake_batch_minutes: number; human_input: boolean; is_corner: boolean }>(
+    `SELECT r.parent_id IS NOT NULL is_corner, (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text,
@@ -513,7 +513,7 @@ export async function createAgentCommand(
       minutes,
     ],
   );
-  if (result.rowCount && resumesOutput) {
+  if (result.rowCount && resumesOutput && member.rows[0]!.is_corner) {
     await db.query(`UPDATE corner_facts SET output_authority_stalled_sequence=NULL,
       output_authority_resumed_sequence=$2 WHERE corner_id=$1`,
       [input.roomId, result.rows[0]!.inbox_sequence]);

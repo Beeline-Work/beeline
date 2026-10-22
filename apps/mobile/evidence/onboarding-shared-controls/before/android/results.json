@@ -1,0 +1,350 @@
+[
+  {
+    "screen": "sign-in",
+    "theme": "obsidian",
+    "file": "sign-in-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "sign-in-error",
+    "theme": "obsidian",
+    "file": "sign-in-error-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "profile",
+    "theme": "obsidian",
+    "file": "profile-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=0",
+    "theme": "obsidian",
+    "file": "welcome-step-0-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=1",
+    "theme": "obsidian",
+    "file": "welcome-step-1-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=2",
+    "theme": "obsidian",
+    "file": "welcome-step-2-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=3",
+    "theme": "obsidian",
+    "file": "welcome-step-3-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "github",
+    "theme": "obsidian",
+    "file": "github-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repository",
+    "theme": "obsidian",
+    "file": "repository-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "starters",
+    "theme": "obsidian",
+    "file": "starters-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=none",
+    "theme": "obsidian",
+    "file": "repository-choice-mode-none-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=link",
+    "theme": "obsidian",
+    "file": "repository-choice-mode-link-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=create",
+    "theme": "obsidian",
+    "file": "repository-choice-mode-create-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=link&connected=0",
+    "theme": "obsidian",
+    "file": "repository-choice-mode-link-connected-0-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repo-picker",
+    "theme": "obsidian",
+    "file": "repo-picker-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-pending",
+    "theme": "obsidian",
+    "file": "agent-pending-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-wait",
+    "theme": "obsidian",
+    "file": "agent-wait-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-failed",
+    "theme": "obsidian",
+    "file": "agent-failed-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-key",
+    "theme": "obsidian",
+    "file": "agent-key-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "empty-room",
+    "theme": "obsidian",
+    "file": "empty-room-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "workspace",
+    "theme": "obsidian",
+    "file": "workspace-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "workspace&join=1",
+    "theme": "obsidian",
+    "file": "workspace-join-1-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "create-workspace",
+    "theme": "obsidian",
+    "file": "create-workspace-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "invite",
+    "theme": "obsidian",
+    "file": "invite-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "invite-offline",
+    "theme": "obsidian",
+    "file": "invite-offline-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "invite-unavailable",
+    "theme": "obsidian",
+    "file": "invite-unavailable-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "new-room",
+    "theme": "obsidian",
+    "file": "new-room-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "new-room-picker",
+    "theme": "obsidian",
+    "file": "new-room-picker-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "repo-empty",
+    "theme": "obsidian",
+    "file": "repo-empty-obsidian.png",
+    "errors": []
+  },
+  {
+    "screen": "sign-in",
+    "theme": "bone",
+    "file": "sign-in-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "sign-in-error",
+    "theme": "bone",
+    "file": "sign-in-error-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "profile",
+    "theme": "bone",
+    "file": "profile-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=0",
+    "theme": "bone",
+    "file": "welcome-step-0-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=1",
+    "theme": "bone",
+    "file": "welcome-step-1-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=2",
+    "theme": "bone",
+    "file": "welcome-step-2-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "welcome&step=3",
+    "theme": "bone",
+    "file": "welcome-step-3-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "github",
+    "theme": "bone",
+    "file": "github-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repository",
+    "theme": "bone",
+    "file": "repository-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "starters",
+    "theme": "bone",
+    "file": "starters-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=none",
+    "theme": "bone",
+    "file": "repository-choice-mode-none-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=link",
+    "theme": "bone",
+    "file": "repository-choice-mode-link-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=create",
+    "theme": "bone",
+    "file": "repository-choice-mode-create-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repository-choice&mode=link&connected=0",
+    "theme": "bone",
+    "file": "repository-choice-mode-link-connected-0-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repo-picker",
+    "theme": "bone",
+    "file": "repo-picker-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-pending",
+    "theme": "bone",
+    "file": "agent-pending-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-wait",
+    "theme": "bone",
+    "file": "agent-wait-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-failed",
+    "theme": "bone",
+    "file": "agent-failed-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "agent-key",
+    "theme": "bone",
+    "file": "agent-key-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "empty-room",
+    "theme": "bone",
+    "file": "empty-room-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "workspace",
+    "theme": "bone",
+    "file": "workspace-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "workspace&join=1",
+    "theme": "bone",
+    "file": "workspace-join-1-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "create-workspace",
+    "theme": "bone",
+    "file": "create-workspace-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "invite",
+    "theme": "bone",
+    "file": "invite-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "invite-offline",
+    "theme": "bone",
+    "file": "invite-offline-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "invite-unavailable",
+    "theme": "bone",
+    "file": "invite-unavailable-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "new-room",
+    "theme": "bone",
+    "file": "new-room-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "new-room-picker",
+    "theme": "bone",
+    "file": "new-room-picker-bone.png",
+    "errors": []
+  },
+  {
+    "screen": "repo-empty",
+    "theme": "bone",
+    "file": "repo-empty-bone.png",
+    "errors": []
+  }
+]

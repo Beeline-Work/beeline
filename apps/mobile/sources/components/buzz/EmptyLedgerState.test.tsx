@@ -1,3 +1,4 @@
+import { EmptyState } from './EmptyState';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -56,15 +57,12 @@ describe('the empty #general', () => {
         }),
       );
     });
-    const byId = (testID: string) =>
-      tree.root.find((node: any) => node.type === 'Text' && node.props.testID === testID);
-    expect(textOf(byId('empty-room-title'))).toBe('#general is empty');
-    expect(textOf(byId('empty-room-intro'))).toBe(
-      'Connect an agent, then ask it for something here.',
-    );
+    const state = tree.root.findByType(EmptyState);
+    expect(state.props.title).toBe('#general is empty');
+    expect(state.props.description).toBe('Connect an agent, then ask it for something here.');
     const rows = tree.root
       .findAll((node: any) => node.type === 'Pressable')
-      .map((row: any) => textOf(row));
+      .map((row: any) => row.props.accessibilityLabel);
     expect(rows).toEqual([
       'Connect an agent so this Room has someone to ask',
       'Invite someone to Northstar Lab',
@@ -79,7 +77,7 @@ describe('empty corner starter', () => {
     await act(async () => {
       tree = create(<EmptyLedgerState variant="corner" agentHandle={agentHandle} onPress={onPress} />);
     });
-    const button = tree.root.findByType('TouchableOpacity');
+    const button = tree.root.findByType('Pressable');
     expect(button.props.accessibilityLabel).toBe(
       `${agentHandle ? 'Tag @beebee to start' : 'Tag an agent to start'}. Agents here reply only when tagged.`,
     );

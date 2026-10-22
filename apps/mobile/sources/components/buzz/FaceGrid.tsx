@@ -1,11 +1,13 @@
+import { Button } from './Button';
+import { InlineRow } from './IndexRow';
 import React from 'react';
-import { Pressable, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { space } from '@/buzz/groknight';
 import { FACE_IDS, type FaceId } from '@/buzz/faces';
 import { IdentityMark } from './IdentityMark';
 
 export const FACE_TILE_SIZE = 64;
-export const FACE_TILE_BORDER = 2;
 
 type FaceGridProps = {
   /** The identity seed the tiles are drawn for. */
@@ -17,14 +19,9 @@ type FaceGridProps = {
   testIDPrefix: string;
   columns?: 3 | 4;
   tileSize?: number;
-  selectedBorderColor?: string;
 };
 
-/**
- * The face ceremony grid: the twelve animals in a 3- or 4-column grid of 64px
- * tiles. Selection is a border COLOUR flip (faint → brass) on a border whose
- * width never changes, so choosing a tile never shifts its siblings.
- */
+/** The face picker uses shared buttons; selection changes only their variant. */
 export function FaceGrid({
   seed,
   selected,
@@ -33,9 +30,7 @@ export function FaceGrid({
   testIDPrefix,
   columns = 3,
   tileSize = FACE_TILE_SIZE,
-  selectedBorderColor,
 }: FaceGridProps) {
-  const { theme } = useUnistyles();
   const rows: FaceId[][] = [];
   for (let index = 0; index < FACE_IDS.length; index += columns) {
     rows.push(FACE_IDS.slice(index, index + columns));
@@ -43,11 +38,11 @@ export function FaceGrid({
   return (
     <View style={styles.grid} testID={`${testIDPrefix}-grid`}>
       {rows.map((row) => (
-        <View key={row[0]} style={styles.row}>
+        <InlineRow key={row[0]} style={styles.row}>
           {row.map((face) => {
             const isSelected = face === selected;
             return (
-              <Pressable
+              <Button label="" variant={isSelected ? 'brass' : 'secondary'}
                 accessibilityRole="button"
                 accessibilityState={{ selected: isSelected, disabled: Boolean(disabled) }}
                 accessibilityLabel={face}
@@ -55,29 +50,19 @@ export function FaceGrid({
                 hitSlop={2}
                 key={face}
                 onPress={() => onSelect(face)}
-                style={[
-                  styles.tile,
-                  {
-                    width: tileSize,
-                    height: tileSize,
-                    borderColor: isSelected
-                      ? (selectedBorderColor ?? theme.buzz.accent)
-                      : theme.buzz.faint,
-                  },
-                ]}
+                style={{ width: tileSize, height: tileSize }}
                 testID={`${testIDPrefix}-${face}`}
-              >
-                <IdentityMark
+                icon={<IdentityMark
                   kind="human"
                   seed={seed}
                   face={face}
                   name={face}
-                  size={tileSize - FACE_TILE_BORDER * 2 - 8}
-                />
-              </Pressable>
+                  size={tileSize - space.md * 2 - 2}
+                />}
+              />
             );
           })}
-        </View>
+        </InlineRow>
       ))}
     </View>
   );
@@ -86,13 +71,4 @@ export function FaceGrid({
 const styles = StyleSheet.create((theme) => ({
   grid: { alignItems: 'center', gap: theme.buzz.space.sm },
   row: { flexDirection: 'row', gap: theme.buzz.space.sm },
-  tile: {
-    width: FACE_TILE_SIZE,
-    height: FACE_TILE_SIZE,
-    borderWidth: FACE_TILE_BORDER,
-    borderRadius: theme.buzz.radius,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.buzz.bgRaised,
-  },
 }));

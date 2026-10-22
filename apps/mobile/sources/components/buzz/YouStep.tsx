@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useRef, useState } from 'react';
 import { Animated, Easing, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -146,7 +147,6 @@ export function YouStep({
                 }}
                 seed={seed}
                 selected={selected}
-                selectedBorderColor={theme.buzz.textPrimary}
                 testIDPrefix="onboarding-face"
                 tileSize={tileSize}
               />
@@ -154,9 +154,7 @@ export function YouStep({
           </View>
           <View style={styles.footer}>
             {error ? (
-              <Text accessibilityRole="alert" style={styles.error} testID="onboarding-face-error">
-                {error}
-              </Text>
+              <ErrorBanner title={error} testID="onboarding-face-error" />
             ) : null}
             <Button
               disabled={!selected || busy}
@@ -205,11 +203,5 @@ const styles = StyleSheet.create((theme) => {
     period: { color: hull.textPrimary },
     gridSlot: { alignItems: 'center', marginTop: hull.space.xxl },
     footer: { paddingBottom: hull.space.sm },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.dialogDanger,
-      marginBottom: hull.space.md,
-    },
   };
 });

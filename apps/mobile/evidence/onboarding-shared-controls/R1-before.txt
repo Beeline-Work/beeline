@@ -1,0 +1,616 @@
+Reproduction R1 — onboarding shared-control inventory
+Baseline: origin/main b82f0f7fbcf524bf0f92d18345cd83754983869a
+Recorded before implementation. PR #2785 remains open.
+
+Manual semantic audit (includes controls the policy scanner does not detect):
+- Sign-in/handle: replace both custom notice panels (status heading plus message) with ErrorBanner, preserving copy. Provider, recovery and claim actions already use Button; handle field uses HullDialogInput.
+- YouStep: replace profile-save error with ErrorBanner. FaceGrid: native face buttons and custom row shells need shared controls. Continue and fields already shared.
+- WelcomeCards: Room/corner headers, corner summary/status rows, agent collection heading/rows, tool-grid shell and dot row need shared components. Save-progress error needs ErrorBanner. Footer and responsive content rows are already fixed by PR #2785 (InlineRow). Next/Get started, HullModal and sample LedgerEntry messages already shared. Illustrated composer and dots are noninteractive artwork, not real text inputs/buttons.
+- GitHub installation return: replace custom error text. PageHeader and Retry already shared. Callback routes only redirect.
+- RepositoryOnboardingCard (repository and starter variants): errors and empty repository results currently use generic TranscriptCard footer notes; use shared error/empty presentation while retaining shared card anatomy. ChoicePlate selections and HullDialogActions already shared.
+- RepositoryChoice: Connect GitHub row, loading row, linked-repository row, create-repository/owner shells, owner selector, Already exists/Link it instead row/action, mode selector/buttons and inline error need shared controls. Owner-menu options already HullActionSheetRow.
+- RepoPicker: loading rows, account group-header/count wrapper, create-input/action row, no-match text and error text need shared components. RepoList: empty text needs EmptyState. Search/name fields, options and actions already shared.
+- First-Room starter steps (EmptyLedgerState): empty-state anatomy, native starter-prompt buttons and fallback whole-empty-state action need shared components. Registered component status does not remove its grandfathered native controls.
+- AgentSignInCard: failure row, link-step row, wait row, field/action row, numbered step and step-body row shells need shared components. Existing buttons/fields are shared.
+- Workspace choice: Back button, Create/Join ChoiceCard rows and error text need shared components. Workspace/invite fields and Preview invite already shared.
+- Create Workspace: Back and error need shared components. Name/Create already shared.
+- Invite confirmation: verified badge and inviter rows, This isn't my invite and Choose another way in native actions, join error, unreachable/unavailable state anatomy need shared components. Join/Retry/unavailable action already Button.
+- First-Room NewRoomDialog: collapsed Repository row and Public row shell need shared components. HullSwitch, sheet, input and footer already shared.
+- No raw switch was found on these paths; existing Public uses HullSwitch. Existing floating onboarding surfaces use HullModal/HullActionSheetModal.
+
+Raw policy scanner observations follow. Multiple rules can describe one control. Registered budgets are evidence of grandfathering, not compliance with the requested migration.
+
+[
+  {
+    "file": "app/(app)/beeline/chat/RepositoryOnboardingCard.tsx",
+    "offences": [],
+    "grandfathered": null
+  },
+  {
+    "file": "app/(app)/beeline/community.tsx",
+    "offences": [
+      {
+        "rule": "raw-button",
+        "file": "app/(app)/beeline/community.tsx",
+        "line": 153,
+        "fingerprint": "90955f5a00cd90038e4c",
+        "legacyFingerprint": "90955f5a00cd90038e4c",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "raw-button",
+        "file": "app/(app)/beeline/community.tsx",
+        "line": 247,
+        "fingerprint": "e5b9e66ae085599ee5ea",
+        "legacyFingerprint": "e5b9e66ae085599ee5ea",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "custom-row",
+        "file": "app/(app)/beeline/community.tsx",
+        "line": 247,
+        "fingerprint": "d9b71faffba9301a497d",
+        "legacyFingerprint": "d9b71faffba9301a497d",
+        "message": "Use a registered shared row instead of a custom row."
+      }
+    ],
+    "grandfathered": {
+      "90955f5a00cd90038e4c": 1,
+      "d9b71faffba9301a497d": 1,
+      "e5b9e66ae085599ee5ea": 1
+    }
+  },
+  {
+    "file": "app/(app)/beeline/create-workspace.tsx",
+    "offences": [
+      {
+        "rule": "raw-button",
+        "file": "app/(app)/beeline/create-workspace.tsx",
+        "line": 102,
+        "fingerprint": "07607ba79adf09831762",
+        "legacyFingerprint": "07607ba79adf09831762",
+        "message": "Use Button instead of styling a native touch target as a button."
+      }
+    ],
+    "grandfathered": {
+      "07607ba79adf09831762": 1
+    }
+  },
+  {
+    "file": "app/(app)/beeline/github-installation.tsx",
+    "offences": [],
+    "grandfathered": null
+  },
+  {
+    "file": "app/(app)/beeline/onboarding.tsx",
+    "offences": [],
+    "grandfathered": {
+      "30ddc6202b9f0c6435b8": 1,
+      "778764b6aef071b18d1a": 1,
+      "9a5a89e24b43849b7cf2": 1,
+      "b2f837cc7e0432700e9d": 1,
+      "cc6a84eb85fad8ab59a0": 1,
+      "f0b9fa51f41f5080ff3a": 1
+    }
+  },
+  {
+    "file": "app/(app)/buzz/github-installation.tsx",
+    "offences": [],
+    "grandfathered": null
+  },
+  {
+    "file": "app/(app)/join/[token].tsx",
+    "offences": [
+      {
+        "rule": "custom-row",
+        "file": "app/(app)/join/[token].tsx",
+        "line": 162,
+        "fingerprint": "b26cab1da78b5be72728",
+        "legacyFingerprint": "0529cdcc150f96ee1a7f",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "app/(app)/join/[token].tsx",
+        "line": 180,
+        "fingerprint": "021d64f7276e914cc3b7",
+        "legacyFingerprint": "293b96c844b62c2e084e",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "raw-button",
+        "file": "app/(app)/join/[token].tsx",
+        "line": 209,
+        "fingerprint": "b1bbfc478a4ae0d26cc8",
+        "legacyFingerprint": "b1bbfc478a4ae0d26cc8",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "raw-button",
+        "file": "app/(app)/join/[token].tsx",
+        "line": 240,
+        "fingerprint": "eae0aa03d3ce036fbfe6",
+        "legacyFingerprint": "eae0aa03d3ce036fbfe6",
+        "message": "Use Button instead of styling a native touch target as a button."
+      }
+    ],
+    "grandfathered": {
+      "021d64f7276e914cc3b7": 1,
+      "b1bbfc478a4ae0d26cc8": 1,
+      "b26cab1da78b5be72728": 1,
+      "eae0aa03d3ce036fbfe6": 1
+    }
+  },
+  {
+    "file": "auth/github-installation-host.ts",
+    "offences": [],
+    "grandfathered": null
+  },
+  {
+    "file": "components/buzz/AgentSignInCard.tsx",
+    "offences": [
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 157,
+        "fingerprint": "49d853e879486f6a298c",
+        "legacyFingerprint": "6bc66532ebd8f4f6b387",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 170,
+        "fingerprint": "7406c313bad39a2a5ca6",
+        "legacyFingerprint": "91cbe1494fc44d971ba4",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 186,
+        "fingerprint": "9028fdfc85e59eb32030",
+        "legacyFingerprint": "69866b1df7928859c4bc",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 193,
+        "fingerprint": "f797ee549f7256b59bc9",
+        "legacyFingerprint": "03d3184fec85cbb75c51",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 230,
+        "fingerprint": "ee4348efcedc404e55d7",
+        "legacyFingerprint": "7e5512d3950f823b4a11",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 265,
+        "fingerprint": "ee4348efcedc404e55d7",
+        "legacyFingerprint": "2dde859f0c3ae624b5b4",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 269,
+        "fingerprint": "2631393d81cdacf0567c",
+        "legacyFingerprint": "338ec0f36aba399e660c",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/AgentSignInCard.tsx",
+        "line": 303,
+        "fingerprint": "ee4348efcedc404e55d7",
+        "legacyFingerprint": "e85ded7f741d31fa3a86",
+        "message": "Use a registered shared row instead of a custom row."
+      }
+    ],
+    "grandfathered": {
+      "2631393d81cdacf0567c": 1,
+      "49d853e879486f6a298c": 1,
+      "7406c313bad39a2a5ca6": 1,
+      "9028fdfc85e59eb32030": 1,
+      "ee4348efcedc404e55d7": 3,
+      "f797ee549f7256b59bc9": 1
+    }
+  },
+  {
+    "file": "components/buzz/EmptyLedgerState.tsx",
+    "offences": [
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/EmptyLedgerState.tsx",
+        "line": 92,
+        "fingerprint": "0f7cc42b38554ef23605",
+        "legacyFingerprint": "0f7cc42b38554ef23605",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/EmptyLedgerState.tsx",
+        "line": 111,
+        "fingerprint": "ebf599fcf206dd831a5d",
+        "legacyFingerprint": "ebf599fcf206dd831a5d",
+        "message": "Use Button instead of styling a native touch target as a button."
+      }
+    ],
+    "grandfathered": {
+      "0f7cc42b38554ef23605": 1,
+      "ebf599fcf206dd831a5d": 1
+    }
+  },
+  {
+    "file": "components/buzz/FaceGrid.tsx",
+    "offences": [
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/FaceGrid.tsx",
+        "line": 46,
+        "fingerprint": "8bf2dc03fbd5e22dd290",
+        "legacyFingerprint": "50e03251851010b01dce",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/FaceGrid.tsx",
+        "line": 50,
+        "fingerprint": "83272ab901756ad29955",
+        "legacyFingerprint": "83272ab901756ad29955",
+        "message": "Use Button instead of styling a native touch target as a button."
+      }
+    ],
+    "grandfathered": {
+      "83272ab901756ad29955": 1,
+      "8bf2dc03fbd5e22dd290": 1
+    }
+  },
+  {
+    "file": "components/buzz/NewRoomDialog.tsx",
+    "offences": [
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/NewRoomDialog.tsx",
+        "line": 236,
+        "fingerprint": "7415fa0d95dc372f32cd",
+        "legacyFingerprint": "7415fa0d95dc372f32cd",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/NewRoomDialog.tsx",
+        "line": 236,
+        "fingerprint": "99ecf43de666660e0f42",
+        "legacyFingerprint": "99ecf43de666660e0f42",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/NewRoomDialog.tsx",
+        "line": 248,
+        "fingerprint": "3df567bb3834c79883b1",
+        "legacyFingerprint": "7f1d2852c8e79fb4355a",
+        "message": "Use a registered shared row instead of a custom row."
+      }
+    ],
+    "grandfathered": {
+      "3df567bb3834c79883b1": 1,
+      "7415fa0d95dc372f32cd": 1,
+      "99ecf43de666660e0f42": 1
+    }
+  },
+  {
+    "file": "components/buzz/RepoList.tsx",
+    "offences": [],
+    "grandfathered": null
+  },
+  {
+    "file": "components/buzz/RepoPicker.tsx",
+    "offences": [
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepoPicker.tsx",
+        "line": 199,
+        "fingerprint": "4746314930bcbf6f988c",
+        "legacyFingerprint": "39d6b939e9d7182a9ca6",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepoPicker.tsx",
+        "line": 216,
+        "fingerprint": "d20f99df95b3d1bb2d2f",
+        "legacyFingerprint": "ceab706d7db354359d41",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-header",
+        "file": "components/buzz/RepoPicker.tsx",
+        "line": 216,
+        "fingerprint": "2e93d12a8c532628647e",
+        "legacyFingerprint": "4929d1ab163420af90ab",
+        "message": "Use PageHeader or a registered shared header."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepoPicker.tsx",
+        "line": 301,
+        "fingerprint": "d27f4c4e1c9baa3c38ab",
+        "legacyFingerprint": "b13a1d9c56c1c6af3edf",
+        "message": "Use a registered shared row instead of a custom row."
+      }
+    ],
+    "grandfathered": {
+      "2e93d12a8c532628647e": 1,
+      "4746314930bcbf6f988c": 1,
+      "d20f99df95b3d1bb2d2f": 1,
+      "d27f4c4e1c9baa3c38ab": 1
+    }
+  },
+  {
+    "file": "components/buzz/RepositoryChoice.tsx",
+    "offences": [
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 163,
+        "fingerprint": "cdc9d2565ac22ecb445e",
+        "legacyFingerprint": "cdc9d2565ac22ecb445e",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 163,
+        "fingerprint": "9b6647d054eec89a6955",
+        "legacyFingerprint": "9b6647d054eec89a6955",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 177,
+        "fingerprint": "6e933d230debcf4897c9",
+        "legacyFingerprint": "7cb2bb071cc34b351e35",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 185,
+        "fingerprint": "521b7670ad446f4bc3a8",
+        "legacyFingerprint": "521b7670ad446f4bc3a8",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 185,
+        "fingerprint": "d582b75a6e55971acaa0",
+        "legacyFingerprint": "d582b75a6e55971acaa0",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 197,
+        "fingerprint": "734ad4993e94a1a907fa",
+        "legacyFingerprint": "6d3ed615336c3281aba0",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 213,
+        "fingerprint": "47d0c04b555992d91410",
+        "legacyFingerprint": "3aaec9a86acf6c49114c",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 214,
+        "fingerprint": "bd7b229c6cdc9b4f6f32",
+        "legacyFingerprint": "0bd3779c780e9dc80c6f",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 215,
+        "fingerprint": "88d4a132ad2bc876ce88",
+        "legacyFingerprint": "aba65a65b5f19c58344b",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 216,
+        "fingerprint": "cb2e6b928c41ed9f4740",
+        "legacyFingerprint": "cb2e6b928c41ed9f4740",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 216,
+        "fingerprint": "0bfd0f95fd02483515d8",
+        "legacyFingerprint": "0bfd0f95fd02483515d8",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 240,
+        "fingerprint": "3b3e0d74f923024e49ce",
+        "legacyFingerprint": "48a84a2e894946e96a44",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 242,
+        "fingerprint": "380c5723f1fc458c3f7a",
+        "legacyFingerprint": "380c5723f1fc458c3f7a",
+        "message": "Use Button instead of styling a native touch target as a button."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 317,
+        "fingerprint": "2d27a9bca2b9502b1ce7",
+        "legacyFingerprint": "58f7b4df8406263a92ad",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "raw-button",
+        "file": "components/buzz/RepositoryChoice.tsx",
+        "line": 319,
+        "fingerprint": "05ca19c7108071705f3d",
+        "legacyFingerprint": "05ca19c7108071705f3d",
+        "message": "Use Button instead of styling a native touch target as a button."
+      }
+    ],
+    "grandfathered": {
+      "05ca19c7108071705f3d": 1,
+      "0bfd0f95fd02483515d8": 1,
+      "2d27a9bca2b9502b1ce7": 1,
+      "380c5723f1fc458c3f7a": 1,
+      "3b3e0d74f923024e49ce": 1,
+      "47d0c04b555992d91410": 1,
+      "521b7670ad446f4bc3a8": 1,
+      "6e933d230debcf4897c9": 1,
+      "734ad4993e94a1a907fa": 1,
+      "88d4a132ad2bc876ce88": 1,
+      "9b6647d054eec89a6955": 1,
+      "bd7b229c6cdc9b4f6f32": 1,
+      "cb2e6b928c41ed9f4740": 1,
+      "cdc9d2565ac22ecb445e": 1,
+      "d582b75a6e55971acaa0": 1
+    }
+  },
+  {
+    "file": "components/buzz/RoomRepositoryChoice.tsx",
+    "offences": [],
+    "grandfathered": null
+  },
+  {
+    "file": "components/buzz/WelcomeCards.tsx",
+    "offences": [
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 101,
+        "fingerprint": "9dd2efd27102476facf1",
+        "legacyFingerprint": "d9aa12327a0eb31ab055",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-header",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 101,
+        "fingerprint": "6ff19e480da6c2f908d3",
+        "legacyFingerprint": "d729919115328632a92c",
+        "message": "Use PageHeader or a registered shared header."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 141,
+        "fingerprint": "04e101cd2024d98e6d34",
+        "legacyFingerprint": "a93de332e9cc8079d60e",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-header",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 141,
+        "fingerprint": "987acf023569aa1acc68",
+        "legacyFingerprint": "b6014282abc10a45a487",
+        "message": "Use PageHeader or a registered shared header."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 172,
+        "fingerprint": "2c755eaf0d0387ad9e86",
+        "legacyFingerprint": "787906bff38d500b5937",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 173,
+        "fingerprint": "ca0bbf83ae3b61939db5",
+        "legacyFingerprint": "29db12676c67c2189023",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 195,
+        "fingerprint": "1e95c80677e9c8ff368e",
+        "legacyFingerprint": "a8a8bd603ef9a44c79e2",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 217,
+        "fingerprint": "49c57652aa2a14578132",
+        "legacyFingerprint": "d7da76968574d96d91ff",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 278,
+        "fingerprint": "e4f221646e386109f207",
+        "legacyFingerprint": "c71a92be99132961afe6",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 279,
+        "fingerprint": "79b944a315f7e0129bcb",
+        "legacyFingerprint": "202b74c983e263b3765f",
+        "message": "Use a registered shared row instead of a custom row."
+      },
+      {
+        "rule": "custom-row",
+        "file": "components/buzz/WelcomeCards.tsx",
+        "line": 307,
+        "fingerprint": "a8657d66b9949359d228",
+        "legacyFingerprint": "f29822dba67ebadebc7a",
+        "message": "Use a registered shared row instead of a custom row."
+      }
+    ],
+    "grandfathered": {
+      "04e101cd2024d98e6d34": 1,
+      "1e95c80677e9c8ff368e": 1,
+      "2c755eaf0d0387ad9e86": 1,
+      "49c57652aa2a14578132": 1,
+      "6ff19e480da6c2f908d3": 1,
+      "79b944a315f7e0129bcb": 1,
+      "987acf023569aa1acc68": 1,
+      "9dd2efd27102476facf1": 1,
+      "ca0bbf83ae3b61939db5": 1,
+      "d37e792970ff50a02e56": 1,
+      "e7dbc7e2a24743b23130": 1
+    }
+  },
+  {
+    "file": "components/buzz/YouStep.tsx",
+    "offences": [],
+    "grandfathered": null
+  }
+]

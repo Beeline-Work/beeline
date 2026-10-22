@@ -1,3 +1,5 @@
+vi.mock('@/components/buzz/ErrorBanner', () => ({ErrorBanner:(props:any)=>React.createElement('ErrorBanner',props)}));
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -65,6 +67,6 @@ it('E7: a failed cold return explains the other account and keeps Connect GitHub
     card={{...card,installationId:undefined,githubLinked:false,state:'install_missing'}} viewerId={H}
     connectionError="github_account_already_linked" />); });
   const props=renderer.root.findByType('TranscriptCard').props;
-  expect(props.footerNote).toContain('Sign out and continue with GitHub');
+  expect(renderer.root.findByType(ErrorBanner).props.title).toContain('Sign out and continue with GitHub');
   expect(props.actions.map((action:any) => action.label)).toEqual(['Connect GitHub']);
 });

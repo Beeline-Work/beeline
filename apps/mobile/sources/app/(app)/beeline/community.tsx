@@ -1,3 +1,5 @@
+import { IndexRow } from '@/components/buzz/IndexRow';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useAutoFitText } from '@/buzz/use-autofit-text';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import * as Crypto from 'expo-crypto';
@@ -7,7 +9,7 @@ import { enterWorkspaceRoom } from '@/buzz/enter-workspace';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -22,7 +24,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { CHEVRON_BACK_SIZE, CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
 import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 
@@ -150,16 +152,12 @@ export default function WorkspaceChoice() {
       >
         <View style={styles.column}>
           {hasWorkspaces ? (
-            <TouchableOpacity
+            <Button label="" variant="quiet"
               accessibilityLabel="Back"
-              accessibilityRole="button"
               onPress={() =>
                 router.canGoBack() ? router.back() : router.replace('/beeline/channels')
               }
-              style={styles.backButton}
-            >
-              <ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />
-            </TouchableOpacity>
+             icon={<ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />} />
           ) : null}
           <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={1} accessibilityRole="header" style={styles.title} testID="choice-title">
             {viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
@@ -217,9 +215,7 @@ export default function WorkspaceChoice() {
           </View>
 
           {error ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="choice-error">
-              {error}
-            </Text>
+            <ErrorBanner title={error} testID="choice-error" />
           ) : null}
         </View>
       </ScrollView>
@@ -242,28 +238,9 @@ function ChoiceCard({
   expanded?: boolean;
   testID: string;
 }) {
-  const { theme } = useUnistyles();
-  return (
-    <Pressable
-      accessibilityHint={description}
-      accessibilityRole="button"
-      accessibilityState={expanded === undefined ? undefined : { expanded }}
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-      testID={testID}
-    >
-      <View style={styles.cardGlyph}>{glyph}</View>
-      <View style={styles.cardCopy}>
-        <Text style={styles.cardTitle}>{title}</Text>
-        <Text style={styles.cardDescription}>{description}</Text>
-      </View>
-      <ChevronGlyph
-        color={theme.buzz.accent}
-        direction={expanded ? 'down' : 'right'}
-        size={CHEVRON_ROW_SIZE}
-      />
-    </Pressable>
-  );
+  return <IndexRow title={title} description={description} leading={glyph}
+    onPress={onPress} accessibilityState={expanded === undefined ? undefined : { expanded }}
+    chevron={expanded ? 'down' : 'right'} testID={testID} />;
 }
 
 const styles = StyleSheet.create((theme) => {
@@ -283,14 +260,6 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-    backButton: {
-      width: 44,
-      height: 44,
-      marginLeft: -hull.space.sm,
-      marginBottom: hull.space.sm,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
     title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     copy: {
       ...Typography.default(),
@@ -299,30 +268,6 @@ const styles = StyleSheet.create((theme) => {
       marginTop: hull.space.sm,
     },
     choices: { marginTop: hull.space.lg, gap: hull.space.sm },
-    card: {
-      minHeight: 76,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-      padding: hull.space.md,
-      borderRadius: hull.radius,
-      borderWidth: 1,
-      borderColor: hull.borderStrong,
-      backgroundColor: hull.bgRaised,
-    },
-    cardPressed: { backgroundColor: hull.bgPressed },
-    cardGlyph: {
-      width: 42,
-      height: 42,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: hull.radius,
-      borderWidth: 1,
-      borderColor: hull.border,
-    },
-    cardCopy: { flex: 1, minWidth: 0, gap: hull.space.xs },
-    cardTitle: { ...Typography.default(), ...hull.type.bodyStrong, color: hull.textPrimary },
-    cardDescription: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet },
     joinForm: { gap: hull.space.sm, paddingTop: hull.space.xs },
     input: {
       ...Typography.mono(),
@@ -334,12 +279,6 @@ const styles = StyleSheet.create((theme) => {
       borderColor: hull.borderStrong,
       color: hull.textPrimary,
       backgroundColor: hull.bgBase,
-    },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.dialogDanger,
-      marginTop: hull.space.md,
     },
   };
 });

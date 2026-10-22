@@ -1749,7 +1749,23 @@
     "fixTarget": "apps/body/src/beeline-skill.ts",
     "forbidden": [
       {
-        "call": "post"
+        "call": "post",
+        "args": {
+          "address": {
+            "not": {
+              "equals": "fixture-room"
+            }
+          }
+        }
+      },
+      {
+        "call": "send_operator_system_dm"
+      },
+      {
+        "call": "notify_feedback_fixed",
+        "args": {
+          "notify": true
+        }
       }
     ],
     "requesterRole": "member"
@@ -1821,7 +1837,23 @@
     "fixTarget": "apps/body/src/beeline-skill.ts",
     "forbidden": [
       {
-        "call": "post"
+        "call": "post",
+        "args": {
+          "address": {
+            "not": {
+              "equals": "fixture-room"
+            }
+          }
+        }
+      },
+      {
+        "call": "send_operator_system_dm"
+      },
+      {
+        "call": "notify_feedback_fixed",
+        "args": {
+          "notify": true
+        }
       }
     ]
   },

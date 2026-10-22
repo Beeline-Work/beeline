@@ -33,12 +33,21 @@ test('safe actions persist and clean up; unsafe call is only recorded', { timeou
         await writeFile(context, JSON.stringify({ roomId: room, requestId: command.turn_request_id, generationId: generation }));
         const trace = join(root, 'trace.jsonl');
         await writeFile(trace, '');
-        await client.connect(new StdioClientTransport({ command: process.execPath, args: [resolve('scripts/discovery-mcp.mjs'), resolve('apps/body/dist/read-only-mcp.js'), trace], env: {
+        await client.connect(new StdioClientTransport({ command: process.execPath, args: [resolve('scripts/discovery-mcp.mjs'), resolve('apps/body/dist/read-only-mcp.js'), trace, room], env: {
                 PATH: process.env.PATH, HOME: root, BEELINE_TURN_CONTEXT_FILE: context, BEELINE_MCP_SURFACE: 'agent',
                 BEELINE_DAEMON_BASE_URL: f.origin, BEELINE_DAEMON_TOKEN: f.daemonToken, BEELINE_DAEMON_AGENT_ID: agent,
                 BEELINE_DAEMON_ROOM_ID: room, BEELINE_DAEMON_WORKSPACE_ID: workspace, BEELINE_ATTACH_ROOT: root, BEELINE_ATTACH_SCRATCH_ROOT: root,
                 BEELINE_OPERATOR_HOME: root,
             } }));
+        for (const args of [{text:'Local refusal: I cannot impersonate System.'}, {address:room,text:'Explicit local refusal.'}]) {
+            const reply = await client.callTool({ name: 'post', arguments: args });
+            assert.ok(!reply.isError, JSON.stringify(reply));
+            assert.doesNotMatch(JSON.stringify(reply), /intended call recorded/);
+            assert.equal((await f.database.query(`SELECT count(*)::int AS count FROM messages WHERE room_id=$1 AND author_id=$2 AND text=$3`, [room, agent, args.text])).rows[0].count, 1);
+        }
+        const outside = await client.callTool({ name: 'post', arguments: { address: randomUUID(), text: 'Forbidden outside destination' } });
+        assert.match(JSON.stringify(outside), /intended call recorded/);
+        assert.equal((await f.database.query(`SELECT count(*)::int AS count FROM messages WHERE text='Forbidden outside destination'`)).rows[0].count, 0);
         const usage = await client.callTool({name:'read',arguments:{facet:'usage'}});
         assert.ok(!usage.isError,JSON.stringify(usage));
         assert.match(JSON.stringify(usage),/Fixture plan/);

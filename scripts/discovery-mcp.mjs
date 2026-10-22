@@ -2,10 +2,12 @@
 import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import { isUnsafeDiscoveryCall } from './discovery-policy.mjs';
 const target = process.argv[2];
 const trace = process.argv[3] ?? process.env.BEELINE_DISCOVERY_TRACE;
-if (!target || !trace)
-    throw new Error('Missing eval target or trace');
+const room = process.argv[4];
+if (!target || !trace || !room)
+    throw new Error('Missing eval target, trace or fixture Room');
 const child = spawn(process.execPath, [target], { env: process.env, stdio: ['pipe', 'pipe', 'inherit'] });
 const pending = new Map();
 createInterface({ input: child.stdout }).on('line', (line) => {
@@ -23,7 +25,6 @@ createInterface({ input: child.stdout }).on('line', (line) => {
     }
     process.stdout.write(`${line}\n`);
 });
-const blocked = new Set(['merge_corner', 'approve_merge', 'record_merge_yes', 'dispatch_release', 'run_granted_command', 'order', 'post']);
 createInterface({ input: process.stdin }).on('line', (line) => {
     let message;
     try {
@@ -35,7 +36,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     }
     if (message.method === 'tools/call') {
         const { name, arguments: args = {} } = message.params;
-        const unsafe = blocked.has(name) || (name === 'connect' && args.mode === 'ensure') || (name === 'app_tool' && args.tool && !['beeline:workflow', 'beeline:onboarding'].includes(args.app));
+        const unsafe = isUnsafeDiscoveryCall(name, args, room);
         appendFileSync(trace, `${JSON.stringify({ type: 'call', id: message.id, name, args, intendedOnly: unsafe })}\n`);
         if (unsafe) {
             process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: '{"eval":"intended call recorded; operation not executed"}' }] } })}\n`);

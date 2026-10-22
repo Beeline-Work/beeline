@@ -23,6 +23,7 @@ import { runtimeConfigPath } from '../apps/body/src/runtime.ts';
 import { ThinDaemonCore } from '../apps/body/src/thin-core.ts';
 import { cursorAcpBridgeLaunch } from '../apps/body/src/cursor-acp-bridge.ts';
 import { summarize } from './discovery-score.mjs';
+import { discoveryResultSucceeded } from './discovery-policy.mjs';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HUMAN = createHash('sha256').update('discovery-fixture-owner').digest('hex');
 const MEMBER = createHash('sha256').update('discovery-fixture-member').digest('hex');
@@ -107,7 +108,7 @@ export async function runCase(f, testCase, directory, options = {}) {
     await f.database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`, [room, WORKSPACE, testCase.id]);
     await f.database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`, [WORKSPACE, room, HUMAN, AGENT, MEMBER]);
-    const bindings = await prepareCaseFixtures(f, testCase, room);
+    const bindings = { 'fixture-room': room, ...await prepareCaseFixtures(f, testCase, room) };
     const operatorHome = options.operatorHome ?? '/home/lunchbox';
     const overlay = await prepareRoomAgentHome({ root: agentHomeRoot, operatorHome, agentKind: 'cursor', sharedSkills: [], grantedHostRoutes: [] });
     const runtime = { version: 2, communityId: WORKSPACE, pairedBy: HUMAN,
@@ -117,7 +118,7 @@ export async function runCase(f, testCase, directory, options = {}) {
         agentBinary: 'cursor-agent', mcpBinary: process.execPath, accessPolicy: 'everyone', transport: { kind: 'monolith', baseUrl: f.origin, daemonToken: f.daemonToken } };
     const config = { bwrapPath: '/usr/bin/bwrap', agentKind: 'cursor', agentCommand: process.execPath, agentArgs: [join(ROOT, 'scripts/discovery-launch.mjs')], agentBinary: 'cursor-agent',
         modelSelection: { model: 'grok-4.7-xhigh' }, mcpBinary: process.execPath,
-        readonlyMcpCommand: process.execPath, readonlyMcpArgs: [join(ROOT, 'scripts/discovery-mcp.mjs'), join(ROOT, 'apps/body/dist/read-only-mcp.js'), trace],
+        readonlyMcpCommand: process.execPath, readonlyMcpArgs: [join(ROOT, 'scripts/discovery-mcp.mjs'), join(ROOT, 'apps/body/dist/read-only-mcp.js'), trace, room],
         agentHomeRoot, sharedSkills: [], operatorHome, workspaceRoot: root,
         agentEnv: { ...overlay, PATH: process.env.PATH, LANG: 'C.UTF-8', USER: process.env.USER, BEELINE_DISCOVERY_TRACE: trace, BEELINE_DISCOVERY_HOME_ROOT: agentHomeRoot },
         autoApprovePermissions: false, accessPolicy: 'everyone' };
@@ -168,7 +169,7 @@ export async function runCase(f, testCase, directory, options = {}) {
         abort.abort();
         await running.catch(() => { });
         const events = (await readFile(trace, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
-        observation.calls = events.filter((e) => e.type === 'call').map((call) => { const response = events.find((e) => e.type === 'result' && e.id === call.id); return { ...call, response: response?.result, succeeded: call.intendedOnly || Boolean(response && !response.error && !response.result?.isError) }; });
+        observation.calls = events.filter((e) => e.type === 'call').map((call) => { const response = events.find((e) => e.type === 'result' && e.id === call.id); return { ...call, response: response?.result, succeeded: call.intendedOnly || discoveryResultSucceeded(response?.result, response?.error) }; });
         const messages = await f.database.query(`SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='message' ORDER BY created_at`, [room, AGENT]);
         observation.text = messages.rows.map((m) => m.text ?? '').join('\n');
         const schedules = await f.database.query(`SELECT id FROM agent_schedules WHERE room_id=$1`, [room]);
@@ -201,7 +202,7 @@ export async function runDiscovery({ out, only, operatorHome, timeoutMs, profile
     await mkdir(directory, { recursive: true });
     await assertIsolatedDiscoveryDirectory(directory);
     const observations = [];
-    const sourceHashes = Object.fromEntries(await Promise.all(['scripts/discovery-live.mjs', 'scripts/discovery-launch.mjs', 'scripts/discovery-mcp.mjs', 'scripts/discovery-score.mjs', 'docs/prompts/cases/discovery/corpus.json', 'apps/body/src/beeline-skill.ts', 'apps/body/src/prompt-assembly.ts', 'apps/body/src/minimal-tool-surface.ts', 'apps/body/dist/read-only-mcp.js'].map(async (path) => [path, createHash('sha256').update(await readFile(join(ROOT, path))).digest('hex')])));
+    const sourceHashes = Object.fromEntries(await Promise.all(['scripts/discovery-live.mjs', 'scripts/discovery-launch.mjs', 'scripts/discovery-mcp.mjs', 'scripts/discovery-policy.mjs', 'scripts/discovery-score.mjs', 'docs/prompts/cases/discovery/corpus.json', 'apps/body/src/beeline-skill.ts', 'apps/body/src/prompt-assembly.ts', 'apps/body/src/minimal-tool-surface.ts', 'apps/body/dist/read-only-mcp.js'].map(async (path) => [path, createHash('sha256').update(await readFile(join(ROOT, path))).digest('hex')])));
     const metadata = { sourceHashes, configurationParity: profile ? { agentId: profile.agentId, profileSha256: createHash('sha256').update(JSON.stringify(profile)).digest('hex') } : 'unverified; smoke only', agent: 'nerd', model: 'grok-4.7-xhigh', effort: null, harness: 'cursor', harnessVersion: execFileSync('cursor-agent', ['--version'], { encoding: 'utf8' }).trim(), commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(), startedAt: new Date().toISOString() };
     metadata.caseTimeoutMs = timeoutMs ?? 300000;
     metadata.independentWorkspaces = true;

@@ -1,16 +1,18 @@
 /** Deterministic capability routing grades. Wording judgments are separate evidence. */
 import { createHash } from 'node:crypto';
 import { evaluateRule } from './prompt-case-rules.ts';
+import { discoveryResultSucceeded } from './discovery-policy.mjs';
 export function grade(testCase, observed) {
-    if (observed.bindings) {
-        const bind = value => typeof value === 'string' ? (observed.bindings[value] ?? value) : Array.isArray(value) ? value.map(bind) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, bind(entry)])) : value;
+    const bindings = { ...(observed.room ? { 'fixture-room': observed.room } : {}), ...observed.bindings };
+    if (Object.keys(bindings).length) {
+        const bind = value => typeof value === 'string' ? (bindings[value] ?? value) : Array.isArray(value) ? value.map(bind) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, bind(entry)])) : value;
         testCase = bind(testCase);
     }
-    const transcript = { calls: observed.calls ?? [], text: observed.text ?? '' };
+    const transcript = { calls: (observed.calls ?? []).map(call => call.name === 'post' && call.args.address === undefined && bindings['fixture-room'] ? { ...call, args: { ...call.args, address: bindings['fixture-room'] } } : call), text: observed.text ?? '' };
     const forbidden = testCase.forbidden?.find((rule) => evaluateRule(rule, transcript).pass);
     if (forbidden)
         return { status: 'fail', reason: `Forbidden behavior: ${JSON.stringify(forbidden)}` };
-    const accepted = { ...transcript, calls: transcript.calls.filter((call) => call.succeeded === true || call.intendedOnly === true) };
+    const accepted = { ...transcript, calls: transcript.calls.filter((call) => call.intendedOnly === true || (call.succeeded === true && (!call.response || discoveryResultSucceeded(call.response, call.error)))) };
     const full = evaluateRule(testCase.pass, accepted);
     // Discovery actions are proved by the required call, not by later prose.
     // Preserve provider/startup errors; only the harness deadline can coexist

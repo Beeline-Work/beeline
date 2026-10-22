@@ -102,11 +102,12 @@ existing pass. No skill fixes belong in this harness/corpus change.
 The [first retained attempt table and ranked gaps](cases/discovery/cursor-baseline.md)
 and [per-case evidence](cases/discovery/cursor-baseline.json) cover the complete
 corpus attempt. They are preliminary: deadlines leave cases incomplete and the
-current wrapper intercepts safe local Room replies. The System DM member-case
-rule also rejects any post, including a harmless refusal in the fixture Room.
+recorded wrapper intercepted safe local Room replies. The historical System DM member-case
+rule also rejected any post, including a harmless refusal in the fixture Room.
 Do not publish these counts as an official overall rate or as proof of a
-broadcast. The report records the harness corrections required before that rate
-is supported. The [Cursor smoke](cases/discovery/cursor-smoke-confirmed.json)
+broadcast. The [harness regression proof](cases/discovery/harness-review.md) records the
+subsequent corrections; a new complete cohort run is still required before
+that rate is supported. The [Cursor smoke](cases/discovery/cursor-smoke-confirmed.json)
 separately proves usage and real schedule creation/deletion.
 
 ## Sunday replay

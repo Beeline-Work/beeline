@@ -26,41 +26,22 @@ function composerTagsProofShims(mobile: string): Record<string, string> {
   };
 }
 
-// Set COMPOSER_TAGS_SCREENSHOTS to a directory to also save each frame.
-const screenshots = process.env.COMPOSER_TAGS_SCREENSHOTS;
-const FRAMES = ['idle', 'menu', 'many', 'reply-recording', 'reply-dashed', 'sending', 'groq'];
-
-describe.skipIf(!existsSync(CHROME))('Composer agent tags in a browser', () => {
+describe.skipIf(!existsSync(CHROME))('Composer member tags in a browser', () => {
   for (const theme of ['obsidian', 'bone']) {
-    it(`${theme}: chip, tag menu, many tags, a dictated quote reply that Stop can drop while it is sent, and an untagged Groq reply`, async () => {
+    it(`${theme}: tags are plain text, one backspace deletes a whole tag, and @ suggestions still open`, async () => {
       const mobile = process.cwd();
       const { result, status, stderr } = await runBrowserProof({
         entry: path.join(mobile, 'scripts/composer-tags-proof.tsx'),
         mobile,
         width: 390,
-        height: 640,
-        // The full walk takes about 9 s of page time.
+        height: 360,
         budgetMs: 20_000,
-        query: `?theme=${theme}`,
+        query: `?theme=${theme}&auto=1`,
         shims: composerTagsProofShims(mobile),
       });
       expect(status, stderr).toBe(0);
       console.log(result);
       expect(result).toContain('RESULT PASS');
-
-      if (!screenshots) return;
-      for (const frame of FRAMES) {
-        await runBrowserProof({
-          entry: path.join(mobile, 'scripts/composer-tags-proof.tsx'),
-          mobile,
-          width: 390,
-          height: 640,
-          budgetMs: 20_000,
-          query: `?theme=${theme}&stop=${frame}`,
-          shims: composerTagsProofShims(mobile),
-          screenshotPath: path.join(screenshots, `${theme}-${frame}.png`),
-        });
-      }
     }, 300_000);
   }
 });

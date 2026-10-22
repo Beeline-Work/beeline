@@ -21,7 +21,7 @@ Total: 37 / 40. This is a design assessment, not independent code review or a cl
 
 The first-timer's main blockers were the invalid GitHub return route and a false offline conclusion. Both have matching failing-before/passing-after regressions. The distracted phone user's primary action moved between cards and met the navigation bar; the common frame, reserved copy space, and modal safe-area provider remove that movement. Long names fit instead of losing their ending, including on React Native Web, which omits native Text's fitting prop.
 
-The audit found another native flaw: Android Modal status icons remained white on Bone. The modal now follows the Activity's status-icon appearance. Its fingerprints require new store binaries; the PR records that delivery constraint.
+The audit found another native flaw: Android Modal status icons remained white on Bone. The modal now follows the Activity's status-icon appearance. Its Android fingerprint requires a new Android binary; clean CI leaves the iOS fingerprint unchanged. The PR records that delivery constraint.
 
 Strengths: the illustrations use the actual ledger and identity components; primary actions stay in the thumb area; both themes retain the established hierarchy. No unresolved P0/P1 design findings remain in the exercised component/service paths. Full first-time provider consent on a fresh real account remains unverified; fixture screenshots are labelled as such.
 

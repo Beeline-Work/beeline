@@ -4,10 +4,10 @@
     "runtimeVersion": "40"
   },
   "ios": {
-    "runtimeVersion": "37"
+    "runtimeVersion": "36"
   },
   "fingerprints": {
-    "android": "0f01e0bfe4eab3be8edeb367e553d13374f07f0c",
-    "ios": "dd2a82afc91da03eff2220ee359aa09055eeaf98"
+    "android": "43e005fe051c6ca2cafc7c007b77231b1efe1762",
+    "ios": "831938dc46dab9517152283c79603577d5765008"
   }
 }

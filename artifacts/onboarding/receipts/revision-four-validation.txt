@@ -1,0 +1,14 @@
+Revision-four delivery repair
+
+GitHub PR 2752 head a494833a5 has 104 changed files; the prior empty-diff review predates that head.
+
+Clean CI native fingerprint job 119581772649 computed:
+android 43e005fe051c6ca2cafc7c007b77231b1efe1762
+ios 831938dc46dab9517152283c79603577d5765008
+The latter matches main's unchanged iOS native hash. The record now uses those clean-CI inputs, keeps Android runtime 40 for the Kotlin modal change, and restores unchanged iOS runtime 36. A fresh CI run must verify the corrected record.
+
+Dead-code job 119581723618 reported the web platform hook export and manually registered native proof entry. Knip now identifies their actual entry usage. The local rerun completed: "Dead-code baseline holds: 4 existing findings, 0 introduced."
+
+npm run corner:prepare completed successfully on the retry. Subsequent provider tests passed (Google continuation and GitHub sessions), but the running full focused batches and typecheck lost their temporary logs across the next incoming-turn environment restart. They are not counted as complete passes for this revision.
+
+The separate first-delivery PR 2754 at 8436999192069ea8270d55aea189b7d49b417bbd already includes general capability discovery, GitHub/repository routing before connector search, runtime instructions and matching regressions. Its failed server-integration assertion at integration.test.ts:5731 omits the newly true repositoryOnboarding capability; that correction was reported to its commander rather than changing another corner's branch here.

@@ -78,7 +78,7 @@ describe('Google sign-in continuation', () => {
       expect(fetcher).toHaveBeenCalledTimes(4);
     } finally { vi.useRealTimers(); }
   });
-  it('R-onb-18: recovers and cancels on Hermes without AbortSignal.timeout', async () => {
+  it('R-onb-21: recovers and cancels on Hermes without AbortSignal.timeout', async () => {
     vi.stubGlobal('AbortSignal', {});
     const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
       expect(options?.signal).toBeDefined();

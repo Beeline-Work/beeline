@@ -134,7 +134,7 @@ it('keeps another requester\'s unanswered card open when onboarding an invitee',
   expect(cards.every(card => card.status === 'open')).toBe(true);
 });
 
-it('R-onb-19: public rollout keeps personal repository choices private in reads and live deltas', async () => {
+it('R-onb-22: public rollout keeps personal repository choices private in reads and live deltas', async () => {
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,[W,R,OTHER]);
   const card=await postRepositoryOnboarding(db,github,{roomId:R,agentId:A,requesterId:H,kind:'repository'});
   expect((await phone.readRoom(R,H))?.messages.some(message=>message.id===card.id)).toBe(true);

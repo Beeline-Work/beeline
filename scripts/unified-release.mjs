@@ -594,8 +594,16 @@ export function checkpointsFromJobs(needs, { version, sourceSha, releaseId }) {
   });
   const checkpoints = [];
   for (const [component, jobs] of Object.entries(COMPONENT_JOBS)) {
+    if (plan[`run_${component.replace('-', '_')}`] !== 'true') continue;
     const job = jobs.find(succeeded);
-    if (plan[`run_${component.replace('-', '_')}`] !== 'true' || !job) continue;
+    if (!job) {
+      // An unfinished OTA that already reached production is recorded as
+      // promoted, so a pinned recovery only recovers that exact promotion.
+      if (jobs.some((name) => needs[name]?.outputs?.promote_started === 'true')) {
+        checkpoints.push({ ...checkpoint(component), state: 'promoted' });
+      }
+      continue;
+    }
     const completedAt = Number(needs[job].outputs?.completed_at);
     checkpoints.push(checkpoint(component, Number.isFinite(completedAt) && completedAt > 0 ? { completedAt } : {}));
   }

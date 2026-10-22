@@ -64,10 +64,16 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
     assert.equal(workflow.jobs[job].steps[0].with.ref, '${{ needs.initialize.outputs.release_sha }}');
     // A recovery of an attempted identity only recovers its exact promotion.
     for (const leg of workflow.jobs[job].steps.filter((step) => step.uses === './.github/actions/mobile-ota-leg')) {
-      assert.equal(leg.with.retry_attempt, "${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}");
+      assert.equal(leg.with.retry_attempt, "${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}");
     }
+    // The marker is its own step before the promote leg, so a job that fails
+    // mid-promotion still reports it.
+    const steps = workflow.jobs[job].steps;
+    const marker = steps.findIndex((step) => step.id === 'promote_started');
+    assert.ok(marker >= 0 && marker === steps.findIndex((step) => step.id === 'promote') - 1);
+    assert.equal(workflow.jobs[job].outputs.promote_started, '${{ steps.promote_started.outputs.started }}');
   }
-  assert.equal(workflow.jobs.initialize.outputs.recovering, "${{ steps.retry_state.outputs.run_id != '' }}");
+  assert.equal(workflow.jobs.initialize.outputs.stage_mobile_ota, '${{ steps.plan.outputs.stage_mobile_ota }}');
 
   const dir = mkdtempSync(join(tmpdir(), 'ota-recovery-'));
   try {
@@ -117,6 +123,26 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
       });
       assert.equal(verified.status, 0, `${command}: ${verified.stderr}`);
     }
+
+    // Reproduction pinned-ota-recovery: a recovery whose earlier attempt never
+    // started promotion runs at attempt 1, so an empty production list
+    // promotes the exact candidate instead of refusing.
+    const runAt = (attempt, payload) => spawnSync(process.execPath, [
+      'scripts/ota-release.mjs', 'recover-promotion', '--ledger', ledgerPath,
+      '--index', indexPath, '--result', resultPath, '--retry-attempt', attempt, '--run-id', '36290000000',
+    ], {
+      cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
+      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: payload }) },
+    });
+    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
+    writeFileSync(indexPath, JSON.stringify(baseIndex));
+    const unstarted = runAt('1', []);
+    assert.equal(unstarted.status, 0, unstarted.stderr);
+    assert.equal(readFileSync(resultPath, 'utf8'), 'new\n');
+    // A started promotion (attempt 2) still refuses to republish blindly.
+    const started = runAt('2', []);
+    assert.notEqual(started.status, 0);
+    assert.match(started.stderr, /refusing to republish on a retry/);
 
     writeFileSync(ledgerPath, JSON.stringify(baseLedger));
     writeFileSync(indexPath, JSON.stringify(baseIndex));
@@ -494,6 +520,15 @@ test('each component job result is its release checkpoint', () => {
     { component: 'website', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `website-v0.0.9-${NEW_SHA}` },
     { component: 'mobile-native', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `mobile-native-v0.0.9-${NEW_SHA}` },
   ]);
+  // An OTA job that failed after production promotion started records it.
+  const promotedOta = checkpointsFromJobs(needs({
+    mobile_ota_after_native: { result: 'failure', outputs: { promote_started: 'true' } },
+  }), identity).find((checkpoint) => checkpoint.component === 'mobile-ota');
+  assert.equal(promotedOta.state, 'promoted');
+  // One that failed before promotion leaves the OTA pending.
+  assert.ok(!checkpointsFromJobs(needs({
+    mobile_ota_after_native: { result: 'failure', outputs: { promote_started: '' } },
+  }), identity).some((checkpoint) => checkpoint.component === 'mobile-ota'));
   // A required native platform that did not build leaves mobile-native unchecked.
   assert.ok(!checkpointsFromJobs(needs({ mobile_native_android: { result: 'failure', outputs: {} } }), identity)
     .some((checkpoint) => checkpoint.component === 'mobile-native'));
@@ -2042,6 +2077,25 @@ test('release-manual-recovery: the dispatch initializer resumes a failed identit
       assert.equal(summary.identity, `v0.0.9@${sourceSha}`);
       assert.ok(Object.values(summary.retry).every(Boolean));
       assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /run_server=true/);
+      // Never promoted: the OTA recovers as a first attempt.
+      assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /^stage_mobile_ota=pending$/m);
+    }
+    {
+      // Promotion started before the attempt failed: the OTA leg recovers
+      // only that exact promotion.
+      const retry = initializeRelease({ version: 'v0.0.9', sourceSha });
+      applyComponentCheckpoints(retry, [{ component: 'mobile-ota', version: 'v0.0.9', sourceSha, state: 'promoted', artifactRef: 'ota' }]);
+      writeFileSync(join(dir, 'retry/release-attempt.json'), JSON.stringify(retry));
+      writeFileSync(join(dir, 'outputs'), '');
+      const result = spawnSync('bash', ['-euc', run], { encoding: 'utf8', env: {
+        ...process.env, RUNNER_TEMP: dir, REQUESTED_SHA: sourceSha,
+        REQUESTED_VERSION: 'v0.0.9', SELECTION: 'all', STORE_TRACK: 'none',
+        GITHUB_OUTPUT: join(dir, 'outputs'), GITHUB_STEP_SUMMARY: join(dir, 'summary'),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const outputs = readFileSync(join(dir, 'outputs'), 'utf8');
+      assert.match(outputs, /^stage_mobile_ota=promoted$/m);
+      assert.match(outputs, /^run_mobile_ota=true$/m);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

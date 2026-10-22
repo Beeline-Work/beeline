@@ -83,7 +83,6 @@ jobs:
       release_version: ${{ steps.plan.outputs.release_version }}
       release_id: ${{ steps.plan.outputs.release_id }}
       trigger_epoch: ${{ steps.clock.outputs.trigger_epoch }}
-      recovering: ${{ steps.retry_state.outputs.run_id != '' }}
       run_server: ${{ steps.plan.outputs.run_server }}
       run_helper: ${{ steps.plan.outputs.run_helper }}
       run_mobile_ota: ${{ steps.plan.outputs.run_mobile_ota }}
@@ -93,6 +92,7 @@ jobs:
       helper_reuse_run_id: ${{ steps.helper_reuse.outputs.run_id }}
       previous_mac_run_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.run_id || '' }}
       previous_mac_release_id: ${{ steps.previous_mac.outcome == 'success' && steps.previous_mac.outputs.release_id || '' }}
+      stage_mobile_ota: ${{ steps.plan.outputs.stage_mobile_ota }}
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
       stage_desktop: ${{ steps.plan.outputs.stage_desktop }}
       native_android: ${{ steps.plan.outputs.native_android }}
@@ -672,6 +672,9 @@ jobs:
           retention-days: 90
 
 
+  # A recovery whose earlier attempt started production promotion only
+  # recovers that exact promotion (retry_attempt 2); a promotion never started
+  # publishes its exact beta candidate as a first attempt would.
   # An unchanged runtime pin needs no store binary as its rollback anchor, so
   # the OTA starts as soon as the plan exists. mobile_ota_after_native below
   # covers a changed pin or a requested device proof.
@@ -686,6 +689,7 @@ jobs:
     timeout-minutes: 18
     outputs:
       completed_at: ${{ steps.promote.outputs.completed_at }}
+      promote_started: ${{ steps.promote_started.outputs.started }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -703,15 +707,20 @@ jobs:
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
+          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
+      # Set before production changes, so a job that fails mid-promotion still
+      # reports it to release_result.
+      - name: Record that production promotion started
+        id: promote_started
+        run: echo 'started=true' >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/mobile-ota-leg
         id: promote
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
+          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
           receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}
@@ -731,6 +740,7 @@ jobs:
     timeout-minutes: 18
     outputs:
       completed_at: ${{ steps.promote.outputs.completed_at }}
+      promote_started: ${{ steps.promote_started.outputs.started }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -748,11 +758,15 @@ jobs:
           sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
+          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           # A platform whose store binary was built in this run may treat that
           # binary's embedded update as the rollback anchor for its new runtime.
           embedded_anchor_platforms: ${{ format('{0}{1}', needs.mobile_native_android.result == 'success' && 'android,' || '', needs.mobile_native_ios.result == 'success' && 'ios' || '') }}
+      - name: Record that production promotion started
+        id: promote_started
+        if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
+        run: echo 'started=true' >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/mobile-ota-leg
         id: promote
         if: needs.release_proof.result == 'success' || inputs.run_release_proof != true
@@ -760,7 +774,7 @@ jobs:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
-          retry_attempt: ${{ needs.initialize.outputs.recovering == 'true' && '2' || '1' }}
+          retry_attempt: ${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}
           expo_token: ${{ secrets.EXPO_TOKEN }}
           owner_pubkey: ${{ secrets.MOBILE_OTA_OWNER_PUBKEY }}
           receipt_token: ${{ secrets.MOBILE_OTA_RECEIPT_TOKEN }}

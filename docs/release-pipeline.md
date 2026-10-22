@@ -215,7 +215,11 @@ node --test scripts/unified-release.test.mjs
 A failed attempt stores its release state. The release never redispatches
 itself. An explicit recovery dispatch with the same `release_version` and
 `release_sha` skips checked components, reuses successful immutable build
-artifacts, and reruns only unfinished component work. When an earlier attempt at
+artifacts, and reruns only unfinished component work. A mobile OTA whose
+earlier attempt never started production promotion publishes its exact beta
+candidate as a first attempt; one whose promotion started (recorded as
+`promoted`) only recovers that exact promotion and refuses partial or
+superseded production groups. When an earlier attempt at
 this identity already merged the three-platform daemon artifact, `initialize`
 resolves the run holding it once and the helper leg promotes those exact bytes,
 so neither macOS bundle is rebuilt. When no reusable artifact resolves - it

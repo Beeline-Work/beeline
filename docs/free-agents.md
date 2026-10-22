@@ -18,6 +18,7 @@ soul. Existing free agents keep their names.
   row (harness `pi`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
   presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
+  The first hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
   The hello tags the owner through the normal mention/push path and uses the
   agent's actual handle. It creates no model turn or Machine. The first real
   queued work provisions the Machine through `FreeAgentService.kick` or the sweep.

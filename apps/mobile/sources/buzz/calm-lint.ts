@@ -41,8 +41,6 @@ export const CALM_DECORATIVE_ALLOWLIST: Readonly<Record<string, string>> = {
     'TURN_LABEL_LINE_HEIGHT (`buzz/room-bottom-chrome.ts`) is the captain-authored exact-pixel budget for the turn line’s row (24px row, 18px label ink, equal air above/below — captain 2026-09-22): the label text’s lineHeight must equal that same 18, not the machine role’s 19, or the hand-derived geometry (TURN_LINE_INK_AIR, TURN_LINE_BAR_MARGIN_BOTTOM) drifts off its own stated arithmetic.',
   'app/(app)/beeline/onboarding.tsx':
     'The `beeline.` sign-in wordmark: a brand surface at its own size (28/32), not a reading-text role.',
-  'components/buzz/YouStep.tsx':
-    'The onboarding identity line’s approved size, `hero.fontSize + body.fontSize` (DESIGN.md, captain-approved) — a deliberate combination of two roles, so its lineHeight is not literally one of the four role values.',
 };
 
 /**

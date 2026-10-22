@@ -5,6 +5,8 @@ export const FUNNEL_EVENTS = [
   'provider_tapped',
   'callback_result',
   'signed_in',
+  'workspace_created',
+  'first_message_sent',
 ] as const;
 export const FUNNEL_PLATFORMS = ['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const;
 export const FUNNEL_ERRORS = [

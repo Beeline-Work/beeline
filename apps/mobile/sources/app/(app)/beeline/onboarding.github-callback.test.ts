@@ -119,12 +119,6 @@ vi.mock('@/auth/monolith-session', () => ({
   GitHubAccountMismatchError: class extends Error {},
 }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
-vi.mock('@/components/buzz/YouStep', async () => {
-  const ReactModule = await import('react');
-  return {
-    YouStep: (props: any) => ReactModule.createElement('YouStep', props),
-  };
-});
 vi.mock('@/push/buzz-push-registration', () => ({
   registerBuzzPushNotifications: vi.fn(async () => undefined),
 }));
@@ -180,7 +174,7 @@ vi.mock('@/constants/Typography', () => ({
 
 const { persistGitHubSignInState } = await import('@/auth/github-auth-session');
 const { OidcBindError } = await import('@beeline/buzz-client');
-const { clearOnboardingFaceStep, clearOnboardingNotice, markSignInInFlight } =
+const { clearOnboardingNotice, markSignInInFlight } =
   await import('@/auth/onboarding-state');
 const { default: BuzzOnboarding } = await import('./onboarding');
 
@@ -234,7 +228,6 @@ describe('GitHub callback delivery into onboarding', () => {
     vi.clearAllMocks();
     storage.clear();
     clearOnboardingNotice();
-    clearOnboardingFaceStep();
     markSignInInFlight(false);
     network.online = true;
     network.fetch.mockImplementation(async () => {
@@ -299,29 +292,13 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
     expect(sdk.finish).not.toHaveBeenCalled();
 
-    // The identity exists; before the app opens, the face ceremony.
-    expect(navigation.replace).not.toHaveBeenCalled();
-    expect(phoneOperation).toHaveBeenCalledWith('getManagedIdentity', {});
-    const ceremony = tree.root.findByType('YouStep' as never);
-    expect(ceremony.props.seed).toBe(MONOLITH_IDENTITY);
-    expect(ceremony.props.currentFace).toBeNull();
-    // The actual GitHub handle is shown; this step saves only the chosen face.
-    expect(ceremony.props.handle).toBe('octocat');
-    await act(async () => {
-      await ceremony.props.onConfirm({ face: 'owl' });
-    });
-    expect(phoneOperation).not.toHaveBeenCalledWith('updatePersonProfile', expect.anything());
-    expect(phoneOperation).toHaveBeenCalledWith('updateIdentityFace', { faceId: 'owl' });
-    expect(navigation.replace).not.toHaveBeenCalled();
-    act(() => ceremony.props.onEntered());
+    expect(phoneOperation).not.toHaveBeenCalledWith('updateIdentityFace', expect.anything());
+    expect(phoneOperation).not.toHaveBeenCalledWith('claimManagedHandle', expect.anything());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
-  // The callback is a deep link, so expo-router routes it and puts a second
-  // onboarding screen over the one whose press is still finishing the sign-in.
-  // The first press stored the session either way; what was lost was the
-  // ceremony, painted by a component the person could no longer see — so the
-  // sign-in looked like it had not counted and only a second press got in.
+  // A warm callback routes another screen while the original press owns the
+  // exchange. That press must finish once and enter the app without a second tap.
   it('finishes the first press on the onboarding screen its own callback routed in', async () => {
     let releaseBrowser!: () => void;
     let releaseExchange!: (identityId: string) => void;
@@ -371,13 +348,7 @@ describe('GitHub callback delivery into onboarding', () => {
       await settle();
     });
 
-    // One press: the ceremony is on the screen the person is looking at.
-    const ceremony = routed.root.findByType('YouStep' as never);
-    expect(ceremony.props.seed).toBe(MONOLITH_IDENTITY);
-    expect(ceremony.props.currentFace).toBeNull();
     expect(monolith.exchangeGitHubTicket).toHaveBeenCalledTimes(1);
-
-    act(() => ceremony.props.onEntered());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
@@ -407,7 +378,7 @@ describe('GitHub callback delivery into onboarding', () => {
     });
     expect(completionReads).toBe(3);
     expect(browser.open).not.toHaveBeenCalled();
-    expect(tree.root.findAllByType('YouStep' as never)).toHaveLength(1);
+    expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
   it('skips the face ceremony for a person who already chose a face', async () => {
@@ -428,7 +399,6 @@ describe('GitHub callback delivery into onboarding', () => {
     await act(async () => {
       await signIn.props.onPress();
     });
-    expect(tree.root.findAllByType('YouStep' as never)).toHaveLength(0);
     expect(phoneOperation).not.toHaveBeenCalledWith('updateIdentityFace', expect.anything());
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
@@ -479,7 +449,7 @@ describe('GitHub callback delivery into onboarding', () => {
       });
       expect(browser.open).toHaveBeenCalledTimes(1);
       expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
-      expect(tree.root.findAllByType('YouStep' as never)).toHaveLength(1);
+      expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     } finally {
       vi.useRealTimers();
     }

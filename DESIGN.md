@@ -272,7 +272,7 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 ### Identity
 `components/buzz/IdentityMark.tsx` is the one identity component (a test bans any other `*Avatar*`). Faces come from `buzz/faces/`, hues from `buzz/identity-mark.ts`.
 
-1. **Species is the face.** People and agents are one of Speakeasy's twelve creatures (fox, owl, pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat). People choose at onboarding; the server assigns an agent's, together with its name. Without either, `defaultFaceForSeed` (FNV-1a) picks the same animal on every device.
+1. **Species is the face.** People and agents are one of Speakeasy's twelve creatures (fox, owl, pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat). People can choose in Settings → Identity; the server assigns an agent's, together with its name. Without either, `defaultFaceForSeed` (FNV-1a) picks the same animal on every device.
 2. **Plate polarity is the type.** A person is a coloured creature on an ink plate; an agent is the same creature in bone on a plate of its own hue.
 3. **Colour is the memory.** Each identity has one deterministic hue from a curated, scrambled 16-hue palette (≥20° apart), used on the creature, the plate, and the byline name.
 4. **The edge layer** (`recolorEdge`, `EDGE_GROW = 3`) draws a contrast copy behind shapes that would vanish on their plate.

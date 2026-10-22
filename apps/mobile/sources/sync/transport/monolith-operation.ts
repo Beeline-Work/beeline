@@ -114,6 +114,8 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
     } catch {}
     throw new MonolithPhoneOperationError(name, response.status, code);
   }
+  if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
+    void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
   if (response.status === 204) return undefined as PhoneOperationMap[Name]['output'];
   return (await response.json()) as PhoneOperationMap[Name]['output'];
 }

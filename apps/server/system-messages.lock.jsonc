@@ -3167,27 +3167,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:wrapper:8627c24c4fb3aba4",
-    "file": "apps/server/src/free-agents.ts",
-    "kind": "wrapper",
-    "template": "createFreeAgentInWorkspace(database, this.config, input)",
-    "literals": [],
-    "occurrences": 1
-  },
-  {
-    "id": "src/free-agents.ts:createFreeAgentInWorkspace:wrapper:c16d0ca4e2689d52",
-    "file": "apps/server/src/free-agents.ts",
-    "kind": "wrapper",
-    "template": "postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' })",
-    "literals": [
-      "'compressed'",
-      "'hex'",
-      "'repository'",
-      "'secp256k1'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:a3631ff7edcd4615",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
@@ -4123,17 +4102,6 @@
     "occurrences": 1
   },
   // redeemInvite wrapper approved by lunchboxfortwo, DM 82530d41 (yes), relayed by Ruby.
-  {
-    "id": "src/phone-service.ts:PhoneService.redeemInvite:wrapper:c122a7fcc9c2c20b",
-    "file": "apps/server/src/phone-service.ts",
-    "kind": "wrapper",
-    "template": "postRepositoryOnboarding(database, this.github, {\n    roomId, agentId: existing.agent_id, requesterId: viewerId,\n    kind: existing.repository_name ? 'starters' : 'repository',\n})",
-    "literals": [
-      "'repository'",
-      "'starters'"
-    ],
-    "occurrences": 1
-  },
   {
     "id": "src/phone-service.ts:PhoneService.removeAgent:wrapper:066577f9ae1ad3ed",
     "file": "apps/server/src/phone-service.ts",

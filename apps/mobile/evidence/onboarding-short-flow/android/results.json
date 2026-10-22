@@ -1,0 +1,222 @@
+[
+  {
+    "theme": "obsidian",
+    "provider": "Google",
+    "stage": "sign-in",
+    "file": "google-sign-in-obsidian.png",
+    "text": [
+      "Tools",
+      "Beeline logo",
+      "beeline.",
+      "workspace for all intelligence",
+      "busy",
+      "Continue with GitHub",
+      "RECOMMENDED",
+      "Continue with Google",
+      "Continue with Google"
+    ]
+  },
+  {
+    "theme": "obsidian",
+    "provider": "Google",
+    "stage": "workspace",
+    "file": "google-workspace-obsidian.png",
+    "text": [
+      "Tools",
+      "Back",
+      "Name your Workspace",
+      "Your team, company, or project. Change it in Settings.",
+      "Workspace name",
+      "Northstar Lab",
+      "Create Workspace",
+      "Create Workspace"
+    ]
+  },
+  {
+    "theme": "obsidian",
+    "provider": "Google",
+    "stage": "general",
+    "file": "google-general-obsidian.png",
+    "text": [
+      "Tools",
+      "#general",
+      "@beebee joined \u00b7 invited by @newperson5",
+      "now",
+      "agent, agent",
+      "Beebee",
+      "now",
+      "@newperson5 Hi, I'm Beebee, your free agent.",
+      "I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.",
+      "Three things to know:",
+      "\u00b7 Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.",
+      "\u00b7 Big jobs get a corner. That's a side thread where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.",
+      "\u00b7 Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.",
+      "What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members."
+    ]
+  },
+  {
+    "theme": "obsidian",
+    "provider": "GitHub",
+    "stage": "sign-in",
+    "file": "github-sign-in-obsidian.png",
+    "text": [
+      "Tools",
+      "Beeline logo",
+      "beeline.",
+      "workspace for all intelligence",
+      "busy",
+      "Continue with GitHub",
+      "RECOMMENDED",
+      "Continue with Google",
+      "Continue with Google"
+    ]
+  },
+  {
+    "theme": "obsidian",
+    "provider": "GitHub",
+    "stage": "workspace",
+    "file": "github-workspace-obsidian.png",
+    "text": [
+      "Tools",
+      "Back",
+      "Name your Workspace",
+      "Your team, company, or project. Change it in Settings.",
+      "Workspace name",
+      "Northstar Lab",
+      "Create Workspace",
+      "Create Workspace"
+    ]
+  },
+  {
+    "theme": "obsidian",
+    "provider": "GitHub",
+    "stage": "general",
+    "file": "github-general-obsidian.png",
+    "text": [
+      "Tools",
+      "#general",
+      "@beebee joined \u00b7 invited by @octocat5",
+      "now",
+      "agent, agent",
+      "Beebee",
+      "now",
+      "@octocat5 Hi, I'm Beebee, your free agent.",
+      "I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.",
+      "Three things to know:",
+      "\u00b7 Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.",
+      "\u00b7 Big jobs get a corner. That's a side thread where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.",
+      "\u00b7 Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.",
+      "What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members."
+    ]
+  },
+  {
+    "theme": "bone",
+    "provider": "Google",
+    "stage": "sign-in",
+    "file": "google-sign-in-bone.png",
+    "text": [
+      "Tools",
+      "Beeline logo",
+      "beeline.",
+      "workspace for all intelligence",
+      "busy",
+      "Continue with GitHub",
+      "RECOMMENDED",
+      "Continue with Google",
+      "Continue with Google"
+    ]
+  },
+  {
+    "theme": "bone",
+    "provider": "Google",
+    "stage": "workspace",
+    "file": "google-workspace-bone.png",
+    "text": [
+      "Tools",
+      "Back",
+      "Name your Workspace",
+      "Your team, company, or project. Change it in Settings.",
+      "Workspace name",
+      "Northstar Lab",
+      "Create Workspace",
+      "Create Workspace"
+    ]
+  },
+  {
+    "theme": "bone",
+    "provider": "Google",
+    "stage": "general",
+    "file": "google-general-bone.png",
+    "text": [
+      "Tools",
+      "#general",
+      "agent, agent",
+      "Beebee",
+      "now",
+      "@newperson6 Hi, I'm Beebee, your free agent.",
+      "I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.",
+      "Three things to know:",
+      "\u00b7 Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.",
+      "\u00b7 Big jobs get a corner. That's a side thread where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.",
+      "\u00b7 Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.",
+      "What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members.",
+      "@beebee joined \u00b7 invited by @newperson6",
+      "now"
+    ]
+  },
+  {
+    "theme": "bone",
+    "provider": "GitHub",
+    "stage": "sign-in",
+    "file": "github-sign-in-bone.png",
+    "text": [
+      "Tools",
+      "Beeline logo",
+      "beeline.",
+      "workspace for all intelligence",
+      "busy",
+      "Continue with GitHub",
+      "RECOMMENDED",
+      "Continue with Google",
+      "Continue with Google"
+    ]
+  },
+  {
+    "theme": "bone",
+    "provider": "GitHub",
+    "stage": "workspace",
+    "file": "github-workspace-bone.png",
+    "text": [
+      "Tools",
+      "Back",
+      "Name your Workspace",
+      "Your team, company, or project. Change it in Settings.",
+      "Workspace name",
+      "Northstar Lab",
+      "Create Workspace",
+      "Create Workspace"
+    ]
+  },
+  {
+    "theme": "bone",
+    "provider": "GitHub",
+    "stage": "general",
+    "file": "github-general-bone.png",
+    "text": [
+      "Tools",
+      "#general",
+      "agent, agent",
+      "Beebee",
+      "now",
+      "@octocat6 Hi, I'm Beebee, your free agent.",
+      "I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.",
+      "Three things to know:",
+      "\u00b7 Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.",
+      "\u00b7 Big jobs get a corner. That's a side thread where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.",
+      "\u00b7 Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.",
+      "What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members.",
+      "@beebee joined \u00b7 invited by @octocat6",
+      "now"
+    ]
+  }
+]

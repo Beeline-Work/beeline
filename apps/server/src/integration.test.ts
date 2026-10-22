@@ -279,14 +279,14 @@ describe('monolith integration', () => {
   const phoneToken = async (login: string) => (await auth.exchangeGitHubOidc(login)).accessToken;
   const operation = (name: string, payload: unknown, token = accessToken) =>
     request(`/v1/phone/operations/${name}`, 'POST', payload, token);
-  it('serves account-scoped welcome eligibility and durable completion', async () => {
+  it('retires welcome cards for fresh and existing accounts, including older clients', async () => {
     const fresh = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Fresh')`, [
       fresh,
     ]);
     await database.query(`UPDATE identities SET welcome_cards_due=NULL WHERE id=$1`, [HUMAN]);
     expect(await (await operation('readWelcomeCards', {})).json()).toEqual({ due: false });
-    expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: true });
+    expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('completeWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });

@@ -29,7 +29,6 @@ import type { CornerOpenAttempt } from '@/buzz/open-random-corner';
 import { roomListSections, roomRowName } from '@/buzz/room-list-row';
 import { useRoomListGestures } from '@/buzz/use-room-list-gestures';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
-import { readWelcomeCards } from '@/buzz/welcome-cards';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
 import { validRoomSlug } from '@/buzz/room-name';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -57,7 +56,6 @@ import { messageSearchHref, useMessageSearch } from '@/buzz/use-message-search';
 import { readGitHubAccess, updateGitHubAccess, useGitHubAccess } from '@/buzz/github-access-surface';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
-import { WelcomeCards } from '@/components/buzz/WelcomeCards';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { BuzzRigTransport } from '@/sync/transport';
@@ -189,7 +187,6 @@ export default function BuzzChannels() {
   const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
-  const [welcomeDue, setWelcomeDue] = useState(false);
   // A covering list read seeds the Needs-you rows behind the badge;
   // ordinary changes carry typed row deltas on the live socket.
   const [needsYouSignal, setNeedsYouSignal] = useState(0);
@@ -248,15 +245,6 @@ export default function BuzzChannels() {
   const activeCommunity =
     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
-  useEffect(() => {
-    if (!identity?.publicKey || !chatList || chatList.viewer.pubkey !== identity.publicKey || viewerIsAgent) return;
-    let active = true;
-    setWelcomeDue(false);
-    void readWelcomeCards().then((view) => {
-      if (active) setWelcomeDue(view.due);
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, [identity?.publicKey, Boolean(chatList), viewerIsAgent]);
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
   const [roomName, setRoomName, roomNameDraft]= useTextDraft(
@@ -884,7 +872,6 @@ export default function BuzzChannels() {
       viewerAvatarUrl={chatList.viewer.avatar}
       viewerFace={chatList.viewer.face}
     >
-      <WelcomeCards key={identity?.publicKey} visible={welcomeDue} onDone={() => setWelcomeDue(false)} />
       <View
         style={[styles.container, { paddingTop: insets.top }]}
         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}

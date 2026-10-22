@@ -2373,7 +2373,7 @@ CREATE TABLE IF NOT EXISTS signin_funnel_installs (
 CREATE TABLE IF NOT EXISTS signin_funnel_events (
   install_id uuid NOT NULL,
   attempt_id uuid NOT NULL,
-  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup')),
+  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent')),
   platform text NOT NULL CHECK (platform IN ('ios','android','web','macos','windows','linux')),
   version text NOT NULL,
   provider text NOT NULL DEFAULT '' CHECK (provider IN ('','github','google')),
@@ -2387,7 +2387,7 @@ CREATE TABLE IF NOT EXISTS signin_funnel_events (
 CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
 ALTER TABLE signin_funnel_events DROP CONSTRAINT IF EXISTS signin_funnel_events_event_check;
 ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_event_check
-  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup'));
+  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent'));
 CREATE TABLE IF NOT EXISTS signin_funnel_auth_flows (
   flow_hash text PRIMARY KEY,
   context jsonb NOT NULL,

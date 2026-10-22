@@ -23,4 +23,3 @@ stdout | sources/test/onboarding-settings.browser.test.ts > onboarding account s
       Tests  1 passed (1)
    Start at  20:39:46
    Duration  903ms (transform 73ms, setup 54ms, collect 34ms, tests 603ms, environment 0ms, prepare 77ms)
-

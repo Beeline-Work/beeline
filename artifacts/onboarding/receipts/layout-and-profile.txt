@@ -49,4 +49,3 @@ stdout | sources/test/onboarding.browser.test.ts > onboarding painted layout > R
       Tests  7 passed (7)
    Start at  20:35:14
    Duration  11.68s (transform 139ms, setup 170ms, collect 149ms, tests 19.86s, environment 1ms, prepare 253ms)
-

@@ -11,4 +11,3 @@ stdout | sources/test/onboarding-google.browser.test.ts > Google browser handoff
       Tests  1 passed (1)
    Start at  20:41:07
    Duration  799ms (transform 69ms, setup 58ms, collect 26ms, tests 483ms, environment 0ms, prepare 62ms)
-

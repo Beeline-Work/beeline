@@ -69,4 +69,3 @@ Serialized Error: { code: 'offline', status: undefined, details: undefined, retr
      Errors  1 error
    Start at  20:38:54
    Duration  643ms (transform 224ms, setup 68ms, collect 287ms, tests 12ms, environment 0ms, prepare 62ms)
-

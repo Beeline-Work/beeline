@@ -1,0 +1,50 @@
+[
+  {
+    "jit": "on",
+    "name": "readCorners",
+    "p50": 733.3851910000012,
+    "p95": 827.8022509999973,
+    "samples": 30,
+    "responseBytes": 46228
+  },
+  {
+    "jit": "off",
+    "name": "readCorners",
+    "p50": 45.581498999999894,
+    "p95": 57.65281500000128,
+    "samples": 30,
+    "responseBytes": 46228
+  },
+  {
+    "jit": "on",
+    "name": "room list",
+    "p50": 387.09449799999857,
+    "p95": 423.9990230000003,
+    "samples": 30,
+    "responseBytes": 113638
+  },
+  {
+    "jit": "off",
+    "name": "room list",
+    "p50": 66.21887800000331,
+    "p95": 73.15957300000446,
+    "samples": 30,
+    "responseBytes": 113638
+  },
+  {
+    "jit": "on",
+    "name": "transcript page",
+    "p50": 12.14680899999803,
+    "p95": 15.110144999998738,
+    "samples": 30,
+    "responseBytes": 24161
+  },
+  {
+    "jit": "off",
+    "name": "transcript page",
+    "p50": 12.021630999995978,
+    "p95": 14.304078000001027,
+    "samples": 30,
+    "responseBytes": 24161
+  }
+]

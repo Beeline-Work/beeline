@@ -312,7 +312,7 @@ describe('private operator dashboard', () => {
   it('counts small web and desktop cohorts exactly and excludes review, proof and hidden identities', async () => {
     await seed();
     const proof = 'c2e54c45-cf58-4cc1-a620-89b196096e7b';
-    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Firstmate Proof')`, [proof]);
+    await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Firstmate Proof',true)`, [proof]);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Play Review')`, [
       REVIEW_IDENTITY_ID,
     ]);

@@ -204,7 +204,7 @@ test('the required TYPECHECK gate executes the policy and its regression tests o
   assert.ok(step);
   assert.match(step.run, /mobile-ui-policy.test.mjs/);
   assert.match(step.run, /check-mobile-ui-components.mjs --base/);
-  assert.equal(step.env.UI_POLICY_BASE, '${{ github.event.pull_request.base.sha || github.sha }}');
+  assert.equal(step.env.UI_POLICY_BASE, '${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}');
   assert.equal(step.if, undefined);
 });
 

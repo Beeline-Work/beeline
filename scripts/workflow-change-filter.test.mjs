@@ -51,9 +51,19 @@ function filterOutputs(files, filterSteps) {
   return outputs;
 }
 
-function runDecide(decide, outputs) {
+function runDecide(decide, outputs, context = {}) {
   const env = {};
   for (const [key, expression] of Object.entries(decide.env)) {
+    if (key === 'EVENT_NAME') {
+      assert.equal(expression, '${{ github.event_name }}');
+      env[key] = context.eventName ?? 'pull_request';
+      continue;
+    }
+    if (key === 'FILTER_OUTCOME' || key === 'UNMAPPED_OUTCOME') {
+      assert.match(expression, /steps\.(filter|unmapped)\.outcome/);
+      env[key] = context[key] ?? 'success';
+      continue;
+    }
     const match = String(expression).match(/steps\.[A-Za-z0-9_-]+\.outputs\.([A-Za-z0-9_-]+)/);
     assert.ok(match, `${key} does not read a filter output: ${expression}`);
     assert.ok(Object.hasOwn(outputs, match[1]), `${key} reads missing output ${match[1]}`);
@@ -235,4 +245,36 @@ test('packages and a path outside the four app trees still open every path-filte
       assert.equal(checks.gates[name], 'true', `${item.label} ${name}`);
     }
   }
+});
+
+test('PR concurrency cancels superseded pushes and isolates non-PR runs', () => {
+  for (const name of ['checks', 'desktop', 'prompt-cases']) {
+    const doc = parse(readFileSync(new URL(`../.github/workflows/${name}.yml`, import.meta.url), 'utf8'));
+    assert.equal(doc.concurrency.group,
+      `${name}-` + "${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}");
+    assert.equal(doc.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}");
+  }
+});
+test('required workflows run merge groups and filter the group head against its base', () => {
+  for (const name of ['checks.yml', 'desktop.yml', 'prompt-cases.yml']) {
+    const doc = parse(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'));
+    assert.deepEqual(doc.on.merge_group, { types: ['checks_requested'] }, name);
+    assert.match(doc.jobs.changes.if, /merge_group/, name);
+    const checkout = doc.jobs.changes.steps.find(step => step.uses?.startsWith('actions/checkout@'));
+    assert.equal(checkout.with['fetch-depth'], 0, name);
+    for (const filter of doc.jobs.changes.steps.filter(step => step.uses?.startsWith('dorny/paths-filter@'))) {
+      assert.equal(filter.with.base, "${{ github.event.merge_group.base_sha || '' }}", name);
+      assert.equal(filter.with.ref, "${{ github.event.merge_group.head_sha || '' }}", name);
+    }
+  }
+});
+
+
+test('a merge-group diff failure runs every suite instead of pruning from missing outputs', () => {
+  const context = { eventName: 'merge_group', FILTER_OUTCOME: 'failure' };
+  const checks = runDecide(checksWorkflow.decide, filterOutputs([], checksWorkflow.filters), context);
+  const desktop = runDecide(desktopWorkflow.decide, filterOutputs([], desktopWorkflow.filters), context);
+  assert.equal(checks.runEverything, 'true');
+  assert.ok(Object.values(checks.gates).every(value => value === 'true'));
+  assert.equal(desktop.gates.desktop, 'true');
 });

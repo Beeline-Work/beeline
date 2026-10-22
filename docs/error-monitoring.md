@@ -126,16 +126,18 @@ above remains independent.
 `sentry_wake_issues` stores issue metadata keyed by issue id and event type;
 retries do not re-arm an acknowledged row, and a newer occurrence updates its
 metadata. `sentry_wake_state` serializes ingestion and dispatch across server
-machines. Fatal issues and explicitly unhandled exceptions queue a private command
-for Jellybean in issues-triage immediately; later urgent issues accumulate until
-five minutes after the previous urgent command. Unhandled signals include
-`issue.isUnhandled`, `event.unhandled`, `handled=no` event tags, and exception
-mechanisms with `handled=false`. Other issues remain pending for a separate
-24-hour daily triage batch; they neither wake on arrival nor enter urgent digests.
-The daily clock starts at migration and advances only when a daily batch commits.
+machines. Every accepted issue, including handled errors, queues a private command
+for Jellybean in issues-triage immediately when no batch has committed in the
+previous five minutes. Later arrivals of any severity share that durable deadline
+and coalesce into one trailing digest. Fatal and unhandled metadata remains
+recorded without changing handled errors into urgent issues.
 The command and acknowledgement commit together. The existing background leader
-reads both durable deadlines after restart and PostgreSQL notifications re-arm it
-after arrivals. An unavailable target keeps rows pending.
+reads the durable five-minute deadline after restart and PostgreSQL notifications
+re-arm it after arrivals. Pending rows from the former daily policy use this same
+deadline, so a deployment drains that backlog without another webhook. The legacy
+`last_daily_wake_at` column is retained for schema compatibility but no longer
+controls dispatch. An unavailable target keeps rows pending. This changes only
+Sentry arrivals; the standing daily feedback sweep keeps its existing cadence.
 The server setting `BEELINE_SENTRY_TRIAGE_AGENT_ID` selects the recipient and
 defaults to Jellybean (`7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877`).
 The receiver and background worker share that setting. Set it consistently on

@@ -79,13 +79,16 @@ it('keeps the Room destination when the opener dismisses before the successful l
   expect(mocks.operation).toHaveBeenCalledTimes(1);
 });
 
-it('GH-WEB-1: pressing Retry after a refresh failure makes a new request and leaves the error page', async () => {
+it('GH-WEB-1: Back to Room leaves a failed refresh without displaying raw errors', async () => {
   mocks.operation.mockRejectedValueOnce(new Error('Repository refresh failed'));
   await loadLanding();
   expect(container.querySelector('h1')?.textContent).toBe('GitHub needs another try');
-  expect(container.textContent).toContain('Repository refresh failed');
+  expect(container.textContent).toContain('Continue connecting GitHub');
+  expect(container.textContent).toContain('Return to your Room to refresh repositories and finish setup.');
+  expect(container.textContent).not.toContain('Repository refresh failed');
+  expect(container.querySelector('button')?.textContent).toBe('Back to Room');
   await act(async () => { container.querySelector('button')!.click(); });
-  expect(mocks.operation).toHaveBeenCalledTimes(2);
+  expect(mocks.operation).toHaveBeenCalledTimes(1);
   expect(window.location.pathname).toBe('/beeline/channels');
   expect(container.querySelector('button')).toBeNull();
 });
@@ -103,12 +106,14 @@ it('hands the successful callback to the opener using Expo and returns to the sa
   expect(window.location.pathname).toBe('/beeline/chat/room-1');
 });
 
-it('shows a real GitHub failure and Retry takes the user back to their Room', async () => {
+it('shows shared recovery for a GitHub failure and returns to the saved Room', async () => {
   await persistGitHubInstallationReturnPath('/beeline/chat/room-1');
   window.history.replaceState(null, '', '/beeline/github-installation?installed=0&error=github_connection_canceled');
   await loadLanding();
   expect(container.querySelector('h1')?.textContent).toBe('GitHub needs another try');
-  expect(container.textContent).toContain('GitHub connection canceled');
+  expect(container.textContent).toContain('Continue connecting GitHub');
+  expect(container.textContent).not.toContain('GitHub connection canceled');
+  expect(container.querySelector('button')?.textContent).toBe('Back to Room');
   await act(async () => { container.querySelector('button')!.click(); });
   expect(window.location.pathname).toBe('/beeline/chat/room-1');
   expect(mocks.operation).not.toHaveBeenCalled();

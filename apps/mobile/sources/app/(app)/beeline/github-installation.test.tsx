@@ -46,18 +46,21 @@ it('returns to the saved Room after refreshing repositories',async()=>{
   expect(renderer.root.findByType('Redirect').props.href).toBe('/beeline/chat/room');
   expect(mocks.operation).toHaveBeenCalledTimes(1);
 });
-it('GH-WEB-1: Retry repeats a failed refresh and completes without a pending path',async()=>{
+it('GH-WEB-1: failed refresh offers the primary Room recovery action',async()=>{
   mocks.enabled=true;mocks.path.mockResolvedValue(null);
   mocks.operation.mockRejectedValueOnce(new Error('Repository refresh failed'));
   const renderer=await render();
   expect(renderer.root.findByType('PageHeader').props.title).toBe('GitHub needs another try');
   expect(mocks.browserComplete).not.toHaveBeenCalled();
-  await act(async()=>{renderer.root.findByType('Button').props.onPress();});
-  expect(mocks.operation).toHaveBeenCalledTimes(2);
+  const button = renderer.root.findByType('Button');
+  expect(button.props.label).toBe('Back to Room');
+  expect(button.props.variant).toBe('primary');
+  await act(async()=>{button.props.onPress();});
+  expect(mocks.operation).toHaveBeenCalledTimes(1);
   expect(renderer.root.findByType('Redirect').props.href).toBe('/beeline/channels');
-  expect(mocks.browserComplete).toHaveBeenCalledTimes(1);
+  expect(mocks.browserComplete).not.toHaveBeenCalled();
 });
-it('Retry takes a GitHub error back to the Room to start again',async()=>{
+it('Back to Room takes a GitHub error back to the Room to start again',async()=>{
   mocks.enabled=true;mocks.params={installed:'0',error:'access_denied'};
   mocks.complete.mockRejectedValueOnce(new Error('GitHub authorization was denied'));
   const renderer=await render();

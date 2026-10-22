@@ -1540,6 +1540,9 @@ export type RequestAgentGrantInput = TurnOutputAuthority &
   RoomInput & {
     readonly kind: AgentGrantKind;
     readonly target: string;
+    readonly purpose: string;
+    readonly touches?: string;
+    readonly capabilities?: string;
     readonly reason: string;
     /** Server-bound app identity for another person's connected app. */
     readonly appId?: string;

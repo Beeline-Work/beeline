@@ -12,6 +12,7 @@
       "TurnStepsLine",
       "row"
     ],
+    "components/buzz/GrantRequestCard.tsx": ["GrantRequestCard"],
     "components/buzz/AgentProfileView.tsx": ["AgentProfileView"],
     "components/buzz/AgentSignInCard.tsx": [
       "AgentSignInCard",
@@ -173,7 +174,8 @@
     "components/buzz/HullMenuTrigger.tsx": ["HullMenuTrigger"],
     "components/buzz/HullSwitch.tsx": ["HullSwitch"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
-    "components/buzz/IndexRow.tsx": ["IndexRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron"],
+    "components/buzz/IndexRow.tsx": ["IndexRow",
+      "TranscriptFactRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron"],
     "components/buzz/Ledger.tsx": [
       "Byline",
       "Container",

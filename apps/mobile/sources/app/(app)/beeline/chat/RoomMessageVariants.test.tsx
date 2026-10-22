@@ -3067,6 +3067,42 @@ describe('Room message variant components', () => {
     });
   });
 
+  it.each(['pending', 'once', 'approved', 'denied'] as const)('shows purpose, facts, folded script and %s outcome', (status) => {
+    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+    const purpose = 'Free disk space so the Android test build can finish.';
+    const card = render(<GrantRequestCard message={message({ grantRequest: {
+      agent: { pubkey: 'agent', kind: 'agent', name: 'Jellybean' }, owner, requester: owner,
+      grants: [{ grantId: 'purpose', kind: 'command', target: '/usr/bin/python3 /tmp/cleanup.py',
+        reason: 'cleanup', purpose, machine: 'squire', touches: 'Old build files', capabilities: 'Delete files',
+        status, requestedBy: owner, roomId: '22222222-2222-4222-8222-222222222222', createdAt: 1, auto: false,
+        ...(status !== 'pending' ? { decidedBy: owner, decidedAt: 1756900060 } : {}),
+        script: { path: '/tmp/cleanup.py', sha256: 'a'.repeat(64), bytes: 17, contents: 'print("cleanup")\n' },
+      }],
+    } })} viewerIsAgent={false} viewerPubkey="owner" viewerRole="owner" actionId={null} onDecision={vi.fn()} />);
+    const texts = () => card.root.findAllByType('Text').map((node: { props: { children: unknown } }) => node.props.children);
+    expect(texts()).toContain(purpose);
+    expect(texts()).toContain('python3 cleanup.py');
+    expect(texts()).toContain('Old build files');
+    expect(texts()).toContain('Delete files');
+    expect(texts()).not.toContain('/tmp/cleanup.py');
+    expect(card.root.findByProps({ testID: 'grant-purpose-ask' }).props.children).toBe('@Jellybean wants to run a script');
+    expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
+    const toggle = () => card.root.findByProps({ testID: 'grant-purpose-script-toggle' });
+    expect(toggle().props.expanded).toBe(false);
+    act(() => toggle().props.onPress());
+    expect(card.root.findByProps({ testID: 'grant-purpose-script' })).toBeDefined();
+    expect(texts()).toContain('print("cleanup")\n');
+    act(() => toggle().props.onPress());
+    expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
+    if (status === 'pending') {
+      expect(card.root.findByProps({ testID: 'grant-purpose-once' })).toBeDefined();
+    } else {
+      expect(card.root.findAllByProps({ testID: 'grant-purpose-once' })).toHaveLength(0);
+      expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.children).toMatch(
+        status === 'denied' ? /^Denied by you · \d{2}:\d{2}$/ : /^Allowed by you · \d{2}:\d{2}$/);
+    }
+  });
+
   it('shows the script an interpreter grant will run, because the command line does not (C94)', () => {
     const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
     const script = 'import os\nos.remove("/tmp/x")\n';
@@ -3105,6 +3141,8 @@ describe('Room message variant components', () => {
         onDecision={vi.fn()}
       />,
     );
+    expect(card.root.findAllByProps({ testID: 'grant-g-1-script' })).toHaveLength(0);
+    act(() => card.root.findByProps({ testID: 'grant-g-1-script-toggle' }).props.onPress());
     const body = card.root.findByProps({ testID: 'grant-g-1-script' });
     const texts = body
       .findAllByType('Text')

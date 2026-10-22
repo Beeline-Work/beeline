@@ -587,3 +587,16 @@ const styles = StyleSheet.create((theme) => {
     chevronMark: { color: hull.textMuted },
   };
 });
+
+/** Compact, wrapping facts inside a transcript card. */
+export function TranscriptFactRow({ label, value }: { label: string; value: string }) {
+  return <View style={factStyles.row}>
+    <Text style={factStyles.label}>{label}</Text>
+    <Text style={factStyles.value}>{value}</Text>
+  </View>;
+}
+const factStyles = StyleSheet.create(({ buzz }) => ({
+  row: { flexDirection: 'row', gap: buzz.space.sm, paddingVertical: buzz.space.sm, borderTopWidth: 1, borderTopColor: buzz.borderStrong },
+  label: { ...buzz.type.meta, color: buzz.ledgerQuiet },
+  value: { ...buzz.type.meta, color: buzz.textPrimary, flex: 1, textAlign: 'right' },
+}));

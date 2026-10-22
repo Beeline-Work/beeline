@@ -1,9 +1,12 @@
+import { TranscriptFactRow } from './IndexRow';
+import { ShowMoreRow } from './ShowMoreRow';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { HullDialogActions } from './HullDialog';
 import React, {
   useEffect,
   useLayoutEffect,
   useRef,
+  useState,
   type ComponentProps,
   type ReactNode,
 } from 'react';
@@ -52,6 +55,7 @@ export type TranscriptCardAction = {
   label: string;
   onPress(): void;
   primary?: boolean;
+  secondary?: boolean;
   disabled?: boolean;
   loading?: boolean;
   testID?: string;
@@ -88,9 +92,12 @@ export type TranscriptCardProps = {
   code?: ReactNode;
   codeTestID?: string;
   codePath?: string;
+  foldCode?: boolean;
+  facts?: readonly { label: string; value: string }[];
   footerNote?: ReactNode;
   footerNoteTestID?: string;
   footerNoteTone?: 'quiet' | 'failed';
+  decisionNote?: boolean;
   actions?: readonly TranscriptCardAction[];
   onHeaderPress?(): void;
   headerExpanded?: boolean;
@@ -230,9 +237,12 @@ export function TranscriptCard({
   code,
   codeTestID,
   codePath,
+  foldCode = false,
+  facts = [],
   footerNote,
   footerNoteTestID,
   footerNoteTone = 'quiet',
+  decisionNote = false,
   actions = [],
   onHeaderPress,
   headerExpanded,
@@ -241,6 +251,7 @@ export function TranscriptCard({
   dismissLabel = 'Dismiss',
   testID,
 }: TranscriptCardProps) {
+  const [codeOpen, setCodeOpen] = useState(false);
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotion();
   const cardMotion = useTranscriptCardMotion();
@@ -425,8 +436,20 @@ export function TranscriptCard({
               {body}
             </SettlingText>
           ) : null}
+          {facts.length ? <View style={[styles.detailInset, styles.facts]}>{facts.map((fact) => (
+            <TranscriptFactRow key={fact.label} label={fact.label} value={fact.value} />
+          ))}</View> : null}
           {children}
-          {code !== undefined ? (
+          {foldCode && code !== undefined ? (
+            <View style={styles.detailInset}><ShowMoreRow
+              inset="none"
+              label={codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
+              expanded={codeOpen}
+              testID={codeTestID ? `${codeTestID}-toggle` : undefined}
+              onPress={() => setCodeOpen((open) => !open)}
+            /></View>
+          ) : null}
+          {code !== undefined && (!foldCode || codeOpen) ? (
             <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>
               {codePath ? <Text style={styles.codePath}>{codePath}</Text> : null}
               <Text selectable style={styles.codeText}>
@@ -481,6 +504,7 @@ export function TranscriptCard({
                   testID={footerNoteTestID}
                   style={[
                     styles.footerNote,
+                    decisionNote && styles.decisionNote,
                     footerNoteTone === 'failed' && styles.footerNoteFailed,
                   ]}
                 >
@@ -495,7 +519,7 @@ export function TranscriptCard({
                   label: action.loading ? '…' : action.label,
                   accessibilityLabel: action.label,
                   accessibilityRole: action.accessibilityRole ?? 'button',
-                  variant: action.primary ? 'primary' : 'quiet',
+                  variant: action.primary ? 'primary' : action.secondary ? 'secondary' : 'quiet',
                   busy: action.loading,
                   disabled: action.disabled,
                   onPress: action.onPress,
@@ -735,6 +759,8 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: card.space.sm,
       paddingHorizontal: metric.side,
     },
+    detailInset: { marginHorizontal: metric.side },
+    facts: { marginTop: card.space.sm },
     bodyQuiet: { color: card.ledgerQuiet },
     code: {
       marginTop: metric.codeTop,
@@ -820,6 +846,7 @@ const styles = StyleSheet.create((theme) => {
       color: card.ledgerQuiet,
       flex: 1,
     },
+    decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textAlign: 'right' },
     footerNoteFailed: { color: card.diffRemoved },
     actions: { flexShrink: 1 },
     action: { ...card.type.body, fontSize: metric.actionSize, color: card.ledgerQuiet },

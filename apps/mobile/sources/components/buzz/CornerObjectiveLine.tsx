@@ -1,4 +1,3 @@
-import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -24,8 +23,6 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   workflow,
   onOpenWorkflow,
   otherLiveRuns = [],
-  workflowError,
-  onRetryWorkflow,
   testID = 'corner-objective-line',
 }: {
   objective?: string;
@@ -37,8 +34,6 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
   onOpenWorkflow?: (run: WorkflowRunSummaryView) => void;
   /** Every other live saved-workflow run in the corner, any workflow, beside the one named above. */
   otherLiveRuns?: readonly WorkflowRunSummaryView[];
-  workflowError?: string | null;
-  onRetryWorkflow?: () => void;
   testID?: string;
 }) {
   const line = objective?.trim();
@@ -48,7 +43,7 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
     return result;
   }, [line]);
   const run = workflow?.status === 'live' && onOpenWorkflow ? workflow : undefined;
-  if (!line && !onOpenBrief && !run && !workflowError) return null;
+  if (!line && !onOpenBrief && !run) return null;
   return (
     <View style={[styles.line, desktop && styles.desktopLine]} testID={testID}>
       {!desktop && <View style={styles.rail} testID={`${testID}-rail`} />}
@@ -72,18 +67,6 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
                   )
                 : line}
             </Text>
-          </View>
-        ) : null}
-        {workflowError ? (
-          <View testID={`${testID}-workflow-error`}>
-            <Text accessibilityRole="alert" style={styles.copy}>{workflowError}</Text>
-            <Button
-              label="Retry"
-              variant="secondary"
-              accessibilityLabel="Retry workflow"
-              onPress={onRetryWorkflow}
-              testID={`${testID}-workflow-retry`}
-            />
           </View>
         ) : null}
         {run || onOpenBrief ? (

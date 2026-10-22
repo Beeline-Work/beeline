@@ -1,3 +1,4 @@
+import { ExpectedRefusalError } from './command-refusal.js';
 import { describe, expect, it } from 'vitest';
 import {
   scheduleDisplayTitle,
@@ -11,7 +12,7 @@ describe('short schedule titles', () => {
     expect(validateScheduleTitle('  Play  downloads check ')).toBe('Play downloads check');
     expect(validateScheduleTitle(undefined)).toBeUndefined();
     for (const title of ['', ' ', 'one two three four five', 'x'.repeat(81), 7, null])
-      expect(() => validateScheduleTitle(title)).toThrow();
+      expect(() => validateScheduleTitle(title)).toThrow(ExpectedRefusalError);
   });
   it('uses workflow display words, bounded to four, or a prompt-free fallback', () => {
     expect(scheduleFallbackTitle('feedback-triage')).toBe('Feedback triage');

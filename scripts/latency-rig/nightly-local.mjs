@@ -27,6 +27,9 @@ export function assessNight({ current, baseline, commits = [], head, rerun, reru
   const text = [
     `Nightly squire emulator rig ${night}: ${verdict.pass ? 'passed' : needsRerun ? 'rerun required' : 'failed or skipped'}`,
     ...verdict.failures,
+    ...(chosen?.rows?.some((row) => row.variant?.startsWith('push-')) && chosen.pushMeasurement ? [
+      `Push measurement: ${chosen.pushMeasurement.measured}; native-response phase ${chosen.pushMeasurement.nativeResponsePhase}. Unmeasured: ${chosen.pushMeasurement.excluded}.`,
+    ] : []),
     baseline?.commit ? `PRs since last pass (${baseline.commit}): ${prs.length ? prs.map((n) => `#${n}`).join(', ') : 'none identified'}` : 'No passing baseline yet; PR regression range unavailable',
     `Measured main: ${head}`,
     `Host load recorded: ${Array.isArray(hostLoad) ? hostLoad.length : 1} observation(s); see attached report`,

@@ -236,7 +236,10 @@ for 30 seconds before collecting the warm-session matrix.
 
 Room-list entries use an on-device `input tap` on the visible fixture row;
 push entries use Android FCM tap extras on `PushNotificationActivity`, through
-the same Expo response listener as a notification tap. This excludes delivery
+the same Expo response listener as a notification tap. Reports measure Activity
+entry to the target text native frame commit; the removed native-response phase
+is absent. Foreground JS in-app notices are not measured by this push-tap case.
+This excludes delivery
 by FCM and System UI notification-shade latency. Each fixture message is a short
 single line with a unique id suffix, so five messages fit the unchanged landing.
 

@@ -7,6 +7,7 @@ import { expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const plugin = require('../../plugins/withLatencyRigNativeProbe.js');
+const pushRouting = require('../../plugins/withAndroidPushRouting.js');
 
 it('keeps one native hook and one protected receiver after repeated prebuild', async () => {
   const root = mkdtempSync(join(tmpdir(), 'beeline-native-rig-'));
@@ -25,7 +26,11 @@ it('keeps one native hook and one protected receiver after repeated prebuild', a
         join(templates, `${name}.java`));
     }
     writeFileSync(join(java, 'MainActivity.kt'), 'class MainActivity : ReactActivity() {\n fun onCreate() { super.onCreate(null) }\n}');
-    writeFileSync(join(java, 'PushNotificationActivity.kt'), 'class PushNotificationActivity {\n fun onCreate() { super.onCreate(savedInstanceState)\n NotificationManager.onNotificationResponseFromExtras(foregroundExtras) }\n}');
+    // Generate the actual shipped routing source so removed hooks cannot linger in a fixture.
+    await pushRouting({ android: { package: 'app.usebeeline' } }).mods.android.dangerous({
+      android: { package: 'app.usebeeline' },
+      modRequest: { projectRoot, platformProjectRoot },
+    });
     const manifest = join(main, 'AndroidManifest.xml');
     writeFileSync(manifest, '<manifest><application></application></manifest>');
     const run = () => plugin({}).mods.android.dangerous({
@@ -39,7 +44,7 @@ it('keeps one native hook and one protected receiver after repeated prebuild', a
     expect(activity.match(/override fun dispatchTouchEvent/g)).toHaveLength(1);
     expect(activity.match(/LatencyRigProbe.attach/g)).toHaveLength(1);
     expect(readFileSync(join(java, 'PushNotificationActivity.kt'), 'utf8').match(/LatencyRigProbe.begin/g)).toHaveLength(1);
-    expect(readFileSync(join(java, 'PushNotificationActivity.kt'), 'utf8').match(/push-native-response-start/g)).toHaveLength(1);
+    expect(readFileSync(join(java, 'PushNotificationActivity.kt'), 'utf8')).not.toContain('push-native-response-');
     const xml = readFileSync(manifest, 'utf8');
     expect(xml.match(/android:name=".LatencyRigReceiver"/g)).toHaveLength(1);
     expect(xml).toContain('android:permission="android.permission.DUMP"');

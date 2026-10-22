@@ -101,3 +101,33 @@ and audio publication for Ruby, Dr. Ruby, Ruby! and an emoji name.
 
 The earlier browser sign-in share was closed on Ruby's order. Ruby owns the live
 voice check after release; no new production browser acceptance is claimed here.
+
+### Speedy correction replay
+
+Speedy repeated VOICE-LABEL-1 with the same two gift questions and an injected
+`Dr. Ruby` label, production VoiceService/provider/runtime, disposable PGlite,
+and received local LiveKit audio. The old provider left the label in synthesis
+and the committed reply; the revised provider delivered only
+`A small ceramic planter.` in both. The partner received voiced frames in both
+runs. See [before](speedy-punctuation-before.json) and
+[after](speedy-punctuation-fixed.json).
+
+After the test and typecheck processes completed, matched-prompt first-audio
+medians were **35.50 ms before / 32.51 ms after**, with four warm-ups and ten
+measured samples per build. An earlier run overlapping validation measured
+39.78 ms / 47.22 ms; the quieter repeat resolves that timing concern without
+claiming a live-provider or physical-device latency measurement. The cleaner
+adds no stream read, provider call or speech buffer.
+
+The exact known name and handle are matched first, with regex metacharacters
+escaped. The bounded fallback anchors on the handle/item suffix and accepts
+punctuation and emoji in names, retaining the sentence-boundary guard for later
+quoted labels. Bare opening item references are still removed. Root typecheck
+and all three context/provider/runtime suites passed (205 tests).
+
+Repeat using the existing delivery fixture with its conversational reply changed
+to `Dr. Ruby (@ruby) [#beeline/item/previous]: A small ceramic planter.` and the
+agent name set to `Dr. Ruby`. Use the previous reviewed provider for baseline
+and this provider for the fixed run. Run two gift questions, then the same prompt
+for the timing samples as described above. No new production browser acceptance
+is claimed. Independent review is required because Speedy authored this correction.

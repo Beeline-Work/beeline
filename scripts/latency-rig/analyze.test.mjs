@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { percentile, serialDepth, summarize, summarizeSample } from './analyze.mjs';
+import { percentile, serialDepth, summarize, summarizeSample, markdown } from './analyze.mjs';
 import { checkRoutes, routeForFile } from './check-routes.mjs';
 
 test('counts independent network requests at one RTT depth', () => {
@@ -86,4 +86,12 @@ test('route inventory excludes tests, layouts and components', async () => {
   assert.equal(routeForFile('(app)/beeline/chat/_chat-surface.tsx'), null);
   assert.equal(routeForFile('(app)/beeline/chat/RoomMessageVariants.tsx'), null);
   await assert.rejects(checkRoutes(['(app)/beeline/channels.tsx'], []), /missing=\/beeline\/channels/);
+});
+
+test('push verdict names measured endpoints and absent native-response phase', () => {
+  const report = summarize([{ kind: 'route', name: '/beeline/chat/[channelId]',
+    variant: 'push-1', startMs: 0, paintMs: 100 }], [], []);
+  assert.equal(report.pushMeasurement.nativeResponsePhase, 'absent');
+  assert.match(markdown(report), /Activity entry to target text native frame commit; native-response phase absent/);
+  assert.match(markdown(report), /foreground JS in-app notice are unmeasured/);
 });

@@ -153,7 +153,11 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
   const undersampledCases = rows.filter((row) => row.samples < minimumSamples)
     .map(({ kind, name, variant, samples }) => ({ kind, name, variant, samples, minimumSamples }));
   const clockCalibrated = rows.length > 0 && rows.every((row) => row.clockCalibrated);
-  return { rows, missingArrivalCases, missingRoutes, missingRouteVariants, missingInteractions, undersampledCases,
+  return { pushMeasurement: {
+    measured: 'Push Activity entry to target text native frame commit',
+    nativeResponsePhase: 'absent',
+    excluded: 'FCM delivery, notification shade, and foreground JS in-app notice',
+  }, rows, missingArrivalCases, missingRoutes, missingRouteVariants, missingInteractions, undersampledCases,
     clockCalibrated, maxClockUncertaintyMs: Math.max(0, ...rows.map((row) => row.maxClockUncertaintyMs)),
     complete: missingRouteVariants.length === 0 && missingInteractions.length === 0 && missingArrivalCases.length === 0 && undersampledCases.length === 0,
     timingPass: rows.every((row) => row.timingPass),
@@ -169,6 +173,9 @@ export function markdown(report, metadata = {}) {
     `- Network: ${metadata.network ?? 'unknown'}`,
     `- Clock calibration: ${report.clockCalibrated ? 'verified' : 'UNVERIFIED'}; maximum uncertainty ${report.maxClockUncertaintyMs} ms`,
     `- Samples: ${report.rows.reduce((sum, row) => sum + row.samples, 0)}`, '',
+    ...(report.rows.some((row) => row.variant.startsWith('push-')) ? [
+      '- Push measurement: Activity entry to target text native frame commit; native-response phase absent. FCM delivery, notification shade, and foreground JS in-app notice are unmeasured.', '',
+    ] : []),
     ...(metadata.note ? [metadata.note, ''] : []),
     '| Kind | Screen or action | Variant | n | p50 | p95 | p99 | Budget | Prepaint HTTP max/depth | WS frames/messages | Payload bytes max | SQL max/depth/wait | Result |',
     '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|',

@@ -177,3 +177,12 @@ the query and emits sample run IDs; compare with a later sample after jobs
 have actually completed. A moving historical median is context, not causal
 proof of the overflow's effect. Actual PR job evidence and the after sample
 must be reported once CI has run on this workflow.
+
+PR #2809's [SHARED PACKAGE TESTS job](https://github.com/Beeline-Work/beeline/actions/runs/39844383372/job/120053669802)
+passed on `squire-ci-2-dde4bbc6-e184-4e8f-9fb5-028d71b98f73`.
+The after sample (19:58:21 UTC) still showed queued runs (13), queued Checks
+(10), and median successful Checks wall-clock seconds (4499) over runs (30).
+This initial sample demonstrates operation, not a queue-time improvement:
+overflow routing is only present on this PR until it merges. DEAD CODE on
+the first head identified missing Knip operator entry points; they are now
+declared explicitly rather than added to the unused-code baseline.

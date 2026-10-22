@@ -46,6 +46,8 @@
         "scripts/prove-helper-migration-update.mjs",
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
+        // The host supervisor and operator runbook invoke these by path.
+        "scripts/squire-ci/{supervisor,metrics,disable}.mjs",
       ],
       "project": [
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",

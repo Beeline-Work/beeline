@@ -49,6 +49,8 @@ Rooms, Workspaces or emails behind it.
 | `toolResults` | Stub results by tool name. Any other call gets `{"ok":true}`. |
 | `pass` | The pass rule. |
 
+Set `session.freeAgent` to `true` to replay Beebee with the current server-owned repository-intent guide, rather than a copied fixture.
+
 The runner defaults the agent to `Ruby` on the Claude harness, so the session
 prompt is the system prompt. Set `session.agentCommand` to `codex-acp` to send it
 in the turn instead.

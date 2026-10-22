@@ -355,19 +355,6 @@
     "components/buzz/VoicePreviewPlayer.native.tsx": ["VoicePreviewPlayer"],
     "components/buzz/VoicePreviewPlayer.tsx": ["VoicePreviewPlayer"],
     "components/buzz/WalletQr.tsx": ["WalletQr"],
-    "components/buzz/welcome-brand-marks.ts": [],
-    "components/buzz/WelcomeCards.tsx": [
-      "CornerScene",
-      "ModelScene",
-      "RoomScene",
-      "SampleEntry",
-      "ToolsScene",
-      "WelcomeCards",
-      "WelcomeCardsContent",
-      "footer",
-      "illustration"
-    ],
-    "components/buzz/WelcomeToolMark.tsx": ["WelcomeToolMark"],
     "components/buzz/WorkflowGlyph.tsx": ["WorkflowGlyph"],
     "components/buzz/WorkflowRunLine.tsx": [
       "ASSIGNEE_MARK",
@@ -386,7 +373,6 @@
       "default"
     ],
     "components/buzz/WritePermissionOutcome.tsx": ["WritePermissionOutcome"],
-    "components/buzz/YouStep.tsx": ["YouStep"],
     "components/buzz/ZoomableArtifactImage.tsx": ["ZoomableArtifactImage"],
     "components/desktop-shell-policy.ts": [],
     "components/DesktopDeepLinkBridge.tsx": ["DesktopDeepLinkBridge"],

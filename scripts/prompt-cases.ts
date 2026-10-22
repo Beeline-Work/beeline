@@ -17,6 +17,7 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import type * as Skills from '../apps/body/src/beeline-skill.js';
 import type * as Assembly from '../apps/body/src/prompt-assembly.js';
 import type * as ToolSurface from '../apps/body/src/minimal-tool-surface.js';
@@ -55,11 +56,21 @@ interface PromptSource {
   readonly assembly: typeof Assembly;
   readonly tools: typeof ToolSurface;
   readonly skills: typeof Skills;
+  readonly freeAgentRepositoryGuide: string;
 }
 
 export async function loadSource(root: string): Promise<PromptSource> {
   const load = (file: string) => import(pathToFileURL(join(root, 'apps', 'body', 'src', file)).href);
-  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts'), skills: await load('beeline-skill.ts') };
+  // Read the current literal without importing the server's runtime dependency graph.
+  const file = join(root, 'apps/server/src/free-agents.ts');
+  const parsed = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const declaration = parsed.statements.flatMap(statement => ts.isVariableStatement(statement)
+    ? [...statement.declarationList.declarations] : [])
+    .find(node => ts.isIdentifier(node.name) && node.name.text === 'FREE_AGENT_REPOSITORY_GUIDE');
+  const guide = declaration?.initializer;
+  if (!guide || !(ts.isNoSubstitutionTemplateLiteral(guide) || ts.isStringLiteral(guide)))
+    throw new Error('FREE_AGENT_REPOSITORY_GUIDE must be a literal for prompt replay');
+  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts'), skills: await load('beeline-skill.ts'), freeAgentRepositoryGuide: guide.text };
 }
 
 const NATIVE_TOOLS: Record<(typeof NATIVE_TOOL_NAMES)[number], ToolDefinition> = {
@@ -125,6 +136,10 @@ function assemble(source: PromptSource, testCase: PromptCase, withMemory = true)
     agentCommand: 'claude-agent-acp',
     memoryMaxBytes: FIXED_MEMORY_MAX_BYTES,
     ...testCase.session,
+    ...(testCase.session?.freeAgent === true ? {
+      agentName: 'Beebee',
+      soul: { name: 'Beebee', instructions: source.freeAgentRepositoryGuide },
+    } : {}),
     brief,
     surface: testCase.place,
   } as Assembly.SessionPromptContext);

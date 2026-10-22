@@ -47,12 +47,17 @@ it.each(['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const)(
     await client.callback('success');
     await client.signedIn('private-session');
     await client.signedIn('private-session');
+    await client.activation('workspace_created', 'private-session');
+    await client.activation('first_message_sent', 'private-session');
+    await client.activation('first_message_sent', 'private-session');
     expect(send.mock.calls.map((c) => (c[0] as SigninFunnelEvent).event)).toEqual([
       'app_opened',
       'signin_screen_shown',
       'provider_tapped',
       'callback_result',
       'signed_in',
+      'workspace_created',
+      'first_message_sent',
     ]);
     for (const call of send.mock.calls) {
       const event = call[0] as SigninFunnelEvent;
@@ -133,4 +138,19 @@ it('rejects corrupted stored context containing personal fields before any callb
   await client.callback('success');
   await client.signedIn('session');
   expect(send).not.toHaveBeenCalled();
+});
+
+it('keeps activation attribution after sign-in across a later session and sends each milestone once', async () => {
+  const { client, input, send, advance } = setup();
+  const attempt = await client.begin('google');
+  await client.signedIn('session');
+  advance();
+  const reloaded = createSigninFunnelClient(input);
+  await reloaded.activation('workspace_created', 'session');
+  await reloaded.activation('first_message_sent', 'session');
+  const again = createSigninFunnelClient(input);
+  await again.activation('first_message_sent', 'session');
+  const milestones = send.mock.calls.map(([event]) => event).filter(event => ['workspace_created', 'first_message_sent'].includes(event.event));
+  expect(milestones.map(event => event.event)).toEqual(['workspace_created', 'first_message_sent']);
+  expect(milestones.every(event => event.attemptId === attempt?.attemptId)).toBe(true);
 });

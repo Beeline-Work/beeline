@@ -33,17 +33,13 @@ import {
   loadPendingGitHubIdentity,
 } from '@/auth/buzz-identity-storage';
 import {
-  clearOnboardingFaceStep,
   clearOnboardingNotice,
   isSignInInFlight,
   markSignInInFlight,
   nextOnboardingStatus,
   noticeForAuthError,
-  publishOnboardingFaceStep,
   publishOnboardingNotice,
-  subscribeToOnboardingFaceStep,
   subscribeToOnboardingNotices,
-  type OnboardingFaceStep,
   type OnboardingNotice,
   type OnboardingStatus,
 } from '@/auth/onboarding-state';
@@ -73,7 +69,6 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
 import { GitHubAccountMismatchError, monolithSession } from '@/auth/monolith-session';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
-import { YouStep } from '@/components/buzz/YouStep';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { isTauri } from '@/utils/isTauri';
 import { accountSignInAvailable } from '@/auth/account-sign-in-platform';
@@ -145,38 +140,12 @@ export default function BuzzOnboarding() {
     '',
     namingIdentity?.publicKey ?? null,
   );
-  // The You step (handle + face): published once the monolith identity exists,
-  // cleared by the crossfade into the app. `face` is a face already on record.
-  const [faceStep, setFaceStep] = useState<OnboardingFaceStep | null>(null);
   const loading = loadingAction !== null;
 
-  // The You step reaches whichever onboarding screen is on the page, not only
-  // the one whose press started the sign-in — the GitHub callback deep link
-  // routes a second one over it before the exchange comes back.
-  useEffect(() => subscribeToOnboardingFaceStep(setFaceStep), []);
-
-  /**
-   * After a monolith sign-in the identity exists; before the app opens the
-   * person sees their GitHub handle and chooses their face. A person who already
-   * chose (a returning sign-in on a new device) goes straight in — both live
-   * in Settings.
-   */
-  const enterAfterMonolithSignIn = async (identityId: string | undefined) => {
+  const enterAfterMonolithSignIn = async (_identityId: string | undefined) => {
     if (await readRepositoryOnboardingEligibility())
       await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
-    const seed = identityId || (await monolithSession.identityId().catch(() => null)) || '';
-    const hosted = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
-    if (hosted?.face) {
-      router.replace('/beeline/channels');
-      return;
-    }
-    publishOnboardingFaceStep({
-      seed,
-      face: null,
-      name: hosted?.name ?? '',
-      handle: hosted?.handle,
-      provider: hosted?.providers?.some((link) => link.provider === 'google') ? 'google' : 'github',
-    });
+    router.replace('/beeline/channels');
   };
 
   const restorePendingBind = async (): Promise<boolean> => {
@@ -347,7 +316,7 @@ export default function BuzzOnboarding() {
       // A press already running in this process owns its own callback. This
       // screen is the one expo-router routed over it when that callback
       // arrived: it must neither spend the one-use ticket a second time nor
-      // race the press into the app past the ceremony it is about to publish.
+      // race the press while it completes sign-in.
       if (isSignInInFlight()) return;
       const googleTicket = await resumeGoogleSignIn(initialUrl);
       if (googleTicket) {
@@ -577,34 +546,6 @@ export default function BuzzOnboarding() {
   const signInLabel = notice?.status === 'offline' ? 'Try again' : 'Continue with GitHub';
   const desktopAuthSurface = isTauri();
 
-  if (faceStep) {
-    return (
-      <View
-        style={[styles.faceContainer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-        testID="onboarding-face-ceremony"
-      >
-        <YouStep
-          currentFace={faceStep.face}
-          handle={faceStep.handle}
-          name={faceStep.name}
-          editableIdentity
-          provider={faceStep.provider}
-          onConfirm={async ({ face, name, handle }) => {
-            if (name !== undefined) await monolithPhoneOperation('updatePersonProfile', { name });
-            if (handle !== undefined)
-              await monolithPhoneOperation('claimManagedHandle', { handle });
-            await monolithPhoneOperation('updateIdentityFace', { faceId: face });
-          }}
-          onEntered={() => {
-            clearOnboardingFaceStep();
-            router.replace('/beeline/channels');
-          }}
-          seed={faceStep.seed}
-        />
-      </View>
-    );
-  }
-
   if (namingIdentity) {
     const normalized = normalizeManagedHandle(nameInput);
     return (
@@ -751,7 +692,6 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.bgVoid,
     },
     brandSurface: { alignItems: 'center', marginBottom: groknight.space.xl },
-    faceContainer: { flex: 1, backgroundColor: groknight.bgVoid },
     desktopBrandSurface: { marginBottom: groknight.space.xl },
     title: {
       // Canonical brand family (theme prose voice, Space Grotesk) — the login

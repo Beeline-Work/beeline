@@ -294,6 +294,8 @@ export class MonolithRigTransport {
         code,
       );
     }
+    if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
+      void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
     if (response.status === 204) return undefined;
     return response.json();
   }

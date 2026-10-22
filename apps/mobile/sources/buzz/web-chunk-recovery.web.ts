@@ -3,6 +3,34 @@ import { flushActiveTextDrafts } from './text-draft-store';
 const RETRY_KEY = 'beeline.web-chunk-reload.v1';
 const CHUNK_PATH = /\/_expo\/static\/js\/[^\s"'<>)]*\.js(?:[?#][^\s"'<>)]*)?/;
 let recovering = false;
+const recognizedErrors = new WeakSet<object>();
+
+// Only the deferred boot scripts identify an export; lazy scripts vary as a tab is used.
+function exportScripts(page: Document): string {
+  return [...page.querySelectorAll<HTMLScriptElement>('script[src][defer]')]
+    .map((script) => script.getAttribute('src') ?? '')
+    .filter((src) => CHUNK_PATH.test(src)).sort().join('\n');
+}
+
+async function reloadNewExport(): Promise<void> {
+  try {
+    const current = exportScripts(document);
+    if (!current) return;
+    const response = await fetch(window.location.href, { cache: 'no-store', credentials: 'same-origin' });
+    if (!response.ok) return;
+    const latest = exportScripts(new DOMParser().parseFromString(await response.text(), 'text/html'));
+    // A changed export is evidence that reloading can help. A broken current export
+    // must not keep reloading, even if its failed lazy chunk changes.
+    if (!latest || latest === current || window.sessionStorage.getItem(RETRY_KEY) === latest) return;
+    window.sessionStorage.setItem(RETRY_KEY, latest);
+    await flushActiveTextDrafts();
+    window.location.reload();
+  } catch {
+    // Offline or blocked storage: leave the current page and its draft intact.
+  } finally {
+    recovering = false;
+  }
+}
 
 /** Match only Expo JavaScript assets, never unrelated application syntax errors. */
 function isWebChunkFailure(value: unknown): boolean {
@@ -14,20 +42,13 @@ function isWebChunkFailure(value: unknown): boolean {
       CHUNK_PATH.test(error.message ?? ''));
 }
 
-/** A session-wide marker also stops loops when successive releases are both broken. */
+/** Retry only when the host offers a different, not-yet-retried export. */
 export function recoverWebChunk(value: unknown): boolean {
+  if (value && typeof value === 'object' && recognizedErrors.has(value)) return true;
   if (!isWebChunkFailure(value)) return false;
   if (recovering) return true;
-  try {
-    if (window.sessionStorage.getItem(RETRY_KEY)) return true;
-    window.sessionStorage.setItem(RETRY_KEY, '1');
-  } catch {
-    // Without a durable marker, a reload cannot be made safe.
-    return true;
-  }
   recovering = true;
-  // Await pending composer saves rather than relying on asynchronous pagehide work.
-  void flushActiveTextDrafts().then(() => window.location.reload());
+  void reloadNewExport();
   return true;
 }
 
@@ -36,7 +57,12 @@ export function installWebChunkRecovery(): void {
   window.addEventListener('error', (event) => {
     const target = event.target;
     const failure = target instanceof HTMLScriptElement ? { request: target.src } : event;
-    if (recoverWebChunk(failure)) event.preventDefault();
+    if (recoverWebChunk(failure)) {
+      // Sentry's RN integration rewrites frame URLs before beforeSend. Keep the
+      // original Error identity from this narrowly matched browser event.
+      if (event.error && typeof event.error === 'object') recognizedErrors.add(event.error);
+      event.preventDefault();
+    }
   }, true);
   window.addEventListener('unhandledrejection', (event) => {
     if (recoverWebChunk(event.reason)) event.preventDefault();

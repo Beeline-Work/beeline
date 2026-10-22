@@ -254,3 +254,47 @@ and native dependencies, changes no runtime pin and needs no new store binary;
 mobile delivery can use the normal OTA release path. The private dashboard
 frontend and production screenshot require its separately accessible repository
 and approved store configuration.
+
+## Free-agent activation and repository linking
+
+The people funnel inserts `free_agent_messaged`, `free_agent_replied`, and
+`repository_linked` immediately after `workspace`. The agent funnel and original
+stage counts/timings remain unchanged. Each new stage is a distinct-person
+milestone over the same eligible human cohort and platform observations as Signup.
+Their denominator/`previousStage` is Workspace; they are parallel milestones,
+not a claim that linking requires a free-agent reply or that paired helpers require
+linking. In particular, do not interpret adjacent bars as conditional conversion.
+
+- `free_agent_messaged`: retained ordinary human source messages addressed by an
+  input command to a `free_agents` row owned by their author. This includes DM,
+  tagged and solo-agent Room dispatches, including pending commands. It excludes
+  messages to another person's agent, owned helpers not provisioned by the free-agent
+  service, system/card messages, deleted messages and fixture Workspaces.
+- `free_agent_replied`: those conversations with a complete command whose result
+  is a retained ordinary message from that person's free agent in a production
+  Room. Drafts, working/cancelled commands and completions without a result message
+  do not count. Free-agent removal does not erase a retained milestone, subject to
+  the existing hidden-identity cohort exclusions. These lifetime reconstructions
+  depend on retained message and command history.
+- `repository_linked`: distinct eligible humans in `repository_link_successes`,
+  restricted to production Workspaces. The record retains only human ID, Workspace
+  ID and first-success timestamp per human/Workspace. Workspace scope prevents a
+  fixture's first success masking the person's later production success. Repeated
+  links and multiple Workspaces count each human once. Unlinking does not undo a
+  success; Workspace deletion cascades its records. No content or repository name
+  is stored or returned.
+
+Successful installed-GitHub bindings through `setRoomRepository`, repository-card
+link/create (which calls that same path), and `createRoom` with a repository write
+this record atomically with the binding. Failed authorization, inventory refresh,
+local/unverified bindings and inherited corner bindings do not record successes.
+There is **no historical backfill**. The migration saves the collection start in
+`operator_metric_epochs` once; later migrations preserve it. The stage's `label`
+is **Linked a repository (since YYYY-MM-DD)** using that UTC deployment date.
+Before deployment there is no measured historical linker count, not a measured
+zero. Both free-agent labels and this dated label are supplied in the response;
+new stages have null/unmeasured timing until a timing definition is approved.
+
+Server-only delivery precedes the frontend change in `Beeline-Work/beeline-dashboard`.
+The frontend must render these labels and stages with its existing bar style once
+repository App access is granted; that change and its screenshot are separate work.

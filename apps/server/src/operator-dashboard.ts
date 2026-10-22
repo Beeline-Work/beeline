@@ -129,6 +129,34 @@ SELECT 'agents' kind, count(*) signup, count(*) FILTER(WHERE workspace) workspac
   count(*) FILTER(WHERE workspace AND paired AND reply AND corner AND merged) merged
 FROM agent_steps`;
 
+// Command provenance identifies the addressed free agent without inspecting content.
+const ACTIVATION_SQL = `WITH ${COHORT_SQL}, eligible AS (
+  SELECT i.id FROM identities i JOIN production_identities pi ON pi.id=i.id
+  WHERE i.kind='human' AND ($1::boolean
+    OR EXISTS(SELECT 1 FROM push_devices d WHERE d.identity_id=i.id AND d.platform=ANY($2::text[]))
+    OR EXISTS(SELECT 1 FROM device_update_receipts d WHERE d.identity_id=i.id AND d.receipt->>'platform'=ANY($2::text[])))
+), conversations AS (
+  SELECT DISTINCT f.owner_id, c.result_message_id, c.state
+  FROM free_agents f JOIN production_identities ai ON ai.id=f.agent_id
+  JOIN production_workspaces fw ON fw.id=f.workspace_id
+  JOIN eligible e ON e.id=f.owner_id
+  JOIN agent_commands c ON c.agent_id=f.agent_id AND c.action='input'
+  JOIN messages m ON m.id=c.source_message_id AND m.author_id=f.owner_id
+  JOIN rooms r ON r.id=m.room_id JOIN production_workspaces w ON w.id=r.workspace_id
+  WHERE m.presentation='message' AND m.deleted_at IS NULL
+), replied AS (
+  SELECT DISTINCT c.owner_id FROM conversations c
+  JOIN messages reply ON reply.id=c.result_message_id
+  JOIN free_agents f ON f.agent_id=reply.author_id AND f.owner_id=c.owner_id
+  JOIN rooms r ON r.id=reply.room_id JOIN production_workspaces w ON w.id=r.workspace_id
+  WHERE c.state='complete' AND reply.presentation='message' AND reply.deleted_at IS NULL
+)
+SELECT (SELECT count(DISTINCT owner_id) FROM conversations) free_agent_messaged,
+  (SELECT count(*) FROM replied) free_agent_replied,
+  (SELECT count(DISTINCT l.identity_id) FROM repository_link_successes l
+    JOIN eligible e ON e.id=l.identity_id JOIN production_workspaces w ON w.id=l.workspace_id) repository_linked,
+  (SELECT started_at FROM operator_metric_epochs WHERE metric='repository_link') repository_link_started_at`;
+
 const FUNNEL_TIME_SQL = `WITH ${COHORT_SQL}, eligible AS (
   SELECT i.id, i.created_at FROM identities i JOIN production_identities pi ON pi.id=i.id WHERE i.kind='human' AND (
     $1::boolean OR EXISTS(SELECT 1 FROM push_devices d WHERE d.identity_id=i.id AND d.platform=ANY($2::text[]))
@@ -203,6 +231,14 @@ export async function dashboardUsage(
   const rows = (
     await database.query<CountRow & { kind: 'people' | 'agents' }>(FUNNEL_SQL, [all, platforms])
   ).rows;
+  const activation = (
+    await database.query<{
+      free_agent_messaged: string;
+      free_agent_replied: string;
+      repository_linked: string;
+      repository_link_started_at: Date | string;
+    }>(ACTIVATION_SQL, [all, platforms])
+  ).rows[0];
   const timeRows = (
     await database
       .query<{
@@ -215,7 +251,7 @@ export async function dashboardUsage(
   ).rows;
   const stages = (kind: 'people' | 'agents') => {
     const row = rows.find((entry) => entry.kind === kind);
-    return DASHBOARD_STAGES.map((stage, index) => {
+    const legacy = DASHBOARD_STAGES.map((stage, index) => {
       const timing = timeRows.find((entry) => entry.kind === kind && entry.stage === stage);
       const measured = number(timing?.total) >= MIN_COHORT;
       return {
@@ -227,6 +263,31 @@ export async function dashboardUsage(
         timeToStepState: measured ? ('measured' as const) : ('unmeasured' as const),
       };
     });
+    if (kind === 'agents') return legacy;
+    const newStages = [
+      {
+        stage: 'free_agent_messaged',
+        label: 'Messaged their free agent',
+        count: measuredCount(activation?.free_agent_messaged),
+      },
+      {
+        stage: 'free_agent_replied',
+        label: 'Free agent replied',
+        count: measuredCount(activation?.free_agent_replied),
+      },
+      {
+        stage: 'repository_linked',
+        label: `Linked a repository (since ${new Date(activation!.repository_link_started_at).toISOString().slice(0, 10)})`,
+        count: measuredCount(activation?.repository_linked),
+      },
+    ].map((entry) => ({
+      ...entry,
+      previousStage: 'workspace',
+      denominator: measuredCount(row?.workspace),
+      medianTimeToStepMs: null,
+      timeToStepState: 'unmeasured' as const,
+    }));
+    return [...legacy.slice(0, 2), ...newStages, ...legacy.slice(2)];
   };
   return {
     state: 'measured' as const,

@@ -982,9 +982,10 @@ async function queueReviewerCommand(
     )
   ).rows[0];
   const context = (await db.query<{ context: unknown }>(
-    `SELECT jsonb_build_object('headSha',lifecycle->'pr'->>'headSha',
+    `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
+       THEN jsonb_build_object('headSha',lifecycle->'pr'->>'headSha',
        'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
-       'checks',${reviewChecksSql}) context
+       'checks',${reviewChecksSql}) ELSE NULL END context
      FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0],
   )).rows[0]?.context;
   const prior = (await db.query<{ text: string }>(
@@ -1004,7 +1005,7 @@ async function queueReviewerCommand(
         prior ? `Prior reviewer verdict and evidence (historical context):\n${prior}` : ''].filter(Boolean).join('\n'),
     });
     if (command) await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1',
-      [command.id, JSON.stringify(context)]);
+      [command.id, context ? JSON.stringify(context) : null]);
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { command };
   } catch (error) {

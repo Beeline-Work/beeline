@@ -257,3 +257,42 @@ it('recognizes issue flags and both Sentry handled-tag encodings without treatin
     {issue_id:'804',urgent:true},{issue_id:'805',urgent:false},
   ]);
 });
+
+it('Reproduction SENTRY-ALERT-WAKE: signed alerts suppress repeats across event types but wake regressions and level changes', async () => {
+  await fixture();
+  const alert = (count: number, level = 'error') => ({action:'triggered',data:{event:{
+    issue_id:'7797705387',title:'Alert repeat proof',level,count,
+    datetime:`2026-10-22T16:${String(count).padStart(2,'0')}:00Z`,
+  }}});
+  await post(alert(1),'event_alert');
+  expect((await commands()).rowCount).toBe(1);
+  const prompt = (await commands()).rows[0]!.private_payload.text;
+  expect(prompt).toContain('Post one short visible summary line');
+  expect(prompt).toContain('Sentry short ID');
+  expect(prompt).toContain('dismissed, existing corner, or new corner');
+  await db.query(`UPDATE sentry_wake_state SET last_wake_at=now()-interval '5 minutes'`);
+  await post(alert(2),'event_alert');
+  const unresolved = issue('7797705387','unresolved','ongoing');
+  unresolved.data.issue.level = 'error';
+  unresolved.data.issue.lastSeen = '2026-10-22T16:03:00Z';
+  await post(unresolved);
+  await flushSentryWakes(db);
+  expect((await commands()).rowCount).toBe(1);
+  expect(await nextSentryWakeAt(db)).toBeNull();
+  const regression = issue('7797705387','regressed');
+  regression.data.issue.level = 'error';
+  regression.data.issue.lastSeen = '2026-10-22T16:04:00Z';
+  await post(regression);
+  expect((await commands()).rowCount).toBe(2);
+  await db.query(`UPDATE sentry_wake_state SET last_wake_at=now()-interval '5 minutes'`);
+  await post(regression);
+  expect((await commands()).rowCount).toBe(2);
+  await post(alert(5,'fatal'),'event_alert');
+  expect((await commands()).rowCount).toBe(3);
+  await db.query(`UPDATE sentry_wake_state SET last_wake_at=now()-interval '5 minutes'`);
+  await post(alert(6,'fatal'),'event_alert');
+  expect((await commands()).rowCount).toBe(3);
+  await db.query(`UPDATE sentry_wake_issues SET last_digested_at=now()-interval '6 hours'`);
+  await post(alert(7,'fatal'),'event_alert');
+  expect((await commands()).rowCount).toBe(4);
+});

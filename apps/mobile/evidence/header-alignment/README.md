@@ -28,6 +28,12 @@ The native fixture entry is `scripts/header-alignment-proof/native.tsx`. Generat
 
 ## Validation and scope
 
-Root typecheck, the shared UI component scanner (including comparison with origin/main), all 29 UI policy tests, all 106 affected component/route tests and both design lints pass locally. A broader mobile unit run was started but interrupted before its final summary; its completion is not claimed. CI remains the merge authority. The first-party mobile UI policy prerequisite from PR #2785 is included so the existing onboarding/lifecycle violations do not mask this change. No new policy exception is added. The separate onboarding audit corner owns the broader onboarding migration.
+Root typecheck, the shared UI component scanner (including comparison with origin/main), all 29 UI policy tests, all 106 affected component/route tests and both design lints pass locally. The complete mobile run and its local fingerprint limitation are recorded below. CI remains the merge authority. The first-party mobile UI policy prerequisite from PR #2785 is included so the existing onboarding/lifecycle violations do not mask this change. No new policy exception is added. The separate onboarding audit corner owns the broader onboarding migration.
 
 The older `ui-alignment-proof/build.mjs` was also attempted for actual Settings/sheet route captures; its existing shims no longer satisfy native TurboModuleRegistry and identity exports. The focused fixture is the working stand-in, and that older harness is unchanged.
+
+## Mobile suite fixture repair
+
+The mobile CI failure exposed six hand-written theme mocks without the new sectionLabel/sectionCount roles. The fixtures now include those roles, and the Members/roster target assertions check the actual 44px boxes rather than the retired hit-slop geometry. All 129 tests in the six affected files pass locally, along with root typecheck.
+
+The complete local mobile run covered 601 files: 596 passed, four skipped and one failed (nativeFingerprint.test.ts). Its test totals were 4,859 passed, five skipped and one failed. The remaining failure is a local native stamp mismatch; it persists after moving the generated Android proof project out of the app and when rechecked with Node 22. CI passed that same fingerprint test on the preceding head. Native configuration and runtime pins are unchanged; the local fingerprint issue is recorded rather than hidden or fixed through an unrelated runtime bump.

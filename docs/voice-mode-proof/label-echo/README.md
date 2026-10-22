@@ -78,3 +78,26 @@ proof does not claim production browser acceptance.
 Workspace preparation, root typecheck and the context/provider/runtime suites
 passed (186 tests). The added prefix edge cases and two-turn regression passed
 in a final focused run (7 tests). No self-review or merge approval is claimed.
+
+## Punctuated speaker regression
+
+VOICE-LABEL-1 repeated with `Dr. Ruby (@ruby) [#beeline/item/previous]: A small ceramic planter.`
+on the pre-revision head `5424d4878`. Both provider and two-turn runtime tests
+failed: synthesis and transcript retained the label. The same isolated PGlite,
+VoiceService, production provider/runtime and local RTC path now synthesizes and
+commits only `A small ceramic planter.`; the partner received voiced audio frames.
+See [punctuation-before.json](punctuation-before.json) and
+[punctuation-fixed.json](punctuation-fixed.json).
+
+Matched prompt first-audio medians were **38.04 ms before / 31.80 ms after**
+(four warm-ups and ten measured samples, controlled providers). This comparison
+shows no observed increase, but does not measure live provider or physical-device
+latency. The cleaner uses the existing collected-response boundary.
+
+Regressions cover titles, exclamation marks, emoji, bracketed names, exact known
+names containing sentence punctuation, token-split prefixes, and later quoted
+labels that must remain intact. Runtime tests verify synthesis, transcript writes
+and audio publication for Ruby, Dr. Ruby, Ruby! and an emoji name.
+
+The earlier browser sign-in share was closed on Ruby's order. Ruby owns the live
+voice check after release; no new production browser acceptance is claimed here.

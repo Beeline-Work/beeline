@@ -8,10 +8,16 @@ import { namedVoiceTarget } from './voice-room-runtime.js';
 describe('voice providers', () => {
   it.each([
     ['Ruby (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['Ruby! (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['🌻 Ruby (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['[Ruby] (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
+    ['Hello. Dr. Ruby (@ruby) [#beeline/item/abc]: quoted.', 'Hello. Dr. Ruby (@ruby) [#beeline/item/abc]: quoted.'],
     ['Ruby Rose (@ruby) [#beeline/item/abc]: Hello.', 'Hello.'],
     ['[#beeline/item/abc] Hello.', 'Hello.'],
     ['[#beeline/item/abc]: [#beeline/item/def]: Hello.', 'Hello.'],
     ['Hello. Ruby (@ruby) [#beeline/item/abc]: quoted.', 'Hello. Ruby (@ruby) [#beeline/item/abc]: quoted.'],
+    ['She said “Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.”', 'She said “Dr. Ruby (@ruby) [#beeline/item/abc]: Hello.”'],
     ['Ruby: Hello.', 'Ruby: Hello.'],
   ])('cleans only the opening transcript prefix: %s', async (content, expected) => {
     // Split inside the prefix: provider token boundaries must not affect speech.
@@ -20,6 +26,15 @@ describe('voice providers', () => {
     const reply = await brain.answer({ id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' },
       [], () => {}, new AbortController().signal);
     expect(reply.text).toBe(expected);
+  });
+
+  it.each(['Dr. Ruby', 'Ruby!', '🌻 Ruby', '[Ruby]', 'Hello. Ruby'])('cleans the exact known name: %s', async (name) => {
+    const content = `${name} (@ruby) [#beeline/item/abc]: Hello.`;
+    const brain = new OpenRouterVoiceBrain('test', async () => new Response('data: ' +
+      JSON.stringify({ choices: [{ delta: { content } }] }) + '\n\n'));
+    const reply = await brain.answer({ id: 'a', name, handle: 'ruby', soul: '', voice: 'luna' },
+      [], () => {}, new AbortController().signal);
+    expect(reply.text).toBe('Hello.');
   });
 
   it('configures Aura speech', () => {

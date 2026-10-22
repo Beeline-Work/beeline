@@ -190,9 +190,9 @@ function conversationService(humans = 2) {
   return { service, speech };
 }
 
-it('VOICE-LABEL-1: two voice turns strip echoed labels before synthesis and transcript writes', async () => {
+it.each(['Ruby', 'Dr. Ruby', 'Ruby!', '🌻 Ruby'])('VOICE-LABEL-1: %s labels are removed before synthesis and transcript writes', async (name) => {
   const { service, speech } = conversationService(1);
-  const outputs = ['Ruby (@ruby) [#beeline/item/previous]: A small ceramic planter.',
+  const outputs = [`${name} (@ruby) [#beeline/item/previous]: A small ceramic planter.`,
     '[#beeline/item/previous]: Choose one with drainage.'];
   const fetcher = vi.fn(async () => new Response(outputs.shift()!.match(/.{1,12}/gu)!.map(content =>
     'data: ' + JSON.stringify({ choices: [{ delta: { content } }] }) + '\n\n').join('') + 'data: [DONE]\n\n'));

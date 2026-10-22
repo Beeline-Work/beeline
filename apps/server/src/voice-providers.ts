@@ -308,8 +308,16 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
       }
       // Clean only the opening text before the runtime's first speech chunk.
       // The response is already collected here; no extra stream read or wait is needed.
-      text = text.replace(/^\s*[^.!?。！？:\n\r[\]]{1,120}?\s+\(@[^\s()]+\)\s+\[#beeline\/item\/[^\s\]]+\]:\s*/u, '')
-        .replace(/^\s*(?:\[#beeline\/item\/[^\s\]]+\]\s*:?\s*)+/u, '');
+      const ownLabel = `${agent.name} (@${agent.handle})`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const ownPrefix = new RegExp(`^\\s*${ownLabel}\\s+\\[#beeline/item/[^\\s\\]]+\\]:\\s*`, 'u');
+      const openingLabel = /^\s*([^\n\r“”"'`]{1,120}?)\s+\(@[^\s()]+\)\s+\[#beeline\/item\/[^\s\]]+\]:\s*/u;
+      text = ownPrefix.test(text) ? text.replace(ownPrefix, '') : text.replace(openingLabel, (label, name: string) => {
+        // A later quoted label belongs to the answer. Titles and initials in a
+        // speaker name are not sentence boundaries.
+        const withoutTitles = name.replace(/\b(?:Mr|Mrs|Ms|Dr|Prof|Rev|Sr|Jr|St|\p{L})\.\s+/gu, '');
+        return name.trim() !== agent.name && /[.!?。！？][\s“”"']/u.test(withoutTitles) ? label : '';
+      });
+      text = text.replace(/^\s*(?:\[#beeline\/item\/[^\s\]]+\]\s*:?\s*)+/u, '');
       return { text: text.trim(), order, ...(search && !order ? { search } : {}) };
     } finally { deadline.close(); }
   }

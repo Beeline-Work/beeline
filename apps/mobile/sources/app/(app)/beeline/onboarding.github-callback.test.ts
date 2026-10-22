@@ -180,7 +180,7 @@ vi.mock('@/constants/Typography', () => ({
 
 const { persistGitHubSignInState } = await import('@/auth/github-auth-session');
 const { OidcBindError } = await import('@beeline/buzz-client');
-const { clearOnboardingFaceStep, clearOnboardingNotice, markSignInInFlight } =
+const { clearOnboardingFaceStep, clearOnboardingNotice, markSignInInFlight, publishOnboardingNotice, noticeForAuthError } =
   await import('@/auth/onboarding-state');
 const { default: BuzzOnboarding } = await import('./onboarding');
 
@@ -271,6 +271,25 @@ describe('GitHub callback delivery into onboarding', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
+
+  it('uses the primary GitHub button before sign-in', async () => {
+    const tree = await render();
+    const button = tree.root.find((node: any) => node.type === 'Button' && node.props.testID === 'onboarding-github-sign-in');
+    expect(button.props.variant).toBe('primary');
+    expect(tree.root.findAll((node: any) => node.type === 'Button').map((node: any) => node.props.label))
+      .toEqual(['Continue with GitHub', 'Continue with Google']);
+  });
+
+  it.each(['browser_canceled', 'ticket_expired', 'offline'])(
+    'shows one primary recovery action for %s on the full screen', async (code) => {
+      const tree = await render();
+      await act(async () => { publishOnboardingNotice(noticeForAuthError(new OidcBindError(code, code))); });
+      const buttons = tree.root.findAll((node: any) => node.type === 'Button');
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0].props.variant).toBe('primary');
+      expect(buttons[0].props.label).toBe(code === 'offline' ? 'Try again' : 'Continue with GitHub');
+    },
+  );
 
   it('opens monolith sign-in on server.usebeeline.app and exchanges its callback there', async () => {
     phoneOperation.mockImplementation(async (name: string) =>
@@ -449,6 +468,7 @@ describe('GitHub callback delivery into onboarding', () => {
             node.type === 'Button' && node.props.testID === 'onboarding-github-sign-in',
         );
       expect(signIn().props.label).toBe('Continue with GitHub');
+      expect(signIn().props.variant).toBe('primary');
 
       await act(async () => {
         await signIn().props.onPress();
@@ -459,6 +479,8 @@ describe('GitHub callback delivery into onboarding', () => {
       expect(noticeText(tree)).toContain('No connection');
       expect(noticeText(tree)).toContain("You're offline.");
       expect(signIn().props.label).toBe('Try again');
+      expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(1);
+      expect(signIn().props.variant).toBe('primary');
       expect(signIn().props.loading).toBe(false);
       expect(signIn().props.disabled).toBe(false);
 
@@ -469,6 +491,7 @@ describe('GitHub callback delivery into onboarding', () => {
       });
       expect(network.fetch).toHaveBeenCalledTimes(requestsAfterPress);
       expect(browser.open).not.toHaveBeenCalled();
+      expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(1);
       expect(signIn().props.label).toBe('Try again');
       expect(signIn().props.loading).toBe(false);
 
@@ -597,6 +620,8 @@ describe('GitHub callback delivery into onboarding', () => {
 
     expect(sdk.finish).not.toHaveBeenCalled();
     expect(noticeText(tree)).toContain('Sign-in expired');
+    expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(1);
+    expect(tree.root.findByType('Button' as never).props.variant).toBe('primary');
     expect(
       tree.root.findAll(
         (node: any) => node.type === 'Button' && node.props.label === 'Continue with GitHub',

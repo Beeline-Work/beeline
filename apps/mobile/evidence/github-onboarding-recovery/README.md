@@ -9,3 +9,11 @@ From the repository root, start `node --import tsx apps/mobile/evidence/github-o
 WELCOME-FRESH-ANDROID did not reproduce the reported Get started loop: a separate test account advanced once per tap and reached its Room on the first Get started tap. Welcome code is deliberately unchanged, as ordered.
 
 The required production web reviewer-bypass proof remains unavailable: the connected saved-link credential was ready, but Squire load_saved rejected its `value` credential type, and browser navigation does not accept a sealed slot. A separate test identity's web signup reached an account mismatch. No successful reviewer-bypass web test or complete unassisted GitHub signup is claimed. Those deployed checks remain required.
+
+## Full-screen recovery regression
+
+Reproduction GITHUB-FULL-SCREEN-ACTIONS: on the actual onboarding screen, Continue with GitHub while offline displayed both Try again and Continue with Google as primary actions. Before an error, GitHub used the provider variant (white in Bone). The callback component tests exercise this full screen, including cancellation and expiry, rather than a standalone banner.
+
+`full-screen.js` renders the actual `BuzzOnboarding` screen, shared controls, fonts, and theme tokens. `full-screen.metro.cjs` isolates account/session, storage, transport, and telemetry boundaries; its sign-in boundary deterministically rejects offline. Cancellation and expiry use the real notice publisher. No sign-in or external GitHub transaction is claimed. For the generated Android proof build, preserve `metro.config.js` as `metro.product.cjs`, replace the root config with a require of `./evidence/github-onboarding-recovery/full-screen.metro.cjs`, and set the generated Gradle entryFile to `../../evidence/github-onboarding-recovery/full-screen.js`. Build x86_64 with two workers and a bounded heap, install on the leased emulator, then run `python3 apps/mobile/evidence/github-onboarding-recovery/capture-full-screen.py emulator-PORT OUTPUT_DIRECTORY`. Restore both generated build configuration changes afterward and remove `metro.product.cjs`.
+
+The capture checks the full initial screen, cancellation, expiry, and a tap through the real sign-in handler into offline recovery in Bone and Obsidian. Each error screen must expose exactly one recovery action; the initial screen retains both providers with GitHub primary.

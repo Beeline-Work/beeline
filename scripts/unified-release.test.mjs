@@ -10,18 +10,18 @@ import { NPM_VISIBILITY_TIMEOUT_MS } from './npm-package-visibility.mjs';
 import {
   applyComponentCheckpoints,
   changedPathsFromPublishedInputs,
+  checkpointsFromJobs,
   classifyReleaseAttempt,
+  desktopLagFromPublishedInputs,
+  DESKTOP_UI_REFRESH_SECONDS,
   COMPONENT_PATH_RULES,
+  SERVER_CANARY_SAMPLES,
   SERVER_CANARY_WINDOW_SECONDS,
   DESKTOP_VERSION_BASELINE,
   createServerImageLedger,
   evaluateServerCanarySample,
   evaluateServerCanaryPromotion,
   evaluateServerCanaryWindow,
-  RELEASE_BUDGET_MINUTES,
-  RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
-  RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS,
-  RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS,
   RELEASE_SOFT_LIMIT_SECONDS,
   RELEASE_COMPONENTS,
   RELEASE_NOTIFY_TIMEOUT_MS,
@@ -59,9 +59,21 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
   assert.match(promote.run, /recover-promotion/);
   assert.match(promote.run, /retry-attempt/);
   assert.match(promote.run, /if \[ "\$\(cat "\$RUNNER_TEMP\/mobile-ota-recovery.txt"\)" = new \]/);
-  assert.equal(workflow.jobs.mobile_ota['timeout-minutes'], 18);
-  assert.match(workflow.jobs.mobile_ota.steps[0].with.ref, /stage_mobile_ota == 'pending'/);
-  assert.match(workflow.jobs.mobile_ota.steps[0].with.ref, /github\.sha/);
+  for (const job of ['mobile_ota', 'mobile_ota_after_native']) {
+    assert.equal(workflow.jobs[job]['timeout-minutes'], 18);
+    assert.equal(workflow.jobs[job].steps[0].with.ref, '${{ needs.initialize.outputs.release_sha }}');
+    // A recovery of an attempted identity only recovers its exact promotion.
+    for (const leg of workflow.jobs[job].steps.filter((step) => step.uses === './.github/actions/mobile-ota-leg')) {
+      assert.equal(leg.with.retry_attempt, "${{ needs.initialize.outputs.stage_mobile_ota == 'promoted' && '2' || '1' }}");
+    }
+    // The marker is its own step before the promote leg, so a job that fails
+    // mid-promotion still reports it.
+    const steps = workflow.jobs[job].steps;
+    const marker = steps.findIndex((step) => step.id === 'promote_started');
+    assert.ok(marker >= 0 && marker === steps.findIndex((step) => step.id === 'promote') - 1);
+    assert.equal(workflow.jobs[job].outputs.promote_started, '${{ steps.promote_started.outputs.started }}');
+  }
+  assert.equal(workflow.jobs.initialize.outputs.stage_mobile_ota, '${{ steps.plan.outputs.stage_mobile_ota }}');
 
   const dir = mkdtempSync(join(tmpdir(), 'ota-recovery-'));
   try {
@@ -112,6 +124,26 @@ test('OTA retry downloads the earlier candidate and recovers only its exact prod
       assert.equal(verified.status, 0, `${command}: ${verified.stderr}`);
     }
 
+    // Reproduction pinned-ota-recovery: a recovery whose earlier attempt never
+    // started promotion runs at attempt 1, so an empty production list
+    // promotes the exact candidate instead of refusing.
+    const runAt = (attempt, payload) => spawnSync(process.execPath, [
+      'scripts/ota-release.mjs', 'recover-promotion', '--ledger', ledgerPath,
+      '--index', indexPath, '--result', resultPath, '--retry-attempt', attempt, '--run-id', '36290000000',
+    ], {
+      cwd: fileURLToPath(new URL('../apps/mobile/', import.meta.url)), encoding: 'utf8',
+      env: { ...process.env, EAS_CLI_PATH: mockPath, MOCK_EAS_LIST: JSON.stringify({ name: 'production', currentPage: payload }) },
+    });
+    writeFileSync(ledgerPath, JSON.stringify(baseLedger));
+    writeFileSync(indexPath, JSON.stringify(baseIndex));
+    const unstarted = runAt('1', []);
+    assert.equal(unstarted.status, 0, unstarted.stderr);
+    assert.equal(readFileSync(resultPath, 'utf8'), 'new\n');
+    // A started promotion (attempt 2) still refuses to republish blindly.
+    const started = runAt('2', []);
+    assert.notEqual(started.status, 0);
+    assert.match(started.stderr, /refusing to republish on a retry/);
+
     writeFileSync(ledgerPath, JSON.stringify(baseLedger));
     writeFileSync(indexPath, JSON.stringify(baseIndex));
     const missing = run(listed.map((target) => ({ ...target, message: 'different release' })));
@@ -151,7 +183,6 @@ test('run 36105533369 succeeds with OTA at 10 minutes and the whole run at 28.5 
     failureClass: '',
     otaElapsedSeconds: 600,
     wholeRunElapsedSeconds: 1710,
-    budgetSeconds: RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
     softLimitSeconds: RELEASE_SOFT_LIMIT_SECONDS,
     slow: false,
     otaCompletedAt: triggerEpoch + 600,
@@ -165,78 +196,42 @@ test('run 36105533369 succeeds with OTA at 10 minutes and the whole run at 28.5 
   assert.equal(slow.outcome, 'success');
   assert.equal(slow.failureClass, '');
   assert.equal(slow.slow, true);
-
-  const missedFixToPhone = classifyReleaseAttempt({
-    triggerEpoch,
-    finishedEpoch: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 1,
-    checkpoints: [{
-      component: 'mobile-ota', state: 'checked',
-      completedAt: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 1,
-    }],
-    incomplete: 'website',
-  });
-  assert.equal(missedFixToPhone.outcome, 'failure');
-  assert.equal(missedFixToPhone.failureClass, 'budget');
-  assert.equal(missedFixToPhone.slow, false);
 });
 
-test('release attempt timing keeps the native allowance and fails closed without an OTA completion timestamp', () => {
+test('a release that shipped every component succeeds however late its OTA landed', () => {
+  // Run 541 shape: OTA completed long after dispatch, but nothing is unfinished.
   const triggerEpoch = 1_700_000_000;
-  const native = classifyReleaseAttempt({
+  const late = classifyReleaseAttempt({
     triggerEpoch,
-    finishedEpoch: triggerEpoch + RELEASE_SOFT_LIMIT_SECONDS + 1,
-    checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + 1800 }],
-    nativeBuildRan: true,
+    finishedEpoch: triggerEpoch + (150 * 60),
+    checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + (90 * 60) }],
   });
-  assert.equal(native.budgetSeconds, RELEASE_NATIVE_FIX_TO_PHONE_BUDGET_SECONDS);
-  assert.equal(native.outcome, 'success');
-  assert.equal(native.slow, true);
+  assert.equal(late.outcome, 'success');
+  assert.equal(late.failureClass, '');
+  assert.equal(late.otaElapsedSeconds, 90 * 60);
+  assert.equal(late.slow, true);
+  assert.equal('budgetSeconds' in late, false);
 
   const missingCompletion = classifyReleaseAttempt({
     triggerEpoch,
-    finishedEpoch: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS,
+    finishedEpoch: triggerEpoch + 1800,
     checkpoints: [{ component: 'mobile-ota', state: 'checked' }],
   });
-  assert.equal(missingCompletion.otaElapsedSeconds, RELEASE_FIX_TO_PHONE_BUDGET_SECONDS);
-  assert.equal(missingCompletion.failureClass, 'budget');
+  assert.equal(missingCompletion.otaElapsedSeconds, 1800);
+  assert.equal(missingCompletion.outcome, 'success');
+});
 
+test('only an unfinished component fails a release attempt', () => {
+  const triggerEpoch = 1_700_000_000;
   const incomplete = classifyReleaseAttempt({
     triggerEpoch,
     finishedEpoch: triggerEpoch + 60,
     checkpoints: [{ component: 'mobile-ota', state: 'checked', completedAt: triggerEpoch + 30 }],
     incomplete: 'helper,website',
   });
+  assert.equal(incomplete.outcome, 'failure');
   assert.equal(incomplete.failureClass, 'component:helper,website');
   assert.equal(incomplete.slow, false);
-});
-
-test('a macOS helper release keeps its own 150-minute fix-to-phone allowance', () => {
-  const triggerEpoch = 1_700_000_000;
-  const helperMacos = classifyReleaseAttempt({
-    triggerEpoch,
-    finishedEpoch: triggerEpoch + RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS + 60,
-    checkpoints: [{
-      component: 'mobile-ota', state: 'checked',
-      completedAt: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 30,
-    }],
-    helperMacosBuildRan: true,
-  });
-  assert.equal(helperMacos.budgetSeconds, RELEASE_MACOS_HELPER_FIX_TO_PHONE_BUDGET_SECONDS);
-  assert.equal(helperMacos.failureClass, '');
-  assert.equal(helperMacos.outcome, 'success');
-  // The whole run still exceeded the soft limit, but that only marks it slow.
-  assert.equal(helperMacos.slow, true);
-
-  // With no macOS helper build the same OTA elapsed is already over budget.
-  const withoutHelperMacos = classifyReleaseAttempt({
-    triggerEpoch,
-    finishedEpoch: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 60,
-    checkpoints: [{
-      component: 'mobile-ota', state: 'checked',
-      completedAt: triggerEpoch + RELEASE_FIX_TO_PHONE_BUDGET_SECONDS + 30,
-    }],
-  });
-  assert.equal(withoutHelperMacos.failureClass, 'budget');
 });
 
 function run(command, args, cwd) {
@@ -275,17 +270,37 @@ test('server canary plan migrates, updates one Machine, watches, then updates it
   assert.deepEqual(plan.steps, [
     'migrate',
     'update:a-machine:registry.fly.io/beeline-server:new',
-    'watch:a-machine:300s',
+    'watch:a-machine:90s',
     'update:b-machine:registry.fly.io/beeline-server:new',
   ]);
   assert.deepEqual(plan.rollbackSteps, [
     'update:a-machine:registry.fly.io/beeline-server:old',
     'fail-release',
   ]);
+  assert.equal(plan.split, false);
   assert.throws(() => planServerCanaryDeployment(machines.slice(0, 1), 'registry.fly.io/beeline-server:new'), /exactly two/);
-  assert.throws(() => planServerCanaryDeployment([
-    machines[0], { id: 'c', config: { image: 'registry.fly.io/beeline-server:other' } },
-  ], 'registry.fly.io/beeline-server:new'), /already split/);
+});
+
+test('reproduces #542: a fleet split by an interrupted release converges on the new image', () => {
+  const plan = planServerCanaryDeployment([
+    { id: 'b', config: { image: 'registry.fly.io/beeline-server:0.1.100' } },
+    { id: 'a', config: { image: 'registry.fly.io/beeline-server:0.1.99' } },
+  ], 'registry.fly.io/beeline-server:0.1.101');
+  assert.equal(plan.split, true);
+  assert.deepEqual(plan.steps, [
+    'migrate',
+    'update:a:registry.fly.io/beeline-server:0.1.101',
+    'watch:a:90s',
+    'update:b:registry.fly.io/beeline-server:0.1.101',
+  ]);
+  // Each Machine returns to the image it ran before this release.
+  assert.deepEqual(plan.rollbackSteps, [
+    'update:a:registry.fly.io/beeline-server:0.1.99',
+    'update:b:registry.fly.io/beeline-server:0.1.100',
+    'fail-release',
+  ]);
+  assert.equal(plan.previousImageRef, 'registry.fly.io/beeline-server:0.1.99');
+  assert.equal(plan.secondPreviousImageRef, 'registry.fly.io/beeline-server:0.1.100');
 });
 
 test('server canary samples and the bounded window fail closed', () => {
@@ -357,25 +372,29 @@ test('server promotion needs sustained clean samples and rejects a late relapse'
   const sample = (index, verdict = { clean: true, reasons: [] }) => ({
     at: new Date(start + index * 15_000).toISOString(), verdict,
   });
-  const clean = Array.from({ length: 21 }, (_, index) => sample(index));
+  assert.equal(SERVER_CANARY_WINDOW_SECONDS, 90);
+  assert.equal(SERVER_CANARY_SAMPLES, 7);
+  const clean = Array.from({ length: 7 }, (_, index) => sample(index));
   assert.deepEqual(evaluateServerCanaryPromotion(clean), {
-    clean: true, cleanCount: 21, elapsedSeconds: 300,
+    clean: true, cleanCount: 7, elapsedSeconds: 90,
   });
   const oneClean = clean.map((entry, index) => index === 0 ? entry :
     sample(index, { clean: false, reasons: ['authenticated Room read returned HTTP 503'] }));
-  assert.match(evaluateServerCanaryPromotion(oneClean).reason, /only 1 of 21/);
+  assert.match(evaluateServerCanaryPromotion(oneClean).reason, /only 1 of 7/);
   const lateRelapse = [...clean];
-  lateRelapse[20] = sample(20, { clean: false, reasons: ['database pool has 2 waiter(s)'] });
-  assert.match(evaluateServerCanaryPromotion(lateRelapse).reason, /final five/);
+  lateRelapse[6] = sample(6, { clean: false, reasons: ['database pool has 2 waiter(s)'] });
+  assert.match(evaluateServerCanaryPromotion(lateRelapse).reason, /final three/);
   const sustained = [...clean];
-  for (const index of [3, 4, 5])
+  for (const index of [1, 2])
     sustained[index] = sample(index, { clean: false, reasons: ['database pool has 1 waiter(s)'] });
   assert.match(evaluateServerCanaryPromotion(sustained).reason, /sustained pool wait/);
   const warmup = [...clean];
-  for (const index of [0, 2, 4, 6, 8])
+  for (const index of [0, 2])
     warmup[index] = sample(index, { clean: false, reasons: ['health endpoint is not ok'] });
   assert.equal(evaluateServerCanaryPromotion(warmup).clean, true);
   assert.equal(evaluateServerCanaryPromotion(clean.slice(1)).clean, false);
+  const short = clean.map((entry, index) => ({ ...entry, at: new Date(start + index * 10_000).toISOString() }));
+  assert.match(evaluateServerCanaryPromotion(short).reason, /full 90-second window/);
 
   const action = parse(readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8'));
   const promotion = action.runs.steps.find((step) =>
@@ -398,7 +417,7 @@ test('server image ledger pins the automatic and manual rollback image', () => {
   assert.throws(() => selectServerRollbackImage({ ledger: {} }), /no valid previous/);
 });
 
-test('server deployment dry-run prints both success and rollback ordering', () => {
+test('server deployment plan prints both success and rollback ordering', () => {
   const root = mkdtempSync(join(tmpdir(), 'beeline-canary-plan-'));
   try {
     const machines = join(root, 'machines.json');
@@ -407,9 +426,9 @@ test('server deployment dry-run prints both success and rollback ordering', () =
       { id: 'b', config: { image: 'registry.fly.io/beeline-server:old' } },
     ]));
     const output = run('node', [RELEASE_SCRIPT, 'server-deploy-plan', '--machines', machines,
-      '--image', 'registry.fly.io/beeline-server:new', '--simulate-failure', 'true'], root);
-    assert.match(output, /migrate -> update:a:.*:new -> watch:a:300s -> update:b:.*:new/);
-    assert.match(output, /canary failed -> update:a:.*:old -> fail-release/);
+      '--image', 'registry.fly.io/beeline-server:new'], root);
+    assert.match(output, /^migrate -> update:a:.*:new -> watch:a:90s -> update:b:.*:new/m);
+    assert.match(output, /on failure: update:a:.*:old -> fail-release/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -431,11 +450,21 @@ test('component selection follows the explicit path map', () => {
 test('shared protocol and shared UI paths fan out to their actual consumers', () => {
   assert.deepEqual(
     selectReleaseComponents(['packages/api-contract/src/phone.ts']),
-    ['server', 'helper', 'mobile-ota', 'desktop'],
+    ['server', 'helper', 'mobile-ota'],
   );
+  // A mobile-sources-only diff ships by OTA and the website, never desktop.
   assert.deepEqual(
     selectReleaseComponents(['apps/mobile/sources/components/Ledger.tsx']),
-    ['mobile-ota', 'desktop', 'website'],
+    ['mobile-ota', 'website'],
+  );
+  assert.deepEqual(selectReleaseComponents(['apps/mobile/assets/images/icon.png']), ['mobile-ota', 'website']);
+  assert.deepEqual(selectReleaseComponents(['packages/nostr/src/index.ts']), ['helper', 'mobile-ota']);
+  assert.deepEqual(selectReleaseComponents(['apps/mobile/src-tauri/src/main.rs']), ['desktop']);
+  assert.deepEqual(selectReleaseComponents([], { selection: 'desktop' }), ['desktop']);
+  // A pipeline-file-only diff never rebuilds the helper or desktop.
+  assert.deepEqual(
+    selectReleaseComponents(['.github/workflows/unified-release.yml', 'scripts/unified-release.mjs']),
+    ['server', 'mobile-ota', 'website'],
   );
   assert.deepEqual(
     selectReleaseComponents(['apps/mobile/app.config.js']),
@@ -445,6 +474,71 @@ test('shared protocol and shared UI paths fan out to their actual consumers', ()
     selectReleaseComponents(['apps/mobile/scripts/ota-release.mjs']),
     ['mobile-ota'],
   );
+});
+
+test('desktop catches up with shared UI once its bundled UI is a week behind', () => {
+  const uiOnly = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [
+    component, ['apps/mobile/sources/components/Ledger.tsx'],
+  ]));
+  assert.deepEqual(selectReleaseComponentsFromPublishedInputs(uiOnly, {
+    desktopLagSeconds: DESKTOP_UI_REFRESH_SECONDS - 1,
+  }), ['mobile-ota', 'website']);
+  assert.deepEqual(selectReleaseComponentsFromPublishedInputs(uiOnly, {
+    desktopLagSeconds: DESKTOP_UI_REFRESH_SECONDS,
+  }), ['mobile-ota', 'desktop', 'website']);
+  // Age alone never rebuilds desktop: only lagging UI it bundles does.
+  const serverOnly = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [component, ['apps/server/src/index.ts']]));
+  assert.deepEqual(selectReleaseComponentsFromPublishedInputs(serverOnly, {
+    desktopLagSeconds: 10 * DESKTOP_UI_REFRESH_SECONDS,
+  }), ['server']);
+  const times = { [OLD_SHA]: 1_000, [NEW_SHA]: 1_000 + DESKTOP_UI_REFRESH_SECONDS };
+  assert.equal(desktopLagFromPublishedInputs(deliveredPrevious(), NEW_SHA, { commitTime: (sha) => times[sha] }),
+    DESKTOP_UI_REFRESH_SECONDS);
+});
+
+test('each component job result is its release checkpoint', () => {
+  const identity = { version: 'v0.0.9', sourceSha: NEW_SHA, releaseId: `v0.0.9-${NEW_SHA}` };
+  const needs = (overrides = {}) => ({
+    initialize: { result: 'success', outputs: {
+      run_server: 'true', run_helper: 'false', run_mobile_ota: 'true', run_mobile_native: 'true',
+      run_desktop: 'true', run_website: 'true', native_android: 'true', native_ios: 'false',
+    } },
+    server: { result: 'success', outputs: {} },
+    helper: { result: 'skipped', outputs: {} },
+    mobile_ota: { result: 'skipped', outputs: {} },
+    mobile_ota_after_native: { result: 'success', outputs: { completed_at: '1700000600' } },
+    mobile_native_android: { result: 'success', outputs: {} },
+    mobile_native_ios: { result: 'skipped', outputs: {} },
+    desktop_installers: { result: 'failure', outputs: {} },
+    website: { result: 'success', outputs: {} },
+    ...overrides,
+  });
+  assert.deepEqual(checkpointsFromJobs(needs(), identity), [
+    { component: 'server', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `server-artifact-v0.0.9-${NEW_SHA}` },
+    { component: 'mobile-ota', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked',
+      artifactRef: `mobile-ota-promoted-v0.0.9-${NEW_SHA}`, completedAt: 1_700_000_600 },
+    { component: 'website', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `website-v0.0.9-${NEW_SHA}` },
+    { component: 'mobile-native', version: 'v0.0.9', sourceSha: NEW_SHA, state: 'checked', artifactRef: `mobile-native-v0.0.9-${NEW_SHA}` },
+  ]);
+  // An OTA job that failed after production promotion started records it.
+  const promotedOta = checkpointsFromJobs(needs({
+    mobile_ota_after_native: { result: 'failure', outputs: { promote_started: 'true' } },
+  }), identity).find((checkpoint) => checkpoint.component === 'mobile-ota');
+  assert.equal(promotedOta.state, 'promoted');
+  // One that failed before promotion leaves the OTA pending.
+  assert.ok(!checkpointsFromJobs(needs({
+    mobile_ota_after_native: { result: 'failure', outputs: { promote_started: '' } },
+  }), identity).some((checkpoint) => checkpoint.component === 'mobile-ota'));
+  // A required native platform that did not build leaves mobile-native unchecked.
+  assert.ok(!checkpointsFromJobs(needs({ mobile_native_android: { result: 'failure', outputs: {} } }), identity)
+    .some((checkpoint) => checkpoint.component === 'mobile-native'));
+  // The applied checkpoints leave exactly the failed component unfinished.
+  const state = initializeRelease({ version: 'v0.0.9', sourceSha: NEW_SHA });
+  applyComponentCheckpoints(state, checkpointsFromJobs(needs({
+    helper: { result: 'success', outputs: {} },
+    initialize: { result: 'success', outputs: { ...needs().initialize.outputs, run_helper: 'true' } },
+  }), identity));
+  assert.deepEqual(Object.entries(retryPlan(state)).filter(([, open]) => open).map(([component]) => component), ['desktop']);
 });
 
 test('routine auto selection catches lagging consumers from each published component sha', () => {
@@ -459,7 +553,6 @@ test('routine auto selection catches lagging consumers from each published compo
 
   assert.deepEqual(selectReleaseComponentsFromPublishedInputs(pathsByComponent), [
     'mobile-ota',
-    'desktop',
     'website',
   ]);
   assert.equal(releaseVersionForSource(deliveredPrevious(), NEW_SHA), 'v0.0.9');
@@ -571,8 +664,8 @@ test('routine same-head release supplements lagging shared UI consumers and retr
   });
 
   assert.equal(version, previous.version);
-  assert.deepEqual(selected, ['mobile-ota', 'desktop', 'website']);
-  assert.deepEqual(state.plan.selected, ['mobile-ota', 'desktop', 'website']);
+  assert.deepEqual(selected, ['mobile-ota', 'website']);
+  assert.deepEqual(state.plan.selected, ['mobile-ota', 'website']);
   assert.equal(state.components.server.sourceSha, NEW_SHA);
   assert.equal(state.components.helper.sourceSha, OLD_SHA);
   for (const component of selected) {
@@ -581,24 +674,22 @@ test('routine same-head release supplements lagging shared UI consumers and retr
   }
 
   for (const stage of ['built', 'promoted', 'checked']) markComponentStage(state, 'mobile-ota', stage);
-  markComponentStage(state, 'desktop', 'built');
   const retry = initializeRelease({
     version,
     sourceSha: NEW_SHA,
     retry: state,
   });
   assert.equal(retry.components['mobile-ota'].state, 'checked');
-  assert.equal(retry.components.desktop.state, 'built');
+  assert.equal(retry.components.website.state, 'pending');
   assert.deepEqual(retryPlan(retry), {
     server: false,
     helper: false,
     'mobile-ota': false,
     'mobile-native': false,
-    desktop: true,
+    desktop: false,
     website: true,
   });
 
-  for (const stage of ['promoted', 'checked']) markComponentStage(retry, 'desktop', stage);
   for (const stage of ['built', 'promoted', 'checked']) markComponentStage(retry, 'website', stage);
   finalizeRelease(retry);
   const noChanges = Object.fromEntries(RELEASE_COMPONENTS.map((component) => [component, []]));
@@ -637,31 +728,30 @@ test('R-release-timeout: routine native input changes carry binaries while recov
 
 test('R-release-timeout: workflow completes promotion and refuses unrequested native jobs', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  assert.equal(workflow.jobs.server['timeout-minutes'], 18);
+  assert.equal(workflow.jobs.server['timeout-minutes'], 15);
   assert.equal(workflow.jobs.server.concurrency['cancel-in-progress'], false);
   const action = parse(readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8'));
   assert.ok(!action.runs.steps.some((step) => /free starter agent|stage-free-agent/.test(step.name + step.run)));
   assert.ok(!workflow.jobs.server.steps.some((step) => step.uses === 'dtolnay/rust-toolchain@stable'));
-  const publishJob = workflow.jobs.free_agent_image;
-  assert.deepEqual(publishJob.needs, ['initialize', 'server', 'release_result']);
-  assert.match(publishJob.if, /always\(\) && !cancelled\(\)/);
-  assert.match(publishJob.if, /needs\.server\.result == 'success'/);
-  assert.equal(publishJob['continue-on-error'], true);
+  // Starter image publishing runs after the release, never inside it.
+  assert.equal(workflow.jobs.free_agent_image, undefined);
+  const starter = parse(readFileSync(new URL('../.github/workflows/free-agent-image.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(starter.on.workflow_run, { workflows: [workflow.name], types: ['completed'] });
+  const publishJob = starter.jobs.free_agent_image;
+  assert.equal(publishJob.if, "github.event.workflow_run.conclusion == 'success'");
   assert.equal(publishJob['timeout-minutes'], 18);
-  assert.equal(publishJob.steps[0].with.ref, '${{ needs.initialize.outputs.release_sha }}');
   assert.ok(publishJob.steps.some((step) => step.uses === 'dtolnay/rust-toolchain@stable'));
   const publish = publishJob.steps.find((step) => step.name === 'Publish the free starter agent base image');
   assert.match(publish.run, /bash scripts\/stage-free-agent-helper\.sh/);
   assert.match(publish.run, /Free starter agent image was not published/);
-  assert.equal(publish.env.RELEASE_SHA, '${{ needs.initialize.outputs.release_sha }}');
-  for (const [name, job] of Object.entries(workflow.jobs)) {
-    if (name === 'free_agent_image') continue;
-    assert.ok(![job.needs].flat().includes('free_agent_image'), `${name} must not wait for starter image publishing`);
-  }
-  const canary = action.runs.steps.find((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer');
-  assert.match(canary.run, /for sample in \$\(seq 0 20\)/);
+  assert.equal(publish.env.RELEASE_SHA, '${{ steps.release.outputs.sha }}');
+  const identity = publishJob.steps.find((step) => step.id === 'release');
+  assert.match(identity.run, /selected\?\.includes\('server'\)/);
+  const canary = action.runs.steps.find((step) => step.name === 'Canary one Machine for ninety seconds, then update its peer');
+  assert.match(canary.run, /for sample in \$\(seq 0 6\)/);
   assert.match(canary.run, /sleep 15/);
-  assert.equal(SERVER_CANARY_WINDOW_SECONDS, 300);
+  assert.equal(SERVER_CANARY_WINDOW_SECONDS, 90);
+  assert.equal(SERVER_CANARY_SAMPLES, 7);
   for (const platform of ['android', 'ios']) {
     const condition = workflow.jobs[`mobile_native_${platform}`].if;
     // Evaluate the actual workflow expression with a stale native retry flag,
@@ -669,7 +759,6 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
     for (const storeTrack of ['', 'none', 'internal', 'beta', 'production']) {
       for (const selection of ['', 'auto', 'all', 'mobile-native']) {
         const expression = condition
-          .replaceAll('inputs.plan_only', 'false')
           .replaceAll('needs.initialize.outputs.run_mobile_native', "'true'")
           .replaceAll(`needs.initialize.outputs.native_${platform}`, "'true'")
           .replaceAll('inputs.store_track', JSON.stringify(storeTrack))
@@ -682,7 +771,7 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
 });
 
 test('R-release-timeout: independent starter publishing preserves release identity and remains best effort', () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const workflow = parse(readFileSync(new URL('../.github/workflows/free-agent-image.yml', import.meta.url), 'utf8'));
   const publish = workflow.jobs.free_agent_image.steps.find((step) => step.name === 'Publish the free starter agent base image');
   const root = mkdtempSync(join(tmpdir(), 'starter-publish-'));
   try {
@@ -733,7 +822,7 @@ test('runtime pin selection requires a native store submission only when the pin
   const unchanged = { changed: false, previous: '23', next: '23' };
   const changed = { changed: true, previous: '23', next: '24' };
   assert.deepEqual(selectReleaseComponents(['apps/mobile/sources/index.ts'], { runtimePin: unchanged }), [
-    'mobile-ota', 'desktop', 'website',
+    'mobile-ota', 'website',
   ]);
   assert.throws(
     () => selectReleaseComponents([], { selection: 'mobile-ota', storeTrack: 'internal', runtimePin: changed }),
@@ -1043,85 +1132,107 @@ test('successful release notification is recorded', async () => {
   assert.deepEqual(result, { state: 'sent', detail: 'server returned HTTP 204' });
 });
 
-test('workflow is manual, selective, concurrent, bounded, and component-local on retry', () => {
+test('workflow is manual, selective, concurrent, bounded, and component-local on recovery', () => {
   const source = readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8');
   const workflow = parse(source);
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   const inputs = workflow.on.workflow_dispatch.inputs;
+  // Diagnostics and self-retry inputs are gone; recovery pins and consent stay.
+  assert.deepEqual(Object.keys(inputs), [
+    'dispatched_by', 'release_sha', 'release_version', 'selection', 'store_track',
+    'run_release_proof', 'allow_pin_restore',
+  ]);
   assert.equal(inputs.dispatched_by.required, true);
   assert.equal(inputs.release_sha.required, false);
   assert.equal(inputs.release_version.required, false);
-  assert.equal(inputs.retry_attempt.default, '1');
   assert.equal(inputs.selection.default, 'auto');
   assert.equal(inputs.store_track.default, 'none');
-  assert.equal(inputs.plan_only.default, false);
   assert.equal(inputs.run_release_proof.default, false);
   assert.equal(inputs.run_release_proof.type, 'boolean');
-  const consentOnly = [ 'release_sha', 'release_version', 'retry_attempt', 'selection', 'store_track', 'plan_only'];
-  for (const name of consentOnly) assert.match(inputs[name].description, /Recovery only|Opt-in only|routine releases keep/, `${name} description`);
-  assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
-  assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
-  assert.equal(RELEASE_BUDGET_MINUTES, 20);
-  assert.match(source, /release ceiling is 20 minutes/);
+  for (const name of ['release_sha', 'release_version', 'selection', 'store_track']) {
+    assert.match(inputs[name].description, /Recovery only|routine releases keep/, `${name} description`);
+  }
+  assert.doesNotMatch(source, /plan_only|retry_attempt:\s*\n\s*description|room_open_trace|server_deploy_plan/);
+  // Bookkeeping needs no production host tools.
+  assert.equal(workflow.jobs.initialize['runs-on'], 'ubuntu-latest');
+  assert.equal(workflow.jobs.release_result['runs-on'], 'ubuntu-latest');
+  assert.equal(workflow.jobs.initialize['timeout-minutes'], 5);
+  assert.equal(workflow.jobs.release_result['timeout-minutes'], 5);
   // Only the legs that build a store binary, run the emulator proof, or build a
-  // native helper bundle from cold cargo may exceed the 20-minute ceiling;
-  // every other job stays within it.
+  // native helper bundle from cold cargo may exceed the 20-minute job ceiling;
+  // every other job stays within it. Job timeouts bound hangs; a release's
+  // total duration never fails it.
+  const jobCeilingMinutes = 20;
   const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos']);
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;
     if (slowLegs.has(name)) continue;
-    assert.ok(name === 'helper' ? cap <= RELEASE_BUDGET_MINUTES : cap < RELEASE_BUDGET_MINUTES, `${name} timeout-minutes ${cap} exceeds the release ceiling`);
+    assert.ok(name === 'helper' ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
   }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
-  assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
   assert.match(source, /version_args=\(release-version --sha "\$release_sha" --reserved-versions/);
   assert.match(source, /version_args\+=\(--previous "\$previous"\)/);
-  assert.match(source, /if \[ "\$PLAN_ONLY" = true \]; then/);
-  assert.match(source, /release_sha=\$\(git rev-parse HEAD\)/);
-  assert.match(source, /release_version=v0\.0\.0/);
   assert.match(source, /release_sha="\$\{REQUESTED_SHA:-\$GITHUB_SHA\}"/);
   assert.match(source, /git merge-base --is-ancestor "\$release_sha" origin\/main/);
+  // The checkout already holds full history; planning fetches nothing again.
+  assert.doesNotMatch(workflow.jobs.initialize.steps.find((step) => step.id === 'plan').run, /git fetch/);
   assert.match(source, /unified-release\.mjs component-paths/);
   assert.match(source, /--component-paths "\$RUNNER_TEMP\/release-component-paths\.json"/);
-  assert.match(source, /needs\.initialize\.outputs\.run_server == 'true'/);
+  assert.equal(workflow.jobs.server.if, "needs.initialize.outputs.run_server == 'true'");
   assert.match(source, /needs\.initialize\.outputs\.run_helper == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_mobile_ota == 'true'/);
-  assert.deepEqual(workflow.jobs.mobile_ota.needs, ['initialize', 'mobile_native_android', 'mobile_native_ios', 'release_proof']);
-  assert.match(workflow.jobs.mobile_ota.if, /runtime_pin_changed != 'true'/);
-  assert.match(workflow.jobs.mobile_ota.if, /stage_mobile_native == 'checked'/);
-  assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_android\.result == 'success'/);
-  assert.match(workflow.jobs.mobile_ota.if, /needs\.mobile_native_ios\.result == 'success'/);
-  // helper_macos is a direct need so release_result can widen its budget for the
-  // cold cargo build the macOS helper bundles pay for.
+  // Server and the unchanged-pin OTA both start from the plan alone, so the
+  // two production host runners take them side by side.
+  assert.equal(workflow.jobs.server.needs, 'initialize');
+  assert.equal(workflow.jobs.mobile_ota.needs, 'initialize');
+  assert.match(workflow.jobs.mobile_ota.if, /runtime_pin_changed != 'true' && inputs\.run_release_proof != true/);
+  assert.deepEqual(workflow.jobs.mobile_ota_after_native.needs, ['initialize', 'mobile_native_android', 'mobile_native_ios', 'release_proof']);
+  assert.match(workflow.jobs.mobile_ota_after_native.if, /runtime_pin_changed == 'true' \|\| inputs\.run_release_proof == true/);
+  assert.match(workflow.jobs.mobile_ota_after_native.if, /stage_mobile_native == 'checked'/);
+  assert.match(workflow.jobs.mobile_ota_after_native.if, /needs\.mobile_native_android\.result == 'success'/);
+  assert.match(workflow.jobs.mobile_ota_after_native.if, /needs\.mobile_native_ios\.result == 'success'/);
+  for (const [pinChanged, proof, expected] of [
+    ['false', false, 'mobile_ota'], ['true', false, 'mobile_ota_after_native'],
+    ['false', true, 'mobile_ota_after_native'], ['true', true, 'mobile_ota_after_native'],
+  ]) {
+    const values = {
+      'needs.initialize.result': 'success',
+      'needs.initialize.outputs.run_mobile_ota': 'true',
+      'needs.initialize.outputs.runtime_pin_changed': pinChanged,
+      'needs.initialize.outputs.stage_mobile_native': 'pending',
+      'needs.initialize.outputs.native_android': 'true',
+      'needs.initialize.outputs.native_ios': 'true',
+      'needs.mobile_native_android.result': 'success',
+      'needs.mobile_native_ios.result': 'success',
+      'inputs.run_release_proof': proof,
+    };
+    const running = ['mobile_ota', 'mobile_ota_after_native'].filter((job) => githubGate(workflow.jobs[job].if, values));
+    assert.deepEqual(running, [expected], `pin changed ${pinChanged}, proof ${proof}`);
+  }
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_native_android',
-    'mobile_native_ios', 'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
+    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_native',
+    'mobile_native_android', 'mobile_native_ios', 'desktop_installers', 'website', 'release_proof',
   ]);
+  assert.equal(workflow.jobs.desktop_checkpoint, undefined);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
   assert.match(source, /needs\.initialize\.outputs\.run_website == 'true'/);
-  assert.equal(workflow.jobs.server_deploy_plan.if, 'inputs.plan_only == true');
-  for (const job of ['server', 'helper', 'mobile_ota', 'desktop_installers', 'desktop_checkpoint', 'website', 'mobile_native_android', 'mobile_native_ios', 'release_proof', 'release_result', 'retry']) {
-    assert.match(String(workflow.jobs[job].if), /inputs\.plan_only != true/);
-  }
-  assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-server/);
-  assert.match(source, /release-checkpoint-\$\{\{ needs\.initialize\.outputs\.release_id \}\}-helper/);
-  assert.match(source, /stage_server:[\s\S]*stage_helper:[\s\S]*stage_mobile_ota:/);
-  assert.match(source, /stage_server == 'pending'/);
-  // A retry whose earlier attempt already produced the complete merged helper
-  // artifact skips the cold Mac cargo builds and reuses it; a fresh identity
-  // (no artifact under this name) builds the Mac bundles exactly as before. The
-  // reuse decision is made once in initialize and consumed everywhere else, so
-  // nothing downstream can reach a second, disagreeing answer.
+  // One result record: job results become checkpoints in release_result, not
+  // a dozen per-stage artifacts.
+  assert.doesNotMatch(source, /release-checkpoint-/);
+  assert.equal((source.match(/actions\/upload-artifact@v4/g) ?? []).length, 8);
+  const result = workflow.jobs.release_result.steps.find((step) => step.id === 'result');
+  assert.equal(result.env.NEEDS, '${{ toJSON(needs) }}');
+  assert.match(result.run, /unified-release\.mjs job-checkpoints --needs/);
+  // A recovery whose earlier attempt already produced the complete merged
+  // helper artifact skips the cold Mac cargo builds and reuses it; a fresh
+  // identity builds the Mac bundles. The reuse decision is made once in
+  // initialize and consumed everywhere else.
   const helperReuse = workflow.jobs.initialize.steps.find((step) => step.id === 'helper_reuse');
   assert.match(helperReuse.uses, /actions\/github-script@v7/);
-  // `built` is the ordinary retry state the reuse path exists for: the merged
-  // artifact and the built checkpoint land together, so a later leg is what
-  // failed. Gating on `pending` alone would leave the lookup firing only in the
-  // seconds between those two uploads.
-  assert.match(helperReuse.if, /contains\(fromJSON\('\["pending","built"\]'\), steps\.plan\.outputs\.stage_helper\)/);
+  assert.equal(helperReuse.if, "steps.plan.outputs.run_helper == 'true'");
   assert.match(workflow.jobs.initialize.outputs.helper_reuse_run_id, /steps\.helper_reuse\.outputs\.run_id/);
   const darwinDownloads = workflow.jobs.helper.steps.filter(
     (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
@@ -1140,19 +1251,18 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(daemonLeg.inputs.reuse_run_id.default, '');
   assert.equal(daemonLeg.runs.steps.filter((step) => step.id === 'reuse').length, 0);
   const buildSteps = daemonLeg.runs.steps.filter((step) => String(step.if).includes("inputs.phase == 'build'"));
-  // Exactly one build step downloads the reused bytes; every other build step
-  // except the shared artifact upload is the fresh-build path and stays off.
+  // Exactly one build step downloads the reused bytes; the fresh-build steps
+  // stay off for a reuse, and the caller installs Node, Rust and npm once.
   assert.deepEqual(
     buildSteps.map((step) => {
       if (String(step.if).includes("inputs.reuse_run_id != ''")) return 'reuse';
       if (String(step.if).includes("inputs.reuse_run_id == ''")) return 'build';
       return 'always';
     }),
-    ['reuse', 'build', 'build', 'build', 'build', 'build', 'always'],
+    ['reuse', 'build', 'build', 'always'],
   );
-  // A `built` retry never re-uploads the artifact into its own run, so promote
-  // reads it back from the run that did, falling back to this run when the
-  // build phase produced it here.
+  assert.ok(!daemonLeg.runs.steps.some((step) => /setup-node|rust-toolchain/.test(String(step.uses))));
+  // Promote reads the artifact back from the run that holds it.
   const promoteDownload = daemonLeg.runs.steps.find(
     (step) => step.uses === 'actions/download-artifact@v4' && String(step.if).includes("inputs.phase == 'promote'"),
   );
@@ -1162,10 +1272,9 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     (step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === 'promote',
   );
   assert.match(helperPromote.with.reuse_run_id, /needs\.initialize\.outputs\.helper_reuse_run_id/);
-  assert.match(source, /\["pending","built"\][\s\S]*stage_server/);
   assert.match(source, /failure_class/);
   assert.match(source, /durationSeconds/);
-  assert.match(source, /rolling [0-9]+ release attempts/);
+  assert.doesNotMatch(source, /rolling [0-9]+ release attempts/);
   assert.match(source, /node scripts\/npm-package-visibility\.mjs usebeeline "\$\{RELEASE_VERSION#v\}"/);
   assert.equal(source.match(/npm publish/g)?.length, 1);
 });
@@ -1179,7 +1288,9 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const serverLegAction = parse(serverLeg);
   const checks = readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
   const desktop = readFileSync(new URL('../.github/workflows/desktop.yml', import.meta.url), 'utf8');
-  assert.match(release, /node scripts\/server-release-smoke\.mjs/);
+  // The canary readiness check proves each Machine serves this exact
+  // release; no second smoke check repeats it.
+  assert.doesNotMatch(release, /server-release-smoke/);
   assert.match(release, /BEELINE_REVIEW_SECRET: \$\{\{ secrets\.BEELINE_REVIEW_SECRET \}\}/);
   assert.match(release, /unified-release\.mjs notify/);
   const notification = workflow.jobs.release_result.steps.find((step) => step.id === 'notification');
@@ -1187,7 +1298,7 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const summary = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Surface release outcome'));
   assert.match(summary.env.NOTIFICATION_STATE, /no_op == 'true'/);
   for (const name of [
-    'Publish immutable attempt state for component-local retry',
+    'Publish immutable attempt state for manual recovery of this identity',
     'Create the one GitHub release record and preserve stable desktop downloads',
     'Notify clients without changing the authoritative release outcome',
     'Finalize successful delivery after every selected promotion and record',
@@ -1204,51 +1315,32 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const genuineFailure = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Fail the attempt'));
   assert.equal(genuineFailure.if, "steps.result.outputs.outcome != 'success'");
   assert.match(genuineFailure.run, /exit 1/);
-  assert.match(workflow.jobs.retry.if, /needs\.release_result\.result == 'failure'/);
-  // A cancelled run (including cancel-in-progress) is terminal for the
-  // identity: the retry job must never fire for it.
-  assert.match(workflow.jobs.retry.steps.find((step) => step.name?.startsWith('Refuse to re-dispatch a cancelled run')).uses, /actions\/github-script@v7/);
-  assert.match(release, /this run was cancelled; cancellation is terminal for the release identity/);
-  // Termination gates: machines touched / failed release migration /
-  // cancelled attempt are recorded by release_result and stamped into the
-  // published attempt state; only automatic retry refuses to fire on it.
-  assert.match(release, /needs\.release_result\.outputs\.terminated != 'true'/);
-  const resultStep = workflow.jobs.release_result.steps.find((step) => step.name === 'Merge checkpoints and classify the final attempt');
-  const otaCheckpoint = workflow.jobs.mobile_ota.steps.find((step) => step.name === 'Require rollback evidence and write checkpoint');
-  assert.match(otaCheckpoint.run, /completedAt:Number\(completedAt\)/);
-  assert.match(otaCheckpoint.run, /date \+%s/);
+  // A failed release never redispatches itself; recovery is an explicit dispatch.
+  assert.equal(workflow.jobs.retry, undefined);
+  assert.doesNotMatch(release, /createWorkflowDispatch/);
+  const resultStep = workflow.jobs.release_result.steps.find((step) => step.name === "Record each component job's result and classify the attempt");
+  const otaLeg = parse(readFileSync(new URL('../.github/actions/mobile-ota-leg/action.yml', import.meta.url), 'utf8'));
+  const otaLedger = otaLeg.runs.steps.find((step) => step.id === 'ledger');
+  assert.match(otaLedger.run, /no rollback ledger/);
+  assert.match(otaLedger.run, /completed_at=\$\(date \+%s\)/);
+  assert.equal(otaLeg.outputs.completed_at.value, '${{ steps.ledger.outputs.completed_at }}');
+  for (const job of ['mobile_ota', 'mobile_ota_after_native']) {
+    assert.equal(workflow.jobs[job].outputs.completed_at, '${{ steps.promote.outputs.completed_at }}');
+  }
   assert.match(resultStep.run, /unified-release\.mjs classify-attempt/);
-  assert.match(resultStep.run, /--helper-macos-build-ran "\$helper_macos_build_ran"/);
-  assert.match(resultStep.run, /\[ "\$HELPER_MACOS_RESULT" = success \][\s\S]*helper_macos_build_ran=true/);
+  assert.doesNotMatch(resultStep.run, /build-ran|budget/);
   assert.match(resultStep.run, /--checkpoints "\$RUNNER_TEMP\/checkpoints\.json"/);
   assert.doesNotMatch(resultStep.run, /\[ "\$elapsed" -ge "\$budget_seconds" \]/);
   assert.equal(summary.env.SLOW, '${{ steps.result.outputs.slow }}');
   assert.match(summary.run, /Slow: whole run reached/);
-  assert.match(resultStep.run, /machinesTouched/);
-  assert.match(resultStep.run, /migrationFailed/);
-  assert.match(resultStep.run, /server-gates\/gates\.json/);
-  assert.match(resultStep.run, /terminated_reason=cancelled/);
-  assert.match(release, /Stamp the terminated identity into the published attempt state/);
-  const stampStep = workflow.jobs.release_result.steps.find((step) => step.name?.startsWith('Stamp the terminated identity'));
-  assert.match(stampStep.if, /steps\.result\.outputs\.terminated == 'true'/);
-  assert.match(stampStep.run, /state\.terminated = true/);
-  const attemptUpload = workflow.jobs.release_result.steps.find((step) => step.name === 'Publish immutable attempt state for component-local retry');
-  assert.ok(workflow.jobs.release_result.steps.indexOf(stampStep) < workflow.jobs.release_result.steps.indexOf(attemptUpload),
-    'Reproduction release-termination-order: termination must be stamped before immutable upload');
-  const planStep = workflow.jobs.initialize.steps.find((step) => step.name?.includes('release plan'));
-  assert.doesNotMatch(planStep.run, /s\.terminated|terminated identity never retries/);
-  assert.equal(workflow.jobs.release_result.outputs.terminated, "${{ steps.result.outputs.terminated }}");
-  const gatesStep = workflow.jobs.server.steps.find((step) => step.name === 'Collect the server retry gates');
-  assert.match(gatesStep.if, /steps\.promote\.conclusion != 'skipped'/);
-  assert.match(release, /server-retry-gates-\$\{\{ needs\.initialize\.outputs\.release_id \}\}/);
+  // No termination bookkeeping remains: it only fed the automatic retry.
+  assert.doesNotMatch(release, /terminated|server-retry-gates|machinesTouched|reliability/);
+  assert.equal(workflow.jobs.release_result.outputs.terminated, undefined);
   const serverLegActionSteps = serverLegAction.runs.steps;
   const migrationIndex = serverLegActionSteps.findIndex((step) => step.name === 'Run schema migrations and backfills once before Machine updates');
-  const canaryIndex = serverLegActionSteps.findIndex((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer');
+  const canaryIndex = serverLegActionSteps.findIndex((step) => step.name === 'Canary one Machine for ninety seconds, then update its peer');
   assert.ok(migrationIndex < canaryIndex);
-  assert.match(serverLegActionSteps[canaryIndex].run, /machines-touched\.json/);
-  assert.ok(serverLegActionSteps[canaryIndex].run.indexOf('machines-touched.json') < serverLegActionSteps[canaryIndex].run.indexOf('retry_flyctl_update "$canary" "$image_ref" "canary"'));
-  const migrationFailedStep = serverLegActionSteps.find((step) => step.name === 'Record a failed release migration for retry gating');
-  assert.equal(migrationFailedStep.if, "inputs.phase == 'promote' && always() && steps.migrate.outcome == 'failure'");
+  assert.doesNotMatch(serverLeg, /machines-touched|migration-failed\.json/);
   assert.match(release, /unified-release-index/);
   assert.match(release, /store_track:/);
   assert.match(rollback, /mobile-ota-rollback-/);
@@ -1258,12 +1350,13 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(serverLeg, /MIGRATION_DATABASE_URL/);
   const setupNodeIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === 'actions/setup-node@v4');
   const prepareMigrationIndex = workflow.jobs.server.steps.findIndex((step) => step.name === 'Prepare the server migration CLI once');
-  const promoteIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === './.github/actions/server-leg' && step.with?.phase === 'promote');
+  const promoteIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === './.github/actions/server-leg');
   assert.ok(setupNodeIndex > 0 && setupNodeIndex < prepareMigrationIndex && prepareMigrationIndex < promoteIndex);
-  assert.equal(workflow.jobs.server.steps[setupNodeIndex].with['node-version-file'], '.nvmrc');
+  assert.equal(workflow.jobs.server.steps.filter((step) => step.uses === 'actions/setup-node@v4').length, 1);
+  assert.equal(workflow.jobs.server.steps[setupNodeIndex].with['node-version'], 22);
   assert.equal(workflow.jobs.server.steps[setupNodeIndex].with.cache, 'npm');
   const prepareMigration = workflow.jobs.server.steps[prepareMigrationIndex].run;
-  assert.match(prepareMigration, /^npm ci$/m);
+  assert.match(prepareMigration, /^bash scripts\/npm-ci-timed\.sh$/m);
   assert.doesNotMatch(prepareMigration, /--ignore-scripts|@beeline\/gate/);
   for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'server']) {
     assert.match(prepareMigration, new RegExp(`npm run build -w @beeline/${workspace}`));
@@ -1281,12 +1374,12 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.ok(migrate.indexOf('database !== \'fly-db\'') < migrate.indexOf('npm run migrate -w @beeline/server'));
   assert.match(migrate, /npm run migrate -w @beeline\/server/);
   assert.doesNotMatch(migrate, /npm ci|npm run build/);
-  assert.match(serverLeg, /seq 0 20/);
+  assert.match(serverLeg, /seq 0 6/);
   assert.match(serverLeg, /sleep 15/);
   assert.match(serverLeg, /fly-force-instance-id/);
   assert.match(serverLeg, /server\.usebeeline\.app\/health(?:\s|\\)/);
   assert.doesNotMatch(serverLeg, /server\.usebeeline\.app\/healthz/);
-  const promote = serverLegAction.runs.steps.find((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer').run;
+  const promote = serverLegAction.runs.steps.find((step) => step.name === 'Canary one Machine for ninety seconds, then update its peer').run;
   assert.match(release, /SERVER_CANARY_REVIEW_SECRET: \$\{\{ secrets\.SERVER_CANARY_REVIEW_SECRET \}\}/);
   assert.match(release, /SERVER_CANARY_ROOM_ID: \$\{\{ secrets\.SERVER_CANARY_ROOM_ID \}\}/);
   assert.match(promote, /v1\/auth\/review\/exchange/);
@@ -1296,7 +1389,7 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(promote, /Authorization: Bearer \$canary_access_token/);
   assert.match(promote, /SERVER_CANARY_REVIEW_SECRET is unset; using the legacy canary phone token/);
   assert.match(promote, /requires SERVER_CANARY_REVIEW_SECRET or SERVER_CANARY_PHONE_TOKEN/);
-  assert.ok(promote.indexOf('/v1/auth/review/exchange') < promote.indexOf('for sample in $(seq 0 20)'));
+  assert.ok(promote.indexOf('/v1/auth/review/exchange') < promote.indexOf('for sample in $(seq 0 6)'));
   assert.equal(promote.match(/v1\/auth\/review\/exchange/g)?.length, 1);
   assert.match(promote, /wait_for_machine_ready\(\)/);
   assert.match(promote, /deadline=\$\(\(SECONDS \+ 180\)\)/);
@@ -1313,15 +1406,15 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
     /retry_flyctl_update "\$second" "\$image_ref" "second"\nwait_for_machine_ready "\$second"/,
   );
   assert.ok(promote.indexOf('wait_for_machine_ready "$canary"') < promote.indexOf('/v1/auth/review/exchange'));
-  assert.match(promote, /v\.version === process\.argv\[2\]/);
+  assert.match(promote, /v\.version === process\.argv\[2\] && v\.sourceSha === process\.argv\[3\]/);
   assert.match(promote, /for exchange_attempt in 1 2 3/);
   assert.match(promote, /-H "fly-force-instance-id: \$canary" -H 'Content-Type: application\/json'/);
   assert.match(promote, /5\?\?\) ;;/);
-  // Verify the final convergence check polls for up to 180s before declaring a split.
-  assert.match(promote, /verify_machine_convergence "\$image_ref" 180/);
-  assert.match(promote, /max_wait="\$\{2:-0\}"/);
-  assert.match(promote, /deadline=\$[\(]\(SECONDS \+ max_wait\)\)/);
-  assert.match(promote, /Machines not yet converged, retrying in/);
+  // Readiness of both Machines already proves the new image; no convergence
+  // wait follows success, and one retry covers a transient Fly API failure.
+  assert.doesNotMatch(promote, /verify_machine_convergence|Machines not yet converged/);
+  assert.equal(promote.match(/flyctl machine update "\$machine"/g)?.length, 2);
+  assert.match(promote, /verify_machine_images "\$previous_ref" "\$expected_second"/);
   assert.match(serverLeg, /SERVER_CANARY_PHONE_TOKEN/);
   assert.match(serverLeg, /rollback_canary/);
   assert.match(desktop, /beeline-desktop-release-/);
@@ -1399,7 +1492,7 @@ function evaluateWorkflowCondition(expression, context) {
   ));
 }
 
-test('every helper stage has either a reused artifact or a Mac rebuild, never neither', () => {
+test('every helper run has either a reused artifact or a Mac rebuild, never neither', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
@@ -1413,64 +1506,32 @@ test('every helper stage has either a reused artifact or a Mac rebuild, never ne
   const darwinDownload = helper.steps.find(
     (step) => step.uses === 'actions/download-artifact@v4' && String(step.with?.name).startsWith('daemon-darwin'),
   );
-  const builtCheckpoint = helper.steps.find((step) => step.name === 'Checkpoint the helper build');
+  // Both daemon-leg phases always run; the leg itself picks reuse or build.
+  assert.equal(buildPhase.if, undefined);
+  assert.equal(promotePhase.if, undefined);
 
-  function resolve({ stage, reuseRunId }) {
-    const initialize = {
-      result: 'success',
-      outputs: { run_helper: 'true', stage_helper: stage, helper_reuse_run_id: reuseRunId },
-    };
-    const inputs = { plan_only: false };
-    const macosRuns = evaluateWorkflowCondition(macos.if, { inputs, needs: { initialize }, steps: {} });
-    // helper_macos produces the Mac bundles by carry or cold build.
-    const needs = { initialize, helper_macos: { result: macosRuns ? 'success' : 'skipped' } };
-    const context = { inputs, needs, steps: {} };
+  function resolve({ reuseRunId, macResult }) {
+    const initialize = { result: 'success', outputs: { run_helper: 'true', helper_reuse_run_id: reuseRunId } };
+    const macosRuns = evaluateWorkflowCondition(macos.if, { inputs: {}, needs: { initialize }, steps: {} });
+    const needs = { initialize, helper_macos: { result: macosRuns ? macResult : 'skipped' } };
+    const context = { inputs: {}, needs, steps: {} };
     return {
       rebuilds: macosRuns,
       helperRuns: evaluateWorkflowCondition(helper.if, context),
       downloadsMacBundles: evaluateWorkflowCondition(darwinDownload.if, context),
-      merges: evaluateWorkflowCondition(buildPhase.if, context),
-      checkpointsBuilt: evaluateWorkflowCondition(builtCheckpoint.if, context),
-      promotes: evaluateWorkflowCondition(promotePhase.if, context),
     };
   }
 
-  // A fresh identity still produces new Mac artifacts.
-  assert.deepEqual(resolve({ stage: 'pending', reuseRunId: '' }), {
-    rebuilds: true, helperRuns: true, downloadsMacBundles: true, merges: true, checkpointsBuilt: true, promotes: true,
+  // A fresh identity produces new Mac artifacts and merges them.
+  assert.deepEqual(resolve({ reuseRunId: '', macResult: 'success' }), {
+    rebuilds: true, helperRuns: true, downloadsMacBundles: true,
   });
-  // The intent's case: a retry whose merged artifact already exists skips the
-  // contended Mac entirely and promotes the reused bytes.
-  for (const stage of ['pending', 'built']) {
-    const reused = resolve({ stage, reuseRunId: '4242' });
-    assert.equal(reused.rebuilds, false, stage);
-    assert.equal(reused.helperRuns, true, stage);
-    assert.equal(reused.downloadsMacBundles, false, stage);
-    assert.equal(reused.promotes, true, stage);
-  }
-  // Reproduces the dead end: a `built` retry whose lookup came back empty (a
-  // transient list error, or an expired/deleted artifact) used to skip the Mac
-  // build AND the merge, leaving promote to read an artifact no run held.
-  assert.deepEqual(resolve({ stage: 'built', reuseRunId: '' }), {
-    rebuilds: true, helperRuns: true, downloadsMacBundles: true, merges: true, checkpointsBuilt: true, promotes: true,
+  // A recovery whose merged artifact already exists skips the Mac entirely.
+  assert.deepEqual(resolve({ reuseRunId: '4242', macResult: 'success' }), {
+    rebuilds: false, helperRuns: true, downloadsMacBundles: false,
   });
-  // Past the stages that owe bytes, the helper leg only records its verdict.
-  const promoted = resolve({ stage: 'promoted', reuseRunId: '' });
-  assert.equal(promoted.rebuilds, false);
-  assert.equal(promoted.helperRuns, true);
-  assert.equal(promoted.merges, false);
-  assert.equal(promoted.promotes, false);
-  // No stage may promote without this run merging the bytes or naming the run
-  // that already did.
-  for (const stage of ['pending', 'built', 'promoted']) {
-    for (const reuseRunId of ['', '4242']) {
-      const paths = resolve({ stage, reuseRunId });
-      assert.ok(
-        !paths.promotes || paths.merges || reuseRunId !== '',
-        `${stage}/${reuseRunId || 'no reuse'} promotes with neither merged nor reused bytes`,
-      );
-    }
-  }
+  // A failed Mac build never promotes a helper with missing bytes.
+  assert.equal(resolve({ reuseRunId: '', macResult: 'failure' }).helperRuns, false);
 });
 
 test('fresh Mac bundle carry is optional and every failure selects the cold build', () => {
@@ -1507,7 +1568,7 @@ test('fresh Mac bundle carry is optional and every failure selects the cold buil
   assert.match(workflow.jobs.initialize.outputs.previous_mac_run_id, /steps\.previous_mac\.outputs\.run_id/);
 });
 
-test('a helper release riding a reused artifact is not classified a budget failure', () => {
+test('release_result records a fully delivered slow attempt as a success', () => {
   const workflow = parse(
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
@@ -1516,14 +1577,22 @@ test('a helper release riding a reused artifact is not classified a budget failu
   const identity = { version: 'v0.0.9', sourceSha: NEW_SHA };
 
   // Run the release_result classifier exactly as the job does: a fully
-  // delivered attempt whose wall clock passed the 20-minute default budget.
-  function classifyDeliveredAttempt(overrides) {
+  // delivered attempt whose wall clock passed the old 20-minute budget.
+  function classifyDeliveredAttempt(triggerAgoSeconds, { otaResult = 'success' } = {}) {
     const root = mkdtempSync(join(tmpdir(), 'beeline-release-budget-'));
     try {
       const state = initializeRelease(identity);
-      for (const component of RELEASE_COMPONENTS) {
-        for (const stage of ['built', 'promoted', 'checked']) markComponentStage(state, component, stage);
-      }
+      const now = Math.floor(Date.now() / 1000);
+      const needs = {
+        initialize: { result: 'success', outputs: {
+          ...Object.fromEntries(RELEASE_COMPONENTS.map((component) => [`run_${component.replace('-', '_')}`, 'true'])),
+          native_android: 'true', native_ios: 'true',
+        } },
+        ...Object.fromEntries(['server', 'helper', 'desktop_installers', 'website',
+          'mobile_native_android', 'mobile_native_ios'].map((job) => [job, { result: 'success', outputs: {} }])),
+        mobile_ota: { result: otaResult, outputs: { completed_at: String(now - 60) } },
+        mobile_ota_after_native: { result: 'skipped', outputs: {} },
+      };
       mkdirSync(join(root, 'release'), { recursive: true });
       writeFileSync(join(root, 'release', 'unified-release.json'), JSON.stringify(state));
       const output = join(root, 'github-output');
@@ -1536,18 +1605,11 @@ test('a helper release riding a reused artifact is not classified a budget failu
           ...process.env,
           RUNNER_TEMP: root,
           GITHUB_OUTPUT: output,
-          TRIGGER_EPOCH: String(Math.floor(Date.now() / 1000) - 2000),
-          SERVER_RESULT: 'skipped',
-          HELPER_RESULT: 'success',
-          HELPER_MACOS_RESULT: 'skipped',
-          HELPER_REUSE_RUN_ID: '',
-          MOBILE_OTA_RESULT: 'skipped',
-          RELEASE_PROOF_RESULT: 'skipped',
-          MOBILE_NATIVE_ANDROID_RESULT: 'skipped',
-          MOBILE_NATIVE_IOS_RESULT: 'skipped',
-          DESKTOP_RESULT: 'skipped',
-          WEBSITE_RESULT: 'skipped',
-          ...overrides,
+          TRIGGER_EPOCH: String(now - triggerAgoSeconds),
+          NEEDS: JSON.stringify(needs),
+          RELEASE_VERSION: identity.version,
+          RELEASE_SHA: identity.sourceSha,
+          RELEASE_ID: `${identity.version}-${identity.sourceSha}`,
         },
       });
       return Object.fromEntries(
@@ -1561,19 +1623,20 @@ test('a helper release riding a reused artifact is not classified a budget failu
     }
   }
 
-  // Before this rule the same delivered attempt was recorded as a failure the
-  // moment the Mac leg was the one thing that did not need to run.
-  assert.equal(classifyDeliveredAttempt({}).failure_class, 'budget');
-  assert.equal(classifyDeliveredAttempt({ HELPER_MACOS_RESULT: 'success' }).outcome, 'success');
-  const reused = classifyDeliveredAttempt({ HELPER_REUSE_RUN_ID: '4242' });
-  assert.equal(reused.outcome, 'success');
-  assert.equal(reused.failure_class, '');
-  // The widening belongs to a helper leg that actually delivered, not to the
-  // mere existence of a reusable artifact.
-  assert.equal(
-    classifyDeliveredAttempt({ HELPER_RESULT: 'skipped', HELPER_REUSE_RUN_ID: '4242' }).failure_class,
-    'budget',
-  );
+  // Run 541 shape: every component shipped and the OTA landed 25 minutes
+  // after dispatch. The old budget rule failed this release.
+  const late = classifyDeliveredAttempt(26 * 60);
+  assert.equal(late.outcome, 'success');
+  assert.equal(late.failure_class, '');
+  assert.equal(late.ota_elapsed_seconds, String(25 * 60));
+  assert.equal(late.slow, 'false');
+  const slow = classifyDeliveredAttempt(3 * 60 * 60);
+  assert.equal(slow.outcome, 'success');
+  assert.equal(slow.slow, 'true');
+  // A component that did not deliver still fails the release.
+  const undelivered = classifyDeliveredAttempt(26 * 60, { otaResult: 'failure' });
+  assert.equal(undelivered.outcome, 'failure');
+  assert.equal(undelivered.failure_class, 'component:mobile-ota');
 });
 
 test('the emulator release proof gates OTA promotion', () => {
@@ -1603,10 +1666,10 @@ test('the emulator release proof gates OTA promotion', () => {
   // resolved" and no commit whose Android build was carried can ever be
   // proven (run 35041737312). The step must build the SDK dist exactly the
   // way the native leg's eas-build-post-install does, after npm ci.
-  assert.match(apk.run, /npm ci/);
+  assert.match(apk.run, /npm-ci-timed\.sh/);
   assert.match(apk.run, /npm run eas-build-post-install/);
   assert.ok(
-    apk.run.indexOf('npm ci') < apk.run.indexOf('npm run eas-build-post-install'),
+    apk.run.indexOf('npm-ci-timed.sh') < apk.run.indexOf('npm run eas-build-post-install'),
     'eas-build-post-install must run after npm ci',
   );
   // The runner's system node is older than metro-config's use of
@@ -1628,7 +1691,7 @@ test('the emulator release proof gates OTA promotion', () => {
   // is blocked loudly. Any OTA promoted without a proof is recorded UNPROVEN
   // on the release.
   assert.match(proof.if, /inputs\.run_release_proof == true/);
-  const ota = workflow.jobs.mobile_ota;
+  const ota = workflow.jobs.mobile_ota_after_native;
   const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
   assert.match(promote.if, /needs\.release_proof\.result == 'success' \|\| inputs\.run_release_proof != true/);
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
@@ -1636,15 +1699,8 @@ test('the emulator release proof gates OTA promotion', () => {
   assert.match(refuse.run, /exit 1/);
   assert.match(refuse.run, /The proof was explicitly requested for this release, so promotion stays blocked/);
   assert.match(refuse.run, /result: \$\{\{ needs\.release_proof\.result \}\}/);
-  for (const step of ota.steps.filter((step) =>
-    [
-      'Checkpoint OTA promotion',
-      'Locate promoted OTA evidence for a check-only retry',
-      'Require rollback evidence and write checkpoint',
-    ].includes(step.name),
-  )) {
-    assert.match(step.if, /needs\.release_proof\.result == 'success' \|\| inputs\.run_release_proof != true/);
-  }
+  // A requested proof always routes the OTA through the job that waits for it.
+  assert.match(workflow.jobs.mobile_ota.if, /inputs\.run_release_proof != true/);
 
   // An unrequested proof records the unproven promotion on the release.
   const result = workflow.jobs.release_result;
@@ -1773,12 +1829,11 @@ test('the release proof is consent-gated; a requested proof that fails blocks pr
     readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'),
   );
   const proofIf = workflow.jobs.release_proof.if;
-  const ota = workflow.jobs.mobile_ota;
+  const ota = workflow.jobs.mobile_ota_after_native;
   const promote = ota.steps.find((step) => step.uses === './.github/actions/mobile-ota-leg' && step.with.phase === 'promote');
   const refuse = ota.steps.find((step) => step.name === 'Refuse promotion unless the release proof succeeded');
 
   const proofEnv = ({ native_android = 'true', native_result = 'success', run_mobile_ota = 'true', requested = false } = {}) => ({
-    'inputs.plan_only': false,
     'inputs.run_release_proof': requested,
     'needs.initialize.result': 'success',
     'needs.initialize.outputs.run_mobile_ota': run_mobile_ota,
@@ -1871,7 +1926,13 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   assert.equal(ios.needs, 'initialize');
   assert.deepEqual(ios['runs-on'], ['self-hosted', 'macOS', 'X64', 'ios-builder']);
   assert.equal(ios['timeout-minutes'], 90);
-  assert.equal(ios.steps.find((step) => step.uses === 'actions/setup-node@v4').with['node-version-file'], '.nvmrc');
+  for (const job of [android, ios]) {
+    const setups = job.steps.filter((step) => step.uses === 'actions/setup-node@v4');
+    assert.equal(setups.length, 1);
+    assert.equal(setups[0].with['node-version'], 22);
+    assert.ok(job.steps.some((step) => step.uses === './.github/actions/eas-cli'));
+    assert.equal(job.env?.EAS_CLI_VERSION, undefined);
+  }
 
   const androidSteps = android.steps;
   const androidBuild = androidSteps.find((step) => step.name === 'Build immutable Android store binary locally');
@@ -1880,15 +1941,15 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   try {
     const env = { ...process.env, RUNNER_TEMP: project, EAS_CLI_VERSION: 'test', EXPO_TOKEN: 'fixture' };
     execFileSync('bash', ['-euc', credentials.run], { env });
-    // The Android leg builds on the self-hosted Linux runner (PR #1229): one
-    // pinned eas-cli, --package + env -u for the same reasons as the iOS leg,
-    // and a local build that writes the aab straight into RUNNER_TEMP.
+    // The Android leg builds on the self-hosted Linux runner (PR #1229) with
+    // the one locked eas-cli and writes the aab straight into RUNNER_TEMP.
     assert.match(androidBuild.run, /for candidate in "\$\{ANDROID_HOME:-\}" \/home\/lunchbox\/android-sdk "\$HOME\/Android\/Sdk"/);
     assert.match(androidBuild.run, /test -d "\$\{ANDROID_HOME:-\}\/platform-tools"/);
     assert.match(
       androidBuild.run,
-      /npx --yes --package="eas-cli@\$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform android --profile production-ci --non-interactive --output "\$RUNNER_TEMP\/beeline\.aab"/,
+      /"\$EAS_CLI_PATH" build --local --platform android --profile production-ci --non-interactive --output "\$RUNNER_TEMP\/beeline\.aab"/,
     );
+    assert.doesNotMatch(androidBuild.run, /npx/);
     assert.match(androidBuild.run, /test -s "\$RUNNER_TEMP\/beeline\.aab"/);
     for (const step of androidSteps.filter((step) =>
       ['Authenticate to Google Play', 'Upload Android to the selected Play track'].includes(step.name)
@@ -1915,7 +1976,8 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.match(iosCredentials.run, /EXPO_APPLE_TEAM_ID=89KT3SWYAF/);
     assert.match(iosCredentials.run, /EXPO_NO_CAPABILITY_SYNC=1/);
     assert.match(iosCredentials.run, /EAS_SKIP_AUTO_FINGERPRINT=1/);
-    assert.match(iosBuild.run, /build --local --platform ios --profile production-ci --non-interactive --output/);
+    assert.match(iosBuild.run, /"\$EAS_CLI_PATH" build --local --platform ios --profile production-ci --non-interactive --output/);
+    assert.doesNotMatch(iosBuild.run, /npx/);
     assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
     assert.match(iosBuild.run, /python3 ..\/..\/scripts\/ios-build-evidence\.py "\$RUNNER_TEMP\/beeline-ios\.ipa" "\$RUNNER_TEMP\/ios-build\.json"/);
     assert.match(iosSubmit.run, /ios-store-build\.mjs prepare "\$RUNNER_TEMP\/ios-build\.json"/);
@@ -1940,21 +2002,6 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.equal(iosEvidence.with.name, 'mobile-native-ios-build-${{ needs.initialize.outputs.release_id }}');
     assert.equal(iosEvidence.with.path, '${{ runner.temp }}/ios-build.json');
 
-    const releaseSteps = workflow.jobs.release_result.steps;
-    const collectEvidence = releaseSteps.find((step) => step.name === 'Collect successful native build evidence');
-    const preserveEvidence = releaseSteps.find((step) => step.name === 'Preserve native build evidence');
-    const checkpoint = releaseSteps.find((step) => step.name === 'Write native checkpoint');
-    const publishCheckpoint = releaseSteps.find((step) => step.name === 'Publish native checkpoint');
-    for (const step of [collectEvidence, preserveEvidence, checkpoint, publishCheckpoint]) {
-      assert.match(step.if, /native_android != 'true'.*mobile_native_android\.result == 'success'/s);
-      assert.match(step.if, /native_ios != 'true'.*mobile_native_ios\.result == 'success'/s);
-    }
-    assert.equal(collectEvidence.with.pattern, 'mobile-native-*-build-${{ needs.initialize.outputs.release_id }}');
-    assert.equal(preserveEvidence.with.name, 'mobile-native-${{ needs.initialize.outputs.release_id }}');
-    assert.match(checkpoint.run, /checkpoint-mobile-native\.json/);
-    assert.match(checkpoint.run, /component:"mobile-native"/);
-    assert.equal(publishCheckpoint.with.name, 'release-checkpoint-${{ needs.initialize.outputs.release_id }}-mobile-native');
-    assert.equal(publishCheckpoint.with.path, '${{ runner.temp }}/checkpoints/checkpoint-mobile-native.json');
     assert.equal(cleanup.if, 'always()');
     assert.match(cleanup.run, /rm -f .*AuthKey_.*beeline-ios\.ipa/);
     assert.equal(restoreKeychains.if, 'always()');
@@ -2000,7 +2047,7 @@ test('helper job accommodates the npm visibility deadline plus publication overh
 });
 
 
-test('release-terminal-manual: the dispatch initializer plans terminated identities for every terminal reason', () => {
+test('release-manual-recovery: the dispatch initializer resumes a failed identity', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   const plan = workflow.jobs.initialize.steps.find((step) => step.id === 'plan');
   const dir = mkdtempSync(join(tmpdir(), 'manual-release-retry-'));
@@ -2016,10 +2063,9 @@ test('release-terminal-manual: the dispatch initializer plans terminated identit
     `;
     // The sourced helper defines the guard, so install its stub after sourcing.
     const run = plan.run.replace('. scripts/gh-release-retry.sh', '. scripts/gh-release-retry.sh\n' + shell);
-    for (const reason of ['cancelled', 'migration-failed', 'machines-touched']) {
+    {
       const retry = initializeRelease({ version: 'v0.0.9', sourceSha });
-      retry.terminated = true;
-      retry.delivery = { state: 'failure', terminated: true, terminatedReason: reason };
+      retry.delivery = { state: 'failure', failureClass: 'component:server' };
       writeFileSync(join(dir, 'retry/release-attempt.json'), JSON.stringify(retry));
       const result = spawnSync('bash', ['-euc', run], { encoding: 'utf8', env: {
         ...process.env, RUNNER_TEMP: dir, PLAN_ONLY: 'false', REQUESTED_SHA: sourceSha,
@@ -2031,6 +2077,25 @@ test('release-terminal-manual: the dispatch initializer plans terminated identit
       assert.equal(summary.identity, `v0.0.9@${sourceSha}`);
       assert.ok(Object.values(summary.retry).every(Boolean));
       assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /run_server=true/);
+      // Never promoted: the OTA recovers as a first attempt.
+      assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /^stage_mobile_ota=pending$/m);
+    }
+    {
+      // Promotion started before the attempt failed: the OTA leg recovers
+      // only that exact promotion.
+      const retry = initializeRelease({ version: 'v0.0.9', sourceSha });
+      applyComponentCheckpoints(retry, [{ component: 'mobile-ota', version: 'v0.0.9', sourceSha, state: 'promoted', artifactRef: 'ota' }]);
+      writeFileSync(join(dir, 'retry/release-attempt.json'), JSON.stringify(retry));
+      writeFileSync(join(dir, 'outputs'), '');
+      const result = spawnSync('bash', ['-euc', run], { encoding: 'utf8', env: {
+        ...process.env, RUNNER_TEMP: dir, REQUESTED_SHA: sourceSha,
+        REQUESTED_VERSION: 'v0.0.9', SELECTION: 'all', STORE_TRACK: 'none',
+        GITHUB_OUTPUT: join(dir, 'outputs'), GITHUB_STEP_SUMMARY: join(dir, 'summary'),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const outputs = readFileSync(join(dir, 'outputs'), 'utf8');
+      assert.match(outputs, /^stage_mobile_ota=promoted$/m);
+      assert.match(outputs, /^run_mobile_ota=true$/m);
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -2038,7 +2103,7 @@ test('release-terminal-manual: the dispatch initializer plans terminated identit
 test('both native builds apply the one resolved store version before EAS, with no extra jobs or inputs', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   const resolve = workflow.jobs.initialize.steps.find((step) => step.id === 'native_version');
-  assert.match(resolve.if, /plan_only != true.*run_mobile_native == 'true'/);
+  assert.equal(resolve.if, "steps.plan.outputs.run_mobile_native == 'true'");
   assert.match(resolve.run, /git show "\$RELEASE_SHA:apps\/mobile\/package.json"/);
   assert.match(resolve.run, /STORE_TRACK.*production/);
   assert.match(resolve.run, /ios-store-build.mjs resolve-version/);
@@ -2079,24 +2144,7 @@ test('release-dispatch-attribution: operator command refuses an unauthenticated 
   assert.match(result.stderr, /requires an authenticated Beeline agent turn/);
 });
 
-test('release-dispatch-serialization: automatic retry ignores itself but refuses another queued release', async () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  const script = workflow.jobs.retry.steps.find(step => step.name.startsWith('Redispatch')).with.script;
-  const execute = new (Object.getPrototypeOf(async function () {}).constructor)('github', 'context', 'core', script);
-  for (const status of ['queued', 'in_progress', 'waiting', 'completed']) {
-    const dispatches = [];
-    const notices = [];
-    const github = {
-      paginate: async () => [{ id: 1, status: 'in_progress' }, { id: 2, status }],
-      rest: { actions: { listWorkflowRuns() {}, createWorkflowDispatch: async args => dispatches.push(args) } },
-    };
-    await execute(github, { repo: { owner: 'Beeline-Work', repo: 'beeline' }, runId: 1 }, { notice: text => notices.push(text) });
-    assert.equal(dispatches.length, status === 'completed' ? 1 : 0);
-    if (status !== 'completed') assert.match(notices[0], /already .*; skipping automatic retry/);
-  }
-});
-
-test('release-dispatch-attribution: workflow refuses missing provenance and retries retain the original dispatch', async () => {
+test('release-dispatch-attribution: workflow refuses missing provenance', async () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   assert.equal(workflow.on.workflow_dispatch.inputs.dispatched_by.required, true);
   assert.match(workflow['run-name'], /inputs.dispatched_by/);
@@ -2109,9 +2157,6 @@ test('release-dispatch-attribution: workflow refuses missing provenance and retr
     await assert.rejects(execute({ summary }), /requires dispatch attribution: agentId/);
     process.env.DISPATCHED_BY = JSON.stringify({ agentId: 'agent', handle: 'jellybean', place: 'room', humanCommandMessageId: 'human', auditMessageId: 'audit' });
     await execute({ summary });
-    const retry = workflow.jobs.retry.steps.find(step => step.name.startsWith('Redispatch'));
-    assert.equal(retry.env.DISPATCHED_BY, '${{ inputs.dispatched_by }}');
-    assert.match(retry.with.script, /dispatched_by: process.env.DISPATCHED_BY/);
   } finally {
     if (previous === undefined) delete process.env.DISPATCHED_BY;
     else process.env.DISPATCHED_BY = previous;

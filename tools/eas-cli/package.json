@@ -1,0 +1,8 @@
+{
+  "name": "beeline-release-eas-cli",
+  "private": true,
+  "description": "The one pinned eas-cli the release installs with npm ci instead of npx --yes.",
+  "dependencies": {
+    "eas-cli": "22.2.0"
+  }
+}

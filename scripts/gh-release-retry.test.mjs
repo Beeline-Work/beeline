@@ -379,7 +379,7 @@ test('initialize guards only a requested version against an existing release at 
 });
 
 test('release_result routes every release-mutating gh call through the retry wrappers', () => {
-  const job = WORKFLOW.match(/^  release_result:[\s\S]*?^  retry:/m)?.[0];
+  const job = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
   assert.ok(job, 'release_result job found in unified-release.yml');
   assert.match(job, /\. scripts\/gh-release-retry\.sh/);
   // No bare release-mutating call may remain in the job (view/download are
@@ -394,15 +394,17 @@ test('release_result routes every release-mutating gh call through the retry wra
   assert.match(job, /ghr_delete_asset "\$RELEASE_VERSION" 'Beeline-latest\.json' \|\| true/);
 });
 
-test('initialize preflights a draft release before dependent shipping jobs', () => {
+test('the release record draft is created at record time, reused by a recovery, and guarded for pinned versions', () => {
   const initialize = WORKFLOW.match(/^  initialize:[\s\S]*?^  [a-z][\w-]*:/m)?.[0];
   assert.ok(initialize);
-  assert.match(initialize, /- name: Preflight the release record before any component ships\n\s*if: inputs\.plan_only != true/);
-  assert.match(initialize, /ghr_requested_version_guard "\$RELEASE_VERSION" "\$RELEASE_SHA"/);
-  assert.match(initialize, /ghr_create "\$RELEASE_VERSION"[^\n]*--draft/);
-  assert.ok(initialize.indexOf('Preflight the release record') < initialize.indexOf('name: unified-release-plan-'));
-  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*?^  retry:/m)?.[0];
-  assert.doesNotMatch(releaseResult, /ghr_create/);
+  // No pre-ship draft: planning only guards a pinned recovery version.
+  assert.doesNotMatch(initialize, /ghr_create/);
+  assert.match(initialize, /ghr_requested_version_guard "\$release_version"/);
+  const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*$/m)?.[0];
+  const create = releaseResult.indexOf('ghr_create "$RELEASE_VERSION"');
+  assert.ok(create > 0);
+  assert.match(releaseResult, /if ! gh release view "\$RELEASE_VERSION" >\/dev\/null 2>&1; then\n\s*ghr_create "\$RELEASE_VERSION"[^\n]*--draft/);
+  assert.ok(create < releaseResult.indexOf('ghr_upload_verified "$RELEASE_VERSION" "$manifest"'));
 });
 
 for (const same of [true, false]) {
@@ -446,16 +448,16 @@ test('ghr_requested_version_guard: existing draft tag wins over its target', (t)
   assert.match(result.stderr, /whose tag points at b{40}/);
 });
 
-for (const same of [true, false]) {
-  test(`Reproduction tagless-draft: workflow preflight ${same ? 'reuses' : 'rejects'} existing draft`, (t) => {
-    const preflight = WORKFLOW.match(/- name: Preflight the release record before any component ships[\s\S]*?run: \|\n([\s\S]*?)(?=      - uses:)/)?.[1];
-    assert.ok(preflight);
-    const body = preflight.replace(/^          /gm, '').replace('. scripts/gh-release-retry.sh', `. '${HELPER}'`);
-    const { result, calls } = runHelper(t, `RELEASE_VERSION=v0.1.64\nRELEASE_SHA="$SHA"\n${body}`, {
-      releaseExists: true, draftExists: true, tagless: true, target: (same ? 'a' : 'b').repeat(40),
+for (const exists of [true, false]) {
+  test(`release record ${exists ? 'reuses the existing draft' : 'creates a draft'} before publishing`, (t) => {
+    const snippet = WORKFLOW.match(/(if ! gh release view "\$RELEASE_VERSION" >\/dev\/null 2>&1; then[\s\S]*?\n\s*fi)\n/)?.[1];
+    assert.ok(snippet);
+    const body = snippet.replace(/^          /gm, '');
+    const { result, calls } = runHelper(t, `. '${HELPER}'\nRELEASE_VERSION=v0.1.64\nRELEASE_SHA="$SHA"\n${body}`, {
+      releaseExists: exists, draftExists: exists, target: 'a'.repeat(40),
     });
-    assert.equal(result.status, same ? 0 : 1, result.stderr);
-    assert.ok(!calls().some((line) => /^release (create|edit|upload|delete)/.test(line)));
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(calls().some((line) => /^release create v0\.1\.64 .*--draft/.test(line)), !exists);
   });
 }
 

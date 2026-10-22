@@ -316,10 +316,45 @@ it('Reproduction quiet-final: private order prose keeps its return route without
   console.info('Demonstrated quiet-final: ordered Room final text reaches commander unchanged, private, without done prefix');
 });
 
+it.each(['working', 'activity', 'other-place', 'optimistic'])(
+  'Reproduction delivery-evidence: pending wake with %s evidence', async (evidence) => {
+    const opened = await open();
+    const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
+    await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE id=$1`, [pending.id]);
+    if (evidence === 'activity' || evidence === 'other-place') {
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
+        VALUES($1,$2,$3,'Reading source','activity')`,
+        [randomBytes(32).toString('hex'), evidence === 'activity' ? opened.cornerId : ROOM, WORKER]);
+    } else if (evidence === 'working') {
+      await db.query(`UPDATE agent_turns SET generation_id='running-helper' WHERE room_id=$1 AND agent_id=$2`, [opened.cornerId, WORKER]);
+    }
+    await noteBlockedCornerChecks(db);
+    const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+    expect(reports).toHaveLength(evidence === 'working' || evidence === 'activity' ? 0 : 1);
+  },
+);
+
+it('Reproduction named-stall: exhausted corner stall names its source in the commander inbox', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query('UPDATE agent_commands SET hiccup_attempts=3 WHERE id=$1', [turn.id]);
+  const { noteFirstSilence } = await import('./turn-silence-notice.js');
+  await noteFirstSilence(db, new LiveHub(), {
+    roomId: opened.cornerId, requestId: turn.turnRequestId!, agentId: WORKER,
+    generationId: 'proof-generation', reason: 'the turn stalled', reasonKind: 'hiccup', stalled: true,
+  });
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports).toHaveLength(1);
+  expect(reports[0]!.source.body).toContain('Widget');
+  expect(reports[0]!.source.body).toContain(opened.cornerId);
+  expect(reports[0]!.source.body).toContain('the turn stalled');
+});
+
 it('Reproduction quiet-unreachable: names the failed corner and agent once per failure span', async () => {
   const opened = await open();
   const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
   await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE id=$1`, [pending.id]);
+  // No helper connection or real turn: a genuinely unreachable worker still reports.
+  expect((await db.query('SELECT 1 FROM agent_connections WHERE agent_id=$1 AND released_at IS NULL', [WORKER])).rowCount).toBe(0);
   const before = (await db.query('SELECT id FROM messages ORDER BY id')).rows;
   await noteBlockedCornerChecks(db);
   await noteBlockedCornerChecks(db);
@@ -997,6 +1032,8 @@ it.each(['repeated-tool-call', 'free-agent-time-limit', 'login-required'])('fail
     reason: `unreported_order: ${reason}; requested work is unconfirmed`, toolCalls: 6 }, WORKER);
   const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
   expect(reports).toHaveLength(1);
+  expect(reports[0]!.source.body).toContain(ROOM);
+  expect(reports[0]!.source.body).toContain('Target Room');
   await claim(reports[0]!);
   await daemon.execute('report', { ...authority(reports[0]!), status: 'failed', text: reports[0]!.source.body }, RUBY);
   expect((await phone.readRoom(DM, HUMAN))?.messages.filter(m => m.text.startsWith('failed:'))).toHaveLength(1);

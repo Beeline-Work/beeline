@@ -1794,7 +1794,15 @@ export async function noteCornerAgentUnreachable(
     const failure = (await db.query<{
       name: string; agent_name: string; last_run: string | null; generation: string | null; recovered: boolean;
     }>(`SELECT corner.name,identity.name agent_name,ran.id last_run,ran.generation_id generation,
-        ran.claimed_at>=COALESCE(failed.created_at,source.created_at,clock_timestamp()) recovered
+        (ran.claimed_at>=COALESCE(failed.created_at,source.created_at,clock_timestamp())
+          OR EXISTS (SELECT 1 FROM agent_turns turn
+            WHERE turn.room_id=corner.id AND turn.agent_id=$2
+              AND turn.generation_id NOT LIKE 'pending:%'
+              AND turn.created_at>=COALESCE(failed.created_at,source.created_at,clock_timestamp()))
+          OR EXISTS (SELECT 1 FROM messages activity
+            WHERE activity.room_id=corner.id AND activity.author_id=$2
+              AND activity.presentation IN ('activity','message') AND activity.deleted_at IS NULL
+              AND activity.created_at>=COALESCE(failed.created_at,source.created_at,clock_timestamp()))) recovered
       FROM rooms corner JOIN identities identity ON identity.id=$2
       LEFT JOIN agent_commands failed ON failed.id=$3 AND failed.room_id=corner.id AND failed.agent_id=$2
       LEFT JOIN messages source ON source.id=$4

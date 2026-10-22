@@ -4417,7 +4417,7 @@ export class DaemonService {
       [input.roomId, agentId],
     );
     if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
-      throw new Error('queued attachments exceed the size cap');
+      throw new CommandRefusalError('queued attachments exceed the size cap', 400);
     await this.database.query(
       `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,

@@ -5,6 +5,7 @@ import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
 import { postRepositoryOnboarding, repositoryStarters, type RepositorySignals } from './repository-onboarding.js';
+import type { CommittedMessageLiveRow } from './live.js';
 
 const H = 'a'.repeat(64), A = 'b'.repeat(64), OTHER = 'c'.repeat(64);
 const W = '11111111-1111-4111-8111-111111111111', R = '22222222-2222-4222-8222-222222222222';
@@ -112,9 +113,10 @@ it('lets an invited Room member start work without granting repository-managemen
 });
 
 it('advertises cards to Google-only viewers without feature configuration', async () => {
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [W,R,OTHER]);
   expect(await phone.execute('getAuthCapabilities', {}, OTHER)).toHaveProperty('repositoryOnboarding', true);
   const card = await postRepositoryOnboarding(db, undefined, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
-  expect((await phone.readRoom(R, H))?.messages.some(message => message.id === card.id)).toBe(true);
+  expect((await phone.readRoom(R, OTHER))?.messages.some(message => message.id === card.id)).toBe(true);
 });
 
 it('keeps another requester\'s unanswered card open when onboarding an invitee', async () => {
@@ -124,6 +126,19 @@ it('keeps another requester\'s unanswered card open when onboarding an invitee',
     `SELECT id,card->>'status' status FROM messages WHERE id=ANY($1::text[])`, [[ownerCard.id, inviteeCard.id]])).rows;
   expect(cards).toHaveLength(2);
   expect(cards.every(card => card.status === 'open')).toBe(true);
+});
+
+it('R-onb-22: public rollout keeps personal repository choices private in reads and live deltas', async () => {
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,[W,R,OTHER]);
+  const card=await postRepositoryOnboarding(db,github,{roomId:R,agentId:A,requesterId:H,kind:'repository'});
+  expect((await phone.readRoom(R,H))?.messages.some(message=>message.id===card.id)).toBe(true);
+  expect((await phone.readRoom(R,OTHER))?.messages.some(message=>message.id===card.id)).toBe(false);
+  const row=(await db.query<CommittedMessageLiveRow>(`SELECT m.*,i.kind author_kind,i.name author_name,
+    i.handle author_handle,i.avatar author_avatar,i.face_id author_face,ARRAY[]::text[] tagged_ids
+    FROM messages m JOIN identities i ON i.id=m.author_id WHERE m.id=$1`,[card.id])).rows[0]!;
+  expect(await phone.projectCommittedLiveDelta(R,{type:'message',row},H)).toMatchObject({type:'message-delta'});
+  expect(await phone.projectCommittedLiveDelta(R,{type:'message',row},OTHER)).toBeNull();
+  expect(await phone.readLiveDelta(R,OTHER,{type:'message',messageId:card.id})).toBeNull();
 });
 
 it('E19/E20: allows any Google-only identity without configuration', async () => {

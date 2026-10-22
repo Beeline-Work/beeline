@@ -9,6 +9,8 @@
   // Only proof adapters: bundlers supply these exports through runtime aliases.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // Metro and the web bundler select this platform export for the shared hook.
+    "apps/mobile/sources/buzz/use-autofit-text.web.ts": ["exports"],
     // Metro injects these disposable server/router adapters into the native proof.
     "apps/mobile/scripts/search-cell-proof/mocks.tsx": ["exports"],
     // Selected as the temporary Metro configuration described in the proof runbook.

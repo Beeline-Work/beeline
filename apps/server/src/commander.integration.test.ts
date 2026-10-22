@@ -1338,6 +1338,19 @@ it('dedupe preserves a final with an additional sentence', async () => {
     .toEqual([text, final]);
 });
 
+it('R-onb-15: a free agent post and paraphrased final leave one visible answer', async () => {
+  await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'fixture')`,
+    [RUBY,WS,HUMAN]);
+  const earlier = 'The card is up. Sign in to Link, then name the repository and I will start.';
+  const final = 'The Link sign-in card is in the Room now. Sign in, then name the repo and I start.';
+  await daemon.execute('postCornerMessage', {...authority(order),cornerId:DM,text:earlier}, RUBY);
+  await daemon.execute('postRoomMessage', {...authority(order),text:final}, RUBY);
+  const messages = (await phone.readRoom(DM,HUMAN))!.messages.filter(message=>message.author.pubkey===RUBY);
+  expect(messages.filter(message=>message.presentation==='message').map(message=>message.text)).toEqual([final]);
+  expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='activity'`,[DM,RUBY])).rows)
+    .toContainEqual({text:earlier});
+});
+
 it.each(['other-address', 'other-generation', 'other-request', 'deleted'] as const)('dedupe does not suppress a final after a post in %s', async scope => {
   const text = 'Google sign-in is merged.';
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: scope === 'other-address' ? ROOM : DM, text }, RUBY);

@@ -120,7 +120,7 @@ describe('YouStep', () => {
       theme.textPrimary,
       theme.textPrimary,
     ]);
-    expect(host(tree, 'onboarding-you-source').props.children).toBe('From GitHub · change either later in Settings');
+    expect(tree.root.findAllByProps({ testID: 'onboarding-you-source' })).toHaveLength(0);
     const labels = tree.root
       .findAll((node: any) => node.type === 'Text')
       .map((node: any) => node.props.children);
@@ -182,8 +182,8 @@ describe('YouStep', () => {
     for (const style of before) {
       expect(style.borderColor).toBe(theme.faint);
       expect(style.borderWidth).toBe(2);
-      expect(style.width).toBe(78);
-      expect(style.height).toBe(78);
+      expect(style.width).toBe(79.5);
+      expect(style.height).toBe(79.5);
     }
     await press(host(tree, 'onboarding-face-owl'));
     const after = FACE_IDS.map((face) => flat(host(tree, `onboarding-face-${face}`).props.style));
@@ -199,7 +199,7 @@ describe('YouStep', () => {
 
   it('lets a Google user edit their imported name and handle before entering', async () => {
     const { tree, onConfirm } = await render({ provider: 'google', editableIdentity: true, name: 'Alex Chen', handle: 'alex.chen' });
-    expect(host(tree, 'onboarding-you-source').props.children).toBe('From Google · change either later in Settings');
+    expect(tree.root.findAllByProps({ testID: 'onboarding-you-source' })).toHaveLength(0);
     await act(async () => {
       host(tree, 'onboarding-you-name-input').props.onChangeText('Chosen Name');
       host(tree, 'onboarding-you-handle-input').props.onChangeText('chosen.handle');

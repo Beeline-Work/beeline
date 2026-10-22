@@ -560,7 +560,7 @@ export default function BuzzIdentitySettings() {
               />
               {pushRegistrationFailed && pushRegistration ? (
                 <SettingsRow
-                  action={pushWorking ? 'Retrying…' : 'Retry'}
+                  action={pushWorking ? 'Retrying notifications…' : 'Retry notifications'}
                   description={capitalize(buzzPushPhaseDetail(pushRegistration.phase) ?? '')}
                   descriptionTone="danger"
                   disabled={pushWorking}

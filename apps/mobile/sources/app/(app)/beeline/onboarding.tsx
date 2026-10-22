@@ -579,7 +579,7 @@ export default function BuzzOnboarding() {
   if (faceStep) {
     return (
       <View
-        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+        style={[styles.faceContainer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
         testID="onboarding-face-ceremony"
       >
         <YouStep
@@ -713,7 +713,7 @@ export default function BuzzOnboarding() {
               <Button
                 label={signInLabel}
                 labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
-                variant="secondary"
+                variant="provider"
                 testID="onboarding-github-sign-in"
                 loading={loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'}
                 onPress={() => void handleSignIn()}
@@ -723,7 +723,7 @@ export default function BuzzOnboarding() {
             </View>
             <Button
               label="Continue with Google"
-              variant="secondary"
+              variant="provider"
               testID="onboarding-google-sign-in"
               loading={loadingAction === 'google'}
               disabled={loading || status === 'checking_device' || status === 'binding'}
@@ -756,6 +756,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: groknight.bgVoid,
     },
     brandSurface: { alignItems: 'center', marginBottom: groknight.space.xl },
+    faceContainer: { flex: 1, backgroundColor: groknight.bgVoid },
     desktopBrandSurface: { marginBottom: groknight.space.xl },
     title: {
       // Canonical brand family (theme prose voice, Space Grotesk) — the login

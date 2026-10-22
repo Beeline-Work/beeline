@@ -177,10 +177,21 @@ describe('the shared Button anatomy', () => {
   it('keeps a disabled primary legible as disabled', async () => {
     active.theme = 'bone';
     const { frame, text, pressable } = await render({ disabled: true });
-    expect(frame().backgroundColor).toBe(beelineThemes.bone.bgRaised);
-    expect(text.color).toBe(beelineThemes.bone.textDisabled);
+    expect(frame().backgroundColor).toBe(beelineThemes.bone.buttonPrimaryFill);
+    expect(frame().borderColor).toBe(beelineThemes.bone.buttonPrimaryFill);
+    expect(frame().opacity).toBe(0.4);
+    expect(text.color).toBe(beelineThemes.bone.buttonPrimaryText);
     expect(pressable.props.disabled).toBe(true);
     expect(pressable.props.accessibilityState).toMatchObject({ disabled: true, busy: false });
+  });
+
+  it.each(['obsidian', 'bone'] as const)('keeps provider actions white when pressed in %s', async theme => {
+    active.theme = theme;
+    const { frame, text } = await render({ variant: 'provider' });
+    expect(frame().backgroundColor).toBe(beelineThemes[theme].buttonProviderFill);
+    expect(frame(true).backgroundColor).toBe(frame().backgroundColor);
+    expect(frame(true).opacity).toBe(0.85);
+    expect(text.color).toBe(beelineThemes[theme].buttonProviderText);
   });
 
   it('keeps borderless variants borderless while disabled', async () => {

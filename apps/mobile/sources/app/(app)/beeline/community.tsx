@@ -1,3 +1,4 @@
+import { useAutoFitText } from '@/buzz/use-autofit-text';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import * as Crypto from 'expo-crypto';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -56,6 +57,7 @@ export default function WorkspaceChoice() {
   );
   const hasWorkspaces = communities.length > 0;
   const viewerName = workspaceList?.viewer.name?.trim() ?? '';
+  const welcomeRef = useAutoFitText(viewerName ? `Welcome, ${viewerName}` : 'Welcome');
   const workspaceName = draftName ?? (viewerName ? `${viewerName}'s team` : 'My team');
   const createWorkspace = async () => {
     if (!identity || creating || !workspaceName.trim()) return;
@@ -159,7 +161,7 @@ export default function WorkspaceChoice() {
               <ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />
             </TouchableOpacity>
           ) : null}
-          <Text accessibilityRole="header" style={styles.title} testID="choice-title">
+          <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={1} accessibilityRole="header" style={styles.title} testID="choice-title">
             {viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
           </Text>
           <Text style={styles.copy}>
@@ -277,7 +279,7 @@ const styles = StyleSheet.create((theme) => {
     scroll: {
       flexGrow: 1,
       justifyContent: 'center',
-      paddingHorizontal: hull.space.md,
+      paddingHorizontal: hull.space.lg,
       paddingBottom: hull.space.xxl,
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },

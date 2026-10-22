@@ -251,7 +251,7 @@ function validInstallationReturnPath(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length <= 1_024 &&
-    /^\/(?:beeline|buzz)\/(?:onboarding|channels|chat\/[^/?#]+)$/.test(value)
+    /^\/(?:beeline|buzz)\/(?:onboarding|channels|settings(?:\/identity)?|chat\/[^/?#]+)$/.test(value)
   );
 }
 

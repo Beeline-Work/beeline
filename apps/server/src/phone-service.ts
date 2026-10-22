@@ -1115,6 +1115,8 @@ export class PhoneService {
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
+    if (committed.row.card_type === 'repository-onboarding' && (!viewerId ||
+      readRepositoryOnboardingCard(committed.row.card)?.requesterId !== viewerId)) return null;
     const message = (await this.decorateCornerOpenCards(roomId, [
       projectedMessage(committed.row, this.publicOrigin, viewerId),
     ]))[0]!;
@@ -1306,6 +1308,8 @@ export class PhoneService {
           }
         : null;
     for (const viewer of row.authorized_viewers) {
+      if (row.card_type === 'repository-onboarding' &&
+        (readRepositoryOnboardingCard(row.card)?.requesterId !== viewer)) continue;
       const message = { ...projectedMessage(row, this.publicOrigin, viewer),
         ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}) };
       deltas.set(viewer, {
@@ -2227,7 +2231,7 @@ export class PhoneService {
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
         : measured('media', this.attachmentFacts(messages, toolRows, briefing)),
-      measured('app-metadata', this.decorateMessageCards(roomId, messages)),
+      measured('app-metadata', this.decorateMessageCards(roomId, messages, viewerId)),
     ]);
     const projectionStartedAt = performance.now();
     const view: RoomView = {
@@ -2510,7 +2514,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2554,7 +2558,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2601,7 +2605,7 @@ export class PhoneService {
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return {
       roomId,
       messages: decorateAttachments(appMessages, attachmentFacts),
@@ -8975,7 +8979,8 @@ export class PhoneService {
     });
   }
 
-  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[], viewerId: string): Promise<RoomViewMessage[]> {
+    messages = messages.filter(message => !message.onboarding || message.onboarding.requesterId === viewerId);
     return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
   }
 

@@ -700,12 +700,13 @@ describe('GitHub auth session redirects', () => {
     await expect(githubInstallationReturnPath()).resolves.toBeNull();
   });
 
-  it('finishes installation from the direct browser return', async () => {
+  it.each(['/beeline/channels', '/beeline/settings/identity', '/beeline/settings'])(
+    'R-onb-11: connects GitHub and returns to %s', async (returnPath) => {
     const callbackUrl = 'beeline://beeline/github-installation?installed=1';
 
     await expect(
       runGitHubInstallationSession({
-        returnPath: '/beeline/channels',
+        returnPath,
         startInstallation: async () => 'https://github.com/apps/beeline/installations/new',
         openAuthSession: async () => ({ type: 'success', url: callbackUrl }),
         subscribeToUrls: () => ({ remove: () => undefined }),
@@ -725,6 +726,32 @@ describe('GitHub auth session redirects', () => {
       }),
     ).rejects.toMatchObject({ code: 'browser_canceled' });
     await expect(githubInstallationReturnPath()).resolves.toBeNull();
+  });
+
+  it.each(['/beeline/settings/identity?next=elsewhere', '/beeline/settings/identity/extra',
+    '//evil.example/settings', 'https://evil.example/beeline/settings']) (
+    'rejects an untrusted installation return path: %s', async (returnPath) => {
+      await expect(persistGitHubInstallationReturnPath(returnPath)).rejects.toMatchObject({
+        code: 'invalid_installation',
+      });
+    },
+  );
+
+  it('R-onb-11: retains Settings through a cold GitHub installation callback', async () => {
+    await persistGitHubInstallationReturnPath('/beeline/settings/identity');
+    expect(await githubInstallationReturnPath()).toBe('/beeline/settings/identity');
+    await expect(resumeInitialGitHubInstallation(async () =>
+      'beeline://beeline/github-installation?installed=1')).resolves.toBe(true);
+    expect(await githubInstallationReturnPath()).toBeNull();
+  });
+
+  it('R-onb-11: explains that a GitHub account already belongs to another identity', async () => {
+    await expect(runGitHubInstallationSession({returnPath:'/beeline/settings/identity',
+      startInstallation:async()=>'https://github.com/apps/beeline/installations/new',
+      openAuthSession:async()=>({type:'success',url:'beeline://beeline/github-installation?installed=0&error=github_account_already_linked'}),
+      subscribeToUrls:()=>({remove(){}}),
+    })).rejects.toMatchObject({code:'github_account_already_linked',
+      message:'That GitHub account belongs to another Beeline account. Sign out and continue with GitHub to use it.'});
   });
 
   it.each(['cancel', 'dismiss'])('keeps the web Room path when the opener reports %s before its landing tab finishes', async (type) => {

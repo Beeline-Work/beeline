@@ -56,4 +56,44 @@ describe('Google sign-in continuation', () => {
     expect(open).toHaveBeenCalledOnce();
     expect(remove).toHaveBeenCalledOnce();
   });
+  it('R-onb-1: recovers on the first attempt after a browser handoff interrupts completion reads', async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError('Network request failed'))
+      .mockImplementationOnce(async () => {
+        await new Promise(resolve => setTimeout(resolve, 11_000));
+        throw new TypeError('Network request failed');
+      })
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const result = runGoogleSignIn({ state, recoveryToken,
+        openAuthSession: async () => ({ type: 'opened' }),
+        subscribeToUrls: () => ({ remove() {} }),
+      });
+      const assertion = expect(result).resolves.toBe(recoveryToken);
+      await vi.runAllTimersAsync();
+      await assertion;
+      expect(fetcher).toHaveBeenCalledTimes(4);
+    } finally { vi.useRealTimers(); }
+  });
+  it('R-onb-21: recovers and cancels on Hermes without AbortSignal.timeout', async () => {
+    vi.stubGlobal('AbortSignal', {});
+    const fetcher = vi.fn(async (_url: string, options?: RequestInit) => {
+      expect(options?.signal).toBeDefined();
+      return new Response('{}', {status:200});
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const input = {state,recoveryToken,subscribeToUrls:()=>({remove(){}})};
+    expect(await runGoogleSignIn({...input,openAuthSession:async()=>({type:'opened'})})).toBe(recoveryToken);
+    fetcher.mockClear();
+    fetcher.mockImplementation(async (url, options) => {
+      expect(options?.signal).toBeDefined();
+      return new Response('{}', {status:url.endsWith('/cancel') ? 200 : 202});
+    });
+    await expect(runGoogleSignIn({...input,openAuthSession:async()=>{throw new Error('Browser could not open');}}))
+      .rejects.toThrow('Browser could not open');
+    expect(fetcher.mock.calls.some(([url])=>url.endsWith('/cancel'))).toBe(true);
+  });
 });

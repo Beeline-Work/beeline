@@ -31,14 +31,25 @@ export async function clearPendingGoogleSignIn(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEY);
 }
 
+/** Hermes supports AbortController but not every AbortSignal static helper. */
+async function googleAuthFetch(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally { clearTimeout(timer); }
+}
+
 async function completion(pending: PendingGoogle): Promise<string | null> {
   const base = getBuzzRuntimeConfig().monolithUrl;
-  const response = await fetch(`${base}/auth/oidc/completion`, {
+  const response = await googleAuthFetch(`${base}/auth/oidc/completion`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ recoveryToken: pending.recoveryToken }),
-    signal: AbortSignal.timeout(5_000),
   });
   if (response.status === 202) return null;
+  if (response.status >= 500 || response.status === 429) {
+    throw new Error('Google sign-in service temporarily unavailable');
+  }
   if (!response.ok) throw new OidcBindError('token_expired', 'Google sign-in expired. Try again.');
   return pending.recoveryToken;
 }
@@ -93,17 +104,18 @@ export async function runGoogleSignIn(input: {
     }, (error: unknown) => { browserFailure = error; browserClosed = true; });
     const deadline = Date.now() + 120_000;
     let closedAt: number | undefined;
-    let unreachableAt: number | undefined;
+    let connectionInterrupted = false;
     while (Date.now() < deadline) {
       if (browserFailure) throw browserFailure;
       try {
         const ticket = await resumeGoogleSignIn(callbackUrl);
         if (ticket) return ticket;
-        unreachableAt = undefined;
+        connectionInterrupted = false;
       } catch (error) {
         if (error instanceof OidcBindError) throw error;
-        unreachableAt ??= Date.now();
-        if (Date.now() - unreachableAt >= 10_000) throw new OidcBindError('offline', 'No network connection. Try again.');
+        // A suspended browser handoff or a slow server cannot establish that
+        // the device is offline. Keep recovering the same proof until expiry.
+        connectionInterrupted = true;
       }
       if (browserClosed) {
         closedAt ??= Date.now();
@@ -111,11 +123,12 @@ export async function runGoogleSignIn(input: {
       }
       await new Promise((resolve) => setTimeout(resolve, 750));
     }
-    throw new OidcBindError('token_expired', 'Google sign-in expired. Try again.');
+    throw new OidcBindError(connectionInterrupted ? 'connection_failed' : 'token_expired',
+      connectionInterrupted ? 'Could not reach Google sign-in. Try again.' : 'Google sign-in expired. Try again.');
   } catch (error) {
-    await fetch(`${base}/auth/oidc/completion/cancel`, {
+    await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ recoveryToken: input.recoveryToken }), signal: AbortSignal.timeout(5_000),
+      body: JSON.stringify({ recoveryToken: input.recoveryToken }),
     }).catch(() => undefined);
     await clearPendingGoogleSignIn();
     throw error;

@@ -71,7 +71,12 @@ export function Button({
         styles.frame,
         primary ? styles.primary : styles[variant],
         pressed && !isDisabled && (filled ? styles.primaryPressed : styles.outlinedPressed),
-        isDisabled && (filled ? styles.primaryDisabled : !borderless && styles.outlinedDisabled),
+        isDisabled &&
+          (primary
+            ? styles.primaryDisabled
+            : variant === 'provider'
+              ? styles.providerDisabled
+              : !borderless && styles.outlinedDisabled),
         fullWidth && styles.fullWidth,
         style,
       ]}
@@ -93,7 +98,7 @@ export function Button({
                 : variant === 'destructive'
                   ? styles.destructiveLabel
                   : styles.secondaryLabel,
-            isDisabled && !primary && variant !== 'provider' && styles.disabledLabel,
+            isDisabled && variant !== 'provider' && styles.disabledLabel,
           ]}
         >
           {label}
@@ -127,7 +132,8 @@ const styles = StyleSheet.create((theme) => {
     destructiveLabel: { color: buzz.dialogDanger },
     primaryPressed: { opacity: 0.85 },
     outlinedPressed: { backgroundColor: buzz.bgPressed },
-    primaryDisabled: { opacity: 0.4 },
+    primaryDisabled: { backgroundColor: buzz.bgPressed, borderColor: buzz.bgPressed },
+    providerDisabled: { opacity: 0.4 },
     outlinedDisabled: { borderColor: buzz.border },
     fullWidth: { alignSelf: 'stretch' },
     label: { ...buzz.type.body, fontFamily: buzz.proseMedium },

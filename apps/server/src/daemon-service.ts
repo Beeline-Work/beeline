@@ -31,6 +31,7 @@ import {
   commandInbox,
   createAgentCommand,
   nextAgentDepth,
+  noteCornerOutputAuthorityLost,
   readAgentCommands,
   routeAgentResult,
   routeSystemCommand,
@@ -437,6 +438,28 @@ export class DaemonService {
     name: Name,
     input: Input<Name>,
     authenticatedAgentId: string,
+  ): Promise<Output<Name>> {
+    try {
+      return await this.executeOperation(name, input, authenticatedAgentId);
+    } catch (error) {
+      if (!this.commandTransaction && error instanceof Error && error.message === 'command output authority rejected') {
+        const candidate = input as Record<string, unknown>;
+        const roomId = CORNER_REACH_OPERATIONS.has(name) && typeof candidate.cornerId === 'string'
+          ? candidate.cornerId : candidate.roomId ?? candidate.cornerId;
+        if (typeof roomId === 'string') {
+          try {
+            await noteCornerOutputAuthorityLost(this.database, roomId, authenticatedAgentId, candidate.generationId, candidate.requestId ?? candidate.turnId);
+          } catch (noticeError) {
+            console.error('[daemon] could not record rejected-output stall', noticeError);
+          }
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async executeOperation<Name extends keyof DaemonOperationMap>(
+    name: Name, input: Input<Name>, authenticatedAgentId: string,
   ): Promise<Output<Name>> {
     input = { ...input };
     const candidate = input as Record<string, unknown>;

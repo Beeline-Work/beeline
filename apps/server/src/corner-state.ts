@@ -16,3 +16,10 @@ export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
 export async function cornerReportWaiting(db: SqlDatabase, cornerId: string): Promise<boolean> {
   return Boolean((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1 LIMIT 1', [cornerId])).rowCount);
 }
+
+/** Automatic lifecycle wakes also stop after a rejected output episode. */
+export async function cornerAutomaticWorkPaused(db: SqlDatabase, cornerId: string): Promise<boolean> {
+  return Boolean((await db.query(`SELECT 1 FROM corner_report_blockers WHERE corner_id=$1
+    UNION ALL SELECT 1 FROM corner_facts WHERE corner_id=$1
+      AND output_authority_stalled_sequence IS NOT NULL LIMIT 1`, [cornerId])).rowCount);
+}

@@ -1,4 +1,4 @@
-import { cornerReportWaiting } from './corner-state.js';
+import { cornerAutomaticWorkPaused } from './corner-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
@@ -662,7 +662,7 @@ async function checksReported(
   transition: Transition,
   event: Extract<CornerEvent, { kind: 'checks' }>,
 ): Promise<Applied> {
-  if (await cornerReportWaiting(db, cornerId)) return no('the corner is waiting for an answer');
+  if (await cornerAutomaticWorkPaused(db, cornerId)) return no('the corner is waiting for an answer');
   // A fact replayed after the checks moved on is stale.
   if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);
   const from = transition.state;
@@ -833,7 +833,7 @@ async function ensureReviewDispatch(
   corner: CornerRow,
   transition: Transition,
 ): Promise<Applied> {
-  if (await cornerReportWaiting(db, cornerId)) return no('the corner is waiting for an answer');
+  if (await cornerAutomaticWorkPaused(db, cornerId)) return no('the corner is waiting for an answer');
   const pr = corner.lifecycle.pr;
   if (transition.state !== 'review' || corner.lifecycle.checks !== 'passing' || !pr?.headSha)
     return OK;
@@ -1214,7 +1214,7 @@ async function wake(
   sourceMessageId: string,
   reason: string,
 ): Promise<RevisionWake> {
-  if (await cornerReportWaiting(db, cornerId)) return { queued: false, reason: 'The corner is waiting for an answer' };
+  if (await cornerAutomaticWorkPaused(db, cornerId)) return { queued: false, reason: 'The corner is waiting for an answer' };
   const command = await createAgentCommand(db, { roomId: cornerId, agentId, sourceMessageId, reason });
   if (!command) await noteCornerAgentUnreachable(db, cornerId, agentId, sourceMessageId, undefined, `${reason} wake could not be queued`);
   return command ? { queued: true, agentId } : { queued: false, reason: 'The implementer cannot be woken' };

@@ -18,12 +18,14 @@ describe('short schedule titles', () => {
     expect(scheduleFallbackTitle('one-two-three-four-five')).toBe('One two three four');
     expect(scheduleFallbackTitle(null)).toBe('Scheduled task');
   });
-  it('leads with a prompt first sentence, bounded to a row', () => {
+  it('leads with the first one to four words of a prompt', () => {
     expect(schedulePromptTitle("Summarize yesterday's merged PRs. Then group them."))
-      .toBe("Summarize yesterday's merged PRs…");
+      .toBe("Summarize yesterday's merged PRs");
     expect(schedulePromptTitle('Ping the Room.')).toBe('Ping the Room');
     expect(schedulePromptTitle('  ')).toBeUndefined();
-    expect(schedulePromptTitle('x'.repeat(60))).toHaveLength(48);
+    expect(schedulePromptTitle('x'.repeat(60))).toHaveLength(60);
+    for (const prompt of ["Summarize yesterday's merged PRs. Then group them.", 'Ping the Room.', 'x'.repeat(60)])
+      expect(schedulePromptTitle(prompt)!.split(' ').length).toBeLessThanOrEqual(4);
   });
   it('names a row from the title, then the workflow, then the prompt', () => {
     expect(scheduleDisplayTitle({ title: 'Play downloads check', workflow: 'feedback-triage', prompt: 'x' }))

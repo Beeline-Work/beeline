@@ -240,9 +240,9 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&namelessSchedules',
       process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'R-schedule-titles.png') : undefined);
     expect(page.text.slice(2)).toEqual([
-      'Post the daily launch report to the Room',
-      'Replay the nightly prompt log',
-      'Check the Play release downloads',
+      'Post the daily launch',
+      'Replay the nightly prompt',
+      'Check the Play release',
       'Feedback triage',
     ]);
     expect(page.text.join(' ')).not.toContain('Scheduled task');

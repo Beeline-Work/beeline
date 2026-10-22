@@ -132,11 +132,12 @@ describe('manager schedule phone operations', () => {
       const titles = (await phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER))
         .schedules.map((row) => row.title);
       expect(titles).toEqual(expect.arrayContaining([
-        'Post the daily launch report to the Room',
-        'Replay the nightly prompt log',
-        'Check the Play release downloads',
+        'Post the daily launch',
+        'Replay the nightly prompt',
+        'Check the Play release',
       ]));
       expect(titles).not.toContain('Scheduled task');
+      for (const title of titles) expect(title.split(' ').length).toBeLessThanOrEqual(4);
       console.log('Demonstrated R-schedule-titles:', JSON.stringify(titles));
     } finally {
       await database.close();

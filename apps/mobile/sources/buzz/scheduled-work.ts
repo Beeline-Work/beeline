@@ -52,6 +52,22 @@ export function scheduleWhere(
     : 'this Room';
 }
 
+/** The longest a derived schedule title runs before it stops at a word boundary. */
+const SCHEDULE_TITLE_WORDS = 4;
+
+/**
+ * The first few words of a prompt, so a nameless schedule still names itself.
+ * One to four words, never a whole sentence, matching the server's derivation.
+ */
+export function promptTitle(message: string): string {
+  const words = message.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  return words
+    .slice(0, SCHEDULE_TITLE_WORDS)
+    .join(' ')
+    .replace(/[.!?,;:]+$/, '')
+    .trim();
+}
+
 /** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
   const stored = schedule.title?.trim();
@@ -59,7 +75,7 @@ export function scheduleTitle(schedule: RoomScheduleView): string {
   // schedule; read it as absent so the prompt or workflow names the row.
   if (stored && stored !== 'Scheduled task') return stored;
   if (schedule.workflowSlug) return workflowDisplayName(schedule.workflowSlug);
-  return promptLead(schedule.message) || 'Scheduled task';
+  return promptTitle(schedule.message) || 'Scheduled task';
 }
 
 /** The detail page's Runs row: the cadence and the next firing. */

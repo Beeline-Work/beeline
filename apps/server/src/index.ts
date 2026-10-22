@@ -359,7 +359,7 @@ async function main() {
   });
   const speechTranscriber = speechTranscriberFromEnv();
   const voiceConfig = voiceConfigFromEnv();
-  const voice = voiceConfig ? new VoiceService(database, live, voiceConfig) : undefined;
+  const voice = voiceConfig ? new VoiceService(database, live, { ...voiceConfig, objects: objectService }) : undefined;
   const freeAgentConfig = freeAgentConfigFromEnv(process.env, publicOrigin);
   const freeAgents = freeAgentConfig && process.env.FLY_FREE_AGENT_API_TOKEN
     ? new FreeAgentService(

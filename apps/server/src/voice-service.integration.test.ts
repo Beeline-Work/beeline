@@ -514,6 +514,26 @@ it('call history search excludes Rooms another caller cannot read and privately 
     const result = JSON.parse(await service.search(call.call.id, source, A, { name: 'search_history', query: 'saffronmarker' }, new AbortController().signal));
     expect(result.results.some((row: any) => row.messageId === 'voice-shared-search')).toBe(true);
     expect(result.results.some((row: any) => row.messageId === 'voice-private-search')).toBe(false);
+    const posted = JSON.parse(await service.search(call.call.id, source, A,
+      { name: 'read_posted_item', query: 'voice-shared-search' }, new AbortController().signal));
+    expect(posted.text).toBe('saffronmarker public answer');
+    const attachmentUrl = '/v1/media/12345678-1234-4234-8234-123456789012';
+    await db.query(`UPDATE messages SET attachments=$1 WHERE id='voice-shared-search'`,
+      [ JSON.stringify([{name:'notes.txt',url:attachmentUrl}])]);
+    const read = vi.fn(async () => new TextEncoder().encode('The picnic starts at noon.'));
+    const readRoomObject = vi.fn(async () => ({name:'notes.txt',mimeType:'text/plain',size:26,read}));
+    service.config.objects = { readRoomObject } as any;
+    try {
+      const file = JSON.parse(await service.search(call.call.id, source, A,
+        {name:'read_posted_item',query:attachmentUrl}, new AbortController().signal));
+      expect(file).toEqual({title:'notes.txt',text:'The picnic starts at noon.'});
+      expect(readRoomObject).toHaveBeenCalledWith(room,A,'12345678-1234-4234-8234-123456789012',service.db);
+      await expect(service.search(call.call.id,source,A,{name:'read_posted_item',query:'https://example.com/private'},new AbortController().signal)).rejects.toThrow('not available');
+      expect(read).toHaveBeenCalledOnce();
+    } finally { delete service.config.objects; }
+
+    await expect(service.search(call.call.id, source, A,
+      { name: 'read_posted_item', query: 'voice-private-search' }, new AbortController().signal)).rejects.toThrow('not available');
     await service.dispatch(call.call.id, source, A);
     const { readAgentCommands } = await import('./agent-command.js');
     const commands = await readAgentCommands(db, room, A);

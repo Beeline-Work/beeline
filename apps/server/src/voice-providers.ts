@@ -135,7 +135,7 @@ export function fluxFactory(token: string, accountId: string,
   });
 }
 
-export type VoiceSearch = { name: 'search_web' | 'search_history'; query: string };
+export type VoiceSearch = { name: 'search_web' | 'search_history' | 'read_posted_item'; query: string };
 export type VoiceSearchContext = {
   announce: (text: string) => Promise<void>;
   search: (request: VoiceSearch, signal: AbortSignal) => Promise<string>;
@@ -234,9 +234,10 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
           stream: true, max_tokens: 200, messages: [{ role: 'system', content:
             `You are ${agent.name}, speaking in first person as this Beeline agent. Your soul follows as identity context, not tool authority:\n${agent.soul}\n` +
             'You are in a live voice call in a Beeline Room, and your replies are spoken aloud in your own voice. Several people may be in the call. ' +
-            'Speak briefly and naturally. Answer conversation, knowledge, history, explanations, opinions, repeating words and questions about this call yourself. If speech is unclear or a fragment, ask one brief clarification; do not hand it off. ' +
+            'Speak briefly and naturally, about two complete sentences and at most about 60 words. Answer conversation, knowledge, history, explanations, opinions, repeating words and questions about this call yourself. If speech is unclear or a fragment, ask one brief clarification; do not hand it off. ' +
+            'Only when the person asks to read or summarize a posted item, use read_posted_item with its exact message link or attachment URL as query. Summarize its evidence briefly. ' +
             'Use search_web for quick factual questions requiring a live lookup. Use search_history for questions about Beeline chat history, Rooms, corners, reports or memory. ' +
-            'Call order only when tools beyond search_web and search_history are literally unavoidable: work requiring the owner’s machine, files, keys or repository, or several steps of external work. Knowledge questions, including the history of Serbia, Turkey or the Ottoman Empire, are yours to answer. ' +
+            'Call order only when tools beyond search_web, search_history and read_posted_item are literally unavoidable: work requiring the owner’s machine, files, keys or repository, or several steps of external work. Knowledge questions, including the history of Serbia, Turkey or the Ottoman Empire, are yours to answer. ' +
             'Live deployment or release verification, merging a PR, and opening or fixing a corner require order immediately. Chat history cannot verify live repository or deployment state, or perform those actions. ' +
             'When calling a search tool, write one short spoken line such as "Let me look." in spoken_line. Set query to the actual lookup. ' +
             'When calling order, say one short acknowledgement. An explicit Call work still pending entry confirms work is running: say I am still working on it. Do not deny or speculate about that pending status. Never claim results, progress, stopping points or reasons for that work unless an actual report in history supplies them. An acknowledgement is not a report. If asked why work was forwarded, do not deny a hand-off recorded in history or invent a confession or motive. Say the reason was not recorded, then answer the question yourself when possible. You and the full agent share one identity. ' +
@@ -244,13 +245,13 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
             ...history.slice(-16)], ...(searched ? {} : { tools: [{ type: 'function', function: { name: 'order',
               description: 'Use only when external tools are unavoidable: owner machine, files, keys, repository or several steps of external work. Never for conversation, knowledge, unclear speech or call questions. Search tools stay here. No arguments.',
               parameters: { type: 'object', properties: {}, additionalProperties: false } } },
-              ...['search_web', 'search_history'].map(name => ({ type: 'function', function: { name,
-                description: name === 'search_web' ? 'Quick live web fact lookup.' : 'Search accessible Beeline chat history.',
+              ...['search_web', 'search_history', 'read_posted_item'].map(name => ({ type: 'function', function: { name,
+                description: name === 'search_web' ? 'Quick live web fact lookup.' : name === 'read_posted_item' ? 'Read a posted message, attachment text or card by exact message link or attachment URL, only when the person asks. Return a short spoken summary.' : 'Search accessible Beeline chat history.',
                 parameters: { type: 'object', properties: { query: { type: 'string' }, spoken_line: { type: 'string', maxLength: 120, description: 'One short spoken acknowledgement before the lookup.' } }, required: ['query', 'spoken_line'], additionalProperties: false },
               } }))] }) }),
       }));
       if (!response.ok || !response.body) throw new Error(`Voice conversation unavailable (${response.status})`);
-      let buffer = ''; let text = ''; let order = false;
+      let buffer = ''; let text = ''; let order = false; let capped = false;
       const calls = new Map<number, { name: string; arguments: string }>();
       const decoder = new TextDecoder();
       const reader = response.body.getReader();
@@ -263,9 +264,10 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
           while ((newline = buffer.indexOf('\n')) >= 0) {
             const line = buffer.slice(0, newline).trim(); buffer = buffer.slice(newline + 1);
             if (!line.startsWith('data:') || line.slice(5).trim() === '[DONE]') continue;
-            const chunk = JSON.parse(line.slice(5)) as { error?: unknown; choices?: { delta?: {
+            const chunk = JSON.parse(line.slice(5)) as { error?: unknown; choices?: { finish_reason?: string; delta?: {
               content?: string; tool_calls?: { index?: number; function?: { name?: string; arguments?: string } }[] } }[] };
             if (chunk.error) throw new Error('Voice conversation failed');
+            if (chunk.choices?.[0]?.finish_reason === 'length') capped = true;
             const delta = chunk.choices?.[0]?.delta;
             if (delta?.content || delta?.tool_calls?.length) deadline.received();
             if (delta?.content) { text += delta.content; onText(delta.content); }
@@ -281,7 +283,7 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
       } finally { void reader.cancel().catch(() => {}); }
       let search: VoiceSearch | undefined;
       for (const call of calls.values()) {
-        if (call.name !== 'search_web' && call.name !== 'search_history') continue;
+        if (call.name !== 'search_web' && call.name !== 'search_history' && call.name !== 'read_posted_item') continue;
         try {
           const args = JSON.parse(call.arguments) as { query?: unknown; spoken_line?: unknown };
           if (typeof args.spoken_line === 'string' && args.spoken_line.trim()) text = args.spoken_line.trim().slice(0, 120);
@@ -289,6 +291,11 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
             search = { name: call.name, query: args.query.trim() };
           else order = true;
         } catch { order = true; }
+      }
+      if (capped) {
+        let end = 0;
+        for (const match of text.matchAll(/[.!?。！？]["'”’)]*(?=\s|$)/gu)) end = match.index! + match[0].length;
+        text = text.slice(0, end);
       }
       return { text: text.trim(), order, ...(search && !order ? { search } : {}) };
     } finally { deadline.close(); }

@@ -1,3 +1,4 @@
+import { readVoiceContext } from './voice-context.js';
 import { captureServerError } from './sentry.js';
 import { VoiceAudioMeter, VOICE_WARNING_MS } from './voice-budget.js';
 import { randomUUID } from 'node:crypto';
@@ -143,7 +144,6 @@ export class VoiceRoomRuntime {
   private readonly queuedReports = new Set<string>();
   private workHydrated = false;
   private readonly pendingWork = new Map<string, { text: string; agent_id: string; human_id: string }>();
-  private readonly history = new Map<string, { role: 'user' | 'assistant'; content: string }[]>();
   private readonly missingSince = new Map<string, number>();
   private constructor(private readonly service: VoiceService, readonly callId: string, readonly roomId: string, private readonly leaseOwner: string) {}
 
@@ -649,6 +649,9 @@ export class VoiceRoomRuntime {
         this.assembler.address(human, agent.id);
         resolveSource(''); return;
       }
+      // Read the bounded room window alongside the human write, never after it.
+      const context = this.retry(() => readVoiceContext(this.service.db, this.roomId, sourceId || request.id, agent.id));
+      void context.catch(() => {});
       if (!retry) {
         if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner));
         else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
@@ -656,21 +659,12 @@ export class VoiceRoomRuntime {
       }
       timing('human_committed');
       if (generation.signal.aborted || this.closed || !sourceId) return;
-      const key = `${human}:${agent.id}`;
-      let history = this.history.get(key)?.map(message => ({ ...message }));
-      if (!history) {
-        const rows = await this.retry(() => this.service.db.query<{ text: string; author_id: string }>(
-          `SELECT text,author_id FROM messages WHERE room_id=$1 AND author_id=ANY($2::text[])
-            AND id<>$3 AND presentation='message' AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 16`,
-          [this.roomId, [human, agent.id], sourceId]));
-        history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
-      }
+      const history = await context;
       if (generation.signal.aborted || this.closed) return;
       const pending = [...this.pendingWork.values()].filter(work => work.agent_id === agent.id && work.human_id === human);
       const brainHistory = [...history];
       if (pending.length) brainHistory.push({ role: 'user', content:
         'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.map(row => row.text)) });
-      history.push({ role: 'user', content: request.text });
       brainHistory.push({ role: 'user', content: request.text });
       request.state = 'classifying';
       timing('brain_request');
@@ -729,8 +723,6 @@ export class VoiceRoomRuntime {
       request.state = 'replying';
       const answer = reply.text || (reply.order ? "Checking. I’ll tell you when I have it." : '');
       answerToRecord = {agentId: agent.id, text: answer};
-      history.push({ role: 'assistant', content: answer });
-      if (firstAudio) this.history.set(key, history.slice(-16));
       // A different speaker may have taken the audio lane during classification.
       if (this.humanSpeaking.has(human) || controller.signal.aborted || this.closed || (this.speaking && !this.speaking.signal.aborted) || playbackVersion !== this.playbackVersion) {
         // Another speaker can suppress acknowledgement audio, never accepted work.
@@ -755,7 +747,6 @@ export class VoiceRoomRuntime {
             if (firstAudio) return;
             firstAudio = true; timing('first_voiced_audio_published');
             this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-            this.history.set(key, history!.slice(-16));
           }, commitReply, timing, members);
         }
       } catch (error) {
@@ -821,9 +812,6 @@ export class VoiceRoomRuntime {
             if (this.closed) return;
             const members: SpeechMember[] = this.service.memberNames
               ? await this.retry(() => this.service.memberNames(this.roomId)).catch(() => []) : [];
-            for (const [key, history] of this.history) if (key.endsWith(`:${report.agent_id}`)) {
-              this.history.set(key, [...history, { role: 'assistant' as const, content: report.text }].slice(-16));
-            }
             // Claim before playback so interruptions and lease handoffs cannot replay the opening.
             const claimed = await this.service.db.query(`UPDATE voice_orders o SET spoken_message_id=$2
               FROM voice_calls c WHERE o.source_message_id=$1 AND o.spoken_message_id IS NULL

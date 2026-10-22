@@ -103,8 +103,11 @@ client renders validated catalog/write receipts, never a guessed voice choice.
 Voice and dictation share the existing scrolling composer waveform. Its newest
 visible bar follows each volume event directly, without smoothing or offscreen
 entry delay. The history retains its 120 ms sample spacing and native glide;
-that history timer never gates the current visible level. Frozen and muted
-states keep their existing appearance.
+that history timer never gates the current visible level. The loudest current
+microphone or remote audio track drives the bars. Muting the local microphone
+still lets another human or an agent animate them; silence stays flat.
+Web uses unsmoothed audio analysers; native uses the same volume processor
+for local and remote tracks.
 
 The existing native WebView hosts short audio previews without adding a native
 dependency or changing the native runtime.
@@ -147,6 +150,16 @@ report without speech. Call-origin commands privately ask agents to put a spoken
 answer sized to the question before their full report: one line for a status, a few sentences for a real
 answer, at most about 150 words. Agent work has no voice timeout and
 continues independently of playback.
+
+Conversational replies target two complete sentences and about 60 words.
+The hard token cap remains a safety net: a capped response drops its unfinished
+last sentence before synthesis, without adding a settling delay. Each reply reads
+a bounded room window alongside the human transcript write. All participants'
+recent messages are labeled by speaker, including attachment and card titles and
+references. `read_posted_item` reads a referenced message, card or bounded text
+attachment in this conversation only when requested; the router summarizes it.
+Deleted and inaccessible items are excluded. [Room context proof](voice-mode-proof/room-context/README.md)
+records the capped reply, multi-speaker context and Android waveform checks.
 
 Quick web facts use the router's `search_web`; chat-history questions use
 `search_history`, with the existing institutional history access rules from the

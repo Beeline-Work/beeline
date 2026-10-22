@@ -135,6 +135,11 @@ export class DaemonAgentSession {
     // Deliver an agent-directed wake instead so discovery starts now.
     this.#wakeReleases.push(
       live.subscribeAll((event) => {
+        if (event.type === 'usage-refresh') {
+          if (event.agentId === agentId && transport.isOpen())
+            transport.send({ type: 'usage-refresh' });
+          return;
+        }
         if (event.type === 'agent-sign-in') {
           // Only this agent's own helper hears its sign-in steps; the
           // link/result answers stay on the server for the waiting phone.

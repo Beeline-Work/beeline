@@ -1052,6 +1052,11 @@ export default function BuzzMembers({
         avatarDisabled={busy}
         onGenerateAvatar={requestSoulAvatar}
         refreshAgent={() => readAgent(profileAgentId)}
+        refreshUsage={async () => {
+          await monolithPhoneOperation('refreshAgentUsage', {
+            workspaceId: selectedAgent!.workspaceId, agentId: profileAgentId,
+          });
+        }}
         loadMoreWork={async (cursor) => {
           if (!identity || !relayUrl || !workspaceId)
             throw new Error('Workspace connection unavailable');

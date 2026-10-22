@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type PressableProps } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -14,6 +14,7 @@ import { needsYouExpiryLabel } from '@/buzz/needs-you';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import brand from '@/buzz/brand.json';
 import { HullDialogActions } from './HullDialog';
+import { PixelLoader } from './MonoHull';
 
 /** How far a phone swipe travels before the rail it reveals dismisses the cell. */
 const SWIPE_RAIL_WIDTH = 96;
@@ -39,11 +40,20 @@ function sourcePath(item: NeedsYouItemView): string {
   return item.roomKind === 'direct' ? title : title.replace(/^#/, '');
 }
 
+/** Choice option ids are the letters A–D. Anything else falls back to that order. */
+const CHOICE_PLATE_LETTERS = ['A', 'B', 'C', 'D'] as const;
+
+function choicePlateLetter(optionId: string, ordinal: number): string {
+  if (optionId.length === 1 && optionId >= 'A' && optionId <= 'D') return optionId;
+  return CHOICE_PLATE_LETTERS[ordinal] ?? String(ordinal + 1);
+}
+
 /**
  * One Needs-you cell: who asks and what (`Hoots asks to run`)
  * with the age at the right, the exact thing asked for (literals in mono),
- * the request's reason or a choice's options, then where it sits, who it is
- * for and when it expires. The verb names the kind, so there is no type
+ * the request's reason, then where it sits, who it is for and when it expires.
+ * A choice's options are full-width plates under the cell, so their labels are
+ * not repeated on the reason line. The verb names the kind, so there is no type
  * label. Tapping opens the exact message; it clears a question, never an
  * approval. Inline actions use the existing card decision operations; Squire opens
  * its own ceremony. A phone swipes any cell right to dismiss it from the tray;
@@ -76,6 +86,41 @@ export function NeedsYouCell({
   const actor = approval?.actor ?? item.author?.name;
   const ask = approval?.ask ?? 'asks you';
   const subject = item.text;
+  const inlineChoices = Boolean(
+    onAction && approval?.actions?.some((action) => action.kind === 'choice'),
+  );
+  const decide = async (action: NeedsYouActionView, index: number) => {
+    if (!onAction || sending.current) return;
+    sending.current = true;
+    setBusy(index);
+    try {
+      await onAction(item, action);
+    } finally {
+      sending.current = false;
+      setBusy(null);
+    }
+  };
+  const dialogAction = (action: NeedsYouActionView, index: number) => ({
+    label: action.label,
+    variant:
+      action.kind === 'skip-choice' ||
+      action.kind === 'external' ||
+      ((action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny')
+        ? ('quiet' as const)
+        : ('primary' as const),
+    accessibilityRole: action.kind === 'external' ? ('link' as const) : ('button' as const),
+    disabled: busy !== null,
+    loading: busy === index,
+    testID: `needs-you-action-${item.messageId}-${index}`,
+    description: action.detail ? <Text style={styles.detail}>{action.detail}</Text> : undefined,
+    onPress: (event: { stopPropagation(): void }) => {
+      event.stopPropagation();
+      void decide(action, index);
+    },
+  });
+  const dialogActions = (approval?.actions ?? []).flatMap((action, index) =>
+    inlineChoices && action.kind === 'choice' ? [] : [dialogAction(action, index)],
+  );
   const meta = [
     ...(approval?.forName ? [`for ${approval.forName}`] : []),
     sourcePath(item),
@@ -91,7 +136,7 @@ export function NeedsYouCell({
       accessibilityLabel={[
         actor ? `${actor} ${ask}` : null,
         subject,
-        approval?.detail,
+        inlineChoices ? null : approval?.detail,
         sourceLabel(item),
         age,
       ]
@@ -129,7 +174,7 @@ export function NeedsYouCell({
       >
         {subject}
       </Text>
-      {approval?.detail ? (
+      {approval?.detail && !inlineChoices ? (
         <Text style={styles.detail} testID={`needs-you-detail-${item.messageId}`}>
           {approval.detail}
         </Text>
@@ -175,32 +220,66 @@ export function NeedsYouCell({
               </Text>
             </View>
           ) : null}
-          <HullDialogActions
-            style={styles.actions}
-            actions={approval.actions.map((action, index) => ({
-              label: action.label,
-              variant: action.kind === 'skip-choice' || action.kind === 'external' || ((action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny') ? 'quiet' : 'primary',
-                accessibilityRole: action.kind === 'external' ? 'link' : 'button',
-              disabled: busy !== null,
-              loading: busy === index,
-              testID: `needs-you-action-${item.messageId}-${index}`,
-              description: action.detail ? (
-                <Text style={styles.detail}>{action.detail}</Text>
-              ) : undefined,
-              onPress: async (event) => {
-                event.stopPropagation();
-                if (sending.current) return;
-                sending.current = true;
-                setBusy(index);
-                try {
-                  await onAction(item, action);
-                } finally {
-                  sending.current = false;
-                  setBusy(null);
-                }
-              },
-            }))}
-          />
+          {inlineChoices ? (
+            <View style={styles.choiceStack}>
+              {(approval?.actions ?? []).map((action, index) => {
+                if (action.kind !== 'choice') return null;
+                const ordinal = (approval?.actions ?? [])
+                  .slice(0, index)
+                  .filter((entry) => entry.kind === 'choice').length;
+                const letter = choicePlateLetter(action.optionId, ordinal);
+                const consequence =
+                  action.detail && action.detail !== action.label ? action.detail : '';
+                const plateBusy = busy === index;
+                return (
+                  <Pressable
+                    key={`${action.choiceId}:${action.optionId}`}
+                    accessibilityLabel={
+                      consequence ? `${letter}. ${action.label}. ${consequence}` : `${letter}. ${action.label}`
+                    }
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: plateBusy, disabled: plateBusy }}
+                    aria-busy={plateBusy}
+                    aria-disabled={plateBusy}
+                    // React Native Web paints dataSet on the DOM node. Pressable's
+                    // types omit it, and the tray proof reads data-variant from there.
+                    {...({ dataSet: { variant: 'secondary' } } as PressableProps)}
+                    disabled={plateBusy}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      void decide(action, index);
+                    }}
+                    style={({ pressed }) => [
+                      styles.choicePlate,
+                      pressed && !plateBusy && styles.choicePlatePressed,
+                      plateBusy && styles.choicePlateBusy,
+                    ]}
+                    testID={`needs-you-action-${item.messageId}-${index}`}
+                  >
+                    <View style={styles.choiceLetter}>
+                      <Text style={[styles.choiceLetterText, plateBusy && styles.choiceBusyText]}>
+                        {letter}
+                      </Text>
+                    </View>
+                    <View style={styles.choiceCopy}>
+                      <Text style={[styles.choiceLabel, plateBusy && styles.choiceBusyText]}>
+                        {action.label}
+                      </Text>
+                      {consequence ? (
+                        <Text style={[styles.choiceConsequence, plateBusy && styles.choiceBusyText]}>
+                          {consequence}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {plateBusy ? <PixelLoader compact /> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+          {dialogActions.length ? (
+            <HullDialogActions style={styles.actions} actions={dialogActions} />
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -242,6 +321,43 @@ const styles = StyleSheet.create((theme) => ({
   cellSelected: { borderLeftWidth: 1, borderLeftColor: theme.buzz.accent },
   actionArea: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.md },
   actions: { marginTop: theme.buzz.space.sm },
+  // Same lettered plate as a Room choice: full width, outlined, label over its consequence.
+  choiceStack: { marginTop: theme.buzz.space.sm, gap: theme.buzz.space.sm, alignSelf: 'stretch' },
+  choicePlate: {
+    alignSelf: 'stretch',
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: theme.buzz.space.sm,
+    paddingVertical: theme.buzz.space.sm,
+    paddingHorizontal: theme.buzz.space.md,
+    borderWidth: 1,
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: theme.buzz.radius,
+    backgroundColor: theme.buzz.bgHighlight,
+  },
+  choicePlatePressed: { backgroundColor: theme.buzz.bgPressed },
+  choicePlateBusy: { borderColor: theme.buzz.border },
+  choiceLetter: {
+    minWidth: theme.buzz.transcriptCard.identitySize,
+    minHeight: theme.buzz.transcriptCard.identitySize,
+    paddingHorizontal: theme.buzz.space.xs,
+    paddingVertical: theme.buzz.space.xs,
+    borderWidth: 1,
+    borderColor: theme.buzz.borderStrong,
+    borderRadius: theme.buzz.radius,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  choiceLetterText: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  choiceCopy: { flex: 1, minWidth: 0 },
+  choiceLabel: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
+  choiceConsequence: {
+    ...theme.buzz.type.meta,
+    marginTop: theme.buzz.space.xs,
+    color: theme.buzz.ledgerQuiet,
+  },
+  choiceBusyText: { color: theme.buzz.textDisabled },
   action: { flexShrink: 1 },
   script: { marginTop: theme.buzz.space.sm },
   head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },

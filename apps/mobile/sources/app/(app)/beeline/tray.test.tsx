@@ -83,6 +83,7 @@ const theme = vi.hoisted(() => ({
     ledgerGhost: '#6c6c76',
     brassWash: 'rgba(176,138,74,0.18)',
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
+    transcriptCard: { identitySize: 26 },
     type: { body: {}, bodyStrong: {}, meta: {}, sectionHead: {} },
   },
 }));

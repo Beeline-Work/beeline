@@ -1,0 +1,168 @@
+
+> @beeline/server@0.0.0 test
+> vitest run src/app-connections.integration.test.ts src/grant-policy-upgrade.test.ts src/needs-you.test.ts -t R1|squire-session|SENTRY-ACCESS|squire-connect|settles on boot --maxWorkers=2 --minWorkers=1
+
+
+ RUN  v2.1.9 /home/lunchbox/.local/state/beeline/corners/1e1ec5ab-c82e-4bd3-bb92-f91a2df45c09/apps/server
+
+stdout | src/needs-you.test.ts > PhoneService Needs-you tray > R12e: projects the switcher room count and unread/approval mark
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card
+[req] POST /v1/daemon/operations/connect
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=github route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+
+stdout | src/needs-you.test.ts > PhoneService Needs-you tray > R1: connection approval in the tray names the asking agent and the app
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+ ✓ src/needs-you.test.ts (35 tests | 33 skipped) 6080ms
+   ✓ PhoneService Needs-you tray > R12e: projects the switcher room count and unread/approval mark 3392ms
+   ✓ PhoneService Needs-you tray > R1: connection approval in the tray names the asking agent and the app 2687ms
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1 / squire-connect-1: connect hands Squire setup to the agent (browser=true)
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-browser transport=squire-browser reason="Trusty Squire reported that the app has no API"
+Reproduction squire-connect-1: connect -> quiet approved consent -> agent URL/goal (browser) -> no helper job -> vault credential -> ready
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1 / squire-connect-1: connect hands Squire setup to the agent (browser=false)
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+Reproduction squire-connect-1: connect -> quiet approved consent -> agent URL/goal (API) -> no helper job -> vault credential -> ready
+
+stdout | src/app-connections.integration.test.ts > connect_app > R1: own-account installation stays approved after boot when someone else requested the work
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=github route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillInstitutionalMemoryRollout: advanced 0, enrolled 1 Workspace rollout(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 1 agent row(s) to yolo_mode=true
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction SENTRY-ACCESS: reconnect requests owner repair instead of returning the existing key
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=sentry route=workbench transport=squire-api reason="already connected in Connectors through vault key vault:sentry-old"
+Reproduction SENTRY-ACCESS stand-in: existing key -> reconnect -> quiet consent -> same-route repair goal, with no old credential returned; live organization issue access still requires owner reauthorization.
+
+stdout | src/app-connections.integration.test.ts > connect_app > R1: a foreign app account still asks its owner and stores the app display name
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillInstitutionalMemoryRollout: advanced 0, enrolled 1 Workspace rollout(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 1 agent row(s) to yolo_mode=true
+
+stdout | src/app-connections.integration.test.ts > connect_app > R1: owner setup replaces legacy denied consent with quiet standing consent
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-browser transport=squire-browser reason="Trusty Squire reported that the app has no API"
+
+stdout | src/app-connections.integration.test.ts > connect_app > R1: owner setup replaces legacy once consent with quiet standing consent
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-browser transport=squire-browser reason="Trusty Squire reported that the app has no API"
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction squire-session-1: a signed-in Squire session makes a browser app ready without a vault login
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=resend route=squire-browser transport=squire-browser reason="Trusty Squire reported that the app has no API"
+Reproduction squire-session-1: signed-in session -> ready; reused; signed-out page -> re-check
+
+stdout | src/app-connections.integration.test.ts > connect_app > Reproduction R1: retries an existing Squire app absent from the Composio catalog
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+connectApp: workspace=11111111-1111-4111-8111-111111111111 owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa app=hetzner route=squire-api transport=squire-api reason="managed OAuth is unsupported; Trusty Squire provisions an API key"
+
+ ✓ src/app-connections.integration.test.ts (89 tests | 79 skipped) 29414ms
+   ✓ connect_app > Reproduction R1: the owner’s agent connects GitHub without a permission card 3704ms
+   ✓ connect_app > Reproduction R1 / squire-connect-1: connect hands Squire setup to the agent (browser=true) 3092ms
+   ✓ connect_app > Reproduction R1 / squire-connect-1: connect hands Squire setup to the agent (browser=false) 2800ms
+   ✓ connect_app > R1: own-account installation stays approved after boot when someone else requested the work 3577ms
+   ✓ connect_app > Reproduction SENTRY-ACCESS: reconnect requests owner repair instead of returning the existing key 2315ms
+   ✓ connect_app > R1: a foreign app account still asks its owner and stores the app display name 3298ms
+   ✓ connect_app > R1: owner setup replaces legacy denied consent with quiet standing consent 3103ms
+   ✓ connect_app > R1: owner setup replaces legacy once consent with quiet standing consent 2943ms
+   ✓ connect_app > Reproduction squire-session-1: a signed-in Squire session makes a browser app ready without a vault login 2241ms
+   ✓ connect_app > Reproduction R1: retries an existing Squire app absent from the Composio catalog 2339ms
+stdout | src/grant-policy-upgrade.test.ts > withdrawSupersededGrantAsks > R1: withdraws pending owner connection installs and settles their cards
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillInstitutionalMemoryRollout: advanced 0, enrolled 1 Workspace rollout(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+withdrawSupersededGrantAsks: withdrew 2 pending ask(s)
+
+stdout | src/grant-policy-upgrade.test.ts > withdrawSupersededGrantAsks > R1: preserves a pending connection ask for another person’s app account
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillInstitutionalMemoryRollout: advanced 0, enrolled 1 Workspace rollout(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | src/grant-policy-upgrade.test.ts > withdrawSupersededGrantAsks > settles on boot the cards the current server would never raise, without waking their turns
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillInstitutionalMemoryRollout: advanced 0, enrolled 1 Workspace rollout(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+withdrawSupersededGrantAsks: withdrew 2 pending ask(s)
+
+ ✓ src/grant-policy-upgrade.test.ts (3 tests) 9906ms
+   ✓ withdrawSupersededGrantAsks > R1: withdraws pending owner connection installs and settles their cards 3351ms
+   ✓ withdrawSupersededGrantAsks > R1: preserves a pending connection ask for another person’s app account 3156ms
+   ✓ withdrawSupersededGrantAsks > settles on boot the cards the current server would never raise, without waking their turns 3397ms
+
+ Test Files  3 passed (3)
+      Tests  15 passed | 112 skipped (127)
+   Start at  23:09:13
+   Duration  43.22s (transform 2.37s, setup 0ms, collect 5.61s, tests 45.40s, environment 1ms, prepare 279ms)
+

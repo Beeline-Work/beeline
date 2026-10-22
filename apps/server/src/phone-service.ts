@@ -7671,7 +7671,8 @@ export class PhoneService {
       )
     ).rows[0];
     if (!grant) throw new Error('grant not found');
-    if (grant.target.startsWith('app:')) {
+    if (grant.target.startsWith('app:') ||
+      (grant.kind === 'mcp' && grant.target.startsWith('connection-install:') && grant.app_owner_id)) {
       if (!grant.app_owner_id || grant.app_owner_id !== viewerId)
         throw new Error('app approval access denied: requires the connected person');
       const member = await this.database.query(

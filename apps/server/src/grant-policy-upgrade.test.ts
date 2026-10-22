@@ -70,7 +70,7 @@ describe('withdrawSupersededGrantAsks', () => {
     );
   }
 
-  it('cancels only pending Beeline connection installs and settles their cards', async () => {
+  it('R1: withdraws pending owner connection installs and settles their cards', async () => {
     const builtin = '20000000-0000-4000-8000-000000000001';
     const external = '20000000-0000-4000-8000-000000000002';
     const approved = '20000000-0000-4000-8000-000000000003';
@@ -85,13 +85,28 @@ describe('withdrawSupersededGrantAsks', () => {
       ] })]);
     await migrate(database);
     expect((await database.query(`SELECT id::text,status FROM agent_grants ORDER BY id`)).rows).toEqual([
-      { id: builtin, status: 'revoked' }, { id: external, status: 'pending' },
+      { id: builtin, status: 'revoked' }, { id: external, status: 'revoked' },
       { id: approved, status: 'approved' },
     ]);
     expect((await database.query<{ card: { grants: { status: string }[] } }>(
       `SELECT card FROM messages WHERE id='builtin-card'`)).rows[0]!.card.grants.map(g => g.status))
-      .toEqual(['revoked', 'pending']);
+      .toEqual(['revoked', 'revoked']);
     expect(await withdrawSupersededGrantAsks(database)).toBe(0);
+  });
+
+  it('R1: preserves a pending connection ask for another person’s app account', async () => {
+    const other = 'd'.repeat(64);
+    const app = '99999999-9999-4999-8999-999999999999';
+    const ask = '20000000-0000-4000-8000-000000000004';
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other owner')`, [other]);
+    await database.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
+      VALUES($1,$2,$3,'github','GitHub','squire-api','squire-api')`, [app, WORKSPACE, other]);
+    await pendingAsk(ask, 'mcp', 'connection-install:github');
+    await database.query('UPDATE agent_grants SET app_id=$2 WHERE id=$1', [ask, app]);
+    await migrate(database);
+    expect(await withdrawSupersededGrantAsks(database)).toBe(0);
+    expect((await database.query('SELECT status FROM agent_grants WHERE id=$1', [ask])).rows)
+      .toEqual([{ status: 'pending' }]);
   });
 
   it('settles on boot the cards the current server would never raise, without waking their turns', async () => {

@@ -468,6 +468,7 @@ export function readAgentGrantView(value: unknown): AgentGrantView | null {
     grantId: item.grantId,
     kind: item.kind,
     target: item.target,
+    ...field('appName', nonempty(item.appName) ? item.appName : undefined),
     reason: item.reason,
     status: item.status,
     requestedBy,

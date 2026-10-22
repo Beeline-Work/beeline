@@ -1,4 +1,5 @@
 import type { AgentGrantView } from '@beeline/api-contract/phone';
+import { connectionInstallName } from '@beeline/api-contract/agent-grants';
 
 /**
  * The words on a grant card and on the profile's grant list. One verb per kind
@@ -18,7 +19,9 @@ const VERBS: Readonly<Record<AgentGrantView['kind'], string>> = {
   shared_asset: 'isolate',
 };
 
-export function grantAskLine(grant: Pick<AgentGrantView, 'kind' | 'target'>): string {
+export function grantAskLine(grant: Pick<AgentGrantView, 'kind' | 'target' | 'appName'>): string {
+  const app = connectionInstallName(grant);
+  if (app) return `connect ${app}`;
   return `${VERBS[grant.kind]} ${grant.target}`;
 }
 
@@ -26,8 +29,10 @@ export function grantAskLine(grant: Pick<AgentGrantView, 'kind' | 'target'>): st
 export function grantRequestLine(
   requester: string,
   agent: string,
-  grant: Pick<AgentGrantView, 'kind' | 'target'>,
+  grant: Pick<AgentGrantView, 'kind' | 'target' | 'appName'>,
 ): string {
+  const app = connectionInstallName(grant);
+  if (app) return `${agent} wants to connect ${app}`;
   const action = grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write'
     : grant.kind === 'shared_asset' ? 'isolate' : 'use';
   return `${requester} wants ${agent} to ${action} ${grant.target}`;

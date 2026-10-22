@@ -384,12 +384,12 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install root dependencies
-        run: timeout 5m npm ci
+        run: timeout 5m npm ci --no-audit --no-fund
       # Mobile is intentionally outside the root npm workspaces. Knip still
       # analyzes it as an explicit workspace and loads its local config graph.
       - name: Install isolated mobile dependencies
         working-directory: apps/mobile
-        run: timeout 5m npm ci
+        run: timeout 5m npm ci --no-audit --no-fund
       - name: Reject new unused files or exports
         run: timeout 5m npm run dead-code
       - name: Prove an unused export fails the guard

@@ -27,6 +27,12 @@ function grant(overrides: Partial<AgentGrantView>): AgentGrantView {
 }
 
 describe('grant copy', () => {
+  it('R1: names the asking agent and the app on connection cards', () => {
+    expect(grantRequestLine('Alex', '@Bee', { kind: 'mcp', target: 'connection-install:github' }))
+      .toBe('@Bee wants to connect GitHub');
+    expect(grantRequestLine('Alex', '@Bee', { kind: 'mcp', target: 'connection-install:acme', appName: 'Acme Cloud' }))
+      .toBe('@Bee wants to connect Acme Cloud');
+  });
   it('states each remaining ask as one specific action line', () => {
     expect(grantRequestLine('Alex', '@Bee', { kind: 'path', target: '/home/alex/report' })).toBe(
       'Alex wants @Bee to read /home/alex/report',

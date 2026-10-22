@@ -11,7 +11,7 @@ import {
   type NeedsYouItemView,
   type RoomViewIdentity,
 } from '@beeline/api-contract/phone';
-import { AGENT_GRANT_VERBS, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
+import { AGENT_GRANT_VERBS, connectionInstallName, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 
@@ -150,7 +150,7 @@ export function needsYouRowText(message: string, readerHandle: string | null, as
   return shortenAsk(withoutReaderTags(ask || needsYouSentence(message), readerHandle));
 }
 
-type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; reason?: string; script?: CommandGrantScript };
+type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; appName?: string; reason?: string; script?: CommandGrantScript };
 
 /** The raw card fields the approval rows read; every kind's card is a subset. */
 type ApprovalCard = {
@@ -396,6 +396,10 @@ export function grantDecidedBySql(grant: string, identityExpr: string): string {
           (${grant}.kind='shared_asset' AND EXISTS (
             SELECT 1 FROM agents a WHERE a.agent_id=${grant}.agent_id
               AND a.owner_id=${identityExpr}))))
+    WHEN ${grant}.kind='mcp' AND ${grant}.target LIKE 'connection-install:%'
+      AND ${grant}.app_id IS NOT NULL THEN EXISTS (
+      SELECT 1 FROM workspace_apps app WHERE app.id=${grant}.app_id
+        AND app.owner_identity_id=${identityExpr})
     ELSE EXISTS (
       SELECT 1 FROM agents grant_agent
       WHERE grant_agent.agent_id=${grant}.agent_id AND grant_agent.owner_id=${identityExpr})
@@ -623,11 +627,12 @@ function approvalView(
       const first = pending[0];
       if (!first?.kind || !first.target) return undefined;
       const more = pending.length > 1 ? ` (and ${pending.length - 1} more)` : '';
+      const appName = connectionInstallName({ kind: first.kind, target: first.target, appName: first.appName });
       const result = view(
         'grant',
-        `asks to ${AGENT_GRANT_VERBS[first.kind] ?? 'use'}`,
-        first.target,
-        true,
+        appName ? 'wants to connect' : `asks to ${AGENT_GRANT_VERBS[first.kind] ?? 'use'}`,
+        appName ?? first.target,
+        !appName,
         text(`${first.reason ?? ''}${more}`),
         forName,
       );

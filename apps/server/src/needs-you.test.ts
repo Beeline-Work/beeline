@@ -458,6 +458,17 @@ describe('PhoneService Needs-you tray', () => {
     ).rejects.toThrow('message is not available');
   });
 
+  it('R1: connection approval in the tray names the asking agent and the app', async () => {
+    await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'mcp','connection-install:github','Connect GitHub',$2,$4,'pending')`, [GRANT, AGENT, WORKSPACE, ROOM]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES($1,$2,$3,'Hoots wants to connect GitHub','card','grant-request',$4::jsonb)`,
+      ['connection-card', ROOM, AGENT, JSON.stringify({ agent: { pubkey: AGENT, kind: 'agent', name: 'Hoots' },
+        grants: [{ grantId: GRANT, kind: 'mcp', target: 'connection-install:github', appName: 'GitHub', status: 'pending' }] })]);
+    const [item] = (await read()).items;
+    expect(item?.approval).toMatchObject({ actor: 'Hoots', ask: 'wants to connect', subject: 'GitHub', literal: false });
+  });
+
   it('shows a pending grant card the reader can decide, with no expiry, until decided', async () => {
     await database.query(
       `INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,created_at)

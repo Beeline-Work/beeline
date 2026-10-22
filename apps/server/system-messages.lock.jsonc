@@ -5,6 +5,7 @@
 // Workflow gate question and consequences clarified under lunchboxfortwo's approved brief revision 1 (message 245b54cdd618d160125d5c6679c7eddc25fa53be56e78b39073a45bf5ccce6c6).
 // Ask normalizer in DaemonService.askRoomChoice and run-owner addressing in postWorkflowGate approved by lunchboxfortwo for PR #2660 (message da6d4a94fec1a6c13558d01d5a74d50559a10f38582cb06308ca50eaec2141db); wording unchanged.
 // Onboarding producers approved by lunchboxfortwo, DM bdf39511 (yes), relayed by Ruby; snapshot only.
+// Connection-install card wording for PR #2765 approved by lunchboxfortwo, DM e9967365 (yes), relayed by Ruby; three requestAgentGrant entries only.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -2866,6 +2867,7 @@
       "'app:'",
       "'approved'",
       "'command'",
+      "'connection-install:'",
       "'human'",
       "'isolate'",
       "'mcp'",
@@ -2877,9 +2879,11 @@
       "'shared_asset'",
       "'use'",
       "'wallet'",
+      "'wants to connect'",
       "'wants'",
       "'write'",
-      "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`"
+      "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`",
+      "`${agent.name} to connect ${connectionInstallName(grant)}`"
     ],
     "occurrences": 1
   },
@@ -2894,6 +2898,7 @@
       "'app:'",
       "'approved'",
       "'command'",
+      "'connection-install:'",
       "'grant-request'",
       "'human'",
       "'isolate'",
@@ -2906,9 +2911,11 @@
       "'shared_asset'",
       "'use'",
       "'wallet'",
+      "'wants to connect'",
       "'wants'",
       "'write'",
-      "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`"
+      "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`",
+      "`${agent.name} to connect ${connectionInstallName(grant)}`"
     ],
     "occurrences": 1
   },
@@ -2923,6 +2930,7 @@
       "'app:'",
       "'approved'",
       "'command'",
+      "'connection-install:'",
       "'grant-request'",
       "'human'",
       "'isolate'",
@@ -2935,9 +2943,11 @@
       "'shared_asset'",
       "'use'",
       "'wallet'",
+      "'wants to connect'",
       "'wants'",
       "'write'",
-      "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`"
+      "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`",
+      "`${agent.name} to connect ${connectionInstallName(grant)}`"
     ],
     "occurrences": 1
   },

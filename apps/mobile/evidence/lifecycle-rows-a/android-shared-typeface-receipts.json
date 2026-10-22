@@ -1,0 +1,34 @@
+[
+  {
+    "frame": "android-bone-shared-typeface",
+    "texts": [
+      "bone",
+      "Room \u00b7 shared typeface",
+      "obsidian",
+      "Next frame",
+      "\u203a 4 steps \u00b7 12s",
+      "@ruby open a corner to align the reading face.",
+      "Corner opened \u00b7 #shared-face",
+      "Merged #2742 Keep agent lead and body text in the same font face"
+    ]
+  },
+  {
+    "destination": "https://github.com/Beeline-Work/beeline/pull/2742"
+  },
+  {
+    "frame": "android-obsidian-shared-typeface",
+    "texts": [
+      "bone",
+      "Room \u00b7 shared typeface",
+      "obsidian",
+      "Next frame",
+      "\u203a 4 steps \u00b7 12s",
+      "@ruby open a corner to align the reading face.",
+      "Corner opened \u00b7 #shared-face",
+      "Merged #2742 Keep agent lead and body text in the same font face"
+    ]
+  },
+  {
+    "destination": "https://github.com/Beeline-Work/beeline/pull/2742"
+  }
+]

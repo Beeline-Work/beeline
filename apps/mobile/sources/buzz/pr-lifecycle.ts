@@ -76,7 +76,16 @@ function lifecycleItem(message: SystemLineMessage): LifecycleItem | undefined {
     };
   }
   if (fact) {
-    if (message.systemEvent?.kind === 'corner-opened') return;
+    if (fact.type === 'corner-open' || message.systemEvent?.kind === 'corner-opened') {
+      return {
+        ...base,
+        title: lifecycleCornerTitle(fact),
+        state: 'Opened',
+        kind: 'corner',
+        kindLine: 'corner',
+        cornerId: fact.cornerId,
+      };
+    }
     if (fact.type === 'corner-complete' && fact.outcome === 'landed' && fact.pullRequest) {
       return {
         ...base,
@@ -177,7 +186,9 @@ export function lifecycleSummary(items: readonly LifecycleItem[]): string {
               ? 'payment'
               : item.kind === 'wallet'
                 ? 'wallet'
-                : 'notice';
+                : item.kind === 'corner'
+                  ? 'corner'
+                  : 'notice';
     const state = item.state.replace(/^(PR|Checks) /, '').toLowerCase();
     const key = `${kind}:${state}`;
     const group = counts.get(key) ?? { kind, state, count: 0 };
@@ -201,14 +212,10 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
   let run: { anchor: T; ids: string[]; items: LifecycleItem[]; index: number } | undefined;
   for (const message of messages) {
     const fact = message.deleted ? undefined : message.daemonFact;
-    // closeCorner settles an opening card in place; its original event still says opened.
-    if (fact && message.systemEvent?.kind === 'corner-opened') {
-      run = undefined;
-      result.push(message);
-      continue;
-    }
     if (
-      (fact?.type === 'corner-complete' && !(fact.outcome === 'landed' && fact.pullRequest)) ||
+      (fact?.type === 'corner-complete' &&
+        message.systemEvent?.kind !== 'corner-opened' &&
+        !(fact.outcome === 'landed' && fact.pullRequest)) ||
       fact?.type === 'worktree-cleaned'
     ) {
       // Retain hidden ids for jumps/read cursors without drawing another close notice.

@@ -161,8 +161,7 @@ downloads; freshness reconciliation runs while the helper serves.
 symlink into immutable `beeline-releases/<id>`. Startup serves the last verified
 release while publication freshness is still unconfirmed;
 it never disables the native restart owner. There is no rollback coordinator
-or detached production fallback. `BEELINE_UPDATE_DISABLE=1` disables automatic
-freshness checks, and is visible in local status; explicit updates still work.
+or detached production fallback.
 
 The manifest's `recovery` entry pins the small bootstrap's file, checksum and
 size. Bundle merging, Pages assembly and the durable helper channel preserve
@@ -186,7 +185,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ### Daemon self-update and CLI bundle
 
-- **`<prefix>/lib/beeline` is the active bundle anchor**, a symlink into `lib/beeline-releases/<id>` swung by rename(2) (`self-update.ts`). `BEELINE_UPDATE_DISABLE=1` opts out of automatic updates. Never suggest `npx beeline` (an unrelated package); recovery is `npx usebeeline update`.
+- **`<prefix>/lib/beeline` is the active bundle anchor**, a symlink into `lib/beeline-releases/<id>` swung by rename(2) (`self-update.ts`). Never suggest `npx beeline` (an unrelated package); recovery is `npx usebeeline update`.
 - **Update restarts are silent.** `runMachineHelper` closes the machine link before agent teardown with `HELPER_UPDATE_CLOSE_CODE`/`HELPER_UPDATE_CLOSE_REASON`; `DaemonAgentSession` releases presence without an offline notice only for that signal. Unexpected loss still notices the owner (`machine-offline.test.ts`, `daemon-live.test.ts`, `machine-helper.test.ts`). Release delivery pushes helpers only (`release-notify.ts`).
 - **Linux handovers use a fixed one-second native restart delay.** `native-helper.ts` renders no escalating restart steps. The running helper refreshes the installed unit with `daemon-reload`, without restarting the service. `recovery.startup.test.ts` proves verified staged/active boot makes no publication request; `systemd.test.ts` covers unit convergence.
 - **Routine updates wait at most five minutes for a quiet gap.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after the first registration on each socket, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the deadline, then hand over; the successor activates the selected release. Deadline interruptions use `force-update-journal.ts`; the successor replays `update-interrupted` receipts and reclaims the same commands without spending retries. `machine-helper.test.ts` proves push, reconnect, and both handoffs over isolated HTTP/WebSocket. Installation is checksum verification plus atomic activation; no post-install probe or rollback. Server minimums (426 / `force-update`) interrupt immediately (`managed-update.ts`).

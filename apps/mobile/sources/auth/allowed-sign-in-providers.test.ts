@@ -5,11 +5,11 @@ const source = (relativePath: string): string =>
   readFileSync(new URL(`../${relativePath}`, import.meta.url), 'utf8');
 
 describe('GitHub and Google mobile sign-in surface', () => {
-  it('offers GitHub first and gates Google on the server capability', () => {
+  it('offers GitHub first and Google to everyone without a preview gate', () => {
     const onboarding = source('app/(app)/beeline/onboarding.tsx');
     expect(onboarding.indexOf('testID="onboarding-github-sign-in"')).toBeLessThan(onboarding.indexOf('testID="onboarding-google-sign-in"'));
-    expect(onboarding).toContain('readAuthCapabilities(runtime.monolithUrl)');
-    expect(onboarding).toContain('capabilities.google === true');
+    expect(onboarding).not.toContain('readAuthCapabilities');
+    expect(onboarding).not.toContain('google_preview');
     expect(onboarding).toContain('Recommended');
     expect(onboarding).not.toContain('Continue with Apple');
     expect(existsSync(new URL('../app/(app)/beeline/google-callback.tsx', import.meta.url))).toBe(true);

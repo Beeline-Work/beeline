@@ -7,8 +7,6 @@ const sources = path.join(__dirname, '..');
 /** The scroll controller moves the transcript list. Nothing else calls a list's scroll methods. */
 const ALLOWED = new Set([
   'buzz/transcript-scroll-controller.ts',
-  // Not the Room transcript: the command palette's own result list.
-  'components/CommandPalette/CommandPaletteResults.tsx',
   // Not the Room transcript: the desktop work pane's corner preview, its own FlatList.
   'components/DesktopRoomInspector.tsx',
   // Not the Room transcript: the tag menu's own scroll view.

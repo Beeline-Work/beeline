@@ -10,16 +10,6 @@ import type { DaemonApiClient } from './daemon-api-client.js';
  * own full deadline before this race cuts the whole RPC off first.
  */
 export const INSTITUTIONAL_CONTEXT_TIMEOUT_MS = 500;
-export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
-
-/** Institutional memory is ON by default: the flag is an OFF switch, so only an
- *  explicit `false` disables it. */
-export function institutionalMemoryFlagEnabled(
-  env: NodeJS.ProcessEnv,
-  flag: string,
-): boolean {
-  return env[flag] !== 'false';
-}
 
 export const EMPTY_INSTITUTIONAL_CONTEXT: InstitutionalContextSnapshot = {
   snapshotRevision: 0,
@@ -60,7 +50,7 @@ export interface InstitutionalContextFetch {
 export function startInstitutionalContextFetch(
   api: Pick<DaemonApiClient, 'execute'>,
   roomId: string,
-  enabled = institutionalMemoryFlagEnabled(process.env, INSTITUTIONAL_MEMORY_LIVE_FLAG),
+  enabled = true,
   now: () => number = () => performance.now(),
 ): InstitutionalContextFetch {
   const startedAt = now();

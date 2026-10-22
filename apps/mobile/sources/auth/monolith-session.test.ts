@@ -53,10 +53,10 @@ describe('monolith phone session', () => {
     expect(JSON.parse(fetcher.mock.calls[0]?.[1]?.body as string)).toEqual({oidcToken:'ticket',funnel:context});
   });
 
-  it('E23: explains preview account rejection without accepting a session', async () => {
-    const fetcher = vi.fn(async () => Response.json({ error: 'google_sign_in_failed', reason: 'preview_account_not_allowed' }, { status: 401 }));
+  it('E23: rejects a failed Google exchange without accepting a session', async () => {
+    const fetcher = vi.fn(async () => Response.json({ error: 'google_sign_in_failed' }, { status: 401 }));
     const session = new MonolithSession('https://server.example', fetcher);
-    await expect(session.exchangeGoogleTicket('ticket')).rejects.toThrow('This Google account is not on the test list.');
+    await expect(session.exchangeGoogleTicket('ticket')).rejects.toThrow();
     expect(await session.identityId()).toBeNull();
     expect(secure.size).toBe(0);
   });

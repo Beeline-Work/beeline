@@ -596,20 +596,18 @@ export async function runInstitutionalCuratorCycle(
   if (!config.enabled) return 0;
   const rollouts = await database.query<{
     workspace_id: string;
-    stage: 'shadow' | 'pilot' | 'live';
     expire_after_days: number;
   }>(
-    `SELECT workspace.id workspace_id,COALESCE(rollout.stage,'live') stage,
+    `SELECT workspace.id workspace_id,
             COALESCE(rollout.expire_after_days,90) expire_after_days
      FROM workspaces workspace
      LEFT JOIN institutional_memory_workspace_rollouts rollout
        ON rollout.workspace_id=workspace.id
-     WHERE COALESCE(rollout.stage,'live') IN ('shadow','pilot','live')
      ORDER BY workspace.id`,
   );
   for (const rollout of rollouts.rows) {
     try {
-      if (config.live && rollout.stage !== 'shadow') {
+      if (config.live) {
         try {
           await refreshWorkspaceSkillAnchors(database, rollout.workspace_id, options.anchors, now);
         } catch (error) {
@@ -628,7 +626,7 @@ export async function runInstitutionalCuratorCycle(
           [randomUUID(), rollout.workspace_id, cycleKey],
         );
         if (!inserted.rowCount) return;
-        const lifecycle = !config.live || rollout.stage === 'shadow'
+        const lifecycle = !config.live
           ? { staleItems: 0, archivedItems: 0, staleSkills: 0, archivedSkills: 0 }
           : await deterministicLifecycle(db, rollout.workspace_id, now, rollout.expire_after_days);
         await db.query(

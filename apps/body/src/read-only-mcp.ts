@@ -153,7 +153,7 @@ export function agentToolsFor(
   cornerTurn = false,
   repositoryCorner = false,
   commandRunnerAvailable = true,
-  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
+  institutionalMemoryEnabled = true,
   explicitSilentReceipt = false,
   nativeIoProven = false,
 ): ToolDefinition[] {
@@ -172,7 +172,7 @@ const TOOLS = agentToolsFor(
   Boolean(process.env.BEELINE_DAEMON_CORNER_ID),
   process.env.BEELINE_CORNER_REPOSITORY === '1',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
-  process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
+  true,
   process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1',
   process.env.BEELINE_NATIVE_IO_PROVEN === '1',
 );
@@ -2722,7 +2722,7 @@ async function daemonUploadArtifact(
 }
 
 function advertisedAgentTool(name: string): ToolDefinition {
-  const tool = agentToolsFor(true, process.env.BEELINE_AGENT_DM === '1', Boolean(process.env.BEELINE_DAEMON_CORNER_ID), process.env.BEELINE_CORNER_REPOSITORY === '1', Boolean(process.env.BEELINE_GRANT_RUNNER_URL), process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false', process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1', process.env.BEELINE_NATIVE_IO_PROVEN === '1').find(tool => tool.name === name);
+  const tool = agentToolsFor(true, process.env.BEELINE_AGENT_DM === '1', Boolean(process.env.BEELINE_DAEMON_CORNER_ID), process.env.BEELINE_CORNER_REPOSITORY === '1', Boolean(process.env.BEELINE_GRANT_RUNNER_URL), true, process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1', process.env.BEELINE_NATIVE_IO_PROVEN === '1').find(tool => tool.name === name);
   if (!tool) throw new Error(`unknown or unavailable tool: ${name}; use only advertised tools`);
   return tool;
 }
@@ -2900,7 +2900,6 @@ async function availableCapabilities(checkOnboarding = false): Promise<string[]>
 
   return Object.keys(CAPABILITY_ROUTES).filter(capability =>
     (capability !== 'onboarding' || onboarding) &&
-    (capability !== 'workflow' || process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false') &&
     (capability !== 'corner_app' || Boolean(process.env.BEELINE_DAEMON_CORNER_ID))
   ).map(capability => `beeline:${capability}`);
 }

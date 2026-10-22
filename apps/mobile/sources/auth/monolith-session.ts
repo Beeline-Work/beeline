@@ -190,15 +190,7 @@ export class MonolithSession {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ oidcToken: ticket, ...(funnel ? {funnel} : {}) }),
     });
-    if (!response.ok) {
-      if (provider === 'google') {
-        const failure = await response.json().catch(() => null);
-        if (failure?.reason === 'preview_account_not_allowed') {
-          throw new OidcBindError('exchange_failed', 'Google sign-in is in preview. This Google account is not on the test list.');
-        }
-      }
-      throw new MonolithSessionRequiredError();
-    }
+    if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
     await this.accept(tokens, true, revision);
     return tokens.identityId;

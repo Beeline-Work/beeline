@@ -94,9 +94,7 @@ export interface PhoneTokens {
   identityId: string;
 }
 
-export class GoogleSignInError extends Error {
-  constructor(message: string, readonly reason?: 'preview_account_not_allowed') { super(message); }
-}
+export class GoogleSignInError extends Error {}
 
 export class TokenAuth {
   readonly #daemonAuthCache = new Map<string, { agentId: string | null; expiresAt: number }>();

@@ -11,7 +11,6 @@ import {
 const SHORTCUT_HINT_DELAY_MS = 240;
 
 export interface GlobalKeyboardActions {
-    commandPalette?: () => void;
     newSession?: () => void;
     settings?: () => void;
     recentSession?: (index: number) => boolean;

@@ -60,7 +60,7 @@ const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'dev
     const work = /build|check my latest report/.test(input.messages.at(-1).content);
     decisionRequests++;
     if (decisionGate && work) await decisionGate;
-    const text = capped ? 'One complete sentence. Then a trailing fragment' : work ? 'Checking.' : 'Ready.';
+    const text = capped ? (process.env.VOICE_CAPPED_REPLY ?? 'One complete sentence. Then a trailing fragment') : work ? 'Checking.' : 'Ready.';
     replies.push(text);
     return new Response('data: '+JSON.stringify({ choices: [{ delta: { content: text,
       ...(work ? { tool_calls: [{function:{name:'order'}}] } : {}) }, ...(capped ? { finish_reason: 'length' } : {}) }] })+'\n\n');

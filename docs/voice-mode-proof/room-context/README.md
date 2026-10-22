@@ -20,6 +20,17 @@ supplies the waveform failure; the baseline transport meters only the local mic.
 
 ## Demonstrated
 
+The reviewer found a capped abbreviation case under VOICE-CONTEXT-1:
+`The appointment is confirmed. Dr. Smith will explain the` previously sent
+`The appointment is confirmed. Dr.` to synthesis. The repeated production
+provider/runtime proof with disposable PGlite and real local LiveKit now sends
+only `The appointment is confirmed.`; see [abbreviation evidence](abbreviation-fixed.json).
+Run the fixture with `VOICE_CAPPED_REPLY='The appointment is confirmed. Dr. Smith will explain the'`
+and POST `{}` to `/context-probe` to repeat. Provider regressions also cover
+titles, initials and dotted abbreviations, and the runtime regression asserts
+the exact synthesis input. Ambiguous abbreviated endings are conservatively
+omitted from capped replies, without additional provider calls or waits.
+
 Repeat the identical posts and utterance with the fixed runtime. Synthesis
 receives only `One complete sentence.`. The brain history includes Goosey by
 name and handle, the attachment title and URL, and Picnic plan with its URL.

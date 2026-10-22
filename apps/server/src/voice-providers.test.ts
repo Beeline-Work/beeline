@@ -401,6 +401,12 @@ it('VOICE-TIMEOUT-1: playback pauses preserve the remaining provider budget rath
 it.each([
   ['First sentence. A trailing fragment', 'First sentence.'],
   ['An unfinished opening', ''],
+  ['The appointment is confirmed. Dr. Smith will explain the', 'The appointment is confirmed.'],
+  ['The appointment is confirmed. Dr.', 'The appointment is confirmed.'],
+  ['Ready. Ask Mr. Smith about the', 'Ready.'],
+  ['Ready. Ask J. Smith about the', 'Ready.'],
+  ['Ready. Try e.g. the', 'Ready.'],
+  ['Dr. Smith confirmed it. Then a fragment', 'Dr. Smith confirmed it.'],
   ['Finished! “Also done.” unfinished', 'Finished! “Also done.”'],
 ])('VOICE-CONTEXT-1: capped stream %s never sends a partial sentence to synthesis', async (content, expected) => {
   const wire = `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}\n\ndata: [DONE]\n\n`;

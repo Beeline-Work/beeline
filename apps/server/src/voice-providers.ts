@@ -294,7 +294,16 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
       }
       if (capped) {
         let end = 0;
-        for (const match of text.matchAll(/[.!?。！？]["'”’)]*(?=\s|$)/gu)) end = match.index! + match[0].length;
+        for (const match of text.matchAll(/[.!?。！？]["'”’)]*(?=\s|$)/gu)) {
+          if (match[0].startsWith('.')) {
+            const prefix = text.slice(0, match.index! + 1);
+            // A title, initial or dotted abbreviation can end a capped fragment.
+            // Prefer losing an ambiguous ending to speaking an unfinished sentence.
+            if (/(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Rev|Sr|Jr|St|vs|etc|No|Fig|Inc|Ltd)|\b\p{L}|(?:\b\p{L}\.)+\p{L})\.$/iu.test(prefix)
+              || prefix.endsWith('..')) continue;
+          }
+          end = match.index! + match[0].length;
+        }
         text = text.slice(0, end);
       }
       return { text: text.trim(), order, ...(search && !order ? { search } : {}) };

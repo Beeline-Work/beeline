@@ -1,3 +1,4 @@
+// Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
@@ -2423,10 +2424,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:6a32799b9e879dae",
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:04990e9148487946",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "postRepositoryOnboarding(this.database, this.github, {\n    roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,\n})",
+    "template": "postRepositoryOnboarding(database, this.github, {\n    roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,\n})",
     "literals": [
       "'human'",
       "'postRepositoryOnboarding'"

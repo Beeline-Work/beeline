@@ -1,10 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { migrate, PostgresDatabase, postgresPoolConfig, type SqlDatabase } from './database.js';
 import { PushDeliveryLoop } from './background.js';
 import { backfillPushOutbox } from './push-outbox.js';
 import { PgliteDatabase } from './test-support.js';
+import * as sentry from './sentry.js';
 
 const person = 'a'.repeat(64), author = 'b'.repeat(64);
 const workspace = '11111111-1111-4111-8111-111111111111';
@@ -125,7 +126,14 @@ describe.skipIf(!postgresUrl)('R-PUSH-SCAN-LOCK', () => {
       const started = new Promise<void>(resolve => { startedSend = resolve; });
       const send = vi.fn(async () => { startedSend(); await sending; });
       const loop = new PushDeliveryLoop(jobs, { send });
-      const query = vi.spyOn(jobs, 'query');
+      const candidateQueries: {sql: string; values?: unknown[]}[] = [];
+      const transaction = jobs.transaction.bind(jobs);
+      vi.spyOn(jobs,'transaction').mockImplementation(async work => transaction(async tx => {
+        const query = vi.spyOn(tx,'query');
+        try { return await work(tx); }
+        finally { for (const [sql,values] of query.mock.calls)
+          if (sql.includes('FROM unclaimed')) candidateQueries.push({sql,values}); }
+      }));
       running = loop.runOnce();
       await Promise.race([started, running.then(() => { throw new Error("no delivery started"); })]);
       const lockDurations: number[] = [];
@@ -139,9 +147,8 @@ describe.skipIf(!postgresUrl)('R-PUSH-SCAN-LOCK', () => {
       console.info(`R-PUSH-SCAN-LOCK: 300 deliveries; 20 locks; max lock handoff ${Math.max(...lockDurations)}ms`);
       expect(await running).toBe(300);
       expect(send).toHaveBeenCalledTimes(300);
-      const candidate = query.mock.calls.find(([sql]) => sql.includes('FROM unclaimed'))!;
-      expect(candidate[0]).toContain('SELECT * FROM messages WHERE id=queued.message_id OFFSET 0');
-      const explain = await jobs.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${candidate[0]}`, candidate[1]);
+      const candidate = candidateQueries[0]!;
+      const explain = await jobs.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${candidate.sql}`, candidate.values);
       const visit = (node: Record<string, unknown>) => {
         if (node['Relation Name'] === 'messages') {
           expect(node['Node Type']).not.toBe('Seq Scan');
@@ -157,4 +164,112 @@ describe.skipIf(!postgresUrl)('R-PUSH-SCAN-LOCK', () => {
       await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
     }
   }, 120_000);
+});
+
+it('R-PUSH-BACKLOG: delivers a DM behind ineligible notes and drops expired rows', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type)
+      SELECT 'noise-'||n,$1,$2,'GitHub check updated','system','github-corner-note'
+      FROM generate_series(1,200) n`, [room, author]);
+    await db.query(`UPDATE push_outbox SET not_before=now()-interval '2 minutes'`);
+    await db.query(`INSERT INTO push_outbox(message_id,device_token,not_before,expires_at)
+      SELECT 'expired-'||n,'proof-device',now()-interval '3 minutes',now()-interval '1 second'
+      FROM generate_series(1,1100) n`);
+    const dm = '33333333-3333-4333-8333-333333333333';
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants)
+      VALUES($1,$2,'DM',$3::jsonb)`, [dm, workspace, JSON.stringify([person,author])]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`, [workspace,dm,person,author]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('fresh-dm',$1,$2,'Hello from your DM')`, [dm,author]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    const signal = vi.spyOn(sentry,'captureServerError').mockImplementation(()=>{});
+    const began = performance.now();
+    const loop = new PushDeliveryLoop(db, { send });
+    expect(await loop.runOnce()).toBe(1);
+    expect(await loop.runOnce()).toBe(0);
+    expect(signal).toHaveBeenCalledOnce();
+    expect(signal).toHaveBeenCalledWith(expect.any(Error),{background_job:'push',signal:'push-outbox-backlog'});
+    signal.mockRestore();
+    const elapsed = performance.now() - began;
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({ messageId:'fresh-dm',title:'@peer' }));
+    expect((await db.query(`SELECT * FROM push_outbox`)).rows).toHaveLength(0);
+    console.info(`R-PUSH-BACKLOG: discarded 1300 rows, delivered DM; ${(1301/(elapsed/1000)).toFixed(1)} rows/sec (${elapsed.toFixed(1)} ms), local provider stand-in`);
+  } finally { await db.close(); }
+});
+
+it('batches suppression with parity for mute, live view, server lease and both read rules', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    const names = ['muted','view','lease','recent','read','stale'];
+    for (const name of names) {
+      const id = createHash('sha256').update(name).digest('hex');
+      await db.query(`INSERT INTO identities(id,kind,name,handle,push_level) VALUES($1,'human',$2,$2,'full')`,[id,name]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[workspace,room,id]);
+      await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+        VALUES($1,$2,'android','physical',now()-interval '1 day')`,[name,id]);
+    }
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('batch',$1,$2,'Untargeted full-mode prose')`,[room,author]);
+    await db.query(`UPDATE memberships SET push_muted=true WHERE identity_id=$1`,[createHash('sha256').update('muted').digest('hex')]);
+    await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('alive')`);
+    await db.query(`INSERT INTO room_push_views(room_id,identity_id,session_id,instance_id,expires_at)
+      VALUES($1,$2,'view',NULL,now()+interval '1 minute'),
+        ($1,$3,'lease','alive',now()-interval '1 minute'),
+        ($1,$4,'stale','gone',now()-interval '1 minute')`,
+      [room,createHash('sha256').update('view').digest('hex'),createHash('sha256').update('lease').digest('hex'),createHash('sha256').update('stale').digest('hex')]);
+    await db.query(`INSERT INTO room_read_marks(room_id,identity_id,message_created_at,message_id,updated_at)
+      SELECT $1::uuid,$2::text,now()-interval '1 day','older',now()
+      UNION ALL SELECT $1::uuid,$3::text,created_at,id,now()-interval '1 minute' FROM messages WHERE id='batch'`,
+      [room,createHash('sha256').update('recent').digest('hex'),createHash('sha256').update('read').digest('hex')]);
+    const sqls: string[] = [];
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db,'transaction').mockImplementation(async work => transaction(async tx => {
+      const query = vi.spyOn(tx,'query');
+      try { return await work(tx); }
+      finally { sqls.push(...query.mock.calls.map(([sql])=>sql)); }
+    }));
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await new PushDeliveryLoop(db,{send}).runOnce()).toBe(2);
+    expect(send.mock.calls.map(([token])=>token).sort()).toEqual(['proof-device','stale']);
+    expect((await db.query(`SELECT device_token FROM push_delivery_claims WHERE status='suppressed' ORDER BY device_token`)).rows
+      .map(row=>row.device_token)).toEqual(['lease','muted','read','recent','view']);
+    expect(sqls.filter(sql=>sql.includes('SELECT candidate.message_id,candidate.token'))).toHaveLength(1);
+  } finally { await db.close(); }
+});
+
+it('does not enqueue cards the delivery policy unconditionally excludes', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type)
+      VALUES('excluded',$1,$2,'Order reference','card','agent-command')`,[room,author]);
+    expect((await db.query(`SELECT * FROM push_outbox`)).rows).toHaveLength(0);
+  } finally { await db.close(); }
+});
+
+
+it('does not send a claim that expires while waiting for provider capacity', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    await post(db,'expires-before-send');
+    const query = db.query.bind(db);
+    const future = Date.now()+2*60*60*1000;
+    vi.spyOn(db,'query').mockImplementation(async (sql,values) => {
+      const result = await query(sql,values);
+      if (sql.includes('INSERT INTO push_delivery_claims AS claim'))
+        vi.spyOn(Date,'now').mockReturnValue(future);
+      return result;
+    });
+    const send = vi.fn().mockResolvedValue(undefined);
+    expect(await new PushDeliveryLoop(db,{send}).runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect((await query(`SELECT status,error FROM push_delivery_claims WHERE message_id='expires-before-send'`)).rows)
+      .toEqual([{status:'failed',error:'Push expired before provider send'}]);
+    expect((await query(`SELECT * FROM push_outbox`)).rows).toHaveLength(0);
+  } finally { vi.restoreAllMocks(); await db.close(); }
 });

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS push_outbox (
 );
 CREATE INDEX IF NOT EXISTS push_outbox_device_idx ON push_outbox(device_token);
 CREATE INDEX IF NOT EXISTS push_outbox_due_idx ON push_outbox(not_before,message_id,device_token);
+CREATE INDEX IF NOT EXISTS push_outbox_expiry_idx ON push_outbox(expires_at);
 CREATE TABLE IF NOT EXISTS push_message_context (
   message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -28,6 +29,9 @@ DECLARE collected_turn_ids text[]; collected_burst_ids text[];
   interruption_time messages.created_at%TYPE; interruption_id text;
 BEGIN
   IF m.created_at<now()-interval '1 hour' OR m.presentation='activity'
+    OR m.deleted_at IS NOT NULL OR btrim(m.text)=''
+    OR m.card_type IN ('agent-yolo','grant-auto','turn-failed','workspace-member-joined','agent-command')
+    OR (m.card_type='relay' AND m.card->>'direction'='up')
     OR NOT EXISTS (SELECT 1 FROM push_devices LIMIT 1) THEN RETURN; END IF;
   -- Serialize turn context with other committed writes in this Room.
   PERFORM pg_advisory_xact_lock(hashtextextended('push-context:' || m.room_id::text,0));

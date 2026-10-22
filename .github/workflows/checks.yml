@@ -111,6 +111,7 @@ jobs:
               - 'packages/**'
             bodyModule:
               - 'apps/body/**'
+              - 'infra/free-agent/**'
             # Deliberately the macOS-specific sources only: this gate holds the
             # repository's one Intel Mac, which the iOS store leg and the release's
             # own darwin-x64 helper leg also need, so an ordinary apps/body or
@@ -455,6 +456,8 @@ jobs:
       - name: Run the hermetic Body suite
         working-directory: apps/body
         run: npx vitest run
+      - name: Prove free-agent boot refresh and startup deadlines
+        run: node --test infra/free-agent/entrypoint.test.mjs
 
   mac-helper-acceptance:
     name: MAC HELPER ACCEPTANCE

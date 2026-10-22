@@ -62,6 +62,7 @@
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
     "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],
+    "components/buzz/ChoicePlate.tsx": ["TranscriptCardChoicePlate", "inner"],
     "components/buzz/CornerLockAction.tsx": ["CornerLockAction"],
     "components/buzz/CodeBlock.tsx": ["CodeBlock", "PEEK_LINE_COUNT", "body"],
     "components/buzz/CodeHighlighter.tsx": ["CodeHighlighter"],
@@ -311,7 +312,6 @@
     "components/buzz/TranscriptCard.tsx": [
       "SettlingText",
       "TranscriptCard",
-      "TranscriptCardChoicePlate",
       "TranscriptCardHandle",
       "TranscriptCardRowView",
       "content",

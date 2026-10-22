@@ -40,9 +40,9 @@ const decorativeAccentFills = new Set([
   'components/buzz/TranscriptCard.tsx:haloMid',
   'components/buzz/TranscriptCard.tsx:haloFar',
   'components/buzz/TranscriptCard.tsx:rowRule',
-  'components/buzz/TranscriptCard.tsx:choiceWash',
-  'components/buzz/TranscriptCard.tsx:choiceWashLeader',
-  'components/buzz/TranscriptCard.tsx:choiceLetterSelected',
+  'components/buzz/ChoicePlate.tsx:choiceWash',
+  'components/buzz/ChoicePlate.tsx:choiceWashLeader',
+  'components/buzz/ChoicePlate.tsx:choiceLetterSelected',
   'components/buzz/TranscriptScrubber.tsx:handle',
   // The center point of the outlined attention glyph, not the button plate.
   // The running call's status dot; Join uses a separate neutral plate.

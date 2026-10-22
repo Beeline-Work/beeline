@@ -540,7 +540,7 @@ describe('connect_app', () => {
     await database.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
       VALUES($1,$2,$3,'github','GitHub','squire-api','squire-api')`, [appId, WORKSPACE, foreign]);
     const result = await daemonWith(fakeRegistry([]).client).execute('requestAgentGrant', {
-      ...turn, kind: 'mcp', target: 'connection-install:github', appId, reason: 'Connect GitHub',
+      ...turn, kind: 'mcp', target: 'connection-install:github', appId, purpose: 'Connect GitHub to complete the requested task', reason: 'Connect GitHub',
     }, HELPER);
     expect(result).toMatchObject({ status: 'pending', auto: false });
     await database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [result.grantId, COMMAND]);

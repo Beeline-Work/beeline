@@ -1095,6 +1095,12 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "maxLength": 512,
           "description": "What you need: a repository, a path, a host, a secret name, a device, the exact command line (with optional `--with SECRET_NAME` suffixes), or — for kind mcp — the exact name of a host MCP server as spelled in the operator harness config."
         },
+        "touches": { "type": "string", "minLength": 1, "maxLength": 240, "description": "Files or resources this command touches, in plain language. Omit when unknown." },
+        "capabilities": { "type": "string", "minLength": 1, "maxLength": 240, "description": "What this command can do, for example Delete files. Omit when unknown; never invent a scope." },
+        "purpose": {
+          "type": "string", "minLength": 1, "maxLength": 240,
+          "description": "Plain language: what you want to do and why. Example: Free about 5 GB of disk by deleting old build files in 3 finished corners, so the Android test build can finish."
+        },
         "reason": {
           "type": "string",
           "minLength": 1,
@@ -1110,7 +1116,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "required": ["action"],
       "additionalProperties": false,
       "anyOf": [
-        {"properties": {"action": {"const": "request"}}, "required": ["action", "kind", "target", "reason"]},
+        {"properties": {"action": {"const": "request"}}, "required": ["action", "kind", "target", "reason", "purpose"]},
         {"properties": {"action": {"const": "list"}}, "required": ["action"]}
       ]
     }

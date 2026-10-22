@@ -244,6 +244,8 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 - **Corner objective.** Under a corner's header, `CornerObjectiveLine` shows the objective in `textSecondary` behind a 2 px `humanRail`, a brief preview (≤3 lines) with a brass "Read brief" link, and the live workflow step when one runs. No box, no label; it wraps rather than truncates.
 
 ### Transcript cards
+
+Approval cards lead with the agent’s plain-language purpose, then available Runs, Touches and Can facts. The full script stays folded behind Show script until requested. Existing requests without a purpose retain their wording with the script folded.
 `TranscriptCard` is the one structured-card anatomy (grant, permission, merge summary, choice, notification): head with identity, title, subline and stamp; rows; code block; footer verbs. Record tier for facts and settled asks, ask tier (raised fill) only while a response is needed. Radius 10, 1 px border, 16 side padding, 26 px identity.
 
 ### Buttons

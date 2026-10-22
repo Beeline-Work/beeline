@@ -2475,6 +2475,9 @@ CREATE TABLE IF NOT EXISTS agent_grants (
 );
 -- C94: an interpreter command grant is bound to the script the card showed.
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS script jsonb;
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS purpose text;
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS touches text;
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS capabilities text;
 ALTER TABLE agent_grants DROP CONSTRAINT IF EXISTS agent_grants_kind_check;
 ALTER TABLE agent_grants ADD CONSTRAINT agent_grants_kind_check
   CHECK (kind IN ('path','host','secret','device','budget','command','mcp','repository','shared_asset'));

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { approveMerge, prChecksStatus } from './read-only-mcp.js';
+import { readFileSync } from 'node:fs';
+import { approveMerge, callAgentTool, prChecksStatus } from './read-only-mcp.js';
 
 const url = 'https://github.com/owner/widgets/pull/614';
 let restore: Record<string, unknown>, items: Record<string, unknown>[];
@@ -70,16 +71,24 @@ afterEach(() => {
 const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus');
 
 describe('pr_checks_status PR selection and reviewer gate', () => {
-  it('adds no hold of its own to a corner with no pull request yet', async () => {
+  it('Reproduction R-NOPR: continues work when no PR exists without adding a hold', async () => {
     restore = { objective: 'Investigate' };
-    const status = JSON.parse(await prChecksStatus());
+    const status = JSON.parse(await callAgentTool('read', { facet: 'checks' }, 'r-nopr'));
     expect(status).toMatchObject({
       held: false,
       mergeAllowed: false,
       approved: false,
     });
     expect(status).not.toHaveProperty('didHumanSayDontMerge');
-    expect(status.next).toContain('The PR URL is not yet durable');
+    expect(status.next).toContain('No PR is recorded for this corner yet');
+    expect(status.next).toContain('Continue the assigned work');
+    expect(status.next).toContain('push the corner branch and open a PR');
+    expect(status.next).toContain('If you already opened one');
+    expect(status.next).not.toContain('end this turn now');
+    expect(status).not.toHaveProperty('pullRequest');
+    const savedCase = JSON.parse(readFileSync(new URL('../../../docs/prompts/cases/checks-no-pr-continues-work.json', import.meta.url), 'utf8'));
+    expect(JSON.parse(savedCase.toolResults.read)).toEqual(status);
+    expect(savedCase.messages).toContain(`Tool result — read(facet:checks): ${savedCase.toolResults.read}`);
     expect(gateCalls()).toHaveLength(0);
   });
   it.each([614, url])(

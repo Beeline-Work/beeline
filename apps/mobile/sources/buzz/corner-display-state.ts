@@ -24,6 +24,7 @@ export type CornerDisplayItem = {
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
   readonly itemId?: string;
+  readonly blocker?: import('@beeline/api-contract/phone').CornerBlocker;
   /** PR/check narration; never an input to the displayed state. */
   readonly lifecycle: CornerLifecycleView;
 };

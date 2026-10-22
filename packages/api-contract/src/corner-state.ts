@@ -1,4 +1,4 @@
-import type { CornerLifecycleView, CornerState, CornerStateReason } from './phone-types.js';
+import type { CornerBlocker, CornerLifecycleView, CornerState, CornerStateReason } from './phone-types.js';
 
 /**
  * Where a corner's workflow run currently sits: the `toState` of its newest
@@ -24,13 +24,14 @@ export type CornerStateFacts = {
    * A workflow stage or an ordinary tag alone never establishes a blocker.
    */
   readonly owed?: boolean;
-  readonly blocker?: { readonly reason: CornerStateReason; readonly itemId: string };
+  readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
 };
 
 export type DerivedCornerState = {
   readonly state: CornerState;
   readonly reason?: CornerStateReason;
   readonly itemId?: string;
+  readonly blocker?: CornerBlocker;
 };
 
 /**

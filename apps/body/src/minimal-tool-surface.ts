@@ -1242,6 +1242,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "properties": {"action": {"enum": ["create", "update", "delete"]}},
           "required": ["action", "trigger"]
         },
+        {"properties": {"action": {"const": "delete"}, "trigger": {"const": "schedule"}}, "required": ["action", "scheduleId"]},
         {"properties": {"action": {"const": "replace_events"}}, "required": ["action", "kinds"]}
       ]
     }

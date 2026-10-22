@@ -342,6 +342,45 @@ describe('minimal agent surface', () => {
       },
     ]);
   });
+  it('R-WAKEDEL creates then deletes a schedule without trigger through the advertised tool', async () => {
+    const schedules = new Set<string>();
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      const input = JSON.parse(String(init.body));
+      const operation = url.pathname.split('/').pop()!;
+      calls.push({ operation, input });
+      if (operation === 'createAgentSchedule') {
+        schedules.add('created');
+        return Response.json({ scheduleId: 'created' });
+      }
+      if (operation === 'deleteAgentSchedule') {
+        expect(schedules.delete(input.scheduleId)).toBe(true);
+        return Response.json({ ok: true });
+      }
+      throw new Error(`Unexpected operation ${operation}`);
+    });
+    const created = await callAgentTool('wake', {
+      action: 'create', trigger: 'schedule', prompt: 'Check work',
+      cadence: { kind: 'interval', everyMinutes: 60 },
+    }, 'create');
+    expect(created).toContain('Schedule created created');
+    expect(await callAgentTool('wake', { action: 'delete', scheduleId: 'created' }, 'delete'))
+      .toBe('Schedule created deleted.');
+    expect(schedules.size).toBe(0);
+    expect(calls[1]).toMatchObject({ operation: 'deleteAgentSchedule', input: {
+      roomId: 'corner', scheduleId: 'created', selfOnly: true,
+    } });
+  });
+  it.each([
+    [{ action: 'create' }, 'trigger'],
+    [{ action: 'delete', trigger: 'schedule' }, 'scheduleId'],
+    [{ action: 'delete', scheduleId: 42 }, 'scheduleId'],
+    [{ action: 'delete', scheduleId: 'mine', trigger: 'bad' }, 'trigger'],
+    [{ action: 'create', trigger: 'schedule', cadence: { kind: 'interval', everyMinutes: 'bad' } }, 'everyMinutes'],
+    [{ action: 'replace_events' }, 'kinds'],
+  ])('names the invalid or missing wake field for %j', async (args, field) => {
+    await expect(callAgentTool('wake', args, 'invalid')).rejects.toThrow(field);
+    expect(calls).toEqual([]);
+  });
   it('forces self-only schedule management and rejects legacy calls', async () => {
     await callAgentTool('wake', { action:'update', trigger:'schedule', scheduleId:'mine', prompt:'Inspect my work' }, 'own');
     expect(calls[0]).toMatchObject({ operation:'updateAgentSchedule', input:{ roomId:'corner', selfOnly:true, scheduleId:'mine' } });

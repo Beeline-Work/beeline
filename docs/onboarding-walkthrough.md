@@ -30,7 +30,7 @@ Review and merge the implementation first, then ship through the release corner.
 
 ## Google sign-in acceptance
 
-Google sign-in uses the same Workspace, Room, repository and starter flow. The Google test subject must already be eligible under `BEELINE_GOOGLE_SIGN_IN` and `BEELINE_GOOGLE_SIGN_IN_SUBJECTS`. Enroll the test device once with `beeline://beeline/onboarding?google_preview=<token>` (web: `/?google_preview=<token>`), using the staged preview secret privately. Keep `BEELINE_GOOGLE_SIGN_IN_EVERYONE` unset. The token reveals the button only and never grants sign-in. Repository cards need no feature configuration; Google-only users receive the `install_missing` card. This does not link accounts by email or change the Google sign-in rollout.
+Google sign-in uses the same Workspace, Room, repository and starter flow. Every user sees Continue with Google; there is no preview link or subject list. Repository cards need no feature configuration; Google-only users receive the `install_missing` card. This does not link accounts by email.
 
 To select the Google variant of `scripts/onboarding-walkthrough.mjs`, supply `ONBOARDING_PROVIDER=google` and `ONBOARDING_GOOGLE_EMAIL` in addition to the dedicated GitHub account, device and switch-repository values above. The emulator browser must already have the dedicated Google session. `apps/mobile/e2e/google-repository-onboarding.yaml` signs in with Google, connects GitHub from the repository card, links or creates a repository, chooses a starter and waits for the normal merged result. The runner preserves recordings for all three passes. The Google account must remain the same identity after connecting GitHub; inspect its name, handle and provider rows before and after the run.
 

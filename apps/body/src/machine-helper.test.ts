@@ -547,7 +547,6 @@ describe('one update drain for every hosted agent', () => {
     await symlink('beeline-releases/old', layout.libDir);
     env.BEELINE_LIB_DIR = layout.libDir;
     // Local archive and server only: no service-unit writes or production Workspace.
-    const helperEnv = { ...env, BEELINE_UPDATE_DISABLE: '1' };
     const archiveRoot = resolve(root, 'published');
     const publishedLib = resolve(archiveRoot, 'lib/beeline');
     await mkdir(resolve(publishedLib, 'codegraph/bin'), { recursive: true });
@@ -672,9 +671,11 @@ describe('one update drain for every hosted agent', () => {
     try {
       await send('held', 'long-room');
       if (handoff !== 'quiet gap') vi.useFakeTimers({ toFake: ['Date'] });
-      running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
+      // Registration notices use a no-op worker; the published archive arrives only through the local manifest below.
+      running = runMachineHelper({ configPaths, env, signals, runAgent,
+        runUpdateWorker: async () => undefined, exitProcess: () => undefined });
       await vi.waitFor(() => expect(claims.has('held')).toBe(true));
-      const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...helperEnv,
+      const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...env,
         BEELINE_UPDATE_MANIFEST_URL: `${origin}/manifest.json` }, logger: () => undefined });
       await manager.checkAndApply();
       await requestMachine(root, { operation: 'update', releaseId: 'new' }, () => true);
@@ -716,7 +717,7 @@ describe('one update drain for every hosted agent', () => {
       // Arrives with no serving helper. The successor's initial GET claims it.
       await send('during-restart');
       const queuedAt = Date.now();
-      running = runMachineHelper({ configPaths, env: helperEnv, signals, runAgent, exitProcess: () => undefined });
+      running = runMachineHelper({ configPaths, env, signals, runAgent, exitProcess: () => undefined });
       await vi.waitFor(() => expect(replies).toContain('during-restart'), { timeout: 2_000 });
       const successorClaimMs = claims.get('during-restart')! - queuedAt;
       const successorAnswerMs = Date.now() - queuedAt;

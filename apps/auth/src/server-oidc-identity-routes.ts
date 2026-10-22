@@ -1,5 +1,4 @@
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { GOOGLE_PREVIEW_HEADER, googlePreviewVisible } from './google-preview.js';
 import { onboardingCookie, onboardingCookieSubject } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
@@ -67,8 +66,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
   app.get('/auth/capabilities', async (request, reply) => {
     tenantFor(request);
     noStore(reply);
-    return reply.send({ github: Boolean(options.github), oidc: true,
-      ...(googlePreviewVisible(options, request.headers[GOOGLE_PREVIEW_HEADER]) ? { google: true } : {}),
+    return reply.send({ github: Boolean(options.github), oidc: true, google: true,
       repositoryOnboarding: true,
     });
   });

@@ -151,7 +151,6 @@ describe('live Workspace and identity changes across sessions', () => {
   });
 
   it('browses without a notice today, skips opted-out workspaces and rotates visits', async () => {
-    expect((await database.query('SELECT notice_sent_at FROM service_review_rollout WHERE id=1')).rows).toEqual([{notice_sent_at:null}]);
     const phone = new PhoneService(database, 'http://local.test');
     await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
     expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([ELSEWHERE]);
@@ -159,21 +158,6 @@ describe('live Workspace and identity changes across sessions', () => {
     await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, VIEWER);
     expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([WORKSPACE]);
     expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
-  });
-
-  it('enables an existing rollout without notice and still respects future effective dates', async () => {
-    await database.query(`ALTER TABLE service_review_rollout ADD CONSTRAINT service_review_rollout_check
-      CHECK(effective_at IS NULL OR notice_sent_at IS NULL OR effective_at >= notice_sent_at + interval '14 days')`);
-    await database.query(`UPDATE service_review_rollout SET effective_at='2026-11-15T19:00:00Z' WHERE id=1`);
-    await migrate(database);
-    expect((await database.query('SELECT notice_sent_at FROM service_review_rollout WHERE id=1')).rows).toEqual([{notice_sent_at:null}]);
-    expect((await database.query<{ effective_at: Date }>('SELECT effective_at FROM service_review_rollout WHERE id=1')).rows[0].effective_at.toISOString()).toBe('2026-10-18T04:00:00.000Z');
-    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toHaveLength(2);
-    expect((await database.query('SELECT * FROM service_review_targets($1,$2)',[REVIEW_AGENT,'test-run'])).rows).toHaveLength(2);
-    await database.query(`UPDATE service_review_rollout SET effective_at=now()+interval '1 day' WHERE id=1`);
-    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
-    expect((await database.query('SELECT * FROM service_review_targets($1,$2)',[REVIEW_AGENT,'test-run'])).rows).toEqual([]);
-    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE)).rows).toEqual([]);
   });
 
   it('reads every reserved page and stops immediately after a workspace opts out', async () => {

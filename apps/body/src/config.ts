@@ -1,10 +1,9 @@
-import { readEnv, envPair } from './env.js';
 /**
  * Body runtime config.
  *
  * LLM credentials are loaded from the process environment (or an optional
  * dotenv-style file selected by the runtime record). Values are never logged.
- * The file provides `BEELINE_LLM_*` (`BUZZY_LLM_*` still works) vars; we map those onto buzz-agent's
+ * The file provides `BEELINE_LLM_*` vars; we map those onto buzz-agent's
  * `OPENAI_COMPAT_*` names.
  */
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
@@ -162,7 +161,7 @@ export interface BodyConfig {
    * Extra filesystem paths whose contents are masked ABSENT from sandboxed ACP
    * children, on top of the built-in known credential homes
    * (`bwrap-sandbox.ts` KNOWN_CREDENTIAL_MASK_PATHS). Sourced from the runtime
-   * record's `sandboxMaskPaths` and/or `BEELINE_BODY_SANDBOX_MASK` (`BUZZY_BODY_SANDBOX_MASK` still works)
+   * record's `sandboxMaskPaths` and/or `BEELINE_BODY_SANDBOX_MASK`
    * (comma-separated absolute paths). Only load-bearing while the OS sandbox
    * is enabled; with `sandbox: 'off'` nothing is masked.
    */
@@ -325,7 +324,7 @@ export function parseEnvFile(path: string): Record<string, string> {
  * harness every secret the daemon happened to hold. The list is deliberately
  * generous — a coding harness legitimately needs locale, proxy, TLS trust,
  * toolchain and terminal context — but it is now an actual boundary, and
- * `BEELINE_BODY_AGENT_ENV_PASSTHROUGH` (`BUZZY_BODY_AGENT_ENV_PASSTHROUGH` still works) (comma-separated) extends it without a
+ * `BEELINE_BODY_AGENT_ENV_PASSTHROUGH` (comma-separated) extends it without a
  * code change.
  */
 export const AGENT_ENV_PASSTHROUGH_NAMES = [
@@ -453,7 +452,6 @@ export const AGENT_ENV_PASSTHROUGH_PREFIXES = [
   'SSH_',
   'HOMEBREW_',
   'BUZZ_',
-  'BUZZY_',
 ] as const;
 
 function isPassthroughName(name: string, extra: Set<string>): boolean {
@@ -466,7 +464,7 @@ function isPassthroughName(name: string, extra: Set<string>): boolean {
 
 /**
  * Build the env map for an ACP agent child process.
- * Maps `BEELINE_LLM_*` (`BUZZY_LLM_*` still works) (egress helper) onto `OPENAI_COMPAT_*` + `BUZZ_AGENT_PROVIDER=openai`.
+ * Maps `BEELINE_LLM_*` (egress helper) onto `OPENAI_COMPAT_*` + `BUZZ_AGENT_PROVIDER=openai`.
  * Never logs secret values.
  *
  * This map is the child's *entire* environment (see `AcpClient.start()`), not
@@ -484,14 +482,14 @@ export function buildAgentEnv(
   }
   Object.assign(merged, fileVars);
 
-  // Prefer explicit OPENAI_COMPAT_*; else map BEELINE_LLM_* (BUZZY_LLM_* still works).
-  const apiKey = merged.OPENAI_COMPAT_API_KEY ?? readEnv(merged, 'LLM_API_KEY') ?? merged.OPENAI_API_KEY;
+  // Prefer explicit OPENAI_COMPAT_*; else map BEELINE_LLM_*.
+  const apiKey = merged.OPENAI_COMPAT_API_KEY ?? merged.BEELINE_LLM_API_KEY ?? merged.OPENAI_API_KEY;
   const baseUrl =
-    merged.OPENAI_COMPAT_BASE_URL ?? readEnv(merged, 'LLM_BASE_URL') ?? 'https://api.openai.com/v1';
-  const model = merged.OPENAI_COMPAT_MODEL ?? readEnv(merged, 'LLM_MODEL') ?? merged.OPENAI_MODEL;
+    merged.OPENAI_COMPAT_BASE_URL ?? merged.BEELINE_LLM_BASE_URL ?? 'https://api.openai.com/v1';
+  const model = merged.OPENAI_COMPAT_MODEL ?? merged.BEELINE_LLM_MODEL ?? merged.OPENAI_MODEL;
 
   const extraPassthrough = new Set(
-    (readEnv(merged, 'BODY_AGENT_ENV_PASSTHROUGH') ?? '')
+    (merged.BEELINE_BODY_AGENT_ENV_PASSTHROUGH ?? '')
       .split(',')
       .map((name) => name.trim())
       .filter(Boolean),
@@ -499,12 +497,6 @@ export function buildAgentEnv(
   const agentEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(merged)) {
     if (isPassthroughName(name, extraPassthrough)) agentEnv[name] = value;
-  }
-  for (const name of Object.keys(agentEnv)) {
-    if (/^(BEELINE|BUZZY)_(BODY_|LLM_|AGENT_PRIVATE_DIR)/.test(name)) {
-      const suffix = name.replace(/^(BEELINE|BUZZY)_/, '');
-      Object.assign(agentEnv, envPair(suffix, readEnv(merged, suffix)!));
-    }
   }
   // Values the child always needs a defined answer for.
   agentEnv.PATH = merged.PATH ?? process.env.PATH ?? '';
@@ -560,22 +552,22 @@ export function loadBodyConfig(opts: {
     codegraphCommand: resolveCodegraphCommand(env),
     agentEnv,
     workspaceRoot: resolve(opts.workspaceRoot),
-    ...(readEnv(env, 'BODY_AGENT_DELEGATION_MAX_HOPS')
-      ? { agentDelegationMaxHops: Number(readEnv(env, 'BODY_AGENT_DELEGATION_MAX_HOPS')) }
+    ...(env.BEELINE_BODY_AGENT_DELEGATION_MAX_HOPS
+      ? { agentDelegationMaxHops: Number(env.BEELINE_BODY_AGENT_DELEGATION_MAX_HOPS) }
       : {}),
-    autoApprovePermissions: readEnv(env, 'BODY_AUTO_APPROVE') !== '0',
+    autoApprovePermissions: true,
     ...(parseSandboxMaskEnv(env) ? { sandboxMaskPaths: parseSandboxMaskEnv(env)! } : {}),
   };
 }
 
 /**
- * Owner-configurable sandbox mask list: `BEELINE_BODY_SANDBOX_MASK=/path/a,/path/b` (BUZZY_BODY_SANDBOX_MASK still works).
+ * Owner-configurable sandbox mask list: `BEELINE_BODY_SANDBOX_MASK=/path/a,/path/b`.
  * Complements the runtime record field of the same name; both are unioned at
  * spawn time. Entries are resolved against `$HOME` lazily by
  * `credentialMaskPaths` only if they are not already absolute.
  */
 export function parseSandboxMaskEnv(env: NodeJS.ProcessEnv): string[] | undefined {
-  const raw = readEnv(env, 'BODY_SANDBOX_MASK');
+  const raw = env.BEELINE_BODY_SANDBOX_MASK;
   if (!raw?.trim()) return undefined;
   const entries = raw
     .split(/[,\n]/)

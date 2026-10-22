@@ -18,7 +18,6 @@
  */
 
 import { log } from '@/log';
-import { loadLocalSettings } from '@/sync/persistence';
 import { loadAppConfig } from '@/sync/appConfig';
 import { Platform } from 'react-native';
 import { serializeForLogs } from '@/utils/truncateForLogs';
@@ -34,13 +33,6 @@ let originalConsole: {
   debug: typeof console.debug,
 } | null = null
 
-/**
- * Toggle console output at runtime (e.g. from Dev screen toggle).
- */
-export function setConsoleOutputEnabled(enabled: boolean) {
-  consoleOutputEnabled = enabled
-}
-
 export function initConsoleLogging() {
   if (isConsolePatched) {
     return
@@ -48,11 +40,9 @@ export function initConsoleLogging() {
 
   remoteLogServerUrl = process.env.EXPO_PUBLIC_LOG_SERVER_URL || null;
 
-  // Determine initial state: user setting > build variant default > off
+  // Development builds print to the console; production builds do not.
   try {
-    const settings = loadLocalSettings();
-    const config = loadAppConfig();
-    consoleOutputEnabled = settings.consoleLoggingEnabled || config.consoleLoggingDefault || false;
+    consoleOutputEnabled = loadAppConfig().consoleLoggingDefault || false;
   } catch {
     consoleOutputEnabled = false;
   }

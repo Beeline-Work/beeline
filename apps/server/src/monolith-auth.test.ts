@@ -99,9 +99,6 @@ describe('mounted monolith auth', () => {
           tokenAuth.createDaemonExchange(agentId, transaction),
         env: {
           NODE_ENV: 'test',
-          BEELINE_GOOGLE_SIGN_IN: '1',
-          BEELINE_GOOGLE_SIGN_IN_SUBJECTS: 'google-owner',
-          BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN: 'p'.repeat(43),
           BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
           BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
           BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
@@ -145,58 +142,9 @@ describe('mounted monolith auth', () => {
     if (database) await database.close();
   });
 
-  it.each([
-    { label: 'defaults', enabled: false, everyone: false, supplied: '', visible: false },
-    { label: 'no token', enabled: true, everyone: false, supplied: '', visible: false },
-    { label: 'wrong token', enabled: true, everyone: false, supplied: 'w'.repeat(43), visible: false },
-    { label: 'right token', enabled: true, everyone: false, supplied: 'p'.repeat(43), visible: true },
-    { label: 'everyone on', enabled: true, everyone: true, supplied: '', visible: true },
-    { label: 'master off', enabled: false, everyone: true, supplied: 'p'.repeat(43), visible: false },
-  ])('preview discovery over mounted HTTP: $label', async ({ enabled, everyone, supplied, visible }) => {
-    const previewMount = await createMonolithAuth(database, tenant.origin, undefined, {
-      createDaemonExchange: async () => { throw new Error('unused'); },
-      env: {
-        NODE_ENV: 'test',
-        BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
-        BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
-        BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
-        BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
-        BEELINE_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
-        BEELINE_AUTH_OIDC_CLIENT_ID: 'test-client',
-        ...(enabled ? { BEELINE_GOOGLE_SIGN_IN: '1' } : {}),
-        ...(everyone ? { BEELINE_GOOGLE_SIGN_IN_EVERYONE: '1' } : {}),
-        BEELINE_GOOGLE_SIGN_IN_PREVIEW_TOKEN: 'p'.repeat(43),
-      },
-    });
-    const previewServer = createBeelineServer({
-      database, auth: {} as TokenAuth, phone: {} as PhoneService,
-      daemon: {} as DaemonService, live: new LiveHub(), mediaMaximumBytes: 1,
-      authHandler: previewMount.handle, webAppOrigins: ['https://web.usebeeline.app'],
-    });
-    try {
-      await new Promise<void>(resolve => previewServer.listen(0, '127.0.0.1', resolve));
-      const result = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-        const req = request(`http://127.0.0.1:${(previewServer.address() as AddressInfo).port}/auth/capabilities`, {
-          headers: { host: tenant.host, 'x-beeline-google-preview': supplied },
-        }, response => {
-          let body = '';
-          response.on('data', chunk => { body += chunk; });
-          response.on('end', () => resolve({ status: response.statusCode!, body }));
-        });
-        req.on('error', reject); req.end();
-      });
-      expect(result.status).toBe(200);
-      expect(JSON.parse(result.body).google === true).toBe(visible);
-    } finally {
-      await new Promise<void>(resolve => previewServer.close(() => resolve()));
-      await previewMount.close();
-    }
-  });
-
   it('R-GOOGLE-WEB-CORS: exposes Google capabilities only to configured browser origins', async () => {
     const allowed = await mountedRequest('/auth/capabilities', {
       origin: 'https://web.usebeeline.app',
-      'x-beeline-google-preview': 'p'.repeat(43),
     });
     expect(allowed.status).toBe(200);
     expect(JSON.parse(allowed.body)).toMatchObject({ google: true });
@@ -207,6 +155,7 @@ describe('mounted monolith auth', () => {
       origin: 'https://attacker.example',
     });
     expect(untrusted.status).toBe(200);
+    expect(JSON.parse(untrusted.body)).toMatchObject({ google: true });
     expect(untrusted.headers['access-control-allow-origin']).toBeUndefined();
   });
 
@@ -230,7 +179,7 @@ describe('mounted monolith auth', () => {
       });
       const response = await fetch(`${origin}/v1/auth/google/exchange`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-beeline-google-preview': 'p'.repeat(43) },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ oidcToken: ticket }),
       });
       return { response, ticket };
@@ -271,10 +220,9 @@ describe('mounted monolith auth', () => {
       body: JSON.stringify({ oidcToken: ticket }),
     });
     expect(replay.status).toBe(401);
-    const denied = (await exchange('not-allowlisted')).response;
-    expect(denied.status).toBe(401);
-    expect(await denied.json()).toMatchObject({ error: 'google_sign_in_failed', reason: 'preview_account_not_allowed' });
-    expect((await database.query("SELECT 1 FROM identity_external_links WHERE provider='google' AND subject='not-allowlisted'")).rows).toEqual([]);
+    const newcomer = (await exchange('any-google-account')).response;
+    expect(newcomer.status).toBe(200);
+    expect((await database.query("SELECT 1 FROM identity_external_links WHERE provider='google' AND subject='any-google-account'")).rows).toHaveLength(1);
   });
 
   async function issueTicket(subject = '42', login = 'octocat'): Promise<string> {

@@ -95,7 +95,6 @@ export interface FreeAgentConfig {
   region: string;
   cpus: number;
   memoryMb: number;
-  sleepMode: 'suspend' | 'stop';
   /** Installer origin for the helper bundle; absent uses the published one. */
   installBaseUrl?: string;
   /** A running Machine with no work this long is put to sleep by the reaper. */
@@ -108,7 +107,6 @@ export function freeAgentConfigFromEnv(
   env: NodeJS.ProcessEnv,
   publicOrigin: string,
 ): FreeAgentConfig | undefined {
-  if (env.BEELINE_FREE_AGENTS !== '1') return undefined;
   const sealSecret = env.BEELINE_FREE_AGENT_SEAL_KEY;
   const image = env.FLY_FREE_AGENT_IMAGE;
   if (!sealSecret || !image) return undefined;
@@ -129,7 +127,6 @@ export function freeAgentConfigFromEnv(
     region: env.FLY_FREE_AGENT_REGION || 'iad',
     cpus: number('FLY_FREE_AGENT_CPUS', 1),
     memoryMb: number('FLY_FREE_AGENT_MEMORY_MB', 2048),
-    sleepMode: env.BEELINE_FREE_AGENT_SLEEP_MODE === 'stop' ? 'stop' : 'suspend',
     ...(env.BEELINE_FREE_AGENT_INSTALL_BASE_URL
       ? { installBaseUrl: env.BEELINE_FREE_AGENT_INSTALL_BASE_URL }
       : {}),
@@ -666,7 +663,7 @@ export class FreeAgentService {
     if (!slept) return { sleep: false };
     // A helper behind the announced release stops instead, so its next boot
     // installs the new release; a suspended Machine would resume the old one.
-    const mode = options.refresh ? 'stop' : this.config.sleepMode;
+    const mode = options.refresh ? 'stop' : 'suspend';
     await recordFreeAgentEvent(this.database, agentId, 'sleep_requested', { mode });
     void this.#sleepMachine(agentId, slept.fly_machine_id, mode);
     return { sleep: true };

@@ -43,14 +43,8 @@ import {
   type AfterCommit,
   type EmbedFn,
 } from './institutional-memory-embeddings.js';
-import {
-  institutionalWorkspaceRolloutStage,
-  rolloutAllowsLive,
-} from './institutional-rollout.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
-export const INSTITUTIONAL_MEMORY_SHADOW_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_SHADOW_ENABLED';
-export const INSTITUTIONAL_MEMORY_LIVE_FLAG = 'BEELINE_INSTITUTIONAL_MEMORY_ENABLED';
 
 /**
  * HTTP status for a refused memory or history call. Every such refusal is the
@@ -80,19 +74,8 @@ export interface InstitutionalMemoryShadowConfig {
   readonly live?: boolean;
 }
 
-/**
- * Institutional memory is ON by default. Each flag is an OFF switch, so only an
- * explicit `false` disables it; setting both to `false` is the full opt-out.
- * `live` governs serving and writing live memory, and the shadow flag remains
- * the measurement-only fallback when live is switched off.
- */
-export function institutionalMemoryShadowConfigFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): InstitutionalMemoryShadowConfig {
-  const live = env[INSTITUTIONAL_MEMORY_LIVE_FLAG] !== 'false';
-  const shadow = env[INSTITUTIONAL_MEMORY_SHADOW_FLAG] !== 'false';
-  return { enabled: live || shadow, live };
-}
+/** Institutional memory is on in production. */
+export const INSTITUTIONAL_MEMORY_ON: InstitutionalMemoryShadowConfig = { enabled: true, live: true };
 
 export const PROHIBITED_SECRET_PATTERNS = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
@@ -294,10 +277,6 @@ export async function getInstitutionalContext(
       )
     ).rows[0];
     if (!authority) throw new Error('institutional memory requester authority is unavailable');
-    const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
-    if (!rolloutAllowsLive(rolloutStage)) {
-      return { snapshotRevision: 0, text: '', itemIds: [], totalBytes: 0, omitted: {} };
-    }
     // Only facts whose saved keywords appear in the request load. Nothing
     // fills leftover fact space, so a request that matches no fact loads none.
     const words = institutionalMemoryRequestWords(requestText);
@@ -531,10 +510,6 @@ async function memoryReadAuthority(
     )
   ).rows[0];
   if (!authority) throw new Error('institutional memory requester authority is unavailable');
-  const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
-  if (!rolloutAllowsLive(rolloutStage)) {
-    throw new Error('institutional memory is not enabled for this Workspace');
-  }
   return authority;
 }
 
@@ -609,10 +584,6 @@ async function memoryWriteAuthority(
     throw new Error(
       `institutional memory requester authority is unavailable: this turn's root message ${command.root_source_message_id} in Room ${authority.root_room_id} is not from a person, and ${corners} a corner with a recorded requester`,
     );
-  }
-  const rolloutStage = await institutionalWorkspaceRolloutStage(db, authority.workspace_id);
-  if (!rolloutAllowsLive(rolloutStage)) {
-    throw new Error('institutional memory is not enabled for this Workspace');
   }
   const requesterTurn = authority.person_id !== null;
   if (requesterTurn && authority.root_room_id !== command.room_id) {

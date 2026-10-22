@@ -25,10 +25,6 @@ export const PACKAGE_CACHE_DIRS = [
   'browser/playwright', 'browser/puppeteer', 'cargo/registry',
 ] as const;
 
-export function sharedAssetsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.BEELINE_SHARED_ASSETS_ENABLED !== '0';
-}
-
 /** The grant list is the server's live authority, including revocations. */
 export function isolatedSharedAssetCategories(grants: {
   grants: readonly { kind: string; target: string; status: string }[];

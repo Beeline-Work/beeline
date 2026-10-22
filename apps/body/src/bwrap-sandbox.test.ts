@@ -657,19 +657,6 @@ describe('feature detection falls back rather than failing the daemon', () => {
     expect(result.advisory).toMatch(/DISABLED by configuration/);
   });
 
-  it('lets BUZZY_BODY_SANDBOX override the persisted policy in both directions', () => {
-    expect(
-      detectBwrapSandbox({ policy: 'bwrap', env: { PATH: '/usr/bin', BUZZY_BODY_SANDBOX: 'off' } })
-        .advisory,
-    ).toMatch(/DISABLED by configuration/);
-    expect(
-      detectBwrapSandbox({
-        policy: 'off',
-        env: { PATH: '/nonexistent', BUZZY_BODY_SANDBOX: 'bwrap' },
-      }).advisory,
-    ).toMatch(/UNAVAILABLE/);
-  });
-
   /**
    * A Room shell is approved only inside this sandbox, so a host that is simply
    * missing the package is worth one install attempt rather than a helper that

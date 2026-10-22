@@ -64,8 +64,7 @@ export class ReleaseTransaction {
   get pending(): Promise<void> | undefined {
     return this.#preparing ?? this.#handingOff;
   }
-  notify(releaseKey?: string, minimum?: string, manual = false): void {
-    if (!manual && !minimum && this.options.env.BEELINE_UPDATE_DISABLE === '1') return;
+  notify(releaseKey?: string, minimum?: string): void {
     if (releaseKey && releaseKey === this.#notice) return;
     this.#notice = releaseKey;
     if (minimum && (!this.#minimum || !versionAtLeast(this.#minimum, minimum))) {

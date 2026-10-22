@@ -47,7 +47,6 @@ const TEST_FREE_AGENT_CONFIG: FreeAgentConfig = {
   region: 'iad',
   cpus: 1,
   memoryMb: 1024,
-  sleepMode: 'suspend',
   reapIdleMs: 300_000,
   deleteAfterMs: 30 * 86_400_000,
 };
@@ -845,7 +844,7 @@ describe('free starter agents', () => {
 });
 
 it('defaults free agents to V4.1 Flash and preserves an explicit model override', () => {
-  const env = { BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' };
+  const env = { BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' };
   expect(freeAgentConfigFromEnv(env, 'https://server.test')?.model).toBe('deepseek/deepseek-v4.1-flash');
   expect(freeAgentConfigFromEnv({ ...env, BEELINE_FREE_AGENT_MODEL: 'custom/model' }, 'https://server.test')?.model).toBe('custom/model');
 });

@@ -77,7 +77,7 @@ describe('Firebase push credentials', () => {
     } as unknown as Credential;
 
     await expect(requirePushDeliveryCredentials(credential)).rejects.toThrow(
-      'PUSH_DELIVERY_ENABLED=true but Firebase credentials are unusable; set GOOGLE_APPLICATION_CREDENTIALS_JSON or configure Application Default Credentials: Could not load the default credentials',
+      'Firebase credentials are unusable; set GOOGLE_APPLICATION_CREDENTIALS_JSON or configure Application Default Credentials: Could not load the default credentials',
     );
   });
 

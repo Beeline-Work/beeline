@@ -424,7 +424,9 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
   } else if (command?.source_message_id) {
     const source = (
       await db.query<{ author_id: string; room_id: string }>(
-        `SELECT author_id,room_id FROM messages WHERE id=$1`,
+        // System wakes carry facts, not an order from the system identity.
+        // Without a message source, retain the corner's recorded opening route.
+        `SELECT author_id,room_id FROM messages WHERE id=$1 AND system_event IS NULL`,
         [command.source_message_id],
       )
     ).rows[0];

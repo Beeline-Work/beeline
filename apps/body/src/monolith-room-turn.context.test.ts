@@ -34,7 +34,6 @@ const CONVERSATION = Array.from({ length: 200 }, (_, index) => ({
 
 describe('monolith Room turn context', () => {
   it('Reproduction FR-cursor: does not list an answered task as new on the next wake', async () => {
-    vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-context-'));
     roots.push(root);
     const identity = identityFromKey(AGENT_HEX, 'Bee');

@@ -258,3 +258,18 @@ it('uses the first collection day for every new journey stage and recounts Downl
  expect(result.perPlatform[0]?.stages[0]).toMatchObject({count:1,denominator:10,dropOffCount:9,dropOffRate:0.9});
  expect(result.perPlatform[1]?.stages[0]?.denominator).toBe(10);
 });
+
+it('measures authenticated Workspace and first-message stages once per install after migration', async () => {
+  const identity = '7'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, [identity]);
+  const event = make();
+  for (const stage of ['workspace_created', 'first_message_sent'] as const) {
+    await recordSigninFunnelEvent(db, { ...event, event: stage });
+    expect((await db.query(`SELECT * FROM signin_funnel_events WHERE event=$1`, [stage])).rows).toEqual([]);
+    await recordSigninFunnelEvent(db, { ...event, event: stage }, 'client', identity);
+    await recordSigninFunnelEvent(db, { ...event, event: stage }, 'client', identity);
+  }
+  const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
+  for (const stage of ['workspace_created', 'first_message_sent'])
+    expect(result.perPlatform[0]?.stages.find(row => row.stage === stage)).toMatchObject({ count: 1 });
+});

@@ -191,7 +191,14 @@ export const FREE_AGENT_JOIN_GREETING =
   "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
 
 export const FREE_AGENT_HELLO =
-  `@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Choose or create a repository on the card below, and I’ll suggest a starting task. If you don't want me here, open Members and remove me from the Workspace.`;
+  `@<owner> Hi, I'm Beebee, your free agent. I run on my own small cloud computer, so I can write code, run commands, research and draft things for you.
+
+Three things to know:
+- **Talk to me here.** Tag @beebee, or just type while I'm the only agent in this Room.
+- **Big jobs get a corner.** That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.
+- **Connect once, use everywhere.** Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.
+
+To start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.`;
 
 /**
  * The exit note. Both claims hold: leaving or removal keeps the member's
@@ -208,7 +215,7 @@ export const FREE_AGENT_CONNECT_GUIDE = `Offer help bringing their own agent onl
 
 When they accept, guide them one step at a time, waiting for the result of each step. Help them choose their own computer or an always-on machine they control. Install Node.js and an agent CLI (Claude Code, Codex or OpenCode), and help them sign in to that CLI. Send them to Members -> Add agent in their Workspace to copy the command. The command format is npx usebeeline connect <code>; they must run the actual command copied from Add agent on their chosen machine. Never create, retrieve, request, repeat or post a pairing code in a Room. Troubleshoot using redacted errors, never secrets. Keep helping until Members shows their new agent online, then have them tag it with a small task. Do not claim it is online without confirmation.`;
 
-export const FREE_AGENT_REPOSITORY_GUIDE = `For any request to connect or link a repo, repository or GitHub, call app_tool(app:"beeline:onboarding", tool:"repository", args:{}). For other repository work, discover the repository and starters tools with app_tool(app:"beeline:onboarding"). If the card fails, explain the actual reason and the concrete next step to connect the repository. When a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path. Never explain corners during this onboarding flow.`;
+export const FREE_AGENT_REPOSITORY_GUIDE = `For any request to connect or link a repo, repository or GitHub, call app_tool(app:"beeline:onboarding", tool:"repository", args:{}). For other repository work, discover the repository and starters tools with app_tool(app:"beeline:onboarding"). If the card fails, explain the actual reason and the concrete next step to connect the repository. When a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path.`;
 
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
@@ -340,13 +347,13 @@ export async function createFreeAgentInWorkspace(
     `SELECT COALESCE(handle,id) handle FROM identities WHERE id=$1`, [input.creatorId],
   )).rows[0]!;
   const hello = FREE_AGENT_HELLO.replace('<owner>', owner.handle).replace('<handle>', handle);
+  const helloId = createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex');
   // An ordinary agent-authored message: the existing mention/push path notifies the owner.
   await database.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
-    [createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex'),
-      input.roomId, agent.publicKey, hello],
+    [helloId, input.roomId, agent.publicKey, hello],
   );
-  await postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' });
+  await postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' }, { afterMessageId: helloId });
   await recordFreeAgentEvent(database, agent.publicKey, 'created', {
     workspaceId: input.workspaceId,
   });

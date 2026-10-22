@@ -55,10 +55,13 @@ export function createSigninFunnelClient(input: {
   const readPending = async () => {
     try {
       const value = JSON.parse((await input.storage.getItem(ATTEMPT_KEY)) ?? 'null');
+      // Completed sign-ins retain anonymous activation attribution for the ledger's retention window.
+      const signedIn = Array.isArray(value?.sent) && value.sent.includes(`${value.context?.attemptId}:signed_in`);
+      const maximumAge = signedIn ? 90 * 86_400_000 : 30 * 60_000;
       if (
         !value ||
         !Number.isFinite(value.createdAt) ||
-        now() - value.createdAt > 30 * 60_000 ||
+        now() - value.createdAt > maximumAge ||
         value.createdAt > now() + 300_000 ||
         !Array.isArray(value.sent)
       )
@@ -84,7 +87,7 @@ export function createSigninFunnelClient(input: {
         context,
         provider: event.provider!,
         createdAt: value.createdAt as number,
-        sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 5),
+        sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 7),
       };
     } catch {
       return null;
@@ -100,7 +103,7 @@ export function createSigninFunnelClient(input: {
     if (suppressed || input.environment !== 'production') return undefined;
     const pending = await readPending();
     const base =
-      provider || event === 'signed_in' || event === 'callback_result'
+      provider || ['signed_in', 'callback_result', 'workspace_created', 'first_message_sent'].includes(event)
         ? pending?.context
         : await context();
     if (!base) return undefined;
@@ -162,6 +165,8 @@ export function createSigninFunnelClient(input: {
       serial(() => step('callback_result', undefined, outcome, errorCode)),
     signedIn: (authorization: string) =>
       serial(() => step('signed_in', undefined, undefined, undefined, authorization)),
+    activation: (event: 'workspace_created' | 'first_message_sent', authorization: string) =>
+      serial(() => step(event, undefined, undefined, undefined, authorization)),
     pending: () =>
       serial(async () => {
         const value = await readPending();

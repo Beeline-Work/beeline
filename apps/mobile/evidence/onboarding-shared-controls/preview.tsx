@@ -10,8 +10,6 @@ import Workspace from '@/app/(app)/beeline/community';
 import CreateWorkspace from '@/app/(app)/beeline/create-workspace';
 import Invite from '@/app/(app)/join/[token]';
 import GitHub from '@/app/(app)/beeline/github-installation';
-import { WelcomeCards } from '@/components/buzz/WelcomeCards';
-import { YouStep } from '@/components/buzz/YouStep';
 import { RepositoryChoice } from '@/components/buzz/RepositoryChoice';
 import { RepoPicker } from '@/components/buzz/RepoPicker';
 import { AgentSignInCard } from '@/components/buzz/AgentSignInCard';
@@ -40,8 +38,6 @@ function App() {
   else if (screen === 'create-workspace') content = <CreateWorkspace />;
   else if (screen.startsWith('invite')) content = <Invite />;
   else if (screen === 'github') content = <GitHub />;
-  else if (screen === 'profile') content = <YouStep seed={'a'.repeat(64)} handle="octocat" editableIdentity name="Octo Cat" onConfirm={async()=>{throw new Error('Offline');}} onEntered={noop} />;
-  else if (screen === 'welcome') content = <WelcomeCards visible onDone={noop} />;
   else if (screen === 'repository-choice') content = <RepositoryChoice testIDPrefix="proof" busy={false} mode={mode} onChooseMode={setMode} loading={false} githubConnected={params.get('connected') !== '0'} onConnect={noop} linkRepo={repository} onOpenList={noop} activeInstallations={[installation]} selectedInstallation={installation} onSelectInstallation={noop} ownerMenuOpen={ownerMenuOpen} setOwnerMenuOpen={setOwnerMenuOpen} createName="planning" takenRepo={repository} onLinkInstead={()=>setMode('link')} />;
   else if (screen.startsWith('new-room')) content=<NewRoomDialog visible roomName={roomName} setRoomName={setRoomName} inviteOnly={inviteOnly} setInviteOnly={setInviteOnly} creatingRoom={false} createRoom={noop} onClose={noop} pendingRepo={picked} showRepoPicker={pickerOpen} handleToggleRepoPicker={()=>setPickerOpen(!pickerOpen)} handleSelectNoRepository={()=>setPicked(null)} handleSelectRepoCandidate={setPicked} repoCandidates={[repository]} repoInstallations={[installation]} repoPickerError={null} handleAddGitHubAccount={noop} />;
   else if(screen==='repo-empty') content=<RepoList candidates={[]} loading={false} currentKey={null} onSelect={noop} testIDPrefix="proof-empty" draftContext="proof" />;
@@ -52,5 +48,3 @@ function App() {
   return <View style={{height:'100%',backgroundColor:theme.buzz.bgBase}}><View style={{flex:1,width:'100%',maxWidth:screen==='welcome'?undefined:640,alignSelf:'center'}}>{content}</View></View>;
 }
 createRoot(document.getElementById('root')!).render(<App />);
-const step = Number(params.get('step') ?? 0);
-setTimeout(() => { let left=step; const advance=()=>{if(left-->0){(document.querySelector('[data-testid="welcome-next"]') as HTMLElement)?.click();setTimeout(advance,100);}};advance(); },500);

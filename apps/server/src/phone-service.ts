@@ -1501,12 +1501,10 @@ export class PhoneService {
   }
 
   async readWelcomeCards(viewerId: string): Promise<WelcomeCardsView> {
-    const result = await this.database.query<{ welcome_cards_due: boolean | null }>(
-      `SELECT welcome_cards_due FROM identities WHERE id=$1 AND kind='human'`,
-      [viewerId],
-    );
+    const result = await this.database.query(`SELECT 1 FROM identities WHERE id=$1 AND kind='human'`, [viewerId]);
     if (!result.rows[0]) throw new Error('human identity required');
-    return { due: result.rows[0].welcome_cards_due === true };
+    // Compatibility for older clients: the welcome deck is retired for everyone.
+    return { due: false };
   }
 
   async completeWelcomeCards(viewerId: string): Promise<WelcomeCardsView> {

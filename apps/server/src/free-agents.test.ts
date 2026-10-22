@@ -284,10 +284,23 @@ describe('free starter agents', () => {
     const hello = (await db.query<{ id: string; text: string }>(
       `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL`, [roomId, agent.agent_id],
     )).rows;
-    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Choose or create a repository on the card below, and I’ll suggest a starting task. If you don't want me here, open Members and remove me from the Workspace.`;
+    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent. I run on my own small cloud computer, so I can write code, run commands, research and draft things for you.
+
+Three things to know:
+- **Talk to me here.** Tag @beebee, or just type while I'm the only agent in this Room.
+- **Big jobs get a corner.** That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.
+- **Connect once, use everywhere.** Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.
+
+To start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.`;
     expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(true);
     expect(hello).toHaveLength(1);
     expect(hello[0]!.text).toBe(expected);
+    const transcript = (await phone.readRoom(roomId, OWNER))!.messages;
+    const helloIndex = transcript.findIndex(message => message.id === hello[0]!.id);
+    const cardIndex = transcript.findIndex(message => message.onboarding?.kind === 'repository');
+    expect(cardIndex).toBeGreaterThan(helloIndex);
+    expect(transcript[cardIndex]!.createdAt).toBeGreaterThan(transcript[helloIndex]!.createdAt);
+
     expect(FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee')).toBe(expected);
     expect(await resolveCurrentMemberMentions(db, roomId, expected, agent.agent_id)).toEqual([{ id: OWNER, kind: 'human', handle: 'lunchboxfortwo' }]);
     expect((await db.query(`SELECT 1 FROM push_outbox

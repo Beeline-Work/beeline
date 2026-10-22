@@ -12,7 +12,6 @@ import { HullFloatingSurface } from '../sources/components/buzz/HullDialog';
 import { UpdateReadyPrompt } from '../sources/components/UpdateReadyPrompt';
 import { TranscriptCard } from '../sources/components/buzz/TranscriptCard';
 import { MonoMarkdown } from '../sources/components/buzz/MonoMarkdown';
-import { WelcomeCards } from '../sources/components/buzz/WelcomeCards';
 import { ArtifactCard } from '../sources/components/buzz/ArtifactCard';
 import { AppSignInCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
 import WorkflowsScreen from '../sources/app/(app)/beeline/settings/workflows';
@@ -202,33 +201,14 @@ function Frames() {
   );
 }
 
-function Welcome() {
-  return <WelcomeCards visible onDone={() => undefined} />;
-}
-
 const pages: Record<string, React.ComponentType> = {
   board: Board,
   frames: Frames,
   workflows: WorkflowsScreen,
   'text-selection': TextSelectionScreen,
-  'welcome-1': Welcome,
-  'welcome-2': Welcome,
-  'welcome-3': Welcome,
-  'welcome-4': Welcome,
 };
 
 const Page = pages[page] ?? Board;
 createRoot(document.getElementById('root')!).render(<Page />);
 
-/** A welcome page past the first is reached by pressing Next, as a person would. */
-const welcomeStep = /^welcome-(\d)$/.exec(page);
-async function advance() {
-  const steps = welcomeStep ? Number(welcomeStep[1]) - 1 : 0;
-  for (let i = 0; i < steps; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    document.querySelector<HTMLElement>('[data-testid="welcome-next"]')?.click();
-  }
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  document.getElementById('result')!.textContent = 'READY';
-}
-void advance();
+setTimeout(() => { document.getElementById('result')!.textContent = 'READY'; }, 600);

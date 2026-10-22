@@ -87,3 +87,14 @@ export async function funnelSignedIn(authorization: string) {
 export async function suppressSigninFunnel() {
   (await getClient())?.suppress();
 }
+
+/** Observe only successful writes; no message, Workspace or identity data leaves here. */
+export async function funnelSuccessfulOperation(name: string) {
+  const event = name === 'createWorkspace' ? 'workspace_created'
+    : name === 'sendRoomMessage' || name === 'sendRoomReply' ? 'first_message_sent' : null;
+  if (!event) return;
+  const funnel = await getClient();
+  if (!funnel) return;
+  const { monolithSession } = await import('./monolith-session');
+  await funnel.activation(event, await monolithSession.authorization());
+}

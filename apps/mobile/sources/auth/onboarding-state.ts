@@ -43,22 +43,7 @@ export function subscribeToOnboardingNotices(listener: OnboardingNoticeListener)
   return () => onboardingNoticeListeners.delete(listener);
 }
 
-/** The You step (handle + face): the sign-in's last step, once the identity exists. */
-export interface OnboardingFaceStep {
-  provider?: 'google' | 'github';
-  seed: string;
-  face: string | null;
-  /** The name on record, used if the handle read is unavailable. */
-  name: string;
-  /** The GitHub login the name came from. */
-  handle?: string;
-}
-
-type OnboardingFaceStepListener = (step: OnboardingFaceStep | null) => void;
-
 let signInInFlight = false;
-let pendingFaceStep: OnboardingFaceStep | null = null;
-const faceStepListeners = new Set<OnboardingFaceStepListener>();
 
 /**
  * True from the press that opens the browser until that flow settles.
@@ -66,8 +51,8 @@ const faceStepListeners = new Set<OnboardingFaceStepListener>();
  * The GitHub callback is a deep link, so expo-router routes it and puts a
  * second onboarding screen over the one whose press is still finishing the
  * sign-in. That newcomer must not race the flow into the app: the session it
- * would read is the very one the press is writing, and entering on it skips
- * the ceremony the press is about to publish.
+ * would read is the very one the press is writing, and entering on it races
+ * the press that owns completion.
  */
 export function isSignInInFlight(): boolean {
   return signInInFlight;
@@ -75,28 +60,6 @@ export function isSignInInFlight(): boolean {
 
 export function markSignInInFlight(inFlight: boolean): void {
   signInInFlight = inFlight;
-}
-
-/**
- * Publish the ceremony rather than holding it in the pressing component: by the
- * time the sign-in completes, that component is no longer the onboarding screen
- * the person is looking at, and its own state paints nothing they can see.
- */
-export function publishOnboardingFaceStep(step: OnboardingFaceStep): void {
-  pendingFaceStep = step;
-  for (const listener of faceStepListeners) listener(step);
-}
-
-/** Entering the app spends the ceremony on every screen holding it, not one. */
-export function clearOnboardingFaceStep(): void {
-  pendingFaceStep = null;
-  for (const listener of faceStepListeners) listener(null);
-}
-
-export function subscribeToOnboardingFaceStep(listener: OnboardingFaceStepListener): () => void {
-  faceStepListeners.add(listener);
-  if (pendingFaceStep) listener(pendingFaceStep);
-  return () => faceStepListeners.delete(listener);
 }
 
 type OnboardingEvent = 'callback_received' | 'bind_succeeded';

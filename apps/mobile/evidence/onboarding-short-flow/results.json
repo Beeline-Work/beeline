@@ -1,0 +1,218 @@
+[
+  {
+    "device": "web",
+    "provider": "google",
+    "theme": "obsidian",
+    "stage": "sign-in",
+    "file": "google-sign-in-obsidian.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "google",
+    "theme": "obsidian",
+    "stage": "workspace",
+    "file": "google-workspace-obsidian.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "google",
+    "theme": "obsidian",
+    "stage": "general",
+    "file": "google-general-obsidian.png",
+    "text": "#general\nBeebee\nnow\n@newperson Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\n@beebee joined · invited by @newperson\n@beebee joined · invited by @newperson\nnow\nChoose a repository\nCreate a private repo or link one you already own.\nConnect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.\nConnect GitHub",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "github",
+    "theme": "obsidian",
+    "stage": "sign-in",
+    "file": "github-sign-in-obsidian.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "github",
+    "theme": "obsidian",
+    "stage": "workspace",
+    "file": "github-workspace-obsidian.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "github",
+    "theme": "obsidian",
+    "stage": "general",
+    "file": "github-general-obsidian.png",
+    "text": "#general\nBeebee\nnow\n@octocat Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\n@beebee joined · invited by @octocat\n@beebee joined · invited by @octocat\nnow\nChoose a repository\nCreate a private repo or link one you already own.\nNew repo: new-project-dd3db1\nInstall Beeline\nLink existing\nAdd Beeline to an org",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "google",
+    "theme": "bone",
+    "stage": "sign-in",
+    "file": "google-sign-in-bone.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "google",
+    "theme": "bone",
+    "stage": "workspace",
+    "file": "google-workspace-bone.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "google",
+    "theme": "bone",
+    "stage": "general",
+    "file": "google-general-bone.png",
+    "text": "#general\nBeebee\nnow\n@newperson2 Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\n@beebee joined · invited by @newperson2\n@beebee joined · invited by @newperson2\nnow\nChoose a repository\nCreate a private repo or link one you already own.\nConnect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.\nConnect GitHub",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "github",
+    "theme": "bone",
+    "stage": "sign-in",
+    "file": "github-sign-in-bone.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "github",
+    "theme": "bone",
+    "stage": "workspace",
+    "file": "github-workspace-bone.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "web",
+    "provider": "github",
+    "theme": "bone",
+    "stage": "general",
+    "file": "github-general-bone.png",
+    "text": "#general\n@beebee joined · invited by @octocat2\n@beebee joined · invited by @octocat2\nnow\nBeebee\nnow\n@octocat2 Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\nChoose a repository\nCreate a private repo or link one you already own.\nNew repo: new-project-6fa62b\nInstall Beeline\nLink existing\nAdd Beeline to an org",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "google",
+    "theme": "obsidian",
+    "stage": "sign-in",
+    "file": "google-sign-in-obsidian.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "google",
+    "theme": "obsidian",
+    "stage": "workspace",
+    "file": "google-workspace-obsidian.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "google",
+    "theme": "obsidian",
+    "stage": "general",
+    "file": "google-general-obsidian.png",
+    "text": "#general\n@beebee joined · invited by @newperson3\n@beebee joined · invited by @newperson3\nnow\nBeebee\nnow\n@newperson3 Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\nChoose a repository\nCreate a private repo or link one you already own.\nConnect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.\nConnect GitHub",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "github",
+    "theme": "obsidian",
+    "stage": "sign-in",
+    "file": "github-sign-in-obsidian.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "github",
+    "theme": "obsidian",
+    "stage": "workspace",
+    "file": "github-workspace-obsidian.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "github",
+    "theme": "obsidian",
+    "stage": "general",
+    "file": "github-general-obsidian.png",
+    "text": "#general\nBeebee\nnow\n@octocat3 Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\n@beebee joined · invited by @octocat3\n@beebee joined · invited by @octocat3\nnow\nChoose a repository\nCreate a private repo or link one you already own.\nNew repo: new-project-c45ea0\nInstall Beeline\nLink existing\nAdd Beeline to an org",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "google",
+    "theme": "bone",
+    "stage": "sign-in",
+    "file": "google-sign-in-bone.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "google",
+    "theme": "bone",
+    "stage": "workspace",
+    "file": "google-workspace-bone.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "google",
+    "theme": "bone",
+    "stage": "general",
+    "file": "google-general-bone.png",
+    "text": "#general\nBeebee\nnow\n@newperson4 Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\n@beebee joined · invited by @newperson4\n@beebee joined · invited by @newperson4\nnow\nChoose a repository\nCreate a private repo or link one you already own.\nConnect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.\nConnect GitHub",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "github",
+    "theme": "bone",
+    "stage": "sign-in",
+    "file": "github-sign-in-bone.png",
+    "text": "beeline.\nworkspace for all intelligence\nContinue with GitHub\nRECOMMENDED\nContinue with Google",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "github",
+    "theme": "bone",
+    "stage": "workspace",
+    "file": "github-workspace-bone.png",
+    "text": "Name your Workspace\nYour team, company, or project. Change it in Settings.\nWorkspace name\nCreate Workspace",
+    "errors": []
+  },
+  {
+    "device": "desktop",
+    "provider": "github",
+    "theme": "bone",
+    "stage": "general",
+    "file": "github-general-bone.png",
+    "text": "#general\n@beebee joined · invited by @octocat4\n@beebee joined · invited by @octocat4\nnow\nBeebee\nnow\n@octocat4 Hi, I'm Beebee, your free agent.\nI run on my own small cloud computer, so I can write code, run commands, research and draft things for you.\nThree things to know:\n· Talk to me here. Tag @beebee, or just type while I'm the only agent in this Room.\n· Big jobs get a corner. That's a side thread where I plan, build and check the work, then bring you one thing to approve. Tap it to follow along.\n· Connect once, use everywhere. Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.\nTo start, pick or create a repository on the card below and I'll suggest a first task. If you'd rather not have me here, remove me from Members.\nChoose a repository\nCreate a private repo or link one you already own.\nNew repo: new-project-826f57\nInstall Beeline\nLink existing\nAdd Beeline to an org",
+    "errors": []
+  }
+]

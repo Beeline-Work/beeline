@@ -222,6 +222,8 @@ describe('private operator dashboard', () => {
     const send=(data:unknown,ip='funnel-proof')=>fetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});
     expect((await send({...input,email:'private@example.com'})).status).toBe(400);
     expect((await send({...input,event:'signed_in',provider:'github'})).status).toBe(401);
+    expect((await send({...input,event:'workspace_created'})).status).toBe(401);
+    expect((await send({...input,event:'first_message_sent'})).status).toBe(401);
     expect((await send({...input,event:'signup',provider:'github'})).status).toBe(400);
     expect((await send({...input,version:'x'.repeat(2000)})).status).toBe(400);
     expect((await send(input)).status).toBe(204);

@@ -97,8 +97,8 @@ on:
 permissions:
   contents: read
 
-# One build per ref. A newer push supersedes the whole matrix, never one
-# platform of it.
+# One build per PR. A newer push supersedes the whole matrix, never one
+# platform of it. Non-PR runs stay independent.
 concurrency:
   group: desktop-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

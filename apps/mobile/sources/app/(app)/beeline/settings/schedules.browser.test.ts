@@ -246,6 +246,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
       'Feedback triage',
     ]);
     expect(page.text.join(' ')).not.toContain('Scheduled task');
+    for (const title of page.text.slice(2)) expect(title.split(' ').length).toBeLessThanOrEqual(4);
   }, 120_000);
 
   it('uses dark brass workflow marks on the light list', async () => {

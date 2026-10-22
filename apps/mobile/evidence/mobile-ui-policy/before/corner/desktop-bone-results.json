@@ -1,0 +1,13 @@
+{
+  "source": "local built production components",
+  "format": [
+    "Opened corner #NAME | SpaceGrotesk-Regular | 16px | 23px | 400 | rgb(74, 64, 56)",
+    "Opened  | SpaceGrotesk-Medium | 16px | 23px | 400 | rgb(23, 19, 16)"
+  ],
+  "destinations": {
+    "call-site": "corner:corner-latency-rig",
+    "dm": "corner:corner-font-check",
+    "long": "corner:long",
+    "room": "corner:corner-font-check"
+  }
+}

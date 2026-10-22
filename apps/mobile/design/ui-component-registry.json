@@ -173,7 +173,7 @@
     "components/buzz/HullMenuTrigger.tsx": ["HullMenuTrigger"],
     "components/buzz/HullSwitch.tsx": ["HullSwitch"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
-    "components/buzz/IndexRow.tsx": ["IndexRow", "body", "trailingColumn", "trailingMark"],
+    "components/buzz/IndexRow.tsx": ["IndexRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron"],
     "components/buzz/Ledger.tsx": [
       "Byline",
       "Container",

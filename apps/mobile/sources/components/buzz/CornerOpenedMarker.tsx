@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
-import { NotificationLifecycleCard, RepositoryLifecycleRow } from './PrLifecycleCard';
+import { RepositoryLifecycleRow } from './PrLifecycleCard';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleItem } from '@/buzz/pr-lifecycle';
 
@@ -47,7 +47,7 @@ const styles = StyleSheet.create(() => ({
   line: { paddingRight: LEDGER_MARGINALIA_WIDTH },
 }));
 
-/** Anchored corners use the repository run's disclosure and truncation rules. */
+/** Each requested corner keeps its own visible line and stable key. */
 export function CornerOpenedMarkers({
   message,
   onOpenCorner,
@@ -64,12 +64,16 @@ export function CornerOpenedMarkers({
   if (!items.length) return null;
   return (
     <View style={styles.line}>
-      <NotificationLifecycleCard
-        anchored
-        message={{ ...message, notificationLifecycleRun: { items, subline: '' } }}
-        onOpenCorner={onOpenCorner}
-        onOpenUrl={onOpenUrl}
-      />
+      {items.map((item) => (
+        <RepositoryLifecycleRow
+          key={item.id}
+          glyph
+          item={item}
+          testID={`corner-opened-marker-${item.cornerId}`}
+          onOpenCorner={onOpenCorner}
+          onOpenUrl={onOpenUrl}
+        />
+      ))}
     </View>
   );
 }

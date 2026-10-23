@@ -30,13 +30,19 @@ def press(node):
     adb('shell', 'input', 'tap', str((left + right) // 2), str((top + bottom) // 2))
     time.sleep(.15)
 
-def choose(label):
-    _, current = nodes()
-    press(next(n for n in current if n.get('content-desc') == label))
+# Harness controls keep fixed bounds in every scene. Reuse their observed nodes.
+_, initial = nodes()
+controls = {n.get('content-desc'): n for n in initial if n.get('content-desc') in
+            ['bone', 'obsidian', 'room', 'dm', 'parent', 'opened', 'merged', 'closed']}
 
+def choose(label):
+    press(controls[label])
+
+latest = []
 def destination():
-    _, current = nodes()
-    return next(n.get('text') for n in current if n.get('resource-id') == 'proof-destination')
+    global latest
+    _, latest = nodes()
+    return next(n.get('text') for n in latest if n.get('resource-id') == 'proof-destination')
 
 receipts = []
 for theme in ['bone', 'obsidian']:
@@ -50,7 +56,11 @@ for theme in ['bone', 'obsidian']:
             assert len(markers) == 1, (surface, state, markers)
             expected = ('Merged requested-work PR 2832' if state == 'merged' else
                         'Closed close-requested-work' if state == 'closed' else 'Opened requested-work')
-            assert any(n.get('text', '').replace('\u00a0', ' ') == expected for n in current), expected
+            texts = [n.get('text', '').replace('\u00a0', ' ') for n in current]
+            if state == 'merged':
+                assert 'Merged requested-work' in texts and ' PR 2832' in texts, texts
+            else:
+                assert expected in texts, expected
             name = f'android-{theme}-{surface}-{state}'
             (output / f'{name}.xml').write_bytes(raw)
             (output / f'{name}.png').write_bytes(adb('exec-out', 'screencap', '-p'))
@@ -60,7 +70,7 @@ for theme in ['bone', 'obsidian']:
             corner = destination()
             assert re.fullmatch(r'[a-f0-9-]{36}', corner or ''), corner
             receipt = {'name': name, 'copy': expected, 'corner': corner, 'status': 'PASS'}
-            _, current = nodes()
+            current = latest
             completions = [n for n in current if n.get('resource-id', '').startswith('notification-run-cell-corner-')]
             assert len(completions) == (1 if state == 'merged' and surface != 'room' else 0)
             if completions:
@@ -68,7 +78,7 @@ for theme in ['bone', 'obsidian']:
                 assert destination() == corner
                 receipt['roomCompletion'] = corner
             if state == 'merged':
-                _, current = nodes()
+                current = latest
                 # Android exposes an inline Text link as a virtual accessibility node.
                 pr = next(n for n in current if n.get('content-desc', '').replace('\u00a0', ' ').strip() in ['PR 2832', 'Open PR 2832'])
                 press(pr)

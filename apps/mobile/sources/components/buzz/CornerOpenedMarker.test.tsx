@@ -120,7 +120,7 @@ describe('CornerBranchGlyph', () => {
 });
 
 describe('anchored corner runs', () => {
-  it.each([1, 2, 4])('uses the repository disclosure for %i markers', (count) => {
+  it.each([1, 2, 4])('keeps a visible gold-glyph line for each of %i markers', (count) => {
     const onOpenCorner = vi.fn();
     const message = {
       id: 'source',
@@ -145,30 +145,11 @@ describe('anchored corner runs', () => {
       renderer.root.findAll(
         (node: any) => typeof node.type === 'string' && node.props.testID === id,
       )[0];
-    if (count === 1) {
-      expect(host('notification-run-expand-source')).toBeUndefined();
-      expect(textOf(renderer)).toBe('Opened name-0');
-    } else {
-      expect(textOf(renderer)).toBe(`${count} corners opened`);
-      expect(host('corner-opened-marker-corner-0')).toBeUndefined();
-      act(() => host('notification-run-expand-source').props.onPress());
-      expect(host('notification-run-expand-source').props.accessibilityState.expanded).toBe(true);
-      act(() =>
-        renderer.update(
-          <CornerOpenedMarkers
-            message={{ ...message }}
-            onOpenCorner={onOpenCorner}
-            onOpenUrl={() => undefined}
-          />,
-        ),
-      );
-      expect(host('corner-opened-marker-corner-0')).toBeTruthy();
-      if (count === 4) {
-        expect(host('corner-opened-marker-corner-2')).toBeUndefined();
-        expect(textOf(renderer)).toContain('2 more');
-        act(() => host('notification-run-more-source').props.onPress());
-        expect(host('corner-opened-marker-corner-3')).toBeTruthy();
-      }
+    expect(host('notification-run-expand-source')).toBeUndefined();
+    expect(renderer.root.findAllByType(CornerBranchGlyph)).toHaveLength(count);
+    for (let index = 0; index < count; index++) {
+      expect(host(`corner-opened-marker-corner-${index}`)).toBeTruthy();
+      expect(textOf(renderer)).toContain(`Opened name-${index}`);
     }
     act(() => host(`corner-opened-marker-corner-${count - 1}`).props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith(`corner-${count - 1}`);

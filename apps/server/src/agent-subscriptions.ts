@@ -66,10 +66,9 @@ DO $$ BEGIN
  END IF;
 END $$;
 DROP INDEX IF EXISTS agent_subscriptions_unique;
-DROP INDEX IF EXISTS agent_subscriptions_unique_v2;
-CREATE UNIQUE INDEX IF NOT EXISTS agent_subscriptions_unique_v3
+CREATE UNIQUE INDEX IF NOT EXISTS agent_subscriptions_unique_v2
  ON agent_subscriptions(room_id,agent_id,source,event,COALESCE(repository,''),
-   COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) WHERE source<>'webhook';
+   COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''));
 CREATE INDEX IF NOT EXISTS agent_subscriptions_workspace ON agent_subscriptions(workspace_id);
 CREATE INDEX IF NOT EXISTS agent_subscriptions_agent ON agent_subscriptions(agent_id);
 CREATE INDEX IF NOT EXISTS agent_subscriptions_repository ON agent_subscriptions(repository,source,event);
@@ -245,18 +244,23 @@ async function createAgentSubscriptionInDb(
       if (webhook.queued) providerConnectorId = webhook.connectorId;
     }
   }
+  const id = randomUUID();
+  // The existing source/event scope key also distinguishes independent webhook links.
+  // Keep its index compatible with older servers during a rolling deployment.
+  const channelScope = input.source === 'webhook' ? id
+    : input.source === 'service' && input.event === 'new_message' ? input.channelId : null;
   const rows = await db.query<Row>(
     `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,repository,prompt,workflow_slug,
        service_app_id,service_account_id,service_channel_id,service_channel_name,trigger_id,title,trigger_text)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),
-       COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) WHERE source<>'webhook' DO UPDATE
+       COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) DO UPDATE
        SET title=EXCLUDED.title,trigger_text=EXCLUDED.trigger_text,prompt=EXCLUDED.prompt,workflow_slug=EXCLUDED.workflow_slug,
          service_channel_name=EXCLUDED.service_channel_name,trigger_id=EXCLUDED.trigger_id
      RETURNING *`,
-    [randomUUID(), room.rows[0]!.workspace_id, input.roomId, agentId, input.source, input.event,
+    [id, room.rows[0]!.workspace_id, input.roomId, agentId, input.source, input.event,
       repository ?? null, prompt, workflowSlug ?? null, app?.id ?? null, app?.composio_account_id ?? null,
-      input.source === 'service' && input.event === 'new_message' ? input.channelId : null,
+      channelScope,
       input.source === 'service' && input.event === 'new_message' ? input.channelName ?? null : null, triggerId ?? null, title, when],
   );
   if (webhookOwner) await createWebhookCredentials(db, rows.rows[0]!.id, webhookOwner);

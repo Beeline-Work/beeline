@@ -50,10 +50,7 @@ describe('agent-created webhook subscription', () => {
           CHECK(source IN ('room','repository','service'));
         ALTER TABLE agent_subscriptions ADD CONSTRAINT agent_subscriptions_shape_v2_check CHECK (
           (source='room' AND repository IS NULL) OR (source='repository' AND repository IS NOT NULL)
-          OR (source='service' AND service_app_id IS NOT NULL AND trigger_id IS NOT NULL));
-        DROP INDEX agent_subscriptions_unique_v3;
-        CREATE UNIQUE INDEX agent_subscriptions_unique_v2 ON agent_subscriptions
-          (room_id,agent_id,source,event,COALESCE(repository,''),COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''));`);
+          OR (source='service' AND service_app_id IS NOT NULL AND trigger_id IS NOT NULL));`);
       await db.query(AGENT_SUBSCRIPTIONS_SCHEMA);
       const one = await create(), two = await create();
       expect(one.id).not.toBe(two.id);

@@ -759,7 +759,13 @@ describe('Eastern Usage dates (Reproduction EASTERN-1)', () => {
 });
 
 it('R-periods: serves distinct activity, four signup funnels and one platform per person over HTTP', async () => {
-  const now = new Date();
+  const now = new Date('2026-10-23T19:15:00.000Z');
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(now);
+  await db.query("UPDATE workspaces SET created_at=$1::timestamptz-interval '1 hour' WHERE id=$2", [
+    now.toISOString(),
+    workspace,
+  ]);
   for (const [index, age] of [0.5, 3, 14, 40].entries()) {
     const human = `c${index.toString(16).padStart(63, '0')}`,
       agent = `d${index.toString(16).padStart(63, '0')}`;
@@ -789,14 +795,22 @@ it('R-periods: serves distinct activity, four signup funnels and one platform pe
       [`repeat-${age}`, room, new Date(now.getTime() - age * 86400000).toISOString()],
     );
   await db.query(
-    `INSERT INTO push_devices(token,identity_id,platform,environment,updated_at) VALUES('period-ios','c000000000000000000000000000000000000000000000000000000000000000','ios','physical',now()-interval '1 day')`,
+    `INSERT INTO push_devices(token,identity_id,platform,environment,updated_at) VALUES('period-ios','c000000000000000000000000000000000000000000000000000000000000000','ios','physical',$1::timestamptz-interval '1 day')`,
+    [now.toISOString()],
   );
   await db.query(
-    `INSERT INTO device_update_receipts(identity_id,device_id,receipt,reported_at) VALUES('c000000000000000000000000000000000000000000000000000000000000000','newest','{"platform":"web"}',now())`,
+    `INSERT INTO device_update_receipts(identity_id,device_id,receipt,reported_at) VALUES('c000000000000000000000000000000000000000000000000000000000000000','newest','{"platform":"web"}',$1)`,
+    [now.toISOString()],
   );
   const response = await get();
   expect(response.status).toBe(200);
   const body = await response.json();
+  const fixtureResponse = { periods: body.periods, platformBreakdown: body.platformBreakdown };
+  const { readFile } = await import('node:fs/promises');
+  const fixture = JSON.parse(
+    await readFile(new URL('./fixtures/operator-dashboard-periods.json', import.meta.url), 'utf8'),
+  );
+  expect(fixtureResponse).toEqual(fixture);
   expect(body.platforms).toEqual(['ios', 'android', 'web', 'macos', 'windows', 'linux']);
   for (const [key, count] of Object.entries({
     '24h': 1,
@@ -824,6 +838,7 @@ it('R-periods: serves distinct activity, four signup funnels and one platform pe
     ),
   ).toBeGreaterThan(2);
   expect(body.periods['24h'].funnel.biggestDrop).toBeNull();
+  expect(body.periods['28d'].funnel.biggestDrop).toEqual({ key: 'active_7d', lost: 1 });
   expect(body.platformBreakdown).toEqual({
     basis: 'last_device',
     counts: [

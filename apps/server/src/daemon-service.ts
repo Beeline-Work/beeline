@@ -3596,16 +3596,18 @@ export class DaemonService {
    */
   private async mergeCorner(input: Input<'mergeCorner'>, agentId: string): Promise<Output<'mergeCorner'>> {
     const corner = (
-      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null }>(
+      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null; archived: boolean }>(
         `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-                fact.lifecycle->'pr'->>'headSha' head_sha
+                fact.lifecycle->'pr'->>'headSha' head_sha,
+                corner.archived_at IS NOT NULL archived
          FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL`,
+         WHERE fact.corner_id=$1`,
         [input.cornerId],
       )
     ).rows[0];
     await this.reach(input.cornerId, agentId);
     if (!corner) throw new Error('corner not found');
+    if (corner.archived) return { status: 'blocked', blocker: 'the corner is closed' };
     if (!corner.head_sha) return { status: 'blocked', blocker: 'the corner has no pull request' };
     if (!this.landCorner || !this.prChecksStatus)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };

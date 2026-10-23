@@ -952,7 +952,7 @@ export class GitHubOperations {
           checks,
           reviewWoken: corner.review_woken,
         });
-    const mergeAllowed = checks === 'passed' && gate.open;
+    const mergeAllowed = !corner.archived && checks === 'passed' && gate.open;
     // Where the corner stands, from the live facts above: building ->
     // checking -> waiting for a yes -> merged (or closed).
     const stage = pr.merged

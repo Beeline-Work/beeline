@@ -1,3 +1,4 @@
+import { cleanVoiceReply } from './voice-reply.js';
 import { readVoiceContext } from './voice-context.js';
 import { captureServerError } from './sentry.js';
 import { VoiceAudioMeter, VOICE_WARNING_MS } from './voice-budget.js';
@@ -206,8 +207,13 @@ export class VoiceRoomRuntime {
       if (!participant || topic !== VOICE_DATA_TOPIC || bytes.length > 2048) return;
       this.task(async () => {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
-        if (data.type !== 'target' && data.type !== 'resume' && data.type !== 'park') return;
+        if (data.type !== 'target' && data.type !== 'unpin' && data.type !== 'resume' && data.type !== 'park') return;
         await this.retry(() => this.service.access(this.roomId, participant.identity));
+        if (data.type === 'unpin') {
+          this.explicitTargets.delete(participant.identity);
+          this.assembler.clearAddress(participant.identity);
+          await this.refresh(); return;
+        }
         if (data.type === 'target') {
           const allowed = await this.retry(() => this.service.agents(this.roomId, participant.identity));
           if (!allowed.some(a => a.id === data.agentId)) return;
@@ -632,14 +638,14 @@ export class VoiceRoomRuntime {
       const members: SpeechMember[] = [...agents.map(agent => ({ handle: agent.handle, name: agent.name })), ...await roomMembers];
       let sourceId = retry ? await request.source : previous ? await priorSource : '';
       const named = openingVoiceName(fragment, agents);
-      const tapped = agents.find(agent => agent.id ===
-        (this.explicitTargets.get(human) ?? this.assembler.target(human)));
+      const pinned = agents.find(agent => agent.id === this.explicitTargets.get(human));
+      const tapped = pinned ?? agents.find(agent => agent.id === this.assembler.target(human));
       let selected = request.agent?.id ?? this.targets.get(human);
       if (humans === 1 && !previous && !named && !tapped && !retry)
         selected = await this.retry(() => this.service.lastActiveAgent(this.roomId, agents)) ?? selected;
       const changedTarget = previous?.agent && this.targets.get(human) !== previous.agent.id
         ? agents.find(agent => agent.id === this.targets.get(human)) : undefined;
-      const agent = retry ? request.agent : named ?? tapped ?? changedTarget ?? request.agent ?? openingVoiceName(request.text, agents) ??
+      const agent = retry ? request.agent : pinned ?? named ?? tapped ?? changedTarget ?? request.agent ?? openingVoiceName(request.text, agents) ??
         (humans === 1 ? namedVoiceTarget(request.text, agents, selected, humans) : undefined);
       if (generation.signal.aborted || this.closed) { resolveSource?.(sourceId); return; }
       if (!agent) {
@@ -647,7 +653,6 @@ export class VoiceRoomRuntime {
         await this.safeSignal({ type: 'unaddressed' }, human); return;
       }
       request.agent = agent;
-      if (named && this.explicitTargets.has(human)) this.explicitTargets.set(human, agent.id);
       this.targets.set(human, agent.id);
       await this.safeSignal({ type: 'target', agentId: agent.id }, human);
       if (voiceNameOnly(fragment, agents) && !previous && !retry) {
@@ -684,6 +689,7 @@ export class VoiceRoomRuntime {
             return this.service.search(this.callId, sourceId, agent.id, search, signal);
           },
           announce: async text => {
+            text = cleanVoiceReply(text, agent.name);
             if (!text || this.humanSpeaking.has(human) || generation.signal.aborted || this.closed || this.speaking || playbackVersion !== this.playbackVersion) return;
             this.speaking = controller; this.speakingHuman = human;
             this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
@@ -727,7 +733,7 @@ export class VoiceRoomRuntime {
       };
       if (generation.signal.aborted || this.closed) return;
       request.state = 'replying';
-      const answer = reply.text || (reply.order ? "Checking. I’ll tell you when I have it." : '');
+      const answer = cleanVoiceReply(reply.text, agent.name) || (reply.order ? "Checking. I’ll tell you when I have it." : '');
       answerToRecord = {agentId: agent.id, text: answer};
       // A different speaker may have taken the audio lane during classification.
       if (this.humanSpeaking.has(human) || controller.signal.aborted || this.closed || (this.speaking && !this.speaking.signal.aborted) || playbackVersion !== this.playbackVersion) {
@@ -845,7 +851,7 @@ export class VoiceRoomRuntime {
             let finishSpeech!: () => void;
             this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
             try {
-              await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(spokenReport(report.text), agent, controller.signal, () => {
+              await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(spokenReport(cleanVoiceReply(report.text, agent.name)), agent, controller.signal, () => {
                 const request = this.assembler.current(report.human_id);
                 if (request?.id === report.source_message_id) this.assembler.finish(report.human_id, request);
               }, undefined, undefined, members);
@@ -860,7 +866,7 @@ export class VoiceRoomRuntime {
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
     onFirstVoicedFrame?: () => void | Promise<void>, timing?: (stage: string) => void, members?: SpeechMember[]) {
-    text = markdownToSpeech(text, members);
+    text = markdownToSpeech(cleanVoiceReply(text, agent.name), members);
     if (!text) return;
     let pending = Buffer.alloc(0); let first = true; let firstByte = true; let firstPublished = true;
     // 20ms mono frames. Carry odd byte boundaries between provider chunks.

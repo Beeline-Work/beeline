@@ -1,3 +1,4 @@
+import { cleanVoiceReply } from './voice-reply.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
@@ -469,8 +470,9 @@ export class DaemonService {
     let cornerReviewer = false;
     let isCorner = false;
     let privateCommand = false;
+    let voiceAgentName: string | null | undefined;
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
-      ({ cornerReviewer, isCorner, privateCommand } = await this.access(scopedRoom, authenticatedAgentId, candidate.requestId).catch(
+      ({ cornerReviewer, isCorner, privateCommand, voiceAgentName } = await this.access(scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId).catch(
         (error: unknown) => {
           // Reachable corner operations also admit a parent Room member.
           if (error instanceof AccessDeniedError && CORNER_REACH_OPERATIONS.has(name))
@@ -478,10 +480,13 @@ export class DaemonService {
               cornerReviewer: false,
               isCorner: true,
               privateCommand: false,
+              voiceAgentName: null,
             }));
           throw error;
         },
       ));
+    if (voiceAgentName && typeof candidate.text === 'string')
+      candidate.text = cleanVoiceReply(candidate.text, voiceAgentName);
     if (name === 'postRoomMessage' && candidate.relay !== undefined)
       throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     const turnWrites = new Set([
@@ -8339,10 +8344,10 @@ export class DaemonService {
     roomId: string,
     agentId: string,
     requestId?: unknown,
-  ): Promise<{ cornerReviewer: boolean; isCorner: boolean; privateCommand: boolean }> {
+  ): Promise<{ cornerReviewer: boolean; isCorner: boolean; privateCommand: boolean; voiceAgentName?: string | null }> {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(roomId))
       throw new AccessDeniedError();
-    const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean; private_command: boolean }>(
+    const result = await this.database.query<{ corner_reviewer: boolean; is_corner: boolean; private_command: boolean; voice_agent_name: string | null }>(
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          WHERE corner.id=$1 AND (
@@ -8354,13 +8359,18 @@ export class DaemonService {
        ) corner_reviewer,
        EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner,
        EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=$1 AND command.agent_id=$2
-         AND command.turn_request_id=$3 AND command.private_payload IS NOT NULL) private_command
+         AND command.turn_request_id=$3 AND command.private_payload IS NOT NULL) private_command,
+       (SELECT identity.name FROM agent_commands command
+         JOIN voice_orders voice ON voice.source_message_id=command.source_message_id AND voice.agent_id=command.agent_id
+         JOIN identities identity ON identity.id=command.agent_id
+         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
+         ORDER BY command.created_at DESC,command.id DESC LIMIT 1) voice_agent_name
        FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId, typeof requestId === 'string' ? requestId : null],
     );
     if (!result.rowCount) throw new AccessDeniedError();
     const row = result.rows[0]!;
-    return { cornerReviewer: row.corner_reviewer, isCorner: row.is_corner, privateCommand: row.private_command };
+    return { cornerReviewer: row.corner_reviewer, isCorner: row.is_corner, privateCommand: row.private_command, voiceAgentName: row.voice_agent_name };
   }
 
   private async roomMembers(roomId: string) {

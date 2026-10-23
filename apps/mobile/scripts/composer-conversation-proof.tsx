@@ -23,7 +23,8 @@ function Proof() {
   const [picker, setPicker] = useState(false);
   const [pending, setPending] = useState<PickedChatAttachment[]>([]);
   const [value, setValue] = useState('');
-  const [target, aim] = useState('ruby');
+  const [target, setTarget] = useState<string | null>(null);
+  const aim = (agent: string) => setTarget(current => current === agent ? null : agent);
   const voice = { call: phase === 'ended' ? null : { id: 'proof' }, connecting: phase === 'connecting',
     agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }, { kind: 'agent', pubkey: 'goose', name: 'Goosey', face: null }],
     speaker: phase === 'speaking' ? 'ruby' : null, target, level: phase === 'silence' ? 0 : 0.4,
@@ -46,21 +47,26 @@ async function run() {
   await pause();
   const selected = () => document.querySelector<HTMLElement>('[aria-label="Speak to Jellybean"]');
   selected()!.click(); await pause();
-  const outlined = () => getComputedStyle(selected()!.firstElementChild!).borderTopColor ===
-    'rgb(0, 0, 0)';
-  check('CONVERSATION-2: tap selects Jellybean with an avatar outline', outlined());
-  const selectedLabel = Array.from(selected()!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
-  check('CONVERSATION-2: selected name has no underline', !!selectedLabel && !getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
+  const pinnedFace = () => byID('voice-pin-jellybean')?.parentElement;
+  const pinned = () => !!pinnedFace() &&
+    getComputedStyle(pinnedFace()!).backgroundColor !== 'rgba(0, 0, 0, 0)';
+  check('CONVERSATION-2: tap pins Jellybean with a filled tile and badge', pinned());
+  check('CONVERSATION-2: pin caption names Jellybean', !!byID('voice-pin-line')?.textContent?.includes('Pinned to Jellybean'));
+  const selectedLabel = Array.from(selected()!.parentElement!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
+  check('CONVERSATION-2: pinned name has no underline', !!selectedLabel && !getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
+  selected()!.click(); await pause();
+  check('CONVERSATION-2: second tap unpins', !byID('voice-pin-jellybean') && !byID('voice-pin-line'));
+  selected()!.click(); await pause();
   const latest = () => byID('waveform-live-level')!;
   check('CONVERSATION-3: visible newest bar is quiet in silence', getComputedStyle(latest()).height === '2px');
   for (const phase of ['silence', 'connecting', 'listening', 'speaking']) {
     flushSync(() => setPhase(phase));
     if (phase === 'listening') check('CONVERSATION-3: volume changes the visible newest bar before timers advance', parseFloat(getComputedStyle(latest()).height) > 2);
     await pause();
-    check(`${phase}: tap stays selected`, outlined());
+    check(`${phase}: pin stays selected`, pinned());
     const faceColor = (name: string) => getComputedStyle(document.querySelector<HTMLElement>(`[aria-label="Speak to ${name}"]`)!.firstElementChild!).borderTopColor;
     check(`${phase}: inactive agent has no frame`, faceColor('Goosey') === 'rgba(0, 0, 0, 0)');
-    if (phase === 'speaking') check('CONVERSATION-2: speaking frame is brass and selection stays black', getComputedStyle(byID('voice-speaking-frame-ruby')!).borderTopColor !== faceColor('Jellybean'));
+    if (phase === 'speaking') check('CONVERSATION-2: speaking frame and pin badge remain brass', getComputedStyle(byID('voice-speaking-frame-ruby')!).borderTopColor === getComputedStyle(byID('voice-pin-jellybean')!).backgroundColor);
     if (phase === 'connecting') {
       check('connecting: startup glyph replaces waveform until audio is ready', !!byID('voice-startup-loader') && !latest());
       const control = byID('chat-conversation')!;

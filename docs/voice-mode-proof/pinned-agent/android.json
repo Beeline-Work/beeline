@@ -1,0 +1,78 @@
+{
+  "reproduction": "R3",
+  "states": [
+    {
+      "state": "bone-default",
+      "target": null,
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "bone-pinned",
+      "target": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "bone-tap-unpinned",
+      "target": null,
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "bone-speaking",
+      "target": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "speaker": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "joined": true
+    },
+    {
+      "state": "bone-moved",
+      "target": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "bone-link-unpinned",
+      "target": null,
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "obsidian-default",
+      "target": null,
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "obsidian-pinned",
+      "target": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "obsidian-tap-unpinned",
+      "target": null,
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "obsidian-speaking",
+      "target": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "speaker": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "joined": true
+    },
+    {
+      "state": "obsidian-moved",
+      "target": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "speaker": null,
+      "joined": true
+    },
+    {
+      "state": "obsidian-link-unpinned",
+      "target": null,
+      "speaker": null,
+      "joined": true
+    }
+  ],
+  "standIn": "Built production hook and VoiceBar on Android; disposable PGlite and controlled providers over native LiveKit. Fixture keeps the call open for capture."
+}

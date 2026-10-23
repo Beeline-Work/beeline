@@ -48,14 +48,14 @@ Say an agent's handle or display name at the start of a request to address it;
 matching ignores case and respects word boundaries. Up to four leading greetings
 or fillers (such as "um hey" or "okay so") are skipped before matching. An exact
 agent name or handle always takes priority over treating its word as filler.
-Ambiguous names and the existing short-name fuzzy guard are unchanged. Tapping its avatar still
-sets the current target. With two or more humans in the call, start each request
-with an agent's name or an explicit avatar tap to get a reply.
+Ambiguous names and the existing short-name fuzzy guard are unchanged. Tapping an avatar pins that agent for your speech until you tap it again, tap
+Unpin, or pin another agent. The pin is private to each participant and remains
+in place when someone speaks an agent's name. With no pin and two or more humans,
+start each request with an agent's name to get a reply.
 A name-only segment holds that human's addressee for three seconds, renewed
-while that human speaks. An avatar tap selects that human's call target until
-another tap or spoken opening name replaces it, including after pauses and replies.
-Selected avatars have a black frame. Speaking avatars have a pulsing brass frame,
-which takes precedence when the speaker is also selected. Other avatars have no frame.
+while that human speaks. Pinned avatars have a filled tile and brass pin badge;
+the line above the voice bar says “Pinned to <Name>” with an Unpin link.
+Speaking avatars retain their pulsing brass frame, including beneath a pin badge.
 Reduced motion keeps the speaking frame steady. Names are never underlined. An unfinished request retains
 its addressee across further segments; an explicit new name replaces it. Other
 humans cannot consume the draft. Delivery, cancel, expiry or departure clears the temporary spoken address.
@@ -64,7 +64,7 @@ request asks for the agent's name again.
 With exactly one human, unnamed speech addresses the eligible agent who most
 recently posted a message in that Room or corner. An opening agent name or an
 explicit avatar tap takes priority. If no eligible agent has posted there, the
-current selection (initially the first listed agent) remains the fallback.
+last routed agent, or the first listed agent, remains the fallback. Joining a call does not pin anyone.
 
 Call mode follows the live database human count, including parked legacy humans
 and humans inside reconnect grace. Joins, leaves and sweeps immediately announce

@@ -112,6 +112,8 @@
         "scripts/render-squire-wallet-freshness-proof.mjs",
         "scripts/squire-wallet-freshness-proof.tsx",
         "scripts/squire-wallet-freshness-fixtures.ts",
+        // Selected as the temporary native entry for the Android approval card proof.
+        "scripts/squire-approval-native-proof.tsx",
         "scripts/identity-picture-seat-proof.tsx",
         "scripts/identity-picture-seat-frames.tsx",
         "scripts/render-identity-picture-seat-frames.mjs",

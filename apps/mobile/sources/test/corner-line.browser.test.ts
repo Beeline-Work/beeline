@@ -26,7 +26,7 @@ document.head.appendChild(fonts);
 let destination = '';
 const base = { text: '', timestamp: 1, isUser: false };
 const opened = { ...base, id: 'opened', daemonFact: { type: 'corner-open', cornerId: 'corner-font-check', name: 'font-check-android', objective: 'Check fonts', sourceMessageId: 'dm-source' } };
-const pr = { ...base, id: 'pr', daemonFact: { type: 'corner-complete', outcome: 'landed', cornerId: 'corner-2742', objective: 'Keep agent lead and body text in the same font face', pullRequest: { number: 2742, title: 'Keep agent lead and body text in the same font face', url: 'https://github.com/Beeline-Work/beeline/pull/2742' } } };
+const pr = { ...base, id: 'pr', daemonFact: { type: 'corner-complete', outcome: 'landed', cornerId: 'corner-2742', objective: 'Keep agent lead', pullRequest: { number: 2742, title: 'Keep agent lead', url: 'https://github.com/Beeline-Work/beeline/pull/2742' } } };
 const props = { onOpenCorner: id => destination = 'corner:' + id, onOpenUrl: url => destination = url };
 const card = messages => foldPrLifecycleRuns(messages).map(message => <NotificationLifecycleCard key={message.id} message={message} {...props}/>);
 function Proof() {
@@ -46,7 +46,7 @@ function Proof() {
       <p style={body}>@ruby open a corner to align the corner lines.</p>
       <div data-line="call-site"><CornerOpenedMarker title="latency-rig" onOpen={() => destination = 'corner:corner-latency-rig'}/></div>
       <div data-line="room">{card([opened])}</div>
-      {card([pr])}
+      <div data-line="merged-short">{card([pr])}</div>
       <p style={{...body, marginTop:24}}>@ruby open a corner with a long name.</p>
       <div data-line="long"><CornerOpenedMarker title="call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron" onOpen={() => destination = 'corner:long'}/></div>
     </section>
@@ -90,6 +90,11 @@ async function main() {
     if (name === 'long') assert(mark.left - copy.firstElementChild.firstElementChild.getBoundingClientRect().right <= 8.1, 'long name gives width back to the chevron');
     if (number) assert(number.getBoundingClientRect().width >= number.scrollWidth - 1, 'PR number shrinks');
   }
+  const shortLink = line('merged-short').querySelector('[accessibilitylabel="Open PR 2742"], [aria-label="Open PR 2742"]');
+  const shortName = shortLink.previousElementSibling;
+  assert(shortName.scrollWidth <= shortName.clientWidth + 1, 'short merged name must fit without truncation');
+  measurements.shortMergedGap = shortLink.getBoundingClientRect().left - shortName.getBoundingClientRect().right;
+  assert(measurements.shortMergedGap >= 4, 'Reproduction corner-width-1: untruncated name touches PR link: ' + measurements.shortMergedGap);
   const prLink = line('merged-width').querySelector('[data-testid="notification-run-cell-url-merged-width"]');
   destination = '';
   prLink.click();

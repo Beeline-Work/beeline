@@ -214,7 +214,7 @@ export function RepositoryLifecycleRow({
                 event.stopPropagation();
                 onOpenUrl(item.url!);
               }}
-            >{` PR ${number}`}</Text>
+            >{`PR ${number}`}</Text>
           ) : null}
         </InlineRow>
       </TranscriptNavigationRow>
@@ -261,7 +261,7 @@ const styles = StyleSheet.create(({ buzz }) => ({
   summary: { ...buzz.type.meta, color: buzz.textSecondary, flex: 1 },
   cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
   cornerName: { flexShrink: 1, minWidth: 0 },
-  cornerNumber: { flexShrink: 0 },
+  cornerNumber: { flexShrink: 0, marginLeft: buzz.space.xs },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
   number: {

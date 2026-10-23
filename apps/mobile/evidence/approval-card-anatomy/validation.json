@@ -1,0 +1,55 @@
+{
+  "reproduction": "APPROVAL-V3",
+  "briefRevision": 4,
+  "mobile": {
+    "fullRun": {
+      "files": 602,
+      "passed": 4971,
+      "failed": 2,
+      "skipped": 5
+    },
+    "unchangedFailedTestsRerun": {
+      "passed": 14,
+      "failed": 0
+    },
+    "finalCardAndAttributionRerun": {
+      "passed": 173,
+      "failed": 0
+    },
+    "updatedThemeMatrix": {
+      "passed": 53,
+      "failed": 0
+    }
+  },
+  "server": {
+    "files": 213,
+    "coverageAfterReruns": {
+      "passed": 3633,
+      "skipped": 19
+    },
+    "initialFailures": [
+      "history fetch under load",
+      "Room read timing bound",
+      "approved System message snapshots required refresh"
+    ],
+    "historyRerun": {
+      "passed": 1
+    },
+    "unchangedTimingAndLockGuardRerun": {
+      "passed": 92
+    },
+    "finalSquireDecisionAndResumeRerun": {
+      "passed": 4
+    }
+  },
+  "bodyResourceAndRelay": {
+    "passed": 68,
+    "failed": 0
+  },
+  "previousClientCompatibility": {
+    "passed": 1
+  },
+  "rootTypecheck": "passed",
+  "deadCodeNewFindings": 0,
+  "note": "Full-suite coverage plus focused reruns; not a single all-green invocation. Squire provider supplies no verified human identity, so its attribution remains neutral."
+}

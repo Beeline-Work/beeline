@@ -1,4 +1,4 @@
-# Approval card anatomy, revision 3
+# Approval card anatomy and language, revision 4
 
 This is a design unification, not a defect report. Reproduction stand-in `APPROVAL-V3` uses the production card components and `sources/unistyles.ts` on a leased Android emulator with the installed development client (native runtime 39), serving this branch through Metro. Disposable fixtures stand in for live vault, checkout, host grant, connector and target-branch ceremonies; no production permission or purchase is exercised.
 
@@ -30,6 +30,7 @@ The fixture buttons record “Action received”; Squire Review keeps its extern
 | grant-denied | [Android](bone/grant-denied.png) | [Android](obsidian/grant-denied.png) |
 | squire-allowed | [Android](bone/squire-allowed.png) | [Android](obsidian/squire-allowed.png) |
 | squire-denied | [Android](bone/squire-denied.png) | [Android](obsidian/squire-denied.png) |
+| squire-expired | [Android](bone/squire-expired.png) | [Android](obsidian/squire-expired.png) |
 | permission-allowed | [Android](bone/permission-allowed.png) | [Android](obsidian/permission-allowed.png) |
 | target-denied | [Android](bone/target-denied.png) | [Android](obsidian/target-denied.png) |
 | connector-allowed | [Android](bone/connector-allowed.png) | [Android](obsidian/connector-allowed.png) |
@@ -39,3 +40,9 @@ The fixture buttons record “Action received”; Squire Review keeps its extern
 [Android interaction receipts](interaction-receipts.json) confirm callback delivery for grant No, Squire View request, spending Allow once, target No and connector No; vault-reference expansion was also exercised. These fixture callbacks do not grant production permissions. The server integration tests establish the corresponding committed decision behavior.
 
 [Previous-client compatibility receipt](old-client-compatibility.json): the unmodified tray renderer from the previous PR head renders the new server copy and labels, and No still dispatches deny at its original action index. Only its relative import paths were adapted for the temporary test location.
+
+## Decision attribution and language (revision 4)
+
+Squire's provider notifier (`apps/mcp/src/approval-decided-notifier.ts`, `ApprovalDecidedNotifier.run`) emits only `approval_id` and `status`. The helper matches this authenticated notification to a pending request and relays that decision; neither the provider payload nor the shared decision contract contains a verified human. Squire receipts therefore use “The request to <action> was allowed / was denied / expired”, and the original card uses neutral “Allowed / Denied” without naming an assumed owner. The stored original card supplies the action; legacy helpers use the shared action fallback. Raw vault references stay in folded details.
+
+Grants, target proposals and connector decisions retain their authenticated phone decision-maker. Their cards say “by you” only when that identity matches the current viewer, otherwise “by @handle”. Expiry remains distinct from denial. No decision event is suppressed or relocated, and paused-turn resume and deduplication retain their existing wire contracts. Named decision-makers on non-Squire cards are disposable fixtures for verified-human rendering. Squire settled fixtures deliberately omit a person and demonstrate neutral wording.

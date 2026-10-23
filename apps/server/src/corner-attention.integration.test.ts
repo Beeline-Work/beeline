@@ -299,6 +299,39 @@ it.each([['agent','blocked'],['agent','needs-decision'],['human','blocked'],['hu
   },
 );
 
+it.each(['blocked', 'needs-decision'] as const)(
+  'Reproduction CORNER-STATE-SAME-REPORT: %s to an agent in this corner opens its persisted report card',
+  async (status) => {
+    await db.query(
+      `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($1::text))
+       WHERE id='opening-order'`, [C],
+    );
+    const { reportToCommander } = await import('./commander.js');
+    const text = `${status}: Choose a direction.`;
+    const report = await reportToCommander(db, C, WORKER, text);
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [C]);
+    const row = (await phone.readCorners(ROOM, HUMAN))!.corners[0]!;
+    expect(row).toMatchObject({ state: 'waiting', blocker: { kind: 'message' } });
+    expect(row.itemId).toBeDefined();
+    expect(row.itemId).not.toBe(report.id);
+    const source = await db.query<{ id: string; card: { text: string } }>(
+      `SELECT id,card FROM messages WHERE room_id=$1 AND id=$2`, [C, row.itemId],
+    );
+    expect(source.rows).toHaveLength(1);
+    expect(source.rows[0]!.card).toMatchObject({ kind: 'report', status, text });
+    const page = await phone.readRoom(C, HUMAN);
+    expect(page!.messages.find(item => item.id === row.itemId)).toMatchObject({
+      agentCommand: { kind: 'report', status, text },
+    });
+    const blocker = (await db.query<{ message_id: string }>(
+      `SELECT message_id FROM corner_report_blockers WHERE corner_id=$1 AND person_id=$2`,
+      [C, COMMANDER],
+    )).rows[0]!;
+    expect(blocker.message_id).toBe(row.itemId);
+    console.info(`Demonstrated CORNER-STATE-SAME-REPORT ${status}: Waiting target resolves to the persisted report card in the corner conversation`);
+  },
+);
+
 it('recovers and fires the gap deadline once across two server instances', async () => {
   await turn();
   await runCornerAttention(db);

@@ -193,8 +193,9 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
 }) {
   const recipient = (await db.query<{ name: string; handle: string | null }>(
     'SELECT name,handle FROM identities WHERE id=$1', [input.recipientId])).rows[0];
+  const id = createHash('sha256').update(`agent-command-card:${input.id}`).digest('hex');
   await systemLine(db, {
-    id: createHash('sha256').update(`agent-command-card:${input.id}`).digest('hex'),
+    id,
     roomId: input.cornerId,
     authorId: input.authorId,
     subject: { kind: 'agent', id: input.authorId, name: input.authorId },
@@ -210,6 +211,7 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
       text: input.text,
     },
   });
+  return id;
 }
 
 export const AGENT_COMMAND_CARD_TYPE = 'agent-command';
@@ -329,10 +331,14 @@ export async function reportToCommander(
   }
   // The corner keeps a collapsed record of what its agent reported, so a
   // person reading a relay can open the full text where it was written.
-  if (!options.automatic && returnRoom !== roomId &&
-    (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount)
-    await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
+  let reportMessageId = member.kind === 'human' ? reportId : null;
+  if (!options.automatic && (returnRoom !== roomId || member.kind === 'agent') &&
+    (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount) {
+    const cardMessageId = await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
       recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] });
+    if (member.kind === 'agent' && returnRoom === roomId)
+      reportMessageId = cardMessageId;
+  }
   if (!options.automatic && origin && (await db.query(
     'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
     if (/^(needs-decision|blocked):/.test(text)) {
@@ -351,7 +357,7 @@ export async function reportToCommander(
        ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,
          return_room_id=EXCLUDED.return_room_id,created_at=EXCLUDED.created_at,
          commander_id=EXCLUDED.commander_id,message_id=EXCLUDED.message_id`,
-      [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, member.kind === 'human' ? reportId : null]);
+      [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, reportMessageId]);
     }
   }
   return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true,

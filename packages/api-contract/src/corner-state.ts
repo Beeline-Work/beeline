@@ -91,9 +91,7 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const started = facts.ciStartedAt ?? lifecycle?.checksSummary?.updatedAt;
   if (checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle)) &&
       started !== undefined && now - started < 30 * 60) {
-    const url = lifecycle?.checksSummary?.checks.find(check => check.status === 'pending' && check.url)?.url
-      ?? (lifecycle?.pr?.url ? `${lifecycle.pr.url}/checks` : undefined);
-    return { state: 'waiting', ...(url ? { blocker: { kind: 'ci', url } } : {}) };
+    return { state: 'review' };
   }
   if (checks !== 'failing' && facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
     return { state: 'working' };

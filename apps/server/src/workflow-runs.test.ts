@@ -154,8 +154,8 @@ async function commandFor(agentId: string, sourceMessageId?: string): Promise<Co
   return command;
 }
 
-/** Archiving is workspace-admin-only: run it from a human Workspace owner's message. */
-async function adminArchiveCommand(): Promise<CommandRow> {
+/** Editing or archiving a saved workflow is workspace-admin-only: run it from a human Workspace owner's message. */
+async function adminCommand(): Promise<CommandRow> {
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')
      ON CONFLICT DO NOTHING`,
@@ -254,7 +254,10 @@ describe('save_workflow', () => {
     );
     expect(row.rows[0]).toEqual({ kind: 'workflow', state: 'active', current_version: 1 });
     const changed = { ...CONTRACT, description: 'Updated description' };
-    const second = await saveWorkflow(database, command, { contract: describedWorkflow(changed)});
+    // Changing a saved workflow is a Workspace admin's call, not its saving agent's.
+    await expect(saveWorkflow(database, command, { contract: describedWorkflow(changed)})).rejects.toThrow('workspace admins only');
+    expect((await database.query(`SELECT current_version FROM workspace_skills WHERE workspace_id=$1 AND slug='corner'`, [WORKSPACE])).rows[0]).toEqual({ current_version: 1 });
+    const second = await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow(changed)});
     expect(second).toEqual({ slug: 'corner', version: 2 });
   });
 
@@ -1514,7 +1517,7 @@ describe('archive_workflow', () => {
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
     // Its saving agent may not archive it; a Workspace admin may.
     await expect(archiveWorkflow(database, command, { name: 'corner' })).rejects.toThrow('workspace admins only');
-    const archived = await archiveWorkflow(database, await adminArchiveCommand(), { name: 'corner' });
+    const archived = await archiveWorkflow(database, await adminCommand(), { name: 'corner' });
     expect(archived).toEqual({ slug: 'corner', archived: true });
     await expect(
       startWorkflow(database, command, {
@@ -1527,7 +1530,7 @@ describe('archive_workflow', () => {
   it('keeps a run in flight on its pinned version after the workflow is archived', async () => {
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER);
-    await archiveWorkflow(database, await adminArchiveCommand(), { name: 'corner' });
+    await archiveWorkflow(database, await adminCommand(), { name: 'corner' });
     const result = await handoff(database, command, {
       runId,
       outcome: 'pushed',
@@ -2161,8 +2164,8 @@ describe('agent workflow run reads and cancellation', () => {
   it('reads the pinned contract, current holder, requirements and complete history after an edit and archive', async () => {
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER);
-    await saveWorkflow(database, command, { contract: describedWorkflow({ ...CONTRACT, description: 'New definition' })});
-    await archiveWorkflow(database, await adminArchiveCommand(), { name: 'corner' });
+    await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow({ ...CONTRACT, description: 'New definition' })});
+    await archiveWorkflow(database, await adminCommand(), { name: 'corner' });
     expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({
       runId, workflowSlug: 'corner', workflowVersion: 1, state: 'implement', status: 'live',
       role: 'implementer', boundAgentId: IMPLEMENTER, requiredFields: ['summary', 'prUrl'],
@@ -3307,7 +3310,7 @@ describe('legacy run timer recovery', () => {
     const gateTimer = (await timersFor(runId))[1]!;
     await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [runId]);
     await database.query(`UPDATE messages SET created_at=now()-interval '1 hour',card=card-'deadlineSeconds' WHERE id=$1`, [runId]);
-    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow({ ...GATED, deadlineSeconds: 14_400 }) });
+    await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow({ ...GATED, deadlineSeconds: 14_400 }) });
     const versions = (await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows;
     const recorded = new RecordingDatabase(database);
     expect(await backfillWorkflowRunTimers(recorded)).toBe(1);

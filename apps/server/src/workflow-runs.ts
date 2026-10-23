@@ -1811,6 +1811,21 @@ export async function saveWorkflow(
     );
     if (!member.rowCount)
       throw new Error('workflow saver must be a current agent member of this Room');
+    // Anyone may save a new workflow, or save an active one unchanged.
+    // Changing or reviving an existing saved workflow changes it for the whole
+    // Workspace, so only a human Workspace admin may.
+    const existing = (await db.query<{ unchanged: boolean }>(
+      `SELECT skill.state='active' AND version.markdown=$3 unchanged
+       FROM workspace_skills skill
+       LEFT JOIN workspace_skill_versions version ON version.skill_id=skill.id
+         AND version.version=skill.current_version
+       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
+       FOR UPDATE OF skill`,
+      [room.workspace_id, contract.name, markdown],
+    )).rows[0];
+    if (existing && !existing.unchanged
+      && !(await humanRoomAdmin(db, command.room_id, await workflowRequester(db, command))))
+      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can change this saved workflow', 403);
     const { skillId, version } = await applySkillRevision(
       db,
       {

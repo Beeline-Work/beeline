@@ -10,7 +10,7 @@ A run heals itself without a person stepping in: an agent that goes silent loses
 
 | Tool | What it does |
 | --- | --- |
-| `app_tool workflow save` | Validates a contract and saves it Workspace-wide, versioned by `name`. Saving the same name again makes a new version. |
+| `app_tool workflow save` | Validates a contract and saves it Workspace-wide, versioned by `name`. Saving the same name again makes a new version; changing an existing saved workflow needs a workspace admin as the requester. |
 | `app_tool workflow start` | Starts a run of a saved workflow in this Room. You bind every role, and it returns a `runId`. Refused while another run of the same workflow is live in this Room. |
 | `app_tool workflow read` | Reads a run by `runId`, including its current state, requirements, history and pinned contract. |
 | `app_tool workflow advance` | Moves a run you hold to its next state. You give an `outcome`, the `contents` the state requires, and the `attempt` your wake names. Outcome `blocked` hands the step to the next agent on its role list. |

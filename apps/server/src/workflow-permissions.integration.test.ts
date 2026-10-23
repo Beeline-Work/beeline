@@ -76,15 +76,18 @@ async function turn(actor: string, agent = SAVER, roomId = ROOM) {
 async function savedWorkflow(actor = REQUESTER) {
   const context = await turn(actor);
   const name = `proof-${randomUUID()}`;
-  const contract = { version: 1, name, description: 'Workflow permissions proof', summary: 'Check workflow control authority',
+  const saved = await call(SAVER, 'saveWorkflow', { ...context, contract: proofContract(name) });
+  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  return { context, name };
+}
+
+function proofContract(name: string, description = 'Workflow permissions proof') {
+  return { version: 1, name, description, summary: 'Check workflow control authority',
     roles: ['worker'], start: 'work', handoffs: {
       work: { role: 'worker', does: 'Perform the work', timeoutSeconds: 3600, requires: [], on: { done: 'done', timeout: 'failed' } },
       done: { kind: 'terminal', status: 'done', does: 'Finish the run' },
       failed: { kind: 'terminal', status: 'failed', does: 'End an expired run' },
     } };
-  const saved = await call(SAVER, 'saveWorkflow', { ...context, contract });
-  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
-  return { context, name };
 }
 
 async function runSnapshot(runId: string) {
@@ -161,6 +164,24 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
     const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(ROOM_ADMIN, DELEGATE), name });
     expect(archived.status).toBe(403);
     expect((await db.query(`SELECT state FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.state).toBe('active');
+  });
+
+  it('lets only a Workspace admin change a saved workflow through the authenticated save path', async () => {
+    const { name } = await savedWorkflow();
+    const version = async () => (await db.query<{ current_version: number }>(
+      `SELECT current_version FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.current_version;
+    for (const actor of [REQUESTER, ROLE_OWNER, ROOM_ADMIN]) {
+      const refused = await call(SAVER, 'saveWorkflow', { ...await turn(actor), contract: proofContract(name, `Edited by ${actor.slice(0, 4)}`) });
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(refused.body)).toContain('workspace admins only');
+      expect(await version()).toBe(1);
+    }
+    // Saving it unchanged is not an edit.
+    expect((await call(SAVER, 'saveWorkflow', { ...await turn(REQUESTER), contract: proofContract(name) })).status).toBe(200);
+    const edited = await call(SAVER, 'saveWorkflow', { ...await turn(WORKSPACE_ADMIN), contract: proofContract(name, 'Edited by an admin') });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect(edited.body).toMatchObject({ slug: name });
+    expect(await version()).toBeGreaterThan(1);
   });
 
   it('allows the owner of an unselected list member to reassign, just as cancel does', async () => {

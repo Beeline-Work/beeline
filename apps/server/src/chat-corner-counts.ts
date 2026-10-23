@@ -123,17 +123,23 @@ export function cornerFactsSql(viewerExpr: string): {
   };
 }
 
-/** Worker and reviewer activity from their complete command queues and running receipts. */
+/** A running turn retains the review role recorded by its dispatch. */
 export function cornerWorkSql(): string {
+  const reviewerTurn = `(t.agent_id=ANY(array_remove(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids,NULL))
+    OR EXISTS(SELECT 1 FROM agent_commands dispatched
+      LEFT JOIN messages source ON source.id=dispatched.source_message_id
+      WHERE dispatched.room_id=t.room_id AND dispatched.agent_id=t.agent_id
+        AND dispatched.turn_request_id=t.request_id
+        AND (dispatched.reason='corner_review_dispatch'
+          OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'
+            AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'))))`;
   return `LEFT JOIN rooms parent ON parent.id=c.parent_id
     LEFT JOIN LATERAL (SELECT
       EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
         AND ((COALESCE(t.generation_id,'') LIKE 'pending:%' AND t.created_at>now()-interval '30 seconds')
-          OR (COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
-            AND NOT(t.agent_id=ANY(array_remove(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids,NULL)))))) worker_active,
+          OR (COALESCE(t.generation_id,'') NOT LIKE 'pending:%' AND NOT ${reviewerTurn}))) worker_active,
       EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
-        AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
-        AND t.agent_id=ANY(array_remove(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids,NULL))) reviewer_active
+        AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%' AND ${reviewerTurn}) reviewer_active
     ) activity ON true`;
 }
 

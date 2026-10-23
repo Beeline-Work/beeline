@@ -343,3 +343,27 @@ it('recovers and fires the stuck CI deadline without a repeating timer', async (
     vi.useRealTimers();
   }
 });
+
+it('Reproduction CORNER-REVIEW-ROLE: a dispatched reviewer stays Review after Room settings change until its turn ends', async () => {
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    [C,JSON.stringify({lifecycle:'in-review',checks:'passing',pr:{headSha:'review-head'}})]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+    VALUES('review-source',$1,$2,'Review requested','system',$3::jsonb)`,
+    [C,COMMANDER,JSON.stringify({kind:'check-passed',object:{headSha:'review-head'}})]);
+  const dispatch=await createAgentCommand(db,{id:'review-dispatch',roomId:C,agentId:REVIEWER,
+    sourceMessageId:'review-source',reason:'corner_review_dispatch'});
+  expect(dispatch).toBeTruthy();
+  const serviceStates=async()=>[await state(),(await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state];
+  // A queued dispatch is not an active reviewer turn.
+  expect(await serviceStates()).toEqual(['working','working']);
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:dispatch!.id,generationId:'review-proof'},REVIEWER);
+  expect(await serviceStates()).toEqual(['review','review']);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`,[ROOM]);
+  expect(await serviceStates()).toEqual(['review','review']);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await end(REVIEWER,40);
+  // Its still-claimed command cannot preserve Review after the terminal receipt.
+  expect(await serviceStates()).toEqual(['idle','idle']);
+  console.info('Demonstrated CORNER-REVIEW-ROLE: getCornerRestoreState and PhoneService.readCorners preserve Review across reviewer settings changes, then leave Review on turn completion');
+});

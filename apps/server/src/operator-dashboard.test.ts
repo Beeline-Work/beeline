@@ -757,3 +757,189 @@ describe('Eastern Usage dates (Reproduction EASTERN-1)', () => {
     expect(wau.data.daily.at(-1)).toEqual({date: today, value: 2});
   });
 });
+
+it('R-periods: serves distinct activity, four signup funnels and one platform per person over HTTP', async () => {
+  const now = new Date();
+  for (const [index, age] of [0.5, 3, 14, 40].entries()) {
+    const human = `c${index.toString(16).padStart(63, '0')}`,
+      agent = `d${index.toString(16).padStart(63, '0')}`;
+    const created = new Date(now.getTime() - age * 86400000).toISOString();
+    await db.query(
+      `INSERT INTO identities(id,kind,name,created_at) VALUES($1,'human','Customer',$3),($2,'agent','Helper',$3)`,
+      [human, agent, created],
+    );
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [
+      workspace,
+      human,
+    ]);
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'hello',$4)`,
+      [`period-first-${index}`, room, human, created],
+    );
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'reply',$4::timestamptz+interval '1 minute')`,
+      [`period-reply-${index}`, room, agent, created],
+    );
+  }
+  // The same person contributes to several daily buckets but only one headline.
+  for (const age of [1, 2, 3])
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,'c000000000000000000000000000000000000000000000000000000000000000','again',$3)`,
+      [`repeat-${age}`, room, new Date(now.getTime() - age * 86400000).toISOString()],
+    );
+  await db.query(
+    `INSERT INTO push_devices(token,identity_id,platform,environment,updated_at) VALUES('period-ios','c000000000000000000000000000000000000000000000000000000000000000','ios','physical',now()-interval '1 day')`,
+  );
+  await db.query(
+    `INSERT INTO device_update_receipts(identity_id,device_id,receipt,reported_at) VALUES('c000000000000000000000000000000000000000000000000000000000000000','newest','{"platform":"web"}',now())`,
+  );
+  const response = await get();
+  expect(response.status).toBe(200);
+  const body = await response.json();
+  expect(body.platforms).toEqual(['ios', 'android', 'web', 'macos', 'windows', 'linux']);
+  for (const [key, count] of Object.entries({
+    '24h': 1,
+    '7d': 2,
+    '28d': 3,
+    all: 4,
+  })) {
+    const period = body.periods[key];
+    expect(period.active.people).toBe(count);
+    expect(period.growth.newPeople).toBe(count);
+    expect(period.funnel.steps.slice(0, 4).map((s: { count: number }) => s.count)).toEqual([
+      count,
+      count,
+      count,
+      count,
+    ]);
+    const counts = period.funnel.steps.map((s: { count: number }) => s.count);
+    expect(counts.every((n: number, i: number) => i === 0 || n <= counts[i - 1])).toBe(true);
+    expect(period.active.series.length).toBeGreaterThan(0);
+  }
+  expect(
+    body.periods['7d'].active.series.reduce(
+      (sum: number, p: { value: number }) => sum + p.value,
+      0,
+    ),
+  ).toBeGreaterThan(2);
+  expect(body.periods['24h'].funnel.biggestDrop).toBeNull();
+  expect(body.platformBreakdown).toEqual({
+    basis: 'last_device',
+    counts: [
+      { platform: 'unknown', people: 3 },
+      { platform: 'web', people: 1 },
+    ],
+  });
+});
+
+it('keeps period funnels conditional and excludes internal, hidden and review activity', async () => {
+  const person = 'e'.repeat(64),
+    hidden = 'f'.repeat(64);
+  await db.query(
+    `INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human','Customer',false),($2,'human','Hidden',true),($3,'human','Review',false) ON CONFLICT DO NOTHING`,
+    [person, hidden, REVIEW_IDENTITY_ID],
+  );
+  await db.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role,removed_at) VALUES($1,$2,'member',now())`,
+    [workspace, person],
+  );
+  for (const id of [person, hidden, REVIEW_IDENTITY_ID])
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'hello')`, [
+      `excluded-${id}`,
+      room,
+      id,
+    ]);
+  const body = await (await get()).json();
+  expect(body.periods['24h'].active.people).toBe(1);
+  expect(body.periods['24h'].funnel.steps.map((s: { count: number }) => s.count)).toEqual([
+    1, 0, 0, 0, 0,
+  ]);
+  expect(body.periods['24h'].funnel.biggestDrop).toEqual({
+    key: 'joined_workspace',
+    lost: 1,
+  });
+  expect(body.platformBreakdown.counts).toEqual([{ platform: 'unknown', people: 1 }]);
+  await db.query(`UPDATE workspaces SET internal=true WHERE id=$1`, [workspace]);
+  const internal = await (await get()).json();
+  expect(internal.periods.all.active.people).toBe(0);
+  expect(internal.periods.all.growth.newPeople).toBe(0);
+  expect(internal.platformBreakdown.counts).toEqual([]);
+});
+
+it.each(['2026-03-09T12:30:00Z', '2026-11-02T12:30:00Z'])(
+  'uses Eastern midnight across DST for period charts at %s',
+  async (measuredAt) => {
+    const { dashboardPeriods } = await import('./operator-dashboard-periods.js');
+    const person = 'e'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name,created_at) VALUES($1,'human','Customer',$2::timestamptz-interval '5 days')`,
+      [person, measuredAt],
+    );
+    const periods = await dashboardPeriods(db, measuredAt);
+    const daily = periods['7d']!.active.series as {
+      start: string;
+      value: number;
+    }[];
+    const intervals = daily
+      .slice(1)
+      .map((p, i) => (Date.parse(p.start) - Date.parse(daily[i]!.start)) / 3600000);
+    expect(intervals).toContain(measuredAt.includes('03-') ? 23 : 25);
+    expect(intervals.every((n) => [23, 24, 25].includes(n))).toBe(true);
+    expect((periods['24h']!.active.series as unknown[]).length).toBe(25);
+  },
+);
+
+it('clips rolling period buckets at the exact window and measurement boundaries', async () => {
+  const { dashboardPeriods } = await import('./operator-dashboard-periods.js');
+  const measuredAt = '2026-10-23T19:15:00Z';
+  const person = 'e'.repeat(64);
+  await db.query(
+    `INSERT INTO identities(id,kind,name,created_at) VALUES($1,'human','Customer','2026-10-01')`,
+    [person],
+  );
+  for (const [index, at] of [
+    '2026-10-22T19:14:59Z',
+    '2026-10-22T19:15:00Z',
+    '2026-10-23T19:14:59Z',
+    '2026-10-23T19:15:00Z',
+  ].entries()) {
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'hello',$4)`,
+      [`edge-${index}`, room, person, at],
+    );
+  }
+  const periods = await dashboardPeriods(db, measuredAt);
+  expect(periods['24h']!.active.people).toBe(1);
+  expect(periods['24h']!.active.messages).toBe(2);
+  expect(periods['24h']!.growth.newPeople).toBe(0);
+  const series = periods['24h']!.active.series as { start: string; value: number }[];
+  expect(Date.parse(series[0]!.start)).toBe(Date.parse('2026-10-22T19:00:00Z'));
+  expect(series[0]!.value).toBe(1);
+  expect(series.at(-1)!.value).toBe(1);
+});
+
+it('requires an owned agent reply strictly after the first retained production message', async () => {
+  const human = 'e'.repeat(64),
+    agent = 'd'.repeat(64);
+  await db.query(
+    `INSERT INTO identities(id,kind,name,created_at) VALUES($1,'human','Customer',now()-interval '10 days'),($2,'agent','Helper',now()-interval '10 days')`,
+    [human, agent],
+  );
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+  await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`, [
+    workspace,
+    human,
+  ]);
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES('sequence-human',$1,$2,'hello',now()-interval '2 days'),('sequence-agent',$1,$3,'early',now()-interval '3 days')`,
+    [room, human, agent],
+  );
+  const counts = async () =>
+    (await (await get()).json()).periods['28d'].funnel.steps.map((s: { count: number }) => s.count);
+  expect(await counts()).toEqual([1, 1, 1, 0, 0]);
+  await db.query(`UPDATE messages SET created_at=now()-interval '1 day' WHERE id='sequence-agent'`);
+  expect(await counts()).toEqual([1, 1, 1, 1, 1]);
+  await db.query(`UPDATE messages SET deleted_at=now() WHERE id='sequence-agent'`);
+  expect(await counts()).toEqual([1, 1, 1, 0, 0]);
+});

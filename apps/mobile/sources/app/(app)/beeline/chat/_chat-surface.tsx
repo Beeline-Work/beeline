@@ -37,7 +37,6 @@ import {
   type ViewProps,
   type ViewToken,
 } from 'react-native';
-import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -783,7 +782,7 @@ export function BuzzChatSurface({
       setPushMuteWorking(false);
     }
   };
-  const isFocused = useIsFocused();
+  const isFocused = useCallback(() => navigation.isFocused(), [navigation]);
   useFocusEffect(
     useCallback(() => {
       pushOpenBuzzChannelId(decodedId || null);
@@ -1193,7 +1192,7 @@ export function BuzzChatSurface({
     [workspaceChatList],
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
-  const { captureSend: captureUntaggedSend, hintMessageIds } = useUntaggedMessageHints({
+  const { captureSend: captureUntaggedSend, hintMessageIds, endVisit: endUntaggedHintVisit } = useUntaggedMessageHints({
     roomId: decodedId,
     viewerPubkey: userPubkey,
     active: isFocused,
@@ -1201,6 +1200,7 @@ export function BuzzChatSurface({
     isDirectMessage,
     hasAgentMembers: Boolean(roomSurface?.members.some(member => member.identity.kind === 'agent')),
   });
+  useFocusEffect(useCallback(() => () => endUntaggedHintVisit(), [endUntaggedHintVisit]));
   const roomVoiceAgents = useMemo(() => roomSurface?.members
     .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !isCorner), roomVoiceAgents);
@@ -1319,32 +1319,32 @@ export function BuzzChatSurface({
     [commitDesktopWorkPane, desktopWorkPanePrimary],
   );
   // Background stack screens stay mounted, so only the focused one listens.
-  useEffect(() => {
-    if (!desktopExperience || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (!desktopExperience || !isFocused()) return;
     return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
       if (roomId !== desktopWorkRoomId) return false;
       openDesktopCorner(roomId, cornerId);
       return true;
     });
-  }, [desktopExperience, desktopWorkRoomId, isFocused, openDesktopCorner]);
+  }, [desktopExperience, desktopWorkRoomId, isFocused, openDesktopCorner]));
   // The work pane and the Room route are siblings, so an artifact Open press
   // arrives as a module event. It replaces whatever the pane showed. When the
   // pane cannot take it, the card opens the full-screen viewer instead.
-  useEffect(() => {
-    if (!desktopExperience || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (!desktopExperience || !isFocused()) return;
     return subscribeDesktopArtifact(
       (artifact) =>
         commitDesktopWorkPane({ type: 'open-artifact', artifact, primary: desktopWorkPanePrimary })
           .placement === 'pane',
     );
-  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
-  useEffect(() => {
-    if (!desktopExperience || !isFocused) return;
+  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]));
+  useFocusEffect(useCallback(() => {
+    if (!desktopExperience || !isFocused()) return;
     return subscribeDesktopComputer((session) =>
       commitDesktopWorkPane({ type: 'open-computer', session, primary: desktopWorkPanePrimary })
         .placement === 'pane',
     );
-  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
+  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]));
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
   const openingChannelReferenceRef = useRef<string | null>(null);
@@ -2218,14 +2218,14 @@ export function BuzzChatSurface({
     return `${artifacts}:${thumbs}`;
   }, [roomSurface?.messages]);
   const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const humanUi = roomSurface?.boundApp?.manifest.humanUi;
-    if (!isFocused || !isCorner || !humanUi) return;
+    if (!isFocused() || !isCorner || !humanUi) return;
     router.replace({
       pathname: '/beeline/corner-app/[slug]',
       params: { slug: roomSurface.boundApp!.manifest.slug, roomId: decodedId },
     } as Href);
-  }, [decodedId, isCorner, isFocused, roomSurface?.boundApp]);
+  }, [decodedId, isCorner, isFocused, roomSurface?.boundApp]));
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
   // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain
@@ -3032,8 +3032,8 @@ export function BuzzChatSurface({
   // fetched tail must never be read over messages sitting below the fold. A
   // reader in history, a landing in progress, or a provisional draft/live lane
   // all write nothing.
-  useEffect(() => {
-    if (anchoredSegmentActive || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (anchoredSegmentActive || !isFocused()) return;
     const chronological = chronologicalMessagesRef.current;
     const report = pinnedTailReadReport(chronological, {
       pinnedToTail: scrollController.isPinnedToTail(),
@@ -3049,7 +3049,7 @@ export function BuzzChatSurface({
     newMessageHasObservedVisibility,
     newestTranscriptMessageId,
     scrollController,
-  ]);
+  ]));
   // Back from the code reader: center the row the reader opened it from.
   const scrollToArtifactOrigin = useCallback(
     (index: number) => {
@@ -4273,15 +4273,15 @@ export function BuzzChatSurface({
 
   // Fill modals render outside the Room tree. Give the viewer the Room's live
   // messages and its signed/outbox-backed send path without a second socket.
-  useEffect(() => {
-    if (!roomSurface || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (!roomSurface || !isFocused()) return;
     publishViewerConversation({
       roomId: decodedId,
       messages: roomSurface.messages,
       send: (message, dictated) => handleSend({ text: message.text, viewer: message }, dictated).then(Boolean),
     });
     return () => removeViewerConversation(decodedId);
-  }, [decodedId, handleSend, isFocused, roomSurface]);
+  }, [decodedId, handleSend, isFocused, roomSurface]));
 
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {

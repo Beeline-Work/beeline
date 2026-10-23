@@ -460,12 +460,14 @@ export function useRoomSurfaceSession({
   // So: arriving re-arms, leaving publishes what was seen. A debounce still
   // holding a boundary when the visit ends is not less read for it.
   useEffect(() => {
+    liveDraftDrainStore.setActive(isFocused);
     if (isFocused) {
       readCursorRef.current?.resume();
+      schedulerRef.current?.signal();
       return;
     }
     readCursorRef.current?.flush();
-  }, [isFocused]);
+  }, [isFocused, liveDraftDrainStore]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') readCursorRef.current?.flush();
@@ -577,9 +579,11 @@ export function useRoomSurfaceSession({
     [],
   );
 
+  // Focus starts a session once. A covered native-stack route retains its
+  // transcript and transport; focus alone never tears them down or rebuilds them.
+  const sessionActivated = isFocused || sessionStartedRef.current;
   useEffect(() => {
-    if (!channelId) return;
-    if (!isFocused) return;
+    if (!channelId || !sessionActivated) return;
     isCornerRef.current = false;
     setFirstUnreadMessageId(null);
     liveDraftDrainStore.setActive(true);
@@ -590,7 +594,7 @@ export function useRoomSurfaceSession({
     // A backgrounded app reads nothing: returning to the foreground replaces
     // the socket, and that resubscribe's `subscribed` frame is the covering read.
     const visibleScheduler = () =>
-      AppState.currentState === 'background' || AppState.currentState === 'inactive' ? undefined : scheduler;
+      !isFocusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive' ? undefined : scheduler;
     // Any frame on this watch since the last applied read. A read that finds a
     // newer message while the socket stayed silent proves the socket missed it.
     let heardSinceRead = false;
@@ -1384,7 +1388,7 @@ export function useRoomSurfaceSession({
     hydrationAttempt,
     markFailed,
     notificationResponseId,
-    isFocused,
+    sessionActivated,
   ]);
 
   const outbox = useMemo<RoomSurfaceOutboxHandle>(
@@ -1397,6 +1401,8 @@ export function useRoomSurfaceSession({
     }),
     [dismissOutbox, failedIds, markFailed, retryOutbox],
   );
+
+  const retryHydration = useCallback(() => setHydrationAttempt((attempt) => attempt + 1), []);
 
   return {
     transport,
@@ -1424,7 +1430,7 @@ export function useRoomSurfaceSession({
     setPresenceNow,
     hydrationFailed,
     hydrationError,
-    retryHydration: () => setHydrationAttempt((attempt) => attempt + 1),
+    retryHydration,
     refreshSignal,
     outbox,
   };

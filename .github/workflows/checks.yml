@@ -403,6 +403,12 @@ jobs:
           npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx'
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
+      - name: Protect Room navigation responsiveness
+        run: >-
+          npm test --prefix apps/mobile -- --run
+          sources/buzz/transition-work.test.ts
+          sources/buzz/surface-registry.test.ts
+          'sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts'
 
   dead-code:
     name: DEAD CODE

@@ -13,7 +13,7 @@ export function useUntaggedMessageHints({
   viewerKind?: 'human' | 'agent';
   hasAgentMembers: boolean;
   isDirectMessage?: boolean;
-  active?: boolean;
+  active?: boolean | (() => boolean);
 }) {
   const enabled = viewerKind === 'human' && hasAgentMembers && !isDirectMessage;
   const session = useMemo(() => ({}), [roomId, viewerPubkey, enabled, active]);
@@ -40,28 +40,36 @@ export function useUntaggedMessageHints({
 
   // Capture before awaiting the send. A receipt arriving after navigation must
   // not put a hint back into a conversation the sender already left.
-  const captureSend = useCallback((hasMentions: boolean) => (messageId: string) => {
-    if (!enabled || !active || currentSession.current !== session) return;
-    if (hasMentions) {
-      hintGeneration.current += 1;
-      ready.current = null;
-      void retireUntaggedHints(viewerPubkey);
-      setHints({ session, ids: NO_HINTS });
-      return;
-    }
-    if (ready.current !== session || recorded.has(messageId)) return;
-    recorded.add(messageId);
-    const generation = hintGeneration.current;
-    void reserveUntaggedHint(viewerPubkey).then(allowed => {
-      if (!allowed || currentSession.current !== session || hintGeneration.current !== generation) return;
-      setHints(previous => ({ session, ids: new Set([
-        ...(previous?.session === session ? previous.ids : []), messageId,
-      ]) }));
-    });
+  const captureSend = useCallback((hasMentions: boolean) => {
+    const visitGeneration = hintGeneration.current;
+    return (messageId: string) => {
+      if (hintGeneration.current !== visitGeneration || !enabled || !(typeof active === 'function' ? active() : active) || currentSession.current !== session) return;
+      if (hasMentions) {
+        hintGeneration.current += 1;
+        ready.current = null;
+        void retireUntaggedHints(viewerPubkey);
+        setHints({ session, ids: NO_HINTS });
+        return;
+      }
+      if (ready.current !== session || recorded.has(messageId)) return;
+      recorded.add(messageId);
+      const generation = hintGeneration.current;
+      void reserveUntaggedHint(viewerPubkey).then(allowed => {
+        if (!allowed || !(typeof active === 'function' ? active() : active) || currentSession.current !== session || hintGeneration.current !== generation) return;
+        setHints(previous => ({ session, ids: new Set([
+          ...(previous?.session === session ? previous.ids : []), messageId,
+        ]) }));
+      });
+    };
   }, [active, enabled, session, recorded, viewerPubkey]);
+  const endVisit = useCallback(() => {
+    hintGeneration.current += 1;
+    setHints(undefined);
+  }, []);
 
   return {
     captureSend,
-    hintMessageIds: enabled && active && hints?.session === session ? hints.ids : NO_HINTS,
+    endVisit,
+    hintMessageIds: enabled && (typeof active === 'function' ? active() : active) && hints?.session === session ? hints.ids : NO_HINTS,
   };
 }

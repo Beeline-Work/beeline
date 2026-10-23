@@ -11,6 +11,7 @@ import { selectIdentities } from './identity-records';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 import { SurfaceRegistry } from './surface-registry';
+import { roomTransitionWork } from './room-transition-work';
 import { webRuntimeStorage } from '@/utils/web-storage';
 
 const web = webRuntimeStorage();
@@ -46,7 +47,8 @@ const durableSurfaceCache = new SurfaceResponseCache(
   stripRetiredAgentNotices,
 );
 export const mobileSurfaceCache = new SurfaceRegistry(
-  durableSurfaceCache, stripRetiredAgentNotices, selectIdentities);
+  durableSurfaceCache, stripRetiredAgentNotices, selectIdentities,
+  (key, work) => roomTransitionWork.enqueue(key, work));
 
 function storedValue(encoded: string | null): unknown {
   if (encoded === null) return undefined;

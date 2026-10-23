@@ -57,3 +57,22 @@ The always-running `SHARED PACKAGE TESTS` job now runs deterministic Room transi
 [baseline-test-results.txt](baseline-test-results.txt) records five navigation/storage regressions and eight overlay regressions failing on current main. The fixed focused mobile suite passes 99 checks; the shared client suite passes 150. Root typecheck, workflow-path checks, dead-code baseline and the desktop Rust library check pass. Browser notification-landing, offline/retry, schedules, wallet and workspace paths were rerun after correcting native-boundary mocks and a concurrent shared-output rebuild.
 
 The exploratory whole-mobile run was not green. Its affected regressions were fixed and rerun; the native fingerprint end-to-end check still fails locally on both this tree and an isolated main copy. Runtime pins and native fingerprint records were not changed. Live GitHub checks remain the merge authority.
+
+### Review follow-up: background during a corner transition
+
+R1 background-save variant: receive a canonical message delta, start pushing a
+corner before the cache debounce expires, then background or inactivate the app
+without advancing timers. The pending timer was outside the transition queue,
+so the original PR head (`3280ff3a4`) did not save the latest message. Both new
+regressions failed there (expected one save, observed zero).
+
+The session now cancels that timer and writes its latest reconciled Room response
+on either lifecycle event. The deterministic route/session regression observes
+one save containing the new message before advancing timers, no duplicate after
+the debounce interval, and no remaining lifecycle listener after unmount. It is
+in the existing always-on responsiveness test file. The focused suite passes
+(84 tests), and root typecheck passes.
+
+This follow-up uses the exact lifecycle path in the mounted route harness; it
+was not rebuilt or measured on Android. The Android timing table above describes
+the earlier measured build and is unchanged.

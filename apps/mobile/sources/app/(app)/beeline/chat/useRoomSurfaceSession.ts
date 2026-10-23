@@ -786,15 +786,23 @@ export function useRoomSurfaceSession({
 
     // Live deltas reach disk too, so a cold open never paints a tail older
     // than what this screen last showed. One write per burst of deltas.
+    const flushCacheWrite = () => {
+      if (!cacheWriteTimer) return;
+      clearTimeout(cacheWriteTimer);
+      cacheWriteTimer = undefined;
+      const view = reconciledViewRef.current;
+      if (cancelled || !view || !cacheAddress) return;
+      void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
+    };
     const scheduleCacheWrite = () => {
       if (cacheWriteTimer || !cacheAddress) return;
-      cacheWriteTimer = setTimeout(() => {
-        cacheWriteTimer = undefined;
-        const view = reconciledViewRef.current;
-        if (cancelled || !view || !cacheAddress) return;
-        void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
-      }, LIVE_CACHE_WRITE_DELAY_MS);
+      cacheWriteTimer = setTimeout(flushCacheWrite, LIVE_CACHE_WRITE_DELAY_MS);
     };
+    // A retained Room can still have a debounce pending while a corner opens.
+    // Enter the storage queue before the app suspends; background writes flush it.
+    const cacheAppStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') flushCacheWrite();
+    });
     scheduleCacheWriteRef.current = scheduleCacheWrite;
 
     const applyView = (
@@ -1360,11 +1368,8 @@ export function useRoomSurfaceSession({
 
     return () => {
       stopOpeningResponse();
-      if (cacheWriteTimer) {
-        clearTimeout(cacheWriteTimer);
-        const view = reconciledViewRef.current;
-        if (view && cacheAddress) void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
-      }
+      cacheAppStateSubscription.remove();
+      flushCacheWrite();
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
       watchGeneration += 1;

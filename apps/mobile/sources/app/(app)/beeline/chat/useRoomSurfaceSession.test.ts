@@ -46,6 +46,7 @@ const controls = vi.hoisted(() => ({
   transportCount: 0,
   reconnects: 0,
   appState: 'active' as string,
+  appStateListeners: new Set<(state: string) => void>(),
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   ensureClientPromise: null as Promise<void> | null,
@@ -67,7 +68,10 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 vi.mock('react-native', () => ({
   AppState: {
-    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    addEventListener: vi.fn((_event: string, listener: (state: string) => void) => {
+      controls.appStateListeners.add(listener);
+      return { remove: () => controls.appStateListeners.delete(listener) };
+    }),
     get currentState() {
       return controls.appState;
     },
@@ -574,6 +578,39 @@ describe('useRoomSurfaceSession', () => {
     expect(reset).toHaveBeenCalledTimes(resets);
     expect(controls.transportCount).toBe(transports);
     await act(async () => renderer.unmount());
+  });
+
+  it.each(['background', 'inactive'])('flushes a pending delta save on %s during a corner transition without advancing timers', async (state) => {
+    vi.useFakeTimers();
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
+    await flushEffects();
+    vi.mocked(mobileSurfaceCache.write).mockClear();
+    await act(async () => controls.subscriptions.at(-1)!.emit({ monolithLive: {
+      type: 'message-delta', roomId: 'room-a', message: {
+        id: 'before-background', roomId: 'room-a', text: 'latest committed arrival',
+        createdAt: 100, author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+        tags: [], attachments: [], reactions: [],
+      },
+    } } as MonolithSurfaceEvent));
+    await act(async () => {
+      controls.navigationListeners.get('transitionStart')?.forEach(listener => listener());
+      controls.focused = false;
+      controls.focusListeners.forEach(listener => listener());
+    });
+    expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
+    await act(async () => {
+      controls.appState = state;
+      controls.appStateListeners.forEach(listener => listener(state));
+    });
+    expect(mobileSurfaceCache.write).toHaveBeenCalledTimes(1);
+    const saved = vi.mocked(mobileSurfaceCache.write).mock.calls[0]![1] as RoomView;
+    expect(saved.messages.at(-1)?.id).toBe('before-background');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(mobileSurfaceCache.write).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+    expect(controls.appStateListeners.size).toBe(0);
   });
 
   it('does not save the Room during a corner push or pop', async () => {

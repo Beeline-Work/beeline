@@ -892,12 +892,13 @@ export class GitHubOperations {
       // registered status context can inherit the earlier empty rollup.
       const latestPr = await this.app.readPullRequest(target.token, target.repository, number);
       rollup = await this.app.readCommitCheckRollup(target.token, target.repository, pr.headSha);
-      zeroChecksConfirmed = absent && latestPr.headSha === pr.headSha && rollup.total === 0;
+      zeroChecksConfirmed = absent && !rollup.pendingRegistrations && latestPr.headSha === pr.headSha && rollup.total === 0;
     }
     // A completed worker handoff can establish that this head genuinely has no
     // checks. Before that point a null rollup is only the ordinary race between
     // opening a PR and GitHub registering its workflows, so it remains pending.
     const completedWithoutChecks =
+      !rollup.pendingRegistrations &&
       rollup.total === 0 &&
       corner.lifecycle.checks === 'passing' &&
       corner.lifecycle.checksSummary?.total === 0 &&

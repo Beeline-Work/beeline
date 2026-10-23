@@ -985,7 +985,9 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
         ? 'all recorded checks passed'
         : checks === 'failed'
           ? (tally ?? 'one or more recorded checks failed')
-          : (tally ?? 'recorded checks are still pending');
+          : checkCount !== 0 && checkStates?.pending === 0
+            ? `Checks are still pending for this head, including any queued or running workflows or suites${tally ? `; ${tally}` : ''}`
+            : (tally ?? 'recorded checks are still pending');
   const reviewer = typeof verdict?.reviewer === 'string' ? verdict.reviewer : null;
   const reviewerWake =
     verdict?.reviewerWake && typeof verdict.reviewerWake === 'object'

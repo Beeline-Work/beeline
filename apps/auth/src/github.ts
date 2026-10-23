@@ -320,6 +320,8 @@ export interface GitHubDispatchableWorkflow {
 export interface GitHubCheckRollup {
   readonly state: 'passed' | 'failed' | 'pending';
   readonly total: number;
+  /** Registered workflows or suites still running, even without contexts. */
+  readonly pendingRegistrations?: boolean;
   readonly failing: readonly string[];
   readonly checks: readonly {
     readonly name: string;
@@ -831,7 +833,10 @@ export class GitHubAppClient {
       Record<string, unknown> | undefined;
     if (object?.oid !== headSha) throw new Error('GitHub commit check rollup head mismatch');
     const rollup = object.statusCheckRollup as Record<string, unknown> | null | undefined;
-    if (!rollup) return { state: 'pending', total: 0, failing: [], checks: [] };
+    if (!rollup) return {
+      state: 'pending', total: 0, failing: [], checks: [],
+      pendingRegistrations: await this.hasUnfinishedChecks(accessToken, fullName, headSha),
+    };
     const state =
       rollup.state === 'SUCCESS'
         ? ('passed' as const)
@@ -875,12 +880,38 @@ export class GitHubAppClient {
         } as const,
       ];
     });
+    // A workflow or suite can be registered before it creates a check run.
+    // The rollup only covers existing contexts, so SUCCESS alone is insufficient.
+    const pending = await this.hasUnfinishedChecks(accessToken, fullName, headSha);
     return {
-      state,
+      state: pending ? 'pending' : state,
+      pendingRegistrations: pending,
       total: contexts.totalCount,
       failing: checks.filter((check) => check.status === 'failed').map((check) => check.name),
       checks,
     };
+  }
+
+  private async hasUnfinishedChecks(accessToken: string, fullName: string, headSha: string): Promise<boolean> {
+    const unfinished = async (path: string, key: string): Promise<boolean> => {
+      for (let page = 1; ; page++) {
+        const separator = path.includes('?') ? '&' : '?';
+        const body = await this.readRepositoryJson(
+          accessToken, fullName, `${path}${separator}per_page=100&page=${page}`,
+        );
+        const items = body[key];
+        if (!Array.isArray(items) || typeof body.total_count !== 'number' || !Number.isSafeInteger(body.total_count) || body.total_count < 0)
+          throw new Error('GitHub head check registration is invalid');
+        if (items.some(item => !item || typeof item.status !== 'string' || item.status !== 'completed')) return true;
+        if (page * 100 >= body.total_count) return false;
+        if (!items.length) throw new Error('GitHub head check registration is incomplete');
+      }
+    };
+    const [suites, workflows] = await Promise.all([
+      unfinished(`commits/${headSha}/check-suites`, 'check_suites'),
+      unfinished(`actions/runs?head_sha=${headSha}`, 'workflow_runs'),
+    ]);
+    return suites || workflows;
   }
 
   /** Empty rollups can precede registration; establish absence independently. */

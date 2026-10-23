@@ -71,6 +71,16 @@ afterEach(() => {
 const gateCalls = () => calls.filter((call) => call.name === 'getPrChecksStatus');
 
 describe('pr_checks_status PR selection and reviewer gate', () => {
+  it('Reproduction CHECK-HEAD-1: explains pending workflows despite green jobs and clears stale text on green', async () => {
+    restore = { lifecycle: { checks: 'pending', pr: { url } } };
+    checks = 'pending'; mergeAllowed = false;
+    checkTally = { checkCount: 1, checkStates: { passed: 1, pending: 0, failed: 0, unlisted: 0, pendingNames: [], failedNames: [] } };
+    const pending = JSON.parse(await prChecksStatus());
+    expect(pending.reason).toContain('queued or running workflows or suites');
+    checks = 'passed'; mergeAllowed = true;
+    expect(JSON.parse(await prChecksStatus())).toMatchObject({ checks: 'passed', reason: 'all recorded checks passed', mergeAllowed: true });
+  });
+
   it('Reproduction R-NOPR: continues work when no PR exists without adding a hold', async () => {
     restore = { objective: 'Investigate' };
     const status = JSON.parse(await callAgentTool('read', { facet: 'checks' }, 'r-nopr'));

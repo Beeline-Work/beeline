@@ -1187,6 +1187,26 @@ it('Reproduction STALE-1: drops a merge-conflict wake whose head moved before th
   console.log('Demonstrated Reproduction STALE-1: stale head A wake cancelled and refused; current dirty head B wake delivered exactly once');
 });
 
+it.each(['delivery', 'claim'])('Reproduction CHECK-HEAD-1: cancels a failed-check wake for the previous head at %s', async boundary => {
+  const oldHead = '1'.repeat(40), newHead = '2'.repeat(40);
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    JSON.stringify({ checks: 'failing', pr: { number: 41, headSha: oldHead } })]);
+  const line = await systemLine(db, { roomId: C, authorId: H,
+    subject: { kind: 'github', name: 'GitHub' }, verb: 'found failing checks on',
+    object: { text: 'pull request #41', headSha: oldHead } });
+  const queued = await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: line.id, reason: 'corner_check' });
+  expect(queued).toBeTruthy();
+  const [stale] = await commands(B, C);
+  expect(stale?.reason).toBe('corner_check');
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    JSON.stringify({ checks: 'passing', pr: { number: 41, headSha: newHead } })]);
+  if (boundary === 'delivery') expect(await commands(B, C)).toHaveLength(0);
+  await expect(claim(stale!)).rejects.toThrow();
+  // A rejected claim rolls back its transaction; delivery persists the cancellation.
+  expect(await commands(B, C)).toHaveLength(0);
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])).rows[0]?.state).toBe('cancelled');
+});
+
 it('keeps a failed-check wake retryable while its opener is unreachable', async () => {
   const headSha = '9'.repeat(40);
   await db.query(

@@ -1514,6 +1514,24 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
 });
 
 describe('re-runs and pushes out of review (AC-1)', () => {
+  it.each(['check-passed', 'check-failed'] as const)('Reproduction CHECK-HEAD-1: ignores an old-head %s wake even when its verdict matches the new head', async kind => {
+    const cornerId = await open('owner/widgets');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await pushToCorner(cornerId, SHA);
+    const checks = kind === 'check-passed' ? 'passing' : 'failing';
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId,
+      JSON.stringify({ checks, lifecycle: 'in-review', pr: { number: 7, headSha: SHA } })]);
+    const before = await cards(cornerId);
+    const beforeWorker = await commands(A, cornerId);
+    const beforeReviewer = await commands(B, cornerId);
+    await systemLine(db, { roomId: cornerId, authorId: H,
+      subject: { kind: 'github', name: 'GitHub' }, verb: 'reported checks on', kind,
+      object: { text: 'pull request #7', headSha: 'f'.repeat(40) } });
+    expect(await cards(cornerId)).toEqual(before);
+    expect(await commands(A, cornerId)).toEqual(beforeWorker);
+    expect(await commands(B, cornerId)).toEqual(beforeReviewer);
+  });
+
   it('a re-run after red checks goes implement -> checks, and its green reaches review', async () => {
     const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);

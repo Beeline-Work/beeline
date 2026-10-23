@@ -2,6 +2,7 @@ import { dashboardSigninFunnel } from './signin-funnel.js';
 import { dashboardDownloads } from './operator-dashboard-downloads.js';
 import type { SqlDatabase } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
+import { dashboardPeriods, dashboardPlatformBreakdown } from './operator-dashboard-periods.js';
 import { dashboardOverview } from './operator-dashboard-overview.js';
 
 export const DASHBOARD_PLATFORMS = ['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const;
@@ -563,6 +564,8 @@ export async function readOperatorDashboard(
     dashboardOps(database, measuredAt, releaseVersion, minRuntimes),
   ]);
   const overview = await dashboardOverview(database, platforms, measuredAt).catch(sectionError);
+  const periods = await dashboardPeriods(database, measuredAt).catch(sectionError);
+  const platformBreakdown = await dashboardPlatformBreakdown(database).catch(sectionError);
   const downloads = await dashboardDownloads(database, platforms, measuredAt).catch(sectionError);
   const signinFunnel =
     'from' in downloads
@@ -590,6 +593,8 @@ export async function readOperatorDashboard(
   };
   return {
     schemaVersion: 1,
+    periods,
+    platformBreakdown,
     downloads,
     signinFunnel,
     overview:

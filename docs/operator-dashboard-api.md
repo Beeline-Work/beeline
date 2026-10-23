@@ -312,3 +312,33 @@ new stages have null/unmeasured timing until a timing definition is approved.
 Server-only delivery precedes the frontend change in `Beeline-Work/beeline-dashboard`.
 The frontend must render these labels and stages with its existing bar style once
 repository App access is granted; that change and its screenshot are separate work.
+
+## Period-scoped people dashboard
+
+The additive `periods` object has `24h`, `7d`, `28d`, and `all` entries, independent
+of the legacy selected-platform filter. Headline activity counts distinct eligible
+humans and their retained ordinary messages in production Rooms. Growth counts
+eligible human signups and production Workspaces created in the window (including
+Workspaces without a current eligible human owner). It does not sum daily counts.
+
+Each entry supplies `active {people, messages, unit, series}`, `growth {newPeople,
+workspaces, series}`, and `funnel {steps, biggestDrop}`. Series points are
+`{start, value}`; activity values count distinct people in each bucket, while growth
+values count new people. The last 24 hours use UTC hour starts; rolling 168- and
+672-hour windows use Eastern day starts; all time starts at the earliest eligible
+signup and uses Eastern calendar weeks. Boundary buckets can be partial and zero
+buckets are included. Window ends are exclusive at `measuredAt`.
+
+The signup-window funnel is conditional: `signed_up`, `joined_workspace` (current
+active production Workspace membership), `first_message`, `agent_reply` (an owned
+agent's retained production-Room message strictly after the person's first such
+message), then `active_7d`. Milestones use retained history through measurement,
+with recent activity in the trailing 168 hours. Hidden or retired owned agents can
+still establish the person's reply milestone. Biggest drop uses the destination
+step key, prefers the later step on equal losses, and is null without any loss.
+
+`platformBreakdown {basis: "last_device", counts}` assigns every eligible human
+once to the latest push registration update or device update receipt. Unknown or
+missing platforms become `unknown`; exact observation-time ties use a stable
+source/device key. The original `platforms` array is unchanged. Failed period or
+platform reads return the existing unavailable-section shape rather than zeros.

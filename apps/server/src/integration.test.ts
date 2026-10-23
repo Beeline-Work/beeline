@@ -13326,7 +13326,7 @@ describe('monolith integration', () => {
        VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
       [WORKSPACE, memberId, ROOM],
     );
-    expect((await operation('listRoomWorkflows', { roomId: ROOM }, memberToken)).status).toBe(400);
+    expect((await operation('listRoomWorkflows', { roomId: ROOM }, memberToken)).status).toBe(403);
     expect(
       (
         await operation(
@@ -13335,7 +13335,7 @@ describe('monolith integration', () => {
           memberToken,
         )
       ).status,
-    ).toBe(400);
+    ).toBe(403);
 
     // An agent never gains this phone authority, even if corrupt data assigns it an admin role.
     await database.query(
@@ -13344,7 +13344,7 @@ describe('monolith integration', () => {
     );
     await expect(
       phone.execute('dispatchRoomWorkflow', { roomId: ROOM, workflowName: 'Release' }, AGENT),
-    ).rejects.toThrow('workspace owner or admin required');
+    ).rejects.toThrow('workspace admins only');
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 

@@ -134,12 +134,13 @@ export function cornerWorkSql(): string {
           OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'
             AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'))))`;
   return `LEFT JOIN rooms parent ON parent.id=c.parent_id
-    LEFT JOIN LATERAL (SELECT
-      EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
-        AND ((COALESCE(t.generation_id,'') LIKE 'pending:%' AND t.created_at>now()-interval '30 seconds')
-          OR (COALESCE(t.generation_id,'') NOT LIKE 'pending:%' AND NOT ${reviewerTurn}))) worker_active,
-      EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
-        AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%' AND ${reviewerTurn}) reviewer_active
+    LEFT JOIN LATERAL (WITH turns AS MATERIALIZED (SELECT ${reviewerTurn} review,
+        COALESCE(t.generation_id,'') LIKE 'pending:%' pending
+        FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+          AND (COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
+            OR t.created_at>now()-interval '30 seconds'))
+      SELECT COALESCE(bool_or(pending OR NOT review),false) worker_active,
+        COALESCE(bool_or(NOT pending AND review),false) reviewer_active FROM turns
     ) activity ON true`;
 }
 

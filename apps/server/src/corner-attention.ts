@@ -61,10 +61,25 @@ BEGIN
     END IF;
     IF TG_OP='UPDATE' AND OLD.status='working' AND NEW.status<>'working'
       AND COALESCE(OLD.generation_id,'') NOT LIKE 'pending:%' THEN
-      UPDATE corner_attention_spans SET last_turn_ended_at=clock_timestamp() WHERE corner_id=corner;
+      UPDATE corner_attention_spans SET last_turn_ended_at=CASE
+        WHEN EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=corner)
+          OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=corner AND released_at IS NULL)
+          OR EXISTS(SELECT 1 FROM corner_owed WHERE corner_id=corner AND blocking
+            AND (expires_at IS NULL OR expires_at>now())) THEN NULL
+        ELSE clock_timestamp() END WHERE corner_id=corner;
     END IF;
   ELSE
     corner=COALESCE(NEW.corner_id,OLD.corner_id);
+  END IF;
+  -- An explicit wait ends the work stretch. Answering it must not revive
+  -- the previous turn's grace period as if work had resumed.
+  IF TG_TABLE_NAME IN ('corner_report_blockers','corner_merge_holds') THEN
+    UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=corner;
+  END IF;
+  IF TG_TABLE_NAME='corner_owed' THEN
+    IF (TG_OP<>'DELETE' AND NEW.blocking) OR (TG_OP<>'INSERT' AND OLD.blocking) THEN
+      UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=corner;
+    END IF;
   END IF;
   IF TG_TABLE_NAME='corner_facts' AND TG_OP<>'DELETE' THEN
     head=NEW.lifecycle->'pr'->>'headSha';

@@ -110,6 +110,28 @@ describe('the per-turn progress indicator', () => {
     motion.reducedMotion = false;
   });
 
+  it('aligns the name and STOP to the transcript inset with the mark inside the row', () => {
+    const renderer = render(React.createElement(TurnProgressLine, {
+      label: 'Ruby Pondering…', startedAt: 10, onStop: vi.fn(), testID: 'alignment',
+    }));
+    const bar = renderer.root.findAllByType('View').find(node => node.props.testID === 'alignment');
+    expect(bar?.props.style.paddingHorizontal).toBe(groknight.space.md);
+    const row = renderer.root.findByType('AnimatedView');
+    const children = React.Children.toArray(row.props.children) as React.ReactElement<any>[];
+    expect(children[0].props.children).toBe('Ruby Pondering…');
+    expect(children.findIndex(child => child.props.testID === 'alignment-glyph'))
+      .toBeGreaterThan(children.findIndex(child => child.props.testID === 'alignment-elapsed'));
+    expect(children.at(-1)?.props.testID).toBe('alignment-stop');
+  });
+
+  it('does not double the inspector transcript inset', () => {
+    const renderer = render(React.createElement(TurnProgressLine, {
+      label: 'Ruby Pondering…', inset: false, testID: 'inspector-alignment',
+    }));
+    const bar = renderer.root.findAllByType('View').find(node => node.props.testID === 'inspector-alignment');
+    expect(Object.assign({}, ...bar?.props.style).paddingHorizontal).toBe(0);
+  });
+
   it('says the agent is thinking, and nothing about any corner', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, { label: 'beebee thinking\u2026' }),

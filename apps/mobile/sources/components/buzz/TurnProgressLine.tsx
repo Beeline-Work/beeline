@@ -31,8 +31,8 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * that pair to exactly one meaning, an agent is alive and working, which is
  * precisely what a turn in progress is.
  *
- * The shape of the line is the status-line idiom: a mark, the verb line, then
- * elapsed minutes and seconds ticking once per second. The mark is the Beeline
+ * The line starts with the verb and elapsed counter, followed by the mark,
+ * so the agent name shares the transcript text edge. The mark is the Beeline
  * icon (`BeelineMarkSpinner`) painting itself and releasing — never a cycling
  * text glyph or a row of dots. A glyph whose advance width changes per frame
  * walks the label's left edge back and forth, so the mark sits in one fixed
@@ -60,8 +60,11 @@ export function TurnProgressLine({
   onStop,
   stopping = false,
   testID,
+  inset = true,
 }: {
   label: string;
+  /** The inspector already supplies the transcript inset around this row. */
+  inset?: boolean;
   /** Server receipt time, unix seconds, the elapsed counter ticks from. */
   startedAt?: number;
   /** A new human steer was committed against this running turn. */
@@ -89,13 +92,10 @@ export function TurnProgressLine({
       accessibilityLabel={stateLabel ? `${label} (${stateLabel})` : label}
       accessibilityLiveRegion="polite"
       accessibilityRole="progressbar"
-      style={styles.bar}
+      style={inset ? styles.bar : [styles.bar, styles.insetBar]}
       testID={testID}
     >
       <HullLivePulse style={styles.row}>
-        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
-          <BeelineMarkSpinner live />
-        </View>
         <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>
@@ -109,6 +109,9 @@ export function TurnProgressLine({
             · received
           </Text>
         )}
+        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+          <BeelineMarkSpinner live />
+        </View>
         {onStop && (
           <Pressable
             accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'}
@@ -216,8 +219,9 @@ const styles = StyleSheet.create((theme) => {
       width: '100%',
       minWidth: 0,
       marginBottom: TURN_LINE_BAR_MARGIN_BOTTOM,
-      paddingHorizontal: 8,
+      paddingHorizontal: groknight.space.md,
     },
+    insetBar: { paddingHorizontal: 0 },
     row: {
       minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       minWidth: 0,

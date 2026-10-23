@@ -14,7 +14,12 @@ Android emulator was started, but it has no signed-in owner session. Attempts
 to build a standalone native replay were interrupted by repeated environment
 replacement: the emulator and build processes stopped and dependencies and
 temporary files disappeared. The combined intermittent phone failure has not
-been reproduced on the emulator. Native screenshots remain outstanding.
+been reproduced on the emulator. Native screenshots remain outstanding. A fallback debug shell for app.usebeeline
+version 0.2.22 (versionCode 27) was installed successfully on the leased emulator
+and opened against this branch's Metro server. It reached the development loader
+but had not rendered the proof screen. The final native bundle was built and
+its immediate quote-installation logic was checked; this is not a substitute
+for on-device interaction proof.
 
 The permitted stand-in is the component regression named
 “returns an interrupted reply swipe to rest and installs its quote” in

@@ -950,23 +950,24 @@ function SwipeToReply({
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
   const returnTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const actionTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const cancelReturn = useCallback(() => {
     clearTimeout(returnTimer.current);
-    clearTimeout(actionTimer.current);
+    clearTimeout(closeTimer.current);
   }, []);
   useEffect(() => cancelReturn, [cancelReturn, messageId]);
   const commitSwipe = (direction: 'left' | 'right') => {
     cancelReturn();
     // WillOpen runs after the swipe commits, even if its opening spring is
     // interrupted. Wait for Swipeable's rowState update before closing it.
-    actionTimer.current = setTimeout(() => {
+    closeTimer.current = setTimeout(() => {
       swipeableRef.current?.close();
       // A cancelled closing spring must not leave the action panel exposed.
       returnTimer.current = setTimeout(() => swipeableRef.current?.reset(), 240);
-      if (direction === 'right') onReply?.();
-      else onSwipeCorner?.();
     }, 0);
+    // Install the quote before a composer update can recycle this row.
+    if (direction === 'right') onReply?.();
+    else onSwipeCorner?.();
   };
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
   const [desktopRowHovered, setDesktopRowHovered] = useState(false);

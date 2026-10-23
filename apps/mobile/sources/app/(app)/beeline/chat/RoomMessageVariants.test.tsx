@@ -1027,6 +1027,7 @@ describe('Room message variant components', () => {
       const swipe = renderer.root.findByType('Swipeable');
       // No Open callback: the native opening spring never finishes.
       act(() => swipe.props.onSwipeableWillOpen?.('right'));
+      expect(targets).toHaveLength(1);
       act(() => vi.advanceTimersByTime(0));
       expect(swipeMotion.close).toHaveBeenCalledOnce();
       expect(targets).toEqual([expect.objectContaining({ preview: 'hello', reference: row.reference })]);

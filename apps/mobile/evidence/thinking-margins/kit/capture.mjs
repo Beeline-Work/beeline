@@ -7,12 +7,12 @@ const context=process.argv[4] ?? 'dm';
 const room=context==='corner'?'bee11e00-0000-4000-8000-000000000106':context==='room'?'97a7dad0-1c24-4610-8236-a77cf0fbb81a':'b8494555-af0a-4fb0-8ee4-64eebf14398a';
 const out = `apps/mobile/evidence/thinking-margins/${side}${context==='dm'?'':'-'+context}`; mkdirSync(out,{recursive:true});
 const base = `http://127.0.0.1:${process.argv[3] ?? '18892'}`;
-await page.size(412,892);
+await page.size(360,892);
 await page.go(`${base}/review/thinking-local-disposable-review`,8000);
 console.log(await page.eval('document.body.innerText.slice(-1800)'));
 for (const theme of ['light','dark']) {
  await page.eval(`(()=>{const k='beeline.settings.local-settings';const v=JSON.parse(localStorage.getItem(k)||'{}');v.appearance='${theme}';localStorage.setItem(k,JSON.stringify(v));})()`);
- for (const [surface,width,height] of [['phone',412,892],['desktop',1280,860]]) {
+ for (const [surface,width,height] of [['phone',360,892],['desktop',1280,860]]) {
   execFileSync('node',[new URL('./seed.mjs',import.meta.url).pathname],{env:process.env});
   await page.size(width,height); await page.scheme(theme==='dark');
   await page.go(`${base}/beeline/chat/${room}?communityId=bee11e00-0000-4000-8000-000000000105`,6500);

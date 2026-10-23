@@ -1,5 +1,26 @@
 # Thinking status transcript margins
 
+## Requested main versus PR captures
+
+The additional `main-360/` and `pr-360/` evidence rebuilds the entire mobile app from detached main (`9054174165545880fb70a1fd40c472ae997fd13f`) and the PR source (`13a90715b488dea74d8834720e8dcd9fec55b196`), at phone width 360 and desktop width 1280, in both themes. Main is checked out separately under `.scratch/thinking-main`; installed dependencies and unchanged workspace dist outputs are reused. The app source is not substituted or mocked. The four `*-360-comparison.png` files show main on the left and PR on the right.
+
+The existing PR #2847 kit supplies `seed-beeline.mjs` (called by our local seed), `serve.mjs` (unchanged), the Chrome CDP capture client, and the actual `ink.py` pixel-measurement function (imported by our measurement wrapper). Its Room-list capture selectors are adapted to the transcript in `kit/capture.mjs`. The wrapper records both edges of message ink and its column, agent name ink, and STOP ink in `measurements.json`. Production sign-in is not needed for any of this proof.
+
+Run `capture.mjs main-360` or `capture.mjs pr-360` while serving the corresponding exported build on 18892, then `python3 -I kit/measure.py` and `python3 -I kit/compose.py main-360 pr-360`. The default phone width is now 360; earlier 412-wide captures remain below as additional evidence.
+
+| Build / surface / theme | Text ink left–right | Text column left–right | Name ink left–right | STOP ink left–right |
+| --- | --- | --- | --- | --- |
+| main-360 / desktop-dark | 357.0–745.5 | 356–1264 | 391.0–491.0 | 1211.5–1254.0 |
+| main-360 / desktop-light | 357.0–745.5 | 356–1264 | 391.0–491.0 | 1211.5–1254.0 |
+| main-360 / phone-dark | 16.5–320.5 | 16–344 | 35.0–135.0 | 307.5–350.0 |
+| main-360 / phone-light | 16.5–320.5 | 16–344 | 35.0–135.0 | 307.5–350.0 |
+| pr-360 / desktop-dark | 357.0–745.5 | 356–1264 | 357.0–457.0 | 1221.5–1264.0 |
+| pr-360 / desktop-light | 357.0–745.5 | 356–1264 | 357.0–457.0 | 1221.5–1264.0 |
+| pr-360 / phone-dark | 16.5–320.5 | 16–344 | 17.0–117.0 | 301.5–344.0 |
+| pr-360 / phone-light | 16.5–320.5 | 16–344 | 17.0–117.0 | 301.5–344.0 |
+
+
+
 Reproduction THINKING-MARGINS-1: open Ruby's DM with a working turn, then compare the thinking name and STOP with the transcript column. Repeat at phone (412 × 892) and desktop (1280 × 860), in Bone and Obsidian.
 
 This uses the real Expo web export and local monolith, a disposable PostgreSQL container on loopback port 5557, and the CDP/server/seed/ink approach from PR #2847. No production data or sign-in credentials are used. `before/` restores the pre-fix TurnProgressLine from the parent of d4463c39a; `after/` uses the final component and desktop caller. Full screenshots and DOM rectangles are checked in. The four comparison images crop the transcript and composer, with red rules at the transcript column bounds.

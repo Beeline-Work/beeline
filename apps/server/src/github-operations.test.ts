@@ -97,6 +97,10 @@ describe('GitHub phone operations', () => {
   it('CLOSED-1: archived corners cannot merge even with passing checks and a current yes', async () => {
     const { corners, headSha, app } = await checksFixture();
     const cornerId = corners[0]!;
+    const implementer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [cornerId, implementer]);
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number)
       VALUES($1,$2,$3,1)`, [cornerId, REVIEWER, headSha]);

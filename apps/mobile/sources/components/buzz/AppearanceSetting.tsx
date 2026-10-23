@@ -5,8 +5,9 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 
 type Appearance = LocalSettings['appearance'];
 
-const APPEARANCE_OPTIONS: readonly Appearance[] = ['dark', 'light'];
+const APPEARANCE_OPTIONS: readonly Appearance[] = ['system', 'light', 'dark'];
 const APPEARANCE_LABELS: Readonly<Record<Appearance, string>> = {
+  system: 'System',
   dark: 'Dark',
   light: 'Light',
 };

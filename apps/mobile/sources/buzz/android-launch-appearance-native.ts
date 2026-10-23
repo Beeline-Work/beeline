@@ -1,5 +1,5 @@
 type NightModeNative = {
-  setNightMode?: (mode: 'light' | 'dark') => void;
+  setNightMode?: (mode: 'system' | 'light' | 'dark') => void;
 };
 
 function nativeModule(): NightModeNative | null {
@@ -15,6 +15,6 @@ function nativeModule(): NightModeNative | null {
   }
 }
 
-export function setAndroidNightMode(mode: 'light' | 'dark'): void {
+export function setAndroidNightMode(mode: 'system' | 'light' | 'dark'): void {
   nativeModule()?.setNightMode?.(mode);
 }

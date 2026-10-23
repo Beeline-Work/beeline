@@ -1,0 +1,32 @@
+import { writeFileSync } from 'node:fs';
+const targets = await (await fetch('http://127.0.0.1:9239/json')).json();
+const socket = new WebSocket(targets.find(t => t.type === 'page').webSocketDebuggerUrl);
+await new Promise(r => socket.addEventListener('open', r, { once: true }));
+let id = 0;
+const pending = new Map();
+socket.addEventListener('message', ({ data }) => { const m = JSON.parse(data); if (pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
+const call = (method, params = {}) => new Promise(resolve => { pending.set(++id, resolve); socket.send(JSON.stringify({ id, method, params })); });
+const pause = () => new Promise(r => setTimeout(r, 350));
+const evalJS = async expression => (await call('Runtime.evaluate', { expression, returnByValue: true })).result.result.value;
+await evalJS('localStorage.clear();location.reload()');
+await pause();
+const results = [];
+for (const scheme of ['dark', 'light']) {
+  await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] });
+  await pause();
+  results.push({ step: scheme, text: await evalJS('document.getElementById("result")?.textContent'), body: await evalJS('document.body.innerText') });
+}
+await evalJS('document.querySelector("select").value="dark";document.querySelector("select").dispatchEvent(new Event("change"))');
+await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+await pause();
+await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+await pause();
+results.push({ step: 'explicit-dark', text: await evalJS('document.getElementById("result").textContent') });
+await call('Page.reload');
+await pause();
+results.push({ step: 'restart', text: await evalJS('document.getElementById("result").textContent') });
+console.log(JSON.stringify(results, null, 2));
+writeFileSync('/tmp/jellybean-appearance/browser-results.json', JSON.stringify(results, null, 2));
+const last = r => JSON.parse(r.text).at(-1);
+if (last(results[0]).theme !== 'obsidian' || last(results[1]).theme !== 'bone' || last(results[2]).theme !== 'obsidian' || last(results[3]).choice !== 'dark') throw Error('appearance proof failed');
+socket.close();

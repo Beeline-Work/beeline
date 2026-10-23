@@ -12,9 +12,9 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * splash resources (cream vs aubergine) instead of the system theme.
  *
  * Official guidance: UiModeManager.setApplicationNightMode on API 31+.
- * Never call MODE_NIGHT_AUTO here — that is time-of-day, not follow-system.
- * Leaving the mode unset is what keeps a never-touched Appearance
- * system-following.
+ * setApplicationNightMode(MODE_NIGHT_AUTO) clears the package override
+ * (UI_MODE_NIGHT_UNDEFINED); unlike setNightMode, it does not schedule
+ * time-of-day changes. This restores system following after a pinned choice.
  */
 class AndroidLaunchAppearanceModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -25,6 +25,7 @@ class AndroidLaunchAppearanceModule : Module() {
         return@Function
       }
       val nightMode = when (mode) {
+        "system" -> UiModeManager.MODE_NIGHT_AUTO
         "light" -> UiModeManager.MODE_NIGHT_NO
         "dark" -> UiModeManager.MODE_NIGHT_YES
         else -> return@Function

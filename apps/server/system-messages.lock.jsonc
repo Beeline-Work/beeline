@@ -12,6 +12,7 @@
 // Onboarding producers approved by lunchboxfortwo, DM bdf39511 (yes), relayed by Ruby; snapshot only.
 // Connection-install card wording for PR #2765 approved by lunchboxfortwo, DM e9967365 (yes), relayed by Ruby; three requestAgentGrant entries only.
 // Corner failure report wording approved by lunchboxfortwo (message 26355fa9), relayed by Ruby: failed: <corner name> (<corner id>): <reason>.
+// Corner reviewer-change System line and corner create, rename and revise producer snapshots approved for PR #2849 only, message 632164dcc66b9f3fb0597d531fa356276a8826b6588b79aacd90da9d5f4d8764 (yes to request e2fdf31e3ee5fb43b0486ad07c1304984dce2ac1c123a076eb9565a51e2b444c).
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -5858,6 +5859,41 @@
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "setCornerHold(db, hold, viewerId)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-reviewer.ts:setCornerReviewer:systemLine:ebcb55495a87dfc1",
+    "file": "apps/server/src/corner-reviewer.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    roomId: cornerId, subject: { kind: 'agent', id: actorId, name: actor.name },\n    verb: 'set the corner reviewer', object: { id: reviewer.id, text: reviewer.name },\n})",
+    "literals": [
+      "'agent'",
+      "'set the corner reviewer'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.createCorner:wrapper:cf9fa597a4d1fdfa",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerReviewer(db, cornerId, input.reviewer, agentId, (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer))",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.renameCorner:wrapper:d8e63bf392b0cd6a",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerReviewer(db, input.cornerId, input.reviewer, agentId, (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer))",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.reviseCornerBrief:wrapper:d8e63bf392b0cd6a",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerReviewer(db, input.cornerId, input.reviewer, agentId, (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer))",
     "literals": [],
     "occurrences": 1
   }

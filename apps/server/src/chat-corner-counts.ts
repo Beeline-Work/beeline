@@ -1,9 +1,13 @@
-import { CORNER_CHECKS_BLOCKED_AFTER, deriveCornerState, type DerivedCornerState } from './corner-state.js';
+import { createHash } from 'node:crypto';
+import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
-import type { ChatListCorner, CornerLifecycleView, CornerStateReason } from '@beeline/api-contract/phone';
-import { cornerImplementerSql } from './corner-worker.js';
+import type {
+  ChatListCorner,
+  CornerLifecycleView,
+  CornerStateReason,
+} from '@beeline/api-contract/phone';
 
 /** Open corners a Room row lists beyond the viewer's own; every Mine corner is listed. */
 export const OPEN_CORNER_PREVIEW = 8;
@@ -19,6 +23,8 @@ export type CornerStateRow = {
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
   worker_active?: boolean;
+  last_turn_ended_at?: Date | null;
+  ci_started_at?: Date | null;
   reviewer_active?: boolean;
   blocking?: boolean;
   waiting_item_id?: string | null;
@@ -38,23 +44,50 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
     archived: Boolean(row.archived_at),
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
     reviewerActive: row.reviewer_active,
+    lastTurnEndedAt: row.last_turn_ended_at
+      ? new Date(row.last_turn_ended_at).getTime() / 1000
+      : undefined,
+    ciStartedAt: row.ci_started_at ? new Date(row.ci_started_at).getTime() / 1000 : undefined,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
     owed: row.blocking ?? false,
     ...(row.waiting_item_id && row.waiting_reason
-      ? { blocker: { reason: row.waiting_reason,
-        ...(row.waiting_kind && row.waiting_kind !== 'message' ? {} : { itemId: row.waiting_item_id }),
-        ...(row.waiting_kind ? { blocker: { kind: row.waiting_kind,
-          ...(row.waiting_person_id ? { personId: row.waiting_person_id } : {}),
-          ...(row.waiting_person_name ? { personName: row.waiting_person_name } : {}) } } : {}),
-      } } : {}),
+      ? {
+          blocker: {
+            reason: row.waiting_reason,
+            ...{
+              itemId:
+                row.waiting_kind === 'report'
+                  ? createHash('sha256')
+                      .update(`agent-command-card:${row.waiting_item_id}`)
+                      .digest('hex')
+                  : row.waiting_kind === 'merge-hold'
+                    ? createHash('sha256')
+                        .update(`corner-hold:${row.waiting_item_id}`)
+                        .digest('hex')
+                    : row.waiting_item_id,
+            },
+            ...(row.waiting_kind
+              ? {
+                  blocker: {
+                    kind: row.waiting_kind,
+                    ...(row.waiting_person_id ? { personId: row.waiting_person_id } : {}),
+                    ...(row.waiting_person_name ? { personName: row.waiting_person_name } : {}),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
   });
 }
 
 /** Mine is followed or owed to this viewer. */
-export function cornerRowMine(row: Pick<CornerStateRow, 'follows_viewer' | 'owed_viewer'>): boolean {
+export function cornerRowMine(
+  row: Pick<CornerStateRow, 'follows_viewer' | 'owed_viewer'>,
+): boolean {
   return Boolean(row.follows_viewer || row.owed_viewer);
 }
 
@@ -67,6 +100,7 @@ export function cornerFactsSql(viewerExpr: string): {
   return {
     columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
       activity.worker_active,activity.reviewer_active,
+      span.last_turn_ended_at,span.ci_started_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,
@@ -76,6 +110,7 @@ export function cornerFactsSql(viewerExpr: string): {
       owed.owed,owed.owed_viewer,owed.attention`,
     joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
     ${cornerWorkSql()}
+    LEFT JOIN corner_attention_spans span ON span.corner_id=c.id
     ${cornerBlockerSql()}
     LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
       AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
@@ -88,46 +123,25 @@ export function cornerFactsSql(viewerExpr: string): {
   };
 }
 
-/** Worker and reviewer activity from their complete command queues and running receipts. */
+/** A running turn retains the review role recorded by its dispatch. */
 export function cornerWorkSql(): string {
+  const reviewerTurn = `(t.agent_id=ANY(array_remove(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids,NULL))
+    OR EXISTS(SELECT 1 FROM agent_commands dispatched
+      LEFT JOIN messages source ON source.id=dispatched.source_message_id
+      WHERE dispatched.room_id=t.room_id AND dispatched.agent_id=t.agent_id
+        AND dispatched.turn_request_id=t.request_id
+        AND (dispatched.reason='corner_review_dispatch'
+          OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'
+            AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'))))`;
   return `LEFT JOIN rooms parent ON parent.id=c.parent_id
-    LEFT JOIN LATERAL (SELECT
-      EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
-        AND t.agent_id=${cornerImplementerSql('f', 'c')}) OR
-      EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
-        AND command.agent_id=${cornerImplementerSql('f', 'c')}
-        AND command.state IN ('pending','claimed') AND command.action<>'stop') worker_active,
-      EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
-        AND t.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
-        AND (COALESCE(t.generation_id,'') NOT LIKE 'pending:%' OR EXISTS(
-          SELECT 1 FROM agent_commands queued WHERE queued.room_id=t.room_id
-            AND queued.agent_id=t.agent_id AND queued.turn_request_id=t.request_id
-            AND queued.state='pending'
-            AND queued.created_at>now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'))) OR
-      EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
-        AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
-        AND command.action<>'stop' AND ${reviewCommandActiveSql('command')}) OR
-      EXISTS(SELECT 1 FROM agent_commands dispatched
-        JOIN messages source ON source.id=dispatched.source_message_id
-        LEFT JOIN agent_turns review_turn ON review_turn.room_id=dispatched.room_id
-          AND review_turn.agent_id=dispatched.agent_id AND review_turn.request_id=dispatched.turn_request_id
-        WHERE dispatched.room_id=c.id AND dispatched.action<>'stop'
-          AND (dispatched.reason='corner_review_dispatch'
-            OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
-          AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'
-          AND (${reviewCommandActiveSql('dispatched')} OR (review_turn.status='working'
-            AND COALESCE(review_turn.generation_id,'') NOT LIKE 'pending:%'))) reviewer_active
+    LEFT JOIN LATERAL (WITH turns AS MATERIALIZED (SELECT ${reviewerTurn} review,
+        COALESCE(t.generation_id,'') LIKE 'pending:%' pending
+        FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+          AND (COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
+            OR t.created_at>now()-interval '30 seconds'))
+      SELECT COALESCE(bool_or(pending OR NOT review),false) worker_active,
+        COALESCE(bool_or(NOT pending AND review),false) reviewer_active FROM turns
     ) activity ON true`;
-}
-
-/** A terminal receipt wins over its stale claim; only fresh unclaimed commands count. */
-function reviewCommandActiveSql(command: string): string {
-  return `((${command}.state='pending'
-      AND ${command}.created_at>now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}')
-    OR (${command}.state='claimed' AND NOT EXISTS(
-      SELECT 1 FROM agent_turns ended WHERE ended.room_id=${command}.room_id
-        AND ended.agent_id=${command}.agent_id AND ended.request_id=${command}.turn_request_id
-        AND ended.status<>'working')))`;
 }
 
 /** Blocking people and recorded commanders. Display picks the oldest; reminders retain newest-first selection. */
@@ -146,16 +160,14 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
-        CASE WHEN report.message_id IS NULL THEN 'report' ELSE 'message' END FROM corner_report_blockers report
+        CASE WHEN report.return_room_id=c.id AND report.message_id IS NOT NULL THEN 'message'
+          ELSE 'report' END FROM corner_report_blockers report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
-      JOIN effective_memberships member ON member.room_id=c.id AND member.identity_id=report.person_id AND member.removed_at IS NULL
       WHERE report.corner_id=c.id
       UNION ALL
       SELECT hold.id::text,hold.actor_id,hold.set_at,'approve','merge-hold' FROM corner_merge_holds hold
       JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'
-      JOIN effective_memberships holder_member ON holder_member.room_id=c.id
-        AND holder_member.identity_id=hold.actor_id AND holder_member.removed_at IS NULL
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
     ) blockers LEFT JOIN identities person ON person.id=blockers.person_id
     WHERE ${sourcePredicate} ORDER BY blockers.created_at ${newestFirst ? 'DESC' : 'ASC'},blockers.item_id ${newestFirst ? 'DESC' : 'ASC'},blockers.person_id LIMIT 1

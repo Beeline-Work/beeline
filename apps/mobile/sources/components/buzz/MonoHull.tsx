@@ -219,7 +219,9 @@ export function StateCircle({
   const diameter = stateCircleDiameter[scale];
   const geometry = { width: diameter, height: diameter, borderRadius: diameter / 2 };
   const mark =
-    state === 'working' ? (
+    state === 'waiting' ? (
+      <View style={[{width:diameter,height:diameter}, styles.stateCircleWaiting]} />
+    ) : state === 'working' ? (
       <Animated.View
         style={[
           geometry,
@@ -228,6 +230,7 @@ export function StateCircle({
           tone === 'brass' && styles.stateCircleWorkingBrass,
           tone === 'quiet' && styles.stateCircleWorkingQuiet,
           tone === 'ghost' && styles.stateCircleWorkingGhost,
+          styles.stateCircleWorkingGap,
           spin,
         ]}
       />
@@ -571,6 +574,11 @@ const styles = StyleSheet.create((theme) => {
       borderWidth: 1,
       borderColor: groknight.accent,
     },
+    stateCircleWaiting: {
+      borderLeftWidth: 2,
+      borderRightWidth: 2,
+      borderColor: groknight.accent,
+    },
     stateCircleIdle: {
       borderWidth: 1,
       borderColor: groknight.steel,
@@ -602,6 +610,7 @@ const styles = StyleSheet.create((theme) => {
     stateCircleStrokeGhost: { borderColor: groknight.ledgerGhost },
     stateCirclePulseQuiet: { borderColor: groknight.ledgerQuiet },
     stateCirclePulseGhost: { borderColor: groknight.ledgerGhost },
+    stateCircleWorkingGap: { borderRightColor: 'transparent' },
     stateCircleWorkingStill: {
       borderColor: groknight.steel,
       borderTopColor: groknight.steel,

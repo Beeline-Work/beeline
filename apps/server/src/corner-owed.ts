@@ -323,9 +323,9 @@ BEGIN
       AND NEW.system_event IS NULL AND NEW.deleted_at IS NULL
       AND (blocker.corner_id=NEW.room_id OR blocker.return_room_id=NEW.room_id)
       AND blocker.created_at<NEW.created_at
-      AND EXISTS(SELECT 1 FROM effective_memberships member JOIN identities author ON author.id=member.identity_id
+      AND (blocker.commander_id=NEW.author_id OR EXISTS(SELECT 1 FROM effective_memberships member JOIN identities author ON author.id=member.identity_id
         WHERE member.room_id=blocker.corner_id AND member.removed_at IS NULL AND author.id=NEW.author_id
-          AND (author.kind='human' OR blocker.commander_id=author.id))
+          AND author.kind='human'))
       RETURNING blocker.report_id,blocker.message_id)
     , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
       WHERE id IN (SELECT report_id FROM answered) RETURNING id)

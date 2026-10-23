@@ -6207,7 +6207,9 @@ export function BuzzChatSurface({
                     waitingReason={cornerHeaderSource?.reason}
                     blocker={cornerHeaderSource?.blocker}
                     viewerId={viewerPubkey}
-                    onReasonPress={cornerHeaderSource?.itemId && (!cornerHeaderSource.blocker || cornerHeaderSource.blocker.kind === 'message') ? () => {
+                    onReasonPress={cornerHeaderSource?.blocker?.url ? () => {
+                      void openExternalUrl(cornerHeaderSource.blocker!.url!);
+                    } : cornerHeaderSource?.itemId ? () => {
                       requestMessageJump(scrollController, cornerHeaderSource.itemId!, jumpToTranscriptMessage);
                     } : undefined}
                     style={[

@@ -4021,7 +4021,8 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
       [randomBytes(32).toString('hex'), cornerId, H],
     );
     const replied = await daemon.execute('getCornerRestoreState', { cornerId }, A);
-    expect(replied).toMatchObject({ activity: 'idle', lastMessage: { authorId: H, excerpt: 'approve' } });
+    // The answer clears Waiting; the recent turn retains Working during its gap.
+    expect(replied).toMatchObject({ state: 'working', activity: 'running', lastMessage: { authorId: H, excerpt: 'approve' } });
     expect(replied.awaiting).toBeUndefined();
   });
 

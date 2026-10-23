@@ -50,10 +50,6 @@ export function CornerHeaderAgentText({
   name,
   stateWord,
   state,
-  headerSuffix,
-  waitingReason,
-  blocker,
-  viewerId,
   onReasonPress,
   style,
 }: {
@@ -71,16 +67,10 @@ export function CornerHeaderAgentText({
   const label = waiting ? 'waiting' : stateWord;
   return (
     <Text numberOfLines={1} style={[styles.metaCaps, style]}>
-      {label ? `${name.toUpperCase()} · ${label}` : name.toUpperCase()}
-      {waiting && blocker?.kind === 'merge-hold' ? ` on ${blocker.personId === viewerId ? 'your' : `${blocker.personName ?? 'someone'}'s`} merge hold`
-        : waiting && blocker?.kind === 'report' ? ' on a report'
-        : waiting && waitingReason ? (
-        <>
-          {waitingReason === 'question' ? ' on a ' : ' to '}
-          <Text accessibilityRole={onReasonPress ? "link" : undefined} onPress={onReasonPress}>{waitingReason}</Text>
-        </>
-      ) : null}
-      {waiting && headerSuffix ? ` · ${headerSuffix}` : null}
+      {name.toUpperCase()}
+      {label ? ' · ' : null}
+      <Text accessibilityRole={waiting && onReasonPress ? 'link' : undefined}
+        onPress={waiting ? onReasonPress : undefined}>{label}</Text>
     </Text>
   );
 }

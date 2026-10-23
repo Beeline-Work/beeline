@@ -15,6 +15,9 @@ export type CornerStateFacts = {
   /** Running worker receipts; reviewer work has its own input. */
   readonly turnRunning: boolean;
   readonly workerQueued?: boolean;
+  readonly now?: number;
+  readonly lastTurnEndedAt?: number;
+  readonly ciStartedAt?: number;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
@@ -79,13 +82,21 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.archived || terminal.state === 'landed' || terminal.state === 'closed' ||
       facts.run?.state === 'landed' || facts.run?.state === 'closed')
     return { state: 'archived' };
-  if (facts.turnRunning || facts.workerQueued) return { state: 'working' };
   if (facts.reviewerActive) return { state: 'review' };
+  const now = facts.now ?? Date.now() / 1000;
+  if (facts.turnRunning) return { state: 'working' };
   if (facts.blocker || facts.owed === true) return { state: 'waiting', ...facts.blocker };
-  if (facts.lifecycle?.mergeQueue || facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
-      facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending') ||
-      checksNotReported(facts.lifecycle))
-    return { state: 'review' };
+  const lifecycle = facts.lifecycle;
+  const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
+  const started = facts.ciStartedAt ?? lifecycle?.checksSummary?.updatedAt;
+  if (checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle)) &&
+      started !== undefined && now - started < 30 * 60) {
+    const url = lifecycle?.checksSummary?.checks.find(check => check.status === 'pending' && check.url)?.url
+      ?? (lifecycle?.pr?.url ? `${lifecycle.pr.url}/checks` : undefined);
+    return { state: 'waiting', ...(url ? { blocker: { kind: 'ci', url } } : {}) };
+  }
+  if (checks !== 'failing' && facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
+    return { state: 'working' };
   return { state: 'idle' };
 }
 

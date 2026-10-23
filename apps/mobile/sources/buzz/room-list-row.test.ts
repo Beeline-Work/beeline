@@ -296,7 +296,7 @@ describe('Room row presentation', () => {
     // and the deck answers it: no gold, no action pill, an honest fact line.
     const stalled = { ...corner('waiting', 'charles-fix'), agentOffline: true };
     const row = roomRowPresentation({ corners: [stalled] }, NO_NAMES);
-    expect(row).toMatchObject({ zone: 'idle', attention: false, live: false, glyph: '○' });
+    expect(row).toMatchObject({ zone: 'idle', attention: false, live: false, glyph: 'Ⅱ' });
     expect(row.fact).toBe('Agent offline · charles-fix');
     expect(row.pills.some((pill) => pill.kind === 'status')).toBe(false);
     // Presence is a separate fact and cannot demote a canonical wait.

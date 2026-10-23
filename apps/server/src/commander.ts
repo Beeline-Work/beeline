@@ -329,10 +329,14 @@ export async function reportToCommander(
   }
   // The corner keeps a collapsed record of what its agent reported, so a
   // person reading a relay can open the full text where it was written.
-  if (!options.automatic && returnRoom !== roomId &&
-    (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount)
+  let reportMessageId = member.kind === 'human' ? reportId : null;
+  if (!options.automatic && (returnRoom !== roomId || member.kind === 'agent') &&
+    (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount) {
     await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
       recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] });
+    if (member.kind === 'agent' && returnRoom === roomId)
+      reportMessageId = createHash('sha256').update(`agent-command-card:${reportId}`).digest('hex');
+  }
   if (!options.automatic && origin && (await db.query(
     'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
     if (/^(needs-decision|blocked):/.test(text)) {
@@ -343,15 +347,15 @@ export async function reportToCommander(
       await db.query(
       `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,commander_id,message_id)
        SELECT $1,person.id,$2,$3,$6,$7 FROM identities person
-       JOIN effective_memberships member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
+       LEFT JOIN effective_memberships member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
        CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
-       WHERE (person.id=$6 OR (person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
+       WHERE (person.id=$6 OR (member.identity_id IS NOT NULL AND person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
        AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
          AND COALESCE(fact.worker_agent_id,fact.owner_agent_id)=$5)
        ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,
          return_room_id=EXCLUDED.return_room_id,created_at=EXCLUDED.created_at,
          commander_id=EXCLUDED.commander_id,message_id=EXCLUDED.message_id`,
-      [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, member.kind === 'human' ? reportId : null]);
+      [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, reportMessageId]);
     }
   }
   return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true,

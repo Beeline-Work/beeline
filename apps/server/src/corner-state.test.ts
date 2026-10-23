@@ -6,6 +6,8 @@ const facts: CornerStateFacts = {
   archived: false,
   turnRunning: false,
   owed: false,
+  now: 1000,
+  ciStartedAt: 990,
   lifecycle: { lifecycle: 'working', checks: 'unknown' },
 };
 const pushed = {
@@ -18,19 +20,19 @@ describe('observed corner states', () => {
   it.each([
     ['idle', {}, 'idle'],
     ['worker running', { turnRunning: true }, 'working'],
-    ['worker queued', { workerQueued: true }, 'working'],
-    ['reviewer running or queued', { reviewerActive: true }, 'review'],
-    ['queued for merge', { lifecycle: { ...pushed, checks: 'passing', mergeQueue: { headSha: pushed.pr.headSha } } }, 'review'],
-    ['checks running', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }, 'review'],
+    ['worker queued alone', { workerQueued: true }, 'idle'],
+    ['reviewer running', { reviewerActive: true }, 'review'],
+    ['queued for merge', { lifecycle: { ...pushed, checks: 'passing', mergeQueue: { headSha: pushed.pr.headSha } } }, 'idle'],
+    ['checks running', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }, 'waiting'],
     [
       'pushed head before checks report',
       { lifecycle: { ...pushed, checksSummary: { ...emptySummary } } },
-      'review',
+      'waiting',
     ],
     [
       'pushed head with pending checks',
       { lifecycle: { ...pushed, checks: 'pending', checksSummary: { ...emptySummary, status: 'pending' } } },
-      'review',
+      'waiting',
     ],
     [
       'fetch found no checks configured',
@@ -65,12 +67,12 @@ describe('observed corner states', () => {
     ],
     ['closed run', { run: { state: 'closed' } }, 'archived'],
   ] as const)('%s', (_name, overrides, expected) => {
-    expect(deriveCornerState({ ...facts, ...overrides })).toEqual({ state: expected });
+    expect(deriveCornerState({ ...facts, ...overrides })).toMatchObject({ state: expected });
   });
-  it('gives worker work precedence over review and human blockers', () => {
+  it('gives live review precedence and active turns precedence over blockers', () => {
     expect(
       deriveCornerState({ ...facts, workerQueued: true, reviewerActive: true, owed: true }),
-    ).toEqual({ state: 'working' });
+    ).toEqual({ state: 'review' });
     const unreported = { ...pushed, checksSummary: emptySummary };
     expect(deriveCornerState({ ...facts, lifecycle: unreported, turnRunning: true })).toEqual({ state: 'working' });
     expect(deriveCornerState({ ...facts, lifecycle: unreported, owed: true })).toEqual({ state: 'waiting' });
@@ -78,4 +80,11 @@ describe('observed corner states', () => {
       state: 'review',
     });
   });
+});
+
+it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) => {
+  expect(deriveCornerState({...facts,lastTurnEndedAt:1000-Number(age)}).state).toBe(state);
+});
+it.each(['pending','failing'] as const)('CI %s with an expired deadline is idle', checks => {
+  expect(deriveCornerState({...facts,ciStartedAt:1000-1801,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state:'idle'});
 });

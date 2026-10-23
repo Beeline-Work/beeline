@@ -1060,7 +1060,7 @@ export { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
 export const CORNER_CHECK_STUCK_AFTER = '1 hour';
 
 /** One silent command push after 30 seconds for a connected, idle helper. */
-export async function renudgeStrandedPendingCommands(db: SqlDatabase): Promise<number> {
+export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: string): Promise<number> {
   const result = await db.query<{ count: number }>(
     `WITH due AS MATERIALIZED (
        SELECT command.id
@@ -1071,8 +1071,9 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase): Promise<n
          AND server.renewed_at>clock_timestamp()-interval '90 seconds'
        WHERE command.state='pending' AND command.action='input'
          AND command.reason IN ('human_tag','direct_message')
-         AND command.renudged_at IS NULL
-         AND command.created_at<=clock_timestamp()-interval '30 seconds'
+         AND (command.renudged_at IS NULL OR $1::text IS NOT NULL)
+         AND ($1::text IS NULL OR command.agent_id=$1)
+         AND ($1::text IS NOT NULL OR command.created_at<=clock_timestamp()-interval '30 seconds')
          AND NOT EXISTS (
            SELECT 1 FROM agent_commands busy
            WHERE busy.agent_id=command.agent_id AND busy.state='claimed'
@@ -1083,9 +1084,10 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase): Promise<n
      ), renudged AS (
        UPDATE agent_commands command SET renudged_at=clock_timestamp()
        FROM due WHERE command.id=due.id AND command.state='pending'
-         AND command.renudged_at IS NULL
+         AND (command.renudged_at IS NULL OR $1::text IS NOT NULL)
        RETURNING command.id
      ) SELECT count(*)::int count FROM renudged`,
+    [agentId ?? null],
   );
   return Number(result.rows[0]?.count ?? 0);
 }

@@ -643,9 +643,14 @@ describe('monolith integration', () => {
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.
-  const drainCornerWork = async (cornerId: string) => {
+  const settleCornerWorkPastGap = async (cornerId: string) => {
     await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+    // These projection fixtures begin after the approved turn gap has elapsed.
+    await database.query(
+      `UPDATE corner_attention_spans SET last_turn_ended_at=now()-interval '40 seconds' WHERE corner_id=$1`,
+      [cornerId],
+    );
   };
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
@@ -9230,7 +9235,7 @@ describe('monolith integration', () => {
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await drainCornerWork(cornerId);
+    await settleCornerWorkPastGap(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
     await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
       cornerId,
@@ -9288,7 +9293,7 @@ describe('monolith integration', () => {
       objective: 'Pick a size for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await drainCornerWork(cornerId);
+    await settleCornerWorkPastGap(cornerId);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
@@ -9333,7 +9338,7 @@ describe('monolith integration', () => {
       objective: 'Pick a finish for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await drainCornerWork(cornerId);
+    await settleCornerWorkPastGap(cornerId);
     const listed = async () =>
       (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
@@ -9394,7 +9399,7 @@ describe('monolith integration', () => {
       objective: 'Pick a box for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await drainCornerWork(cornerId);
+    await settleCornerWorkPastGap(cornerId);
     const state = async () =>
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
@@ -9453,7 +9458,7 @@ describe('monolith integration', () => {
       objective: 'Pick a lid for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
-    await drainCornerWork(cornerId);
+    await settleCornerWorkPastGap(cornerId);
     const state = async () =>
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,

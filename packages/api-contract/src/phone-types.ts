@@ -90,7 +90,8 @@ export type CornerLifecycleView = {
  * never derive a second state from lifecycle, PR, check, or turn facts. */
 export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'archived';
 export type CornerBlocker = {
-  readonly kind: 'message' | 'merge-hold' | 'report';
+  readonly kind: 'message' | 'merge-hold' | 'report' | 'ci';
+  readonly url?: string;
   readonly personId?: string;
   readonly personName?: string;
 };

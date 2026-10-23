@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { ConnectionPresence, recordAgentEvidence } from './connection-presence.js';
+import { ConnectionPresence, recordAgentEvidence, claimAgentConnection } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import { runMaintenance } from './background.js';
 import type { SqlDatabase } from './database.js';
@@ -61,6 +61,23 @@ describe('delivery-driven presence', () => {
   async function elapsed() {
     await vi.advanceTimersByTimeAsync(100);
   }
+  it('starts no repeating command, commander wake, or corner attention sweep', async()=>{
+    const interval=vi.spyOn(globalThis,'setInterval');
+    await presence.start();
+    expect(interval.mock.calls.map(call=>call[1])).toEqual([30000]);
+    interval.mockRestore();
+  });
+  it('re-sends pending work on both connection and reconnect without a periodic tick',async()=>{
+    const command=await createAgentCommand(database,{roomId:ROOM,agentId:AGENT,sourceMessageId:null,reason:'human_tag'});
+    await database.query(`UPDATE agent_commands SET renudged_at=now()-interval '1 hour' WHERE id=$1`,[command!.id]);
+    await presence.renewLease();
+    await claimAgentConnection(database,live,AGENT,{lifecycleId:'connect'},{connectionId:'one',instanceId:presence.instanceId});
+    const first=(await database.query<{renudged_at:Date}>('SELECT renudged_at FROM agent_commands WHERE id=$1',[command!.id])).rows[0]!.renudged_at;
+    await claimAgentConnection(database,live,AGENT,{lifecycleId:'reconnect'},{connectionId:'two',instanceId:presence.instanceId});
+    const second=(await database.query<{renudged_at:Date}>('SELECT renudged_at FROM agent_commands WHERE id=$1',[command!.id])).rows[0]!.renudged_at;
+    expect(second.getTime()).toBeGreaterThanOrEqual(first.getTime());
+    expect(first.getTime()).toBeGreaterThan(Date.now()-10000);
+  });
   it('clears unclaimed optimistic work at the pickup deadline without a reply', async () => {
     const command = await createAgentCommand(database, {
       roomId: ROOM, agentId: AGENT, sourceMessageId: null, turnRequestId: MESSAGE, reason: 'human_tag',

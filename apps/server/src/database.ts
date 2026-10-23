@@ -1,3 +1,4 @@
+import { backfillCornerHoldMessages } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
@@ -3326,6 +3327,7 @@ export async function migrate(
 /** Idempotent data work runs after both schema owners have expanded. Each step
  * commits separately, so retrying a release resumes completed work. */
 export async function migrateData(database: SqlDatabase): Promise<void> {
+  await backfillCornerHoldMessages(database);
   const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     let result!: T;
     await retryMigrationStep(name, async () => {

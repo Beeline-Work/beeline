@@ -68,7 +68,7 @@ export function cornerHeaderItem(
 export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState {
   const { state } = item;
   const visual: CornerVisualState =
-    state === 'working' ? 'working' : state === 'review' ? 'needs-you' : 'idle';
+    state === 'working' ? 'working' : state === 'review' ? 'needs-you' : state === 'waiting' ? 'waiting' : 'idle';
   const headerSuffix = item.lifecycle.checks === 'failing' || item.lifecycle.checksSummary?.status === 'failing'
     ? 'checks failed' as const : undefined;
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
@@ -76,7 +76,7 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
     status: state,
     visual,
     needsYou: state === 'review' || state === 'waiting',
-    glyph: state === 'working' ? '◌' : state === 'review' ? '●' : '○',
+    glyph: state === 'working' ? '◌' : state === 'review' ? '●' : state === 'waiting' ? 'Ⅱ' : '○',
     word: state,
     ...(detail ? { detail } : {}),
     ...(item.lifecycle.pr?.url ? { prUrl: item.lifecycle.pr.url } : {}),
@@ -106,9 +106,7 @@ export type CornerHeaderAgentInput = {
 
 export type CornerHeaderAgent = {
   readonly pubkey?: string;
-  /** A reviewer's live turn is still work IN the corner, so the state stays
-   * a working state — it reads `reviewing` while the running turn belongs to
-   * an agent other than the corner's own. The name never swaps. */
+  /** The server's Review state identifies reviewer work. The name never swaps. */
   readonly reviewerTurnRunning: boolean;
   readonly stateWord?: string;
   /** The header mark's gold ring is the corner's own agent's aliveness, not
@@ -121,16 +119,8 @@ export function cornerHeaderAgent(input: CornerHeaderAgentInput): CornerHeaderAg
     input.status && input.headerSuffix
       ? `${input.status} · ${input.headerSuffix}`
       : input.status;
-  const reviewerTurnRunning =
-    input.status === 'working' &&
-    input.ownerPubkey !== undefined &&
-    input.activeTurnPubkeys.length > 0 &&
-    !input.activeTurnPubkeys.includes(input.ownerPubkey);
-  const stateWord = reviewerTurnRunning
-    ? input.headerSuffix
-      ? `reviewing · ${input.headerSuffix}`
-      : 'reviewing'
-    : base;
+  const reviewerTurnRunning = input.status === 'review' && input.activeTurnPubkeys.length > 0;
+  const stateWord = base;
   return {
     ...(input.ownerPubkey !== undefined ? { pubkey: input.ownerPubkey } : {}),
     reviewerTurnRunning,

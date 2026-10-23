@@ -21,6 +21,11 @@ import { CornerHeaderAgentText } from './HeaderLadder';
 const niglet = 'a'.repeat(64);
 const candy = 'b'.repeat(64);
 const viewer = 'c'.repeat(64);
+function textContent(value: any): string {
+  if (Array.isArray(value)) return value.map(textContent).join('');
+  if (value && typeof value === 'object') return textContent(value.props?.children);
+  return value == null ? '' : String(value);
+}
 const names: Record<string, string> = { [niglet]: 'Niglet', [candy]: 'Candy' };
 
 // A corner in review whose GitHub check lines were stored with a copied parent
@@ -81,7 +86,7 @@ function renderedHeader(cornerOpenerAgentId?: string): string {
       <CornerHeaderAgentText name={names[header.pubkey!] ?? 'Agent'} stateWord={header.stateWord} />,
     );
   });
-  return tree!.root.findByType('Text' as never).children.join('');
+  return textContent(tree!.root.findAllByType('Text' as never)[0]!.props.children);
 }
 
 it('names the corner opener when GitHub check lines carry another agent as author', () => {
@@ -104,11 +109,11 @@ it.each(['approve', 'connect', 'question'] as const)(
     const link = tree!.root.findAllByType('Text' as never).find(
       (node: any) => node.props.accessibilityRole === 'link',
     );
-    expect(link?.props.children).toBe(reason);
+    expect(link?.props.children).toBe('waiting');
     act(() => link!.props.onPress());
     expect(jump).toHaveBeenCalledOnce();
     const root = tree!.root.findAllByType('Text' as never)[0]!;
-    expect(root.props.children[0]).toBe('JELLYBEAN · waiting');
+    expect(textContent(root.props.children)).toBe('JELLYBEAN · waiting');
   },
 );
 
@@ -128,11 +133,10 @@ it.each(['approve', 'connect', 'question'] as const)(
     });
     const texts = tree!.root.findAllByType('Text' as never);
     const link = texts.find((node: any) => node.props.accessibilityRole === 'link');
-    expect(link?.props.children).toBe(reason);
+    expect(link?.props.children).toBe('waiting');
     act(() => link!.props.onPress());
     expect(jump).toHaveBeenCalledWith(item.itemId);
-    expect(texts[0]!.props.children[0]).toBe('JELLYBEAN · waiting');
-    expect(texts[0]!.props.children[2]).toBe(' · checks failed');
+    expect(textContent(texts[0]!.props.children)).toBe('JELLYBEAN · waiting');
   },
 );
 
@@ -141,13 +145,14 @@ it.each([
   [{ kind: 'merge-hold', personId: viewer, personName: 'Viewer' }, ' on your merge hold'],
   [{ kind: 'merge-hold', personId: candy, personName: 'Candy' }, " on Candy's merge hold"],
   [{ kind: 'report' }, ' on a report'],
-] as const)('R1: renders %j as plain text even if a stale jump callback exists', (blocker, copy) => {
+] as const)('R1: renders %j as plain Waiting linked to its source', (blocker, copy) => {
   const jump = vi.fn();
   let tree: ReturnType<typeof create>;
   act(() => { tree = create(<CornerHeaderAgentText name="Jellybean" state="waiting"
     waitingReason="approve" blocker={blocker} viewerId={viewer} onReasonPress={jump} />); });
   const texts = tree!.root.findAllByType('Text' as never);
-  expect(texts.some((node: any) => node.props.accessibilityRole === 'link' || node.props.onPress)).toBe(false);
-  expect(texts[0]!.props.children[1]).toBe(copy);
-  expect(jump).not.toHaveBeenCalled();
+  const link=texts.find((node:any)=>node.props.accessibilityRole==='link');
+  expect(textContent(texts[0]!.props.children)).toBe('JELLYBEAN · waiting');
+  act(()=>link!.props.onPress());
+  expect(jump).toHaveBeenCalledOnce();
 });

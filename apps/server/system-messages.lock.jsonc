@@ -1,3 +1,4 @@
+// Hold source line and revised idle alert approved by lunchboxfortwo, message d11eb900ed471847b1901ecca1d8086fb000a7731e0ee9c43ae0181367a5c4d8; associated producer/wrapper snapshots only.
 // Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
 // Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
@@ -1268,12 +1269,21 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-attention.ts:deliverCornerAttention:wrapper:de1ad65d72087d45",
+    "id": "src/corner-attention.ts:refreshCornerAttention:wrapper:3c7a886d0b417b72",
     "file": "apps/server/src/corner-attention.ts",
     "kind": "wrapper",
-    "template": "reportToCommander(tx, row.id, SYSTEM_IDENTITY_ID, `blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`, undefined, flag.id, { automatic: true, agentOnly: true })",
+    "template": "reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID, `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`, undefined, id, { automatic: true, agentOnly: true })",
     "literals": [
-      "`blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`"
+      "'hex'",
+      "'idle'",
+      "'merge-hold'",
+      "'report'",
+      "'sha256'",
+      "'working'",
+      "`agent-command-card:${row.waiting_item_id}`",
+      "`blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`",
+      "`corner-hold:${row.waiting_item_id}`",
+      "`corner-idle:${cornerId}:${episode}`"
     ],
     "occurrences": 1
   },
@@ -5747,6 +5757,95 @@
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
     "template": "INSERT messages text=text, author_id=SYSTEM_IDENTITY_ID",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-holds.ts:backfillCornerHoldMessages:wrapper:5111a3d7cc98f62b",
+    "file": "apps/server/src/corner-holds.ts",
+    "kind": "wrapper",
+    "template": "writeHoldMessage(db, row.corner_id, row.id, row.actor_id)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-holds.ts:setCornerHold:wrapper:71441b1a44da3b8d",
+    "file": "apps/server/src/corner-holds.ts",
+    "kind": "wrapper",
+    "template": "writeHoldMessage(db, input.cornerId, row.id, actorId)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-holds.ts:writeHoldMessage:systemLine:1ee631c2af4ece82",
+    "file": "apps/server/src/corner-holds.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),\n    roomId: cornerId,\n    authorId: actorId,\n    subject: { kind: 'person', id: actorId, name: actor?.name ?? actorId },\n    verb: 'set a merge hold',\n})",
+    "literals": [
+      "'person'",
+      "'set a merge hold'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.createCorner:wrapper:472ddbdfc46b7156",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerHold(db, { cornerId }, commissionedBy)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:0e75bef594c44473",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerHold(db, hold, actor.author_id)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/database.ts:migrate:wrapper:1d7945e1b069b167",
+    "file": "apps/server/src/database.ts",
+    "kind": "wrapper",
+    "template": "migrateData(database)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/database.ts:migrateData:wrapper:6bdec7df0c3d1ccd",
+    "file": "apps/server/src/database.ts",
+    "kind": "wrapper",
+    "template": "backfillCornerHoldMessages(database)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/index.ts:runReleaseMigration:wrapper:1d7945e1b069b167",
+    "file": "apps/server/src/index.ts",
+    "kind": "wrapper",
+    "template": "migrateData(database)",
+    "literals": [
+      "'MIGRATION_DATABASE_URL'",
+      "'migration'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/index.ts:runReleaseMigration:wrapper:a47fbd28e26b71b7",
+    "file": "apps/server/src/index.ts",
+    "kind": "wrapper",
+    "template": "migrate(database, { deferData: true })",
+    "literals": [
+      "'MIGRATION_DATABASE_URL'",
+      "'migration'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/phone-service.ts:PhoneService.execute:wrapper:26598f064fbf40e0",
+    "file": "apps/server/src/phone-service.ts",
+    "kind": "wrapper",
+    "template": "setCornerHold(db, hold, viewerId)",
     "literals": [],
     "occurrences": 1
   }

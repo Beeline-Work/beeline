@@ -1,7 +1,6 @@
 import {
   cornerStatusPresentation,
   cornerSuperState,
-  cornerVisualState,
   isCornerStalledOffline,
   roomCornerSignal,
   roomListCorners,
@@ -87,10 +86,8 @@ const FINISHED_STATUSES: ReadonlySet<CornerState> = new Set(['archived']);
  */
 function needsYouCorner(corner: CornerSummary): boolean {
   return (
-    cornerVisualState(corner.state, {
-      awaitingReply: corner.awaitingReply,
-      reason: corner.reason,
-    }) === 'needs-you'
+    corner.state === 'review' ||
+    (corner.state === 'waiting' && (corner.awaitingReply === true || corner.reason === 'question'))
   );
 }
 

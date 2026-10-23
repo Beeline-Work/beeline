@@ -1,0 +1,122 @@
+[
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-back-0",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780786110,
+    "paintMs": 1792780786226,
+    "profiled": false,
+    "durationMs": 116,
+    "warmup": true
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-open-0",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780787316,
+    "paintMs": 1792780787498,
+    "profiled": false,
+    "durationMs": 182,
+    "warmup": true
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-back-1",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780788626,
+    "paintMs": 1792780788740,
+    "profiled": false,
+    "durationMs": 114,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-open-1",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780789833,
+    "paintMs": 1792780790073,
+    "profiled": false,
+    "durationMs": 240,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-back-2",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780791201,
+    "paintMs": 1792780791311,
+    "profiled": false,
+    "durationMs": 110,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-open-2",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780792412,
+    "paintMs": 1792780792600,
+    "profiled": false,
+    "durationMs": 188,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-back-3",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780793724,
+    "paintMs": 1792780793843,
+    "profiled": false,
+    "durationMs": 119,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-open-3",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780794919,
+    "paintMs": 1792780795090,
+    "profiled": false,
+    "durationMs": 171,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-back-4",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780796223,
+    "paintMs": 1792780796338,
+    "profiled": false,
+    "durationMs": 115,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-open-4",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780797405,
+    "paintMs": 1792780797614,
+    "profiled": false,
+    "durationMs": 209,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-back-5",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780798692,
+    "paintMs": 1792780798774,
+    "profiled": false,
+    "durationMs": 82,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "fixed-matched-corner-open-5",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780799865,
+    "paintMs": 1792780800014,
+    "profiled": false,
+    "durationMs": 149,
+    "warmup": false
+  }
+]

@@ -1,0 +1,87 @@
+{
+  "reproduction": "R1",
+  "baselineCommit": "b5e800481295b6a6a164419583a76bca9331a66c",
+  "fixedProductionSourceCommit": "87dfd2bcfe5fdaa35ea8d6c5ee16a8fd061b9127",
+  "fixedBaseCommit": "8021af7c3b4a5cb82ddd30f6eb1f2d2d0cbf4ba1",
+  "device": {
+    "serial": "emulator-5558",
+    "avd": "se_api35",
+    "api": 35,
+    "gpu": "swiftshader_indirect",
+    "memoryMiB": 2560,
+    "cores": 4
+  },
+  "buildType": "release/Hermes/x86_64/local fixture signing",
+  "fixture": {
+    "rooms": 200,
+    "corners": 300,
+    "olderActivityRows": 10000,
+    "messageWindow": 30,
+    "largeAnswerBytes": 10240,
+    "draftSnapshots": 100,
+    "draftCadenceMs": 100,
+    "finalDraftCharacters": 14013
+  },
+  "results": {
+    "baseline": {
+      "corner-back": {
+        "samplesMs": [
+          279,
+          264,
+          288,
+          280,
+          253
+        ],
+        "medianMs": 279,
+        "maxMs": 288
+      },
+      "corner-open": {
+        "samplesMs": [
+          243,
+          215,
+          230,
+          242,
+          234
+        ],
+        "medianMs": 234,
+        "maxMs": 243
+      },
+      "stream": {
+        "framesRendered": 293,
+        "jankyFrames": 180,
+        "jankyPercent": 61.43
+      },
+      "apkSha256": "bc159bc476843ef756ec39e13e97f1affd2c2dc13d65f3fc84325733b37f27ce"
+    },
+    "fixed": {
+      "corner-back": {
+        "samplesMs": [
+          114,
+          110,
+          119,
+          115,
+          82
+        ],
+        "medianMs": 114,
+        "maxMs": 119
+      },
+      "corner-open": {
+        "samplesMs": [
+          240,
+          188,
+          171,
+          209,
+          149
+        ],
+        "medianMs": 188,
+        "maxMs": 240
+      },
+      "stream": {
+        "framesRendered": 545,
+        "jankyFrames": 75,
+        "jankyPercent": 13.76
+      },
+      "apkSha256": "bdc76d3b2e7fb79feedf657ed4604564f29af96f3da3782dcc9d6ce838678221"
+    }
+  }
+}

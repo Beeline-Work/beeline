@@ -1,3 +1,6 @@
+vi.mock('@/buzz/room-transition-work', () => ({
+  deferRoomWrite: (_key: string, work: () => Promise<void>) => work(),
+}));
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 

@@ -82,7 +82,7 @@ export class SurfaceRegistry {
     this.selected.delete(key);
     for (const observer of this.observers.get(address.endpoint) ?? []) observer(address, value, stamp);
     const inactiveRooms = [...this.values.keys()].filter((candidate) =>
-      !this.listeners.has(candidate) && String((JSON.parse(candidate) as unknown[])[3]).startsWith('/room/'));
+      !this.listeners.has(candidate) && /^\/room\/[^/]+$/.test(String((JSON.parse(candidate) as unknown[])[3])));
     for (const oldest of inactiveRooms.slice(0, Math.max(0, inactiveRooms.length - MAX_INACTIVE_ROOMS))) {
       this.values.delete(oldest);
       this.stamps.delete(oldest);

@@ -409,6 +409,7 @@ jobs:
           sources/buzz/transition-work.test.ts
           sources/buzz/room-transition-work.test.ts
           sources/buzz/surface-registry.test.ts
+          sources/buzz/surface-storage.scheduling.test.ts
           'sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts'
 
   dead-code:

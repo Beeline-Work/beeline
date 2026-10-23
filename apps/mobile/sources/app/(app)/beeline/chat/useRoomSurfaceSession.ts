@@ -583,7 +583,8 @@ export function useRoomSurfaceSession({
   // transcript and transport; focus alone never tears them down or rebuilds them.
   const sessionActivated = isFocused || sessionStartedRef.current;
   useEffect(() => {
-    if (!channelId || !sessionActivated) return;
+    if (!channelId) return;
+    if (!sessionActivated) return;
     isCornerRef.current = false;
     setFirstUnreadMessageId(null);
     liveDraftDrainStore.setActive(true);

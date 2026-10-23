@@ -48,7 +48,8 @@ const durableSurfaceCache = new SurfaceResponseCache(
 );
 export const mobileSurfaceCache = new SurfaceRegistry(
   durableSurfaceCache, stripRetiredAgentNotices, selectIdentities,
-  deferRoomWrite);
+  (key, work) => /^\/room\/[^/]+$/.test(String((JSON.parse(key) as unknown[])[3]))
+    ? deferRoomWrite(key, work) : work());
 
 function storedValue(encoded: string | null): unknown {
   if (encoded === null) return undefined;

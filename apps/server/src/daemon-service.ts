@@ -411,7 +411,7 @@ export class DaemonService {
     private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
     private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
     /** The merge attempt behind `merge_corner` and `order_corner_merge`. */
-    private readonly landCorner?: (cornerId: string) => Promise<LandCornerOutcome>,
+    private readonly landCorner?: (cornerId: string, onBlocked?: (reason: string) => void) => Promise<LandCornerOutcome>,
     /** The GitHub close behind `close_pull_request`. */
     private readonly closePullRequest?: (
       cornerId: string,
@@ -3618,9 +3618,10 @@ export class DaemonService {
       ].filter(Boolean);
       return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed' };
     }
-    const landed = await this.landCorner(input.cornerId);
+    let blocker = 'the merge did not start; read the current checks before retrying';
+    const landed = await this.landCorner(input.cornerId, reason => { blocker = reason; });
     if (landed.status === 'not-attempted')
-      return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
+      return { status: 'blocked', blocker };
     if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
     return { status: landed.status === 'queued' ? 'queued' : 'merge-started', headSha: corner.head_sha };
   }

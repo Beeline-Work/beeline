@@ -151,9 +151,14 @@ function rowIds(renderer: ReactTestRenderer): string[] {
     .map((node: any) => node.props.testID);
 }
 
-/** The row's trailing slot: the chevron it hands the shared row component. */
-function rowTrailing(renderer: ReactTestRenderer, testID: string): unknown {
-  return renderer.root.findAllByProps({ testID }).at(0)!.props.trailing;
+/**
+ * The row's chevron: the shared row's built-in chevron slot, never the
+ * 72 px trailing column, so the agent's model ends beside it.
+ */
+function rowChevron(renderer: ReactTestRenderer, testID: string): unknown {
+  const row = renderer.root.findAllByProps({ testID }).at(0)!;
+  expect(row.props.trailing).toBeUndefined();
+  return row.props.chevron;
 }
 
 function render(element: React.ReactElement): ReactTestRenderer {
@@ -280,8 +285,9 @@ describe('RoomRosterSheet', () => {
 
     // The viewer's own row opens like any other, and says what it holds.
     const own = renderer.root.findAllByProps({ testID: `room-roster-person-${VIEWER}` }).at(-1)!;
-    expect(rowTrailing(renderer, `room-roster-person-${VIEWER}`)).toBeTruthy();
+    expect(rowChevron(renderer, `room-roster-person-${VIEWER}`)).toBe('right');
     act(() => own.props.onPress());
+    expect(rowChevron(renderer, `room-roster-person-${VIEWER}`)).toBe('down');
     expect(renderer.root.findAllByProps({ testID: `remove-room-member-${VIEWER}` })).toHaveLength(
       0,
     );
@@ -377,8 +383,9 @@ describe('RoomRosterSheet', () => {
     ] as const) {
       const renderer = render(sheet(scope));
       const agentRow = renderer.root.findAllByProps({ testID: `room-roster-agent-${OX}` }).at(-1)!;
-      expect(rowTrailing(renderer, `room-roster-agent-${OX}`)).toBeTruthy();
+      expect(rowChevron(renderer, `room-roster-agent-${OX}`)).toBe('right');
       act(() => agentRow.props.onPress());
+      expect(rowChevron(renderer, `room-roster-agent-${OX}`)).toBe('down');
       expect(renderer.root.findAllByProps({ testID: `remove-room-member-${OX}` })).toHaveLength(0);
       expect(
         renderer.root.findByProps({ testID: `room-roster-${OX}-detail` }).findByType('Text' as any)

@@ -75,7 +75,6 @@ import {
   filterAgentModelOptions,
 } from '@/buzz/agent-model-picker';
 import { Modal } from '@/modal/ModalManager';
-import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 
 async function copyText(value: string): Promise<void> {
@@ -1362,11 +1361,9 @@ export default function BuzzMembers({
             } as Href)
           }
           pubkey={member.identity.pubkey}
+          chevron="right"
           role={member.role}
           testID={`member-${member.identity.pubkey}-identity`}
-          trailing={
-            <ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />
-          }
         />
       </View>
     );
@@ -1474,6 +1471,7 @@ export default function BuzzMembers({
                 <View key={member.identity.pubkey}>
                   <MemberRosterRow
                     avatarUrl={member.identity.avatar}
+                    chevron="right"
                     disabled={busy}
                     divider="bottom"
                     face={member.identity.face}
@@ -1491,13 +1489,6 @@ export default function BuzzMembers({
                     ownerHandle={member.owner?.handle}
                     pubkey={member.identity.pubkey}
                     testID={`agent-${member.identity.pubkey}-identity`}
-                    trailing={
-                      <ChevronGlyph
-                        color={styles.chevron.color}
-                        direction="right"
-                        size={CHEVRON_ROW_SIZE}
-                      />
-                    }
                   />
                 </View>
               );
@@ -1562,7 +1553,6 @@ const styles = StyleSheet.create((theme) => {
     loadMore: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.sm },
     loadMoreText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     detail: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
-    chevron: { color: hull.textMuted },
     profileSettingLabel: {
       ...Typography.default(),
       ...hull.type.bodyStrong,

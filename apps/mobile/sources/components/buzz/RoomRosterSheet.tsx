@@ -173,13 +173,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             const agentWorking =
               participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
             // Every row discloses, so every row wears the mark.
-            const trailing = (
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction={open ? 'down' : 'right'}
-                size={CHEVRON_ROW_SIZE}
-              />
-            );
+            const chevron = open ? 'down' : 'right';
             return (
               <View key={participant.pubkey}>
                 {participant.kind === 'agent' ? (
@@ -197,7 +191,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     pubkey={participant.pubkey}
                     seed={display?.avatarSeed}
                     testID={`room-roster-agent-${participant.pubkey}`}
-                    trailing={trailing}
+                    chevron={chevron}
                   />
                 ) : (
                   <MemberRosterRow
@@ -211,7 +205,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     pubkey={participant.pubkey}
                     role={targetRole ?? 'member'}
                     testID={`room-roster-person-${participant.pubkey}`}
-                    trailing={trailing}
+                    chevron={chevron}
                   />
                 )}
                 {open && (

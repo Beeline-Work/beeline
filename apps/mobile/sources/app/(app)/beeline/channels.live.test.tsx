@@ -1093,10 +1093,14 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 it('R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot', async () => {
+  hotSurfaces.values.clear();
+  vi.mocked(mobileSurfaceCache.read).mockResolvedValue(null);
   deck.withholdWorkspaceSnapshot = true;
   try {
     const renderer = await mountDeck();
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    expect(deck.chatsReads).toBeGreaterThan(0);
+    console.log('R-GITHUB-LANDING cold empty-cache navigation trace:', JSON.stringify(vi.mocked(router.replace).mock.calls));
     await act(async () => renderer.unmount());
   } finally { deck.withholdWorkspaceSnapshot = false; }
 });

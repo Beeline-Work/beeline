@@ -1,74 +1,70 @@
-# Repository card return and workspace landing
+# GitHub repository card — approved mock v2
 
-## Reproduction R-GITHUB-CARD
+`approved-v2/comparison.html` places each approved mock panel beside its native
+Android capture. `normal.png`, `error.png`, `linked.png` and `workspace.png` show
+the four requested states. The agent mark is the real IdentityMark, using
+Beebee's production public identity and owl face. The state selectors and
+developer-menu bubble belong to the local proof harness.
 
-Return a failed GitHub connection to a Room with two repository cards. Before:
-all cards receive the same error, show conflicting connection actions, and keep
-the error in the URL. After: only the initiating card shows inline danger text
-and one secondary Try again action; consuming the error clears its query
-parameter while preserving the repository picker and installation result.
+## Reproduced
 
-`RepositoryOnboardingCard.test.tsx` renders both cards, consumes the return and
-remounts the initiating card. The regression fails against the original code
-and passes with this change. The native installation-return success test also
-passes.
+**R-GITHUB-CARD:** return a failed GitHub connection to a Room with two cards.
+The original implementation repeats the error, nested banner and conflicting
+actions on all cards, and replays the URL error after remount. Original Android
+screenshots remain here as `native-before-*` and `android-before-*`.
 
-The Android Chrome screenshots use the actual RepositoryOnboardingCard and
-TranscriptCard, built with `node apps/mobile/scripts/render-github-card-proof.mjs
-<output>`. Navigation and phone operations are fixture adapters, not production
-OAuth. Open `?repositoryPicker=card-one&githubConnectionError=github_account_already_linked`
-for the failure and the bare URL for normal cards. Add `theme=bone` for Bone.
-These screenshots establish layout on Android Chrome, not native sign-in.
+**R-GITHUB-LANDING:** a fresh nonempty workspace response arrives before the
+subscribed surface snapshot. The original route combines a confirmed boolean
+with the absent snapshot, reads zero workspaces and navigates to community.
+`approved-v2/cold-cache-before.txt` records the failing original-route test.
 
-Native screenshots (`native-*`) use a locally built debug APK on the isolated
-API 36 emulator, with the actual native card components, theme and fonts. The
-native fixture source is retained in `proof-kit/`; it replaces only navigation,
-eligibility and phone operations. The same fixture was captured against the
-original card/TranscriptCard and against the fix. These establish native layout,
-not an end-to-end OAuth session. No release was dispatched.
+## Demonstrated
 
-## Reproduction R-GITHUB-LANDING
+The initiating card now consumes the error query, displays the approved inline
+error and Dismiss/Try again actions, and leaves other cards normal. Dismiss and
+remount do not replay it; the installation result and picker parameters survive.
+A linked repository settles to the compact record, using server-projected real
+repository visibility. The Workspace screen uses the shared PageHeader,
+HullDialogInput boxed variant, existing glyphs and IndexRow dividers.
 
-A confirmed nonempty workspace response arrives before its subscribed surface
-snapshot. The original channels route combines a confirmed boolean with a
-missing snapshot and reads its count as zero, redirecting to community.
-`channels.live.test.tsx` reproduces this ordering through the actual route
-component and records the wrong router call. It fails against the original code
-and passes when the confirmed count comes from the same response. Existing tests
-still redirect confirmed empty accounts to community.
+The native captures use the PR debug APK on an isolated API 36 emulator with
+actual production components, fonts and tokens. Navigation, eligibility,
+account reads and phone operations are fixture adapters. No live credentials
+or production account data beyond the public agent identity enter the fixture.
 
-This route-component reproduction is the closest stand-in for the reported
-production sign-in flash; it does not establish a filmed production sign-in.
+`approved-v2/local-web-error.png` shows the same components built by Expo web
+on localhost. Squire also inspected that page and confirmed the approved error
+copy, both actions and the independent normal card.
 
-## GitHub ownership
+`approved-v2/cold-cache-navigation.txt` is the accepted instrumented substitute
+for sign-in footage: the actual channels route starts with an empty cache and a
+fresh workspace response while the subscribed snapshot is withheld. The full
+navigation trace is empty, a chats read starts, and no community navigation
+occurs. The same test fails against the original route. Existing tests preserve
+the redirect for a confirmed truly empty account. This is not a claimed
+production sign-in recording.
 
-Read-only production SQL found GitHub login lunchboxfortwo, subject 269599412,
-linked to Beeline identity
-`34cf4160723acd12d205dfbe292614bfec9489b78812d1cd9846c00346903334`,
-the owner identity in the approved brief. No retained GitHub auth flow exists
-for that identity, so the initiating identity of the reported failure is
-unknown. The mounted auth callback test now explicitly reconnects that same
-identity and succeeds with installed=1. The existing conflict guard already
-allows this; no server token-flow or identity-ownership change is needed.
+## Local fixture
 
-## Acceptance gaps
+The source is `scripts/github-card-proof.tsx`, with
+`github-card-proof-adapters.tsx`, `github-card-proof-theme.ts` and the Metro
+resolver adapter `github-card-proof-metro.cjs`. For the isolated proof only,
+back up the app entry and Metro config, point the entry to this proof, append
+`require('./scripts/github-card-proof-metro.cjs')(module.exports,__dirname)` to
+the config, and start Expo with `--dev-client --port 18765`.
+The web entry accepts `?state=Normal|Error|Linked|Workspace`; the native proof
+has the same state selectors. Restore both production entry/config files before
+validation or committing. They are unchanged in this PR.
 
-Reviewer-bypass browser verification remains pending: connector discovery found
-the vaulted review link; sealed browser-fill returned unsupported_credential_type;
-Squire drive could not consume that link and observed an existing Bento Maker
-session instead. No production repository actions were taken. A browser handoff
-is needed to sign in with the review link without exposing its secret.
+## Production ownership and validation
 
-The server refused recording these reproduction details in the brief because
-its approval lookup requires a human Room message, while the inherited brief
-cites the owner's DM. The approved scope remains revision 1; the reproduction
-identifiers and evidence are recorded here and in the pull request.
+Read-only SQL confirms lunchboxfortwo GitHub subject 269599412 belongs to the
+owner identity `34cf4160723acd12d205dfbe292614bfec9489b78812d1cd9846c00346903334`.
+No retained failed auth flow identifies the starting session. The mounted auth
+callback test explicitly reconnects the same linked identity and succeeds;
+the existing ownership guard needs no change.
 
-## Validation
-
-Root typecheck and shared UI component policy pass. Targeted mobile suites pass,
-including live channels, card resume, workspace choice, calm lint and design
-lint. The mounted auth callback reconnect test passes. Both R-GITHUB regressions
-also fail against the original source. The native x86_64 debug APK builds with
-two Gradle workers and a bounded Java heap. Proof-only app entry and Metro
-resolver changes were restored before final validation.
+Targeted mobile, auth, design and server tests, root typecheck and shared UI
+policy validate this change. The production browser test was removed by brief
+revision 4 because production cannot run PR code; the posted browser share was
+closed. No release was dispatched.

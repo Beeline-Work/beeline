@@ -14,6 +14,7 @@ const signals: RepositorySignals = { commits: [], failingChecks: [], issues: [],
 const github = { onboardingSignals: vi.fn(async () => signals), refresh: vi.fn(async () => ({})),
   createRepository: vi.fn(async (_viewer: string, input: { name: string }, database: SqlDatabase) => {
     await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch,active) VALUES(100,77,$1,'main',true)`, [`tester/${input.name}`]);
+    await database.query(`UPDATE github_repositories SET private=true WHERE repository_id=100`);
     return { id:100, fullName:`tester/${input.name}`, installationId:77, defaultBranch:'main', private:true };
   }),
 } as unknown as GitHubOperations;
@@ -104,6 +105,7 @@ it('creates and links a private repository once when the same tap is retried', a
   expect(github.createRepository).toHaveBeenCalledTimes(1);
   expect((await db.query(`SELECT identity_id FROM repository_link_successes`)).rows).toEqual([{ identity_id: H }]);
   expect((await phone.readRoom(R,H))?.repository?.name).toBe(`tester/${card.defaultName}`);
+  expect((await phone.readRoom(R,H))?.messages.find(m => m.id === card.id)?.onboarding).toMatchObject({status:'settled',repository:`tester/${card.defaultName}`,repositoryPrivate:true});
 });
 
 it('lets an invited Room member start work without granting repository-management rights', async () => {

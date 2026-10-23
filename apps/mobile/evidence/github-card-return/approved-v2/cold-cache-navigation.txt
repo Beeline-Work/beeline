@@ -1,0 +1,17 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/55e6a72d-fb20-45f6-bd1b-0c838c3207d4/apps/mobile
+
+stderr | sources/app/(app)/beeline/channels.live.test.tsx > R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stdout | sources/app/(app)/beeline/channels.live.test.tsx > R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot
+R-GITHUB-LANDING cold empty-cache navigation trace: []
+
+ ✓ sources/app/(app)/beeline/channels.live.test.tsx (29 tests | 28 skipped) 1124ms
+   ✓ R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot  1123ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 28 skipped (29)
+   Start at  21:37:19
+   Duration  1.98s (transform 437ms, setup 60ms, collect 640ms, tests 1.12s, environment 0ms, prepare 44ms)
+

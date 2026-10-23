@@ -68,17 +68,17 @@ it('R-GITHUB-CARD: consumes the return only on its initiating card, once', async
     <RepositoryOnboardingCard card={{...card,id:'other'}} viewerId={H} />
   </>); });
   const cards = renderer.root.findAllByType('TranscriptCard');
-  expect(cards[0].props.body).toContain('sign out of Beeline');
-  expect(cards[0].props.bodyTone).toBe('failed');
-  expect(cards[0].props.actions.map((action:any) => action.label)).toEqual(['Try again']);
-  expect(cards[0].props.actions[0].primary).not.toBe(true);
-  expect(cards[1].props.bodyTone).toBeUndefined();
+  expect(cards[0].props.inlineError.description).toContain('linked to a different Beeline account');
+  expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
+  expect(cards[0].props.actions.map((action:any) => action.label)).toEqual(['Dismiss', 'Try again']);
+  expect(cards[0].props.actions[1].primary).toBe(true);
+  expect(cards[1].props.inlineError).toBeUndefined();
   expect(mocks.params.githubConnectionError).toBeUndefined();
   expect(mocks.params.installed).toBe('0');
   expect(mocks.params.repositoryPicker).toBe(card.id);
   await act(async () => renderer.unmount());
   await act(async () => { renderer=create(<RepositoryOnboardingCard card={card} viewerId={H} />); });
-  expect(renderer.root.findByType('TranscriptCard').props.bodyTone).toBeUndefined();
+  expect(renderer.root.findByType('TranscriptCard').props.inlineError).toBeUndefined();
   await act(async () => renderer.unmount());
   mocks.params = {};
 });
@@ -122,13 +122,35 @@ it('R-GITHUB-CARD: keeps an operation failure local and retries the failed actio
   </>); });
   await act(async () => renderer.root.findAllByType('TranscriptCard')[0].props.actions[0].onPress());
   const cards = renderer.root.findAllByType('TranscriptCard');
-  expect(cards[0].props.bodyTone).toBe('failed');
-  expect(cards[0].props.standardBody).toBe(true);
+  expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
+  expect(cards[0].props.compactBody).toBe(true);
   expect(cards[0].props.subline).toBeUndefined();
-  expect(cards[0].props.actions.map((a:any) => a.label)).toEqual(['Try again']);
-  expect(cards[1].props.bodyTone).toBeUndefined();
-  await act(async () => cards[0].props.actions[0].onPress());
+  expect(cards[0].props.actions.map((a:any) => a.label)).toEqual(['Dismiss', 'Try again']);
+  expect(cards[1].props.inlineError).toBeUndefined();
+  await act(async () => cards[0].props.actions[1].onPress());
   expect(mocks.operation).toHaveBeenLastCalledWith('actOnRepositoryCard', expect.objectContaining({action:'create',cardId:card.id}));
-  expect(renderer.root.findAllByType('TranscriptCard')[0].props.bodyTone).toBeUndefined();
+  expect(renderer.root.findAllByType('TranscriptCard')[0].props.inlineError).toBeUndefined();
   await act(async () => renderer.unmount());
+});
+
+it.each([true, false])('collapses a linked repository into its real visibility record (%s)', async (repositoryPrivate) => {
+  let renderer: any;
+  await act(async () => { renderer=create(<RepositoryOnboardingCard card={{...card,status:'settled',repositoryPrivate}} viewerId={H} />); });
+  const props=renderer.root.findByType('TranscriptCard').props;
+  expect(props.title).toBe('Repository linked');
+  expect(props.subline).toBe(`test/current · ${repositoryPrivate ? 'private' : 'public'}`);
+  expect(props.body).toBeUndefined();
+  expect(props.actions).toEqual([]);
+  expect(props.identity).toBeTruthy();
+  await act(async () => renderer.unmount());
+});
+it('dismisses a failed connect permanently while preserving the installation result', async () => {
+  mocks.params={repositoryPicker:card.id,githubConnectionError:'github_account_already_linked',installed:'1'};
+  let renderer:any;
+  await act(async()=>{renderer=create(<RepositoryOnboardingCard card={card} viewerId={H}/>);});
+  await act(async()=>renderer.root.findByType('TranscriptCard').props.actions[0].onPress());
+  expect(renderer.root.findByType('TranscriptCard').props.inlineError).toBeUndefined();
+  expect(mocks.params.githubConnectionError).toBeUndefined();
+  expect(mocks.params.installed).toBe('1');
+  await act(async()=>renderer.unmount());mocks.params={};
 });

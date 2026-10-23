@@ -1,4 +1,5 @@
-import { TranscriptFactRow } from './IndexRow';
+import { Ionicons } from '@expo/vector-icons';
+import { InlineRow, TranscriptFactRow } from './IndexRow';
 import { ShowMoreRow } from './ShowMoreRow';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { HullDialogActions } from './HullDialog';
@@ -84,8 +85,9 @@ export type TranscriptCardProps = {
   identity?: ReactNode;
   body?: ReactNode;
   quietBody?: boolean;
-  bodyTone?: 'failed';
-  standardBody?: boolean;
+  compactBody?: boolean;
+  inlineError?: { title: string; description: string };
+  footerDivider?: boolean;
   /** Controls an ask needs beyond rows and choices (a field, a step list). */
   children?: ReactNode;
   rows?: readonly TranscriptCardRow[];
@@ -233,8 +235,9 @@ export function TranscriptCard({
   children,
   body,
   quietBody = false,
-  bodyTone,
-  standardBody = false,
+  compactBody = false,
+  inlineError,
+  footerDivider = true,
   rows = [],
   choices = [],
   noteInput,
@@ -434,12 +437,19 @@ export function TranscriptCard({
             <SettlingText
               active={animateArrival}
               durationMs={TRANSCRIPT_SETTLE_MS}
-              steadyColor={bodyTone === 'failed' ? theme.buzz.dialogDanger : quietBody ? steady.quiet : steady.body}
-              style={[styles.body, standardBody && styles.bodyStandard, quietBody && styles.bodyQuiet, bodyTone === 'failed' && styles.bodyFailed]}
+              steadyColor={quietBody ? steady.quiet : steady.body}
+              style={[styles.body, compactBody && styles.bodyCompact, quietBody && styles.bodyQuiet]}
             >
               {body}
             </SettlingText>
           ) : null}
+          {inlineError ? <InlineRow accessibilityRole="alert" accessibilityLiveRegion="polite" style={styles.inlineError}>
+            <Ionicons name="alert-circle-outline" size={20} color={theme.buzz.dialogDanger} />
+            <View style={styles.errorCopy}>
+              <Text style={styles.errorTitle}>{inlineError.title}</Text>
+              <Text style={styles.errorDescription}>{inlineError.description}</Text>
+            </View>
+          </InlineRow> : null}
           {facts.length ? <View style={[styles.detailInset, styles.facts]}>{facts.map((fact) => (
             <TranscriptFactRow key={fact.label} label={fact.label} value={fact.value} />
           ))}</View> : null}
@@ -502,7 +512,7 @@ export function TranscriptCard({
             </View>
           ) : null}
           {hasFooter ? (
-            <View style={styles.footer}>
+            <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider]}>
               {footerNote !== undefined ? (
                 <Text
                   testID={footerNoteTestID}
@@ -530,7 +540,7 @@ export function TranscriptCard({
                   testID: action.testID,
                 }))}
               />
-            </View>
+            </InlineRow>
           ) : null}
         </View>
       </Animated.View>
@@ -765,8 +775,12 @@ const styles = StyleSheet.create((theme) => {
     },
     detailInset: { marginHorizontal: metric.side },
     facts: { marginTop: card.space.sm },
-    bodyStandard: { ...card.type.body },
-    bodyFailed: { color: card.dialogDanger },
+    inlineError: { flexDirection: 'row', gap: card.space.sm, paddingHorizontal: metric.side, paddingTop: card.space.sm },
+    errorCopy: { flex: 1, minWidth: 0, gap: card.space.xs },
+    errorTitle: { ...card.type.meta, fontFamily: card.proseMedium, color: card.dialogDanger },
+    errorDescription: { ...card.type.meta, color: card.dialogDanger },
+    bodyCompact: { ...card.type.meta },
+    footerWithoutDivider: { borderTopWidth: 0 },
     bodyQuiet: { color: card.ledgerQuiet },
     code: {
       marginTop: metric.codeTop,

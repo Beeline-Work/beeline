@@ -162,16 +162,16 @@ describe('the create-or-join choice', () => {
   it('welcomes the person by name and says what each path does', async () => {
     controls.workspaces.mockResolvedValue({ workspaces: [], viewer: { name: 'Ada' } });
     const renderer = await render();
-    expect(find(renderer, 'choice-title')[0]!.props.children).toBe('Welcome, Ada');
+    expect(find(renderer, 'choice-title')[0]!.props.children).toBe('Welcome,\nAda');
     const texts = renderer.root
       .findAll((node: any) => node.type === 'Text')
       .map((node: any) => node.props.children);
     expect(texts).toEqual(
       expect.arrayContaining([
         'Start a Workspace, or join one you were invited to.',
-        'Create a Workspace',
+        'Create Workspace',
         'Join with an invite link',
-        'Paste the link someone sent you.',
+        'Paste the link someone sent you',
       ]),
     );
     expect(texts).not.toContain("Ada's team");

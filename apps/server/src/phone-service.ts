@@ -7599,6 +7599,7 @@ export class PhoneService {
           redirectUri: input.redirectUri, selectTarget: input.action === 'organization',
         });
       }
+      let linkedRepository: { repository: string; repositoryPrivate?: boolean } | undefined;
       if (input.action === 'starter') {
         if (card.kind !== 'starters') throw new Error('this card does not offer starter tasks');
         const starter = card.starters.find(s => s.id === input.starterId);
@@ -7628,10 +7629,14 @@ export class PhoneService {
         await service.setRepository({ roomId: input.roomId, key: `github:${repository.id}`, name: repository.fullName,
           remote: `git://github.com/${repository.fullName}`, targetBranch: repository.defaultBranch,
           githubInstallationId: repository.installationId }, viewerId);
+        const details = (await database.query<{ private: boolean | null }>(
+          `SELECT private FROM github_repositories WHERE repository_id=$1 AND installation_id=$2`,
+          [repository.id, repository.installationId])).rows[0];
+        linkedRepository = { repository: repository.fullName, ...(typeof details?.private === 'boolean' ? { repositoryPrivate: details.private } : {}) };
       }
       const selected = input.action === 'starter' ? input.starterId! : input.action === 'create' ? card.defaultName : String(input.repositoryId);
       await database.query(`UPDATE messages SET card=card || $2::jsonb,version=version+1 WHERE id=$1`,
-        [input.cardId, JSON.stringify({ status: followup ? 'open' : 'settled', selected })]);
+        [input.cardId, JSON.stringify({ status: followup ? 'open' : 'settled', selected, ...linkedRepository })]);
       return { selected };
     });
     if (followup) {

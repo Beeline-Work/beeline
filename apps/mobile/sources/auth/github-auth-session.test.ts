@@ -751,7 +751,7 @@ describe('GitHub auth session redirects', () => {
       openAuthSession:async()=>({type:'success',url:'beeline://beeline/github-installation?installed=0&error=github_account_already_linked'}),
       subscribeToUrls:()=>({remove(){}}),
     })).rejects.toMatchObject({code:'github_account_already_linked',
-      message:'That GitHub account belongs to another Beeline account. To use it, sign out of Beeline, then choose Continue with GitHub.'});
+      message:'This GitHub account is linked to a different Beeline account. Sign in with that account, or connect another GitHub account.'});
   });
 
   it.each(['cancel', 'dismiss'])('keeps the web Room path when the opener reports %s before its landing tab finishes', async (type) => {

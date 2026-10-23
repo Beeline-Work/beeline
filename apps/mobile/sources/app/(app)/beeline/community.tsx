@@ -140,8 +140,7 @@ export default function WorkspaceChoice() {
       viewerFace={workspaceList?.viewer.face}
     >
       <View style={{ paddingTop: insets.top }}>
-        <PageHeader title={viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
-          titleTestID="choice-title" prominent
+        <PageHeader title=""
           onBack={hasWorkspaces ? () => router.canGoBack() ? router.back() : router.replace('/beeline/channels') : undefined} />
       </View>
       <ScrollView
@@ -154,23 +153,25 @@ export default function WorkspaceChoice() {
         testID="workspace-choice"
       >
         <View style={styles.column}>
+          <Text accessibilityRole="header" testID="choice-title" style={styles.title}>{viewerName ? `Welcome,\n${viewerName}` : 'Welcome'}</Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}
           </Text>
 
           <View style={styles.choices}>
-            {enabled ? <HullDialogInput accessibilityLabel="Workspace name" testID="choice-workspace-name"
+            {enabled ? <Text style={styles.fieldLabel}>WORKSPACE NAME</Text> : null}
+            {enabled ? <HullDialogInput variant="boxed" accessibilityLabel="Workspace name" testID="choice-workspace-name"
               maxLength={80} editable={!creating} value={workspaceName} onChangeText={setDraftName}
               onSubmitEditing={() => void createWorkspace()} /> : null}
             <ChoiceCard
-              description={creating ? "Creating your Workspace…" : "New workspace for your team"}
+              description={creating ? "Creating your Workspace…" : "Uses the name above"}
               glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => enabled ? void createWorkspace() : router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
-              title={`Create a ${WORKSPACE_LABEL}`}
+              title="Create Workspace"
             />
             <ChoiceCard
-              description="Paste the link someone sent you."
+              description="Paste the link someone sent you"
               expanded={joinOpen}
               glyph={<MembersAgentsGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => {
@@ -247,11 +248,13 @@ const styles = StyleSheet.create((theme) => {
     container: { flex: 1, minWidth: 0, backgroundColor: hull.bgTerminal },
     scroll: {
       flexGrow: 1,
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
       paddingHorizontal: hull.space.lg,
       paddingBottom: hull.space.xxl,
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
+    title: { ...hull.type.hero, color: hull.textPrimary },
+    fieldLabel: { ...hull.type.meta, color: hull.textSecondary, marginTop: hull.space.lg },
     copy: {
       ...Typography.default(),
       ...hull.type.meta,

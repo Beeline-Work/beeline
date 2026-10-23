@@ -1,7 +1,7 @@
 export function githubConnectionErrorNotice(error: string): { title: string; description: string } {
   if (error === 'github_account_already_linked') return {
     title: 'GitHub account already connected',
-    description: 'That GitHub account belongs to another Beeline account. To use it, sign out of Beeline, then choose Continue with GitHub.',
+    description: 'This GitHub account is linked to a different Beeline account. Sign in with that account, or connect another GitHub account.',
   };
   if (error === 'github_installation_admin_required') return {
     title: 'A GitHub owner needs to connect',

@@ -1,1 +1,0 @@
-export const monolithPhoneOperation=async()=>{throw {code:'github_connection_failed'};};

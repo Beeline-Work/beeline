@@ -4425,8 +4425,14 @@ export class DaemonService {
        WHERE room_id=$1 AND agent_id=$2`,
       [input.roomId, agentId],
     );
-    if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
-      throw new CommandRefusalError('queued attachments exceed the size cap', 400);
+    const usedBytes = Number(queued.rows[0]!.total);
+    if (usedBytes + attachment.size > this.mediaMaximumBytes)
+      throw new CommandRefusalError(
+        `Queued attachments exceed the ${this.mediaMaximumBytes}-byte total limit per reply: ` +
+          `${usedBytes} bytes already queued; artifact size: ${attachment.size} bytes. ` +
+          'Use smaller files, or deliver the queued attachments with your next reply or report before posting more.',
+        400,
+      );
     await this.database.query(
       `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,

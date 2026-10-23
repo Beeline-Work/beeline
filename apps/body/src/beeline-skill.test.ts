@@ -525,6 +525,12 @@ describe('beeline-connecting-services', () => {
 describe('beeline-files-and-mocks "Showing a mock" section', () => {
   const markdown = beelineFilesSkillMarkdown('test-release');
 
+  it('explains the combined attachment budget and recovery', () => {
+    expect(markdown).toContain('25 MiB (26,214,400 bytes) per reply');
+    expect(markdown).toContain('bytes already queued');
+    expect(markdown).toContain('before uploading the rest');
+  });
+
   it('carries the Showing a mock section with the post_artifact flow', () => {
     expect(markdown).toContain('## Showing a mock');
     expect(markdown).toContain('beeline-agent post_artifact');

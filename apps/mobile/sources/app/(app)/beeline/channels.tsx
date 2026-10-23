@@ -1184,7 +1184,7 @@ const styles = StyleSheet.create((theme) => {
     header: {
       minHeight: 62,
       paddingLeft: hull.roomList.edge,
-      // The tray's ink, not its target, ends on the Room list edge; Room and
+      // The tray's centre, not its target, sits on the Room list icon line; Room and
       // corner conversation headers keep their own 16 px target spacing.
       paddingRight: hull.roomList.trayEnd,
       flexDirection: 'row',

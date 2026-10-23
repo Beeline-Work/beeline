@@ -72,6 +72,8 @@ beforeEach(async () => {
     privatePayload: { kind: 'order', text: 'Do the work', authorId: COMMANDER, fromRoomId: ROOM },
   });
   await db.query(`UPDATE agent_commands SET state='complete' WHERE id='opening-order'`);
+  await db.query(`DELETE FROM agent_turns WHERE room_id=$1`,[C]);
+  await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=$1`,[C]);
 });
 const state = async () =>
   (await daemon.execute('getCornerRestoreState', { cornerId: C }, WORKER)).state;
@@ -245,9 +247,9 @@ it('a merge hold shows Waiting with its real message and sends no extra wake', a
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
-it.each(['agent', 'human'] as const)(
-  'an unanswered %s commander report waits even outside corner membership',
-  async (kind) => {
+it.each([['agent','blocked'],['agent','needs-decision'],['human','blocked'],['human','needs-decision']] as const)(
+  'an unanswered %s commander %s report waits even outside corner membership',
+  async (kind,status) => {
     const recipient = kind === 'agent' ? COMMANDER : HUMAN;
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
       ROOM,
@@ -270,7 +272,7 @@ it.each(['agent', 'human'] as const)(
       [recipient, returnRoom],
     );
     const { reportToCommander } = await import('./commander.js');
-    await reportToCommander(db, C, WORKER, 'blocked: Choose a direction.');
+    await reportToCommander(db, C, WORKER, `${status}: Choose a direction.`);
     // A remaining Room member can inspect the same server-owned state.
     expect(await state()).toBe('waiting');
     const blocker = (

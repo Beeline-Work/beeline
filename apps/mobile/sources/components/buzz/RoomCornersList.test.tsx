@@ -249,7 +249,7 @@ describe('RoomCornersList', () => {
 
   it.each([
     ['working', 'working', 'quiet', 'ledgerQuiet'],
-    ['waiting', 'idle', 'brass', 'accent'],
+    ['waiting', 'waiting', 'brass', 'accent'],
     ['review', 'needs-you', 'quiet', 'ledgerQuiet'],
     ['archived', 'idle', 'ghost', 'ledgerGhost'],
   ] as const)('renders %s with its state word, circle and tone', (state, visual, tone, color) => {

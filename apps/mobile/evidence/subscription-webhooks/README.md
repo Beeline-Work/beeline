@@ -44,3 +44,12 @@ rotates, rejects the old token, starts the fixed saved workflow despite maliciou
 payload fields, links the recorded call to its run, then stops and rejects further calls.
 Other cases prove Workspace-admin creation/control, no Link metadata for Room-only admins,
 rate limit, body limit, bounded history, and refusal after owner demotion or Room archival.
+
+
+The owner-approved receipt line is also covered by the System-message lock suite.
+The caller preview is exercised in `Ledger.test.ts`, `system-lines.test.ts` and the
+actual-screen `system-lines.browser.test.ts` proof: a message containing Markdown,
+a link, an @mention and 1,000 characters appears under “Caller's message:” as a
+plain native Text node, capped at 280 characters including the ellipsis. Browser
+assertions reject child markup, link/mention actions and URL auto-linking; the full
+outside body stays unchanged for the agent.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { joinSystemNames, systemLineText } from './system-lines';
+import { joinSystemNames, systemLineText, webhookCallerMessage } from './system-lines';
 
 const joined = (
   id: string,
@@ -114,4 +114,16 @@ it('keeps a corner opened from a message out of a folded lifecycle run', () => {
   // Lifecycle notices and a source-message marker retain their own anchors.
   const folded = Array.from([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
   expect(folded.map((m) => m.id)).toEqual(['a', 'b', 'm']);
+});
+
+
+it('caps only webhook caller previews, including Unicode, without changing the saved event body', () => {
+  const message = '🙂'.repeat(1000);
+  const event = { subject: { kind: 'system' as const, name: 'Beeline' }, verb: 'received',
+    kind: 'subscription-fired' as const, payload: { source: 'webhook', body: message } };
+  expect(webhookCallerMessage(event)).toBe('🙂'.repeat(279) + '…');
+  expect(event.payload.body).toBe(message);
+  expect(webhookCallerMessage({ ...event, payload: { source: 'service', body: message } })).toBeUndefined();
+  expect(webhookCallerMessage({ ...event, payload: { source: 'webhook', body: 'short' } })).toBe('short');
+  expect(webhookCallerMessage({ ...event, payload: { source: 'webhook', body: 'x'.repeat(280) } })).toBe('x'.repeat(280));
 });

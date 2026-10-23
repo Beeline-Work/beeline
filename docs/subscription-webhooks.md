@@ -13,6 +13,11 @@ Send `POST /hooks/<subscription UUID>` on the server host with
 `Authorization: Bearer <token>`. The token begins `bl_whk_` and contains 32 random bytes.
 The body is limited to 64 KiB. JSON and plain text are accepted as outside data;
 the sender cannot select a prompt, workflow, agent, or destination.
+The transcript labels any preview “Caller's message:” and quotes at most 280 characters
+(including a trailing ellipsis when shortened). It uses plain text with Markdown,
+mentions and URL detection disabled. A JSON body's `message` or `text` field supplies
+the preview when present; otherwise the body itself is shown. The full body still
+reaches the agent as quoted outside data.
 
 For HMAC senders, compute HMAC-SHA256 over the exact raw body bytes using the full token
 as the key. Send the hexadecimal digest in `X-Beeline-Signature` (optionally prefixed

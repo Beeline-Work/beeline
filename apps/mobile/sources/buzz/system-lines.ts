@@ -53,3 +53,18 @@ export function systemLineText(event: SystemEvent, subjects?: readonly SystemSub
   const line = event.object?.text ? `${head} ${event.object.text}` : head;
   return event.consequence ? `${line} · ${event.consequence}` : line;
 }
+
+/** A caller's preview is plain display data, separate from Beeline's own line. */
+export function webhookCallerMessage(event: SystemEvent | undefined): string | undefined {
+  if (event?.kind !== 'subscription-fired' || !event.payload || typeof event.payload !== 'object') return undefined;
+  const payload = event.payload as { source?: unknown; body?: unknown };
+  if (payload.source !== 'webhook' || payload.body === undefined) return undefined;
+  const body = payload.body;
+  const fields = body && typeof body === 'object' ? body as { message?: unknown; text?: unknown } : undefined;
+  const words = typeof body === 'string' ? body
+    : typeof fields?.message === 'string' ? fields.message
+      : typeof fields?.text === 'string' ? fields.text : JSON.stringify(body);
+  if (!words) return undefined;
+  const characters = Array.from(words);
+  return characters.length > 280 ? `${characters.slice(0, 279).join('')}…` : words;
+}

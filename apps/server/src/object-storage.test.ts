@@ -149,3 +149,42 @@ describe('object-storage golden signatures (fixed clock)', () => {
     await expect(failing.deleteObject('k')).rejects.toThrow('HTTP 500');
   });
 });
+
+it('real AWS retry backoff cannot extend the outside-service deadline', async () => {
+  const { createServer } = await import('node:http');
+  const controller = new AbortController();
+  vi.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+  vi.spyOn(Math, 'random').mockReturnValue(1);
+  let requests = 0;
+  let received!: () => void;
+  const firstRequest = new Promise<void>(resolve => { received = resolve; });
+  const server = createServer((_request, response) => {
+    requests += 1;
+    response.writeHead(429);
+    response.end('retry');
+    received();
+  });
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  try {
+    const storage = new ObjectStorage({ ...config,
+      endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}` });
+    let settled = false;
+    const request = storage.putObject('deadline-proof', new Uint8Array([1]), 'text/plain');
+    const checked = expect(request).rejects.toThrow('result is unknown').then(() => { settled = true; });
+    await firstRequest;
+    // Let AwsClient enter its real randomized retry sleep, then expire the
+    // original deadline. Its sleep does not listen to the abort signal.
+    await new Promise(resolve => setTimeout(resolve, 10));
+    controller.abort(new DOMException('deadline', 'TimeoutError'));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(true);
+    await checked;
+    // Let the SDK's first sleep finish: an aborted retry must never reach HTTP.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(requests).toBe(1);
+  } finally {
+    vi.restoreAllMocks();
+    server.closeAllConnections();
+    await new Promise<void>(done => server.close(() => done()));
+  }
+});

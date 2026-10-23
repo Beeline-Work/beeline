@@ -1252,3 +1252,23 @@ describe('merge queue provider boundary (R1)', () => {
       .toEqual({ id: 'PR', head });
   });
 });
+
+it('repository creation keeps an unknown result when a success body stalls', async () => {
+  const { createServer } = await import('node:http');
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => originalTimeout(100));
+  const server = createServer((_request, response) => {
+    response.writeHead(201, { 'content-type': 'application/json' });
+    response.write('{"id":');
+  });
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  try {
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline',
+      apiBaseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}` });
+    await expect(app.createRepository(1, { login: 'person', type: 'User' }, { name: 'example' }, 'local-token'))
+      .rejects.toThrow('repository may have been created. The result is unknown');
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(done => server.close(() => done()));
+  }
+});

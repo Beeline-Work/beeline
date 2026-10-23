@@ -1,4 +1,4 @@
-import { githubFetch } from './external-fetch.js';
+import { ExternalServiceTimeoutError, githubFetch } from './external-fetch.js';
 import { importPKCS8, SignJWT } from 'jose';
 
 const GITHUB_ISSUER = 'https://github.com';
@@ -112,7 +112,8 @@ async function jsonResponseObject(
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    if (error instanceof ExternalServiceTimeoutError) throw error;
     if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
     throw new Error(`${label} returned invalid JSON`);
   }
@@ -135,7 +136,8 @@ async function jsonArray(response: Response, label: string): Promise<Record<stri
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    if (error instanceof ExternalServiceTimeoutError) throw error;
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!Array.isArray(body)) {
@@ -623,7 +625,8 @@ export class GitHubAppClient {
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalServiceTimeoutError) throw error;
       throw new Error('GitHub file lookup returned invalid JSON');
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
@@ -1280,17 +1283,26 @@ export class GitHubAppClient {
       account.type === 'Organization'
         ? `/orgs/${encodeURIComponent(account.login)}/repos`
         : '/user/repos';
-    const body = await jsonObject(
-      await githubFetch(`${this.#config.apiBaseUrl}${path}`, {
-        method: 'POST',
-        headers: { ...githubHeaders(token), 'content-type': 'application/json' },
-        // GitHub creates README.md and the default-branch first commit in the
-        // same repository creation request. The Room can then fetch main on
-        // its first start, including for a selected installation account.
-        body: JSON.stringify({ ...input, auto_init: true }),
-      }),
-      'GitHub repository creation',
-    );
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonObject(
+        await githubFetch(`${this.#config.apiBaseUrl}${path}`, {
+          method: 'POST',
+          headers: { ...githubHeaders(token), 'content-type': 'application/json' },
+          // GitHub creates README.md and the default-branch first commit in the
+          // same repository creation request. The Room can then fetch main on
+          // its first start, including for a selected installation account.
+          body: JSON.stringify({ ...input, auto_init: true }),
+        }),
+        'GitHub repository creation',
+      );
+    } catch (error) {
+      if (error instanceof ExternalServiceTimeoutError)
+        throw new ExternalServiceTimeoutError(
+          'GitHub did not finish responding. The repository may have been created. The result is unknown; refresh to check before retrying.',
+        );
+      throw error;
+    }
     const id = body.id;
     const name = body.name;
     const fullName = body.full_name;
@@ -1407,7 +1419,8 @@ export class GitHubAppClient {
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalServiceTimeoutError) throw error;
       return 'unknown';
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return 'unknown';

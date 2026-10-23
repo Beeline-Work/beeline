@@ -34,7 +34,7 @@ it('keeps the signal alive after headers so a stalled body aborts too', async ()
     const response = await externalFetch(
       `http://127.0.0.1:${(server.address() as { port: number }).port}`,
     );
-    await expect(response.json()).rejects.toThrow();
+    await expect(response.json()).rejects.toThrow('result is unknown');
   } finally {
     server.closeAllConnections();
     await new Promise<void>((done) => server.close(() => done()));

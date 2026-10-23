@@ -10,7 +10,7 @@ beforeAll(async () => {
     CREATE TABLE effective_memberships(room_id text,identity_id text,removed_at timestamp);
     CREATE TABLE identities(id text,kind text,name text);
     CREATE TABLE corner_owed(corner_id text,message_id text,person_id text,created_at timestamp,blocking boolean,expires_at timestamp);
-    CREATE TABLE corner_report_blockers(corner_id text,message_id text,report_id text,person_id text,created_at timestamp);
+    CREATE TABLE corner_report_blockers(corner_id text,message_id text,report_id text,person_id text,created_at timestamp,commander_id text);
     CREATE TABLE corner_merge_holds(corner_id text,id text,actor_id text,set_at timestamp,released_at timestamp);
     INSERT INTO rooms VALUES('corner','room');
     INSERT INTO memberships VALUES('room','person',NULL);`);
@@ -58,7 +58,7 @@ it('R1: holds and messageless reports keep selection IDs but never expose them a
     INSERT INTO identities VALUES('person','human','Lunchbox');
     INSERT INTO effective_memberships VALUES('corner','person',NULL);
     INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);
-    INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','person','2026-01-02');`);
+    INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','person','2026-01-02','person');`);
   const query = async (newest = false) => (await db.query<{
     item_id: string; kind: 'message' | 'merge-hold' | 'report'; person_name: string;
     person_id: string; reason: 'approve' | 'question';

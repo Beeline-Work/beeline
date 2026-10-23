@@ -342,7 +342,7 @@ export async function expiredWakeDigestSources(db: SqlDatabase, roomId: string, 
 function waitingReportSql(command: string): string {
   return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
     SELECT 1 FROM corner_report_blockers blocker WHERE blocker.corner_id=${command}.room_id
-  ) OR ${command}.private_payload->>'kind'='order' OR EXISTS (
+  ) OR ${command}.private_payload->>'kind' IN ('order','report') OR EXISTS (
     SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
     WHERE source.id=${command}.source_message_id AND author.kind='human' AND source.system_event IS NULL
   ))`;
@@ -449,7 +449,7 @@ export async function createAgentCommand(
   if (!member.rowCount) return undefined;
   if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
       input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input &&
-      await cornerReportWaiting(db, input.roomId))
+      await cornerReportWaiting(db, input.roomId, input.privatePayload?.kind))
     return undefined;
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);

@@ -1,8 +1,8 @@
 import { createServer } from 'node:http';
 import { afterEach, expect, it, vi } from 'vitest';
-import { externalFetch, EXTERNAL_REQUEST_TIMEOUT_MS } from './external-fetch';
+import { externalFetch, githubFetch, EXTERNAL_REQUEST_TIMEOUT_MS } from './external-fetch';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 it('supplies the shared deadline and preserves an earlier caller cancellation', async () => {
   const original = AbortSignal.timeout.bind(AbortSignal);
   const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => original(30));
@@ -39,4 +39,11 @@ it('keeps the signal alive after headers so a stalled body aborts too', async ()
     server.closeAllConnections();
     await new Promise<void>((done) => server.close(() => done()));
   }
+});
+
+it('uses GitHub’s documented processing bound plus transport time', async () => {
+  const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(new AbortController().signal);
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({})));
+  await githubFetch('https://api.github.example/user');
+  expect(timeout).toHaveBeenCalledWith(15_000);
 });

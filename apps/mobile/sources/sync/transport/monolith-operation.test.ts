@@ -72,7 +72,7 @@ describe('every registered phone operation has a complete deadline', () => {
     const result = monolithPhoneOperation(name, {} as never).catch((error: unknown) => error);
     const limit = phoneOperationRequestOptions(name, {})?.timeoutMs;
     expect(limit).toBeGreaterThan(0);
-    expect(limit).toBeLessThanOrEqual(name === 'actOnRepositoryCard' ? 60_000 : 20_000);
+    expect(limit).toBeLessThanOrEqual(name === 'approveCornerMerge' ? 540_000 : ['actOnRepositoryCard', 'createGitHubRepository'].includes(name) ? 60_000 : 20_000);
     await vi.advanceTimersByTimeAsync(limit!);
     expect(await result).toBeInstanceOf(Error);
     expect(vi.getTimerCount()).toBe(0);

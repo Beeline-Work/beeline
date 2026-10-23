@@ -1,0 +1,8 @@
+{
+  "reproduction": "R1",
+  "surface": "profile",
+  "mode": "back",
+  "app": "normal index.ts; real signed-in app; no transport mocks",
+  "airplaneMode": true,
+  "backVisibleBySeconds": 2.56
+}

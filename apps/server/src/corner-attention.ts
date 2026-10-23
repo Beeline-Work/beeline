@@ -284,7 +284,10 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
             [flag.person_id],
           )
         ).rows[0];
-        if (!person?.handle) return;
+        if (!person?.handle) {
+          await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [flag.id]);
+          return;
+        }
         await tx.query(
           `UPDATE corner_attention_flags SET sent_at=now(),due_at=now()+interval '24 hours',
         deliveries=deliveries+1 WHERE id=$1`,

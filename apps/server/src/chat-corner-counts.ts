@@ -130,7 +130,7 @@ function reviewCommandActiveSql(command: string): string {
         AND ended.status<>'working')))`;
 }
 
-/** Human-facing blockers only. Display picks the oldest; reminders retain newest-first selection. */
+/** Blocking people and recorded commanders. Display picks the oldest; reminders retain newest-first selection. */
 export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false): string {
   return `LEFT JOIN LATERAL (
     SELECT blockers.*,person.name person_name FROM (
@@ -147,7 +147,8 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
         CASE WHEN report.message_id IS NULL THEN 'report' ELSE 'message' END FROM corner_report_blockers report
-      JOIN identities recipient ON recipient.id=report.person_id AND recipient.kind='human'
+      JOIN identities recipient ON recipient.id=report.person_id
+        AND (recipient.kind='human' OR report.person_id=report.commander_id)
       JOIN effective_memberships member ON member.room_id=c.id AND member.identity_id=report.person_id AND member.removed_at IS NULL
       WHERE report.corner_id=c.id
       UNION ALL

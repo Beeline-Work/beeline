@@ -367,6 +367,7 @@ BEGIN
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='corner_waiting'
     WHERE command.room_id=NEW.corner_id AND command.state='pending' AND command.action IN ('input','resume')
       AND command.private_payload->>'kind' IS DISTINCT FROM 'order'
+      AND command.private_payload->>'kind' IS DISTINCT FROM 'report'
       AND NOT EXISTS(SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
         WHERE source.id=command.source_message_id AND author.kind='human' AND source.system_event IS NULL)
     RETURNING command.*)

@@ -60,11 +60,15 @@ indexes for message history, turn history and invited-member joins.
 
 - `series`: `signups`, `workspaces`, `firstReply`, `friendsJoined`, `dau`, `wau`.
   Each has `daily` and `weekly` arrays of `{date, value}`. Reads are bounded to
-  90 UTC dates; rolling WAU starts after the first six dates so its whole seven-day
+  90 Eastern dates (America/New_York); rolling WAU starts after the first six dates so its whole seven-day
   window is observed. Successful empty dates are zero; failed metrics have no
   array. Weekly buckets are trailing seven-day groups ending on the measurement
   date, not calendar weeks. Counts sum; DAU becomes a daily mean; WAU uses the
   bucket-ending rolling distinct count. The earliest weekly bucket can be partial.
+- `overview.timeZone` is `America/New_York` for Usage series. Each local day
+  starts at Eastern midnight, including DST changes. Other sections retain their
+  existing UTC windows. Frontends may fall back to Eastern when the additive field
+  is absent.
 - New people means identity creation, not sign-in. Created Workspaces are
   attributed through owner membership, which can change. First reply means the
   earliest retained message in the 90-day window from an owned eligible agent,

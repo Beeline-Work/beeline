@@ -14,38 +14,39 @@ const ELIGIBLE = `WITH ${COHORT_SQL}, eligible AS MATERIALIZED (
     OR EXISTS(SELECT 1 FROM device_update_receipts d WHERE d.identity_id=i.id
       AND d.receipt->>'platform'=ANY($2::text[])))
 )`;
-const DAY = (column: string) => `(${column} AT TIME ZONE 'UTC')::date::text`;
+const TIME_ZONE = 'America/New_York';
+const DAY = (column: string) => `(${column} AT TIME ZONE '${TIME_ZONE}')::date::text`;
 // Each aggregate scans a bounded ledger once. In particular, do not put a
 // correlated first-reply scan inside a generated-day loop (production timeout).
 const SERIES_SQL = {
   signups: `${ELIGIBLE} SELECT ${DAY('created_at')} date,count(*) value
-    FROM eligible WHERE created_at >= $3::timestamptz AND created_at < $4::timestamptz+interval '1 day' GROUP BY 1`,
+    FROM eligible WHERE created_at >= ($3::date::timestamp AT TIME ZONE 'America/New_York') AND created_at < (($4::date+1)::timestamp AT TIME ZONE 'America/New_York') GROUP BY 1`,
   workspaces: `${ELIGIBLE} SELECT ${DAY('w.created_at')} date,count(DISTINCT w.id) value
     FROM workspaces w JOIN production_workspaces pw ON pw.id=w.id
     JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL AND m.role='owner'
-    JOIN eligible e ON e.id=m.identity_id WHERE w.created_at >= $3::timestamptz AND w.created_at < $4::timestamptz+interval '1 day' GROUP BY 1`,
+    JOIN eligible e ON e.id=m.identity_id WHERE w.created_at >= ($3::date::timestamp AT TIME ZONE 'America/New_York') AND w.created_at < (($4::date+1)::timestamp AT TIME ZONE 'America/New_York') GROUP BY 1`,
   firstReply: `${ELIGIBLE}, firsts AS MATERIALIZED (
     SELECT a.owner_id,min(msg.created_at) at FROM messages msg
     JOIN rooms r ON r.id=msg.room_id JOIN production_workspaces w ON w.id=r.workspace_id
     JOIN agents a ON a.agent_id=msg.author_id JOIN production_identities ai ON ai.id=a.agent_id
     JOIN eligible e ON e.id=a.owner_id
-    WHERE msg.created_at >= $3::timestamptz AND msg.created_at < $4::timestamptz+interval '1 day' AND msg.presentation='message' AND msg.deleted_at IS NULL
+    WHERE msg.created_at >= ($3::date::timestamp AT TIME ZONE 'America/New_York') AND msg.created_at < (($4::date+1)::timestamp AT TIME ZONE 'America/New_York') AND msg.presentation='message' AND msg.deleted_at IS NULL
     GROUP BY a.owner_id
   ) SELECT ${DAY('at')} date,count(*) value FROM firsts GROUP BY 1`,
   friendsJoined: `${ELIGIBLE} SELECT ${DAY('m.joined_at')} date,count(DISTINCT m.identity_id) value
     FROM memberships m JOIN eligible e ON e.id=m.invited_by
     JOIN production_workspaces w ON w.id=m.workspace_id
     JOIN production_identities pi ON pi.id=m.identity_id JOIN identities i ON i.id=pi.id AND i.kind='human'
-    WHERE m.joined_at >= $3::timestamptz AND m.joined_at < $4::timestamptz+interval '1 day' AND m.room_id IS NULL AND m.invited_by<>m.identity_id GROUP BY 1`,
+    WHERE m.joined_at >= ($3::date::timestamp AT TIME ZONE 'America/New_York') AND m.joined_at < (($4::date+1)::timestamp AT TIME ZONE 'America/New_York') AND m.room_id IS NULL AND m.invited_by<>m.identity_id GROUP BY 1`,
   dau: `${ELIGIBLE} SELECT ${DAY('msg.created_at')} date,count(DISTINCT msg.author_id) value
     FROM messages msg JOIN rooms r ON r.id=msg.room_id
     JOIN production_workspaces w ON w.id=r.workspace_id JOIN eligible e ON e.id=msg.author_id
-    WHERE msg.created_at >= $3::timestamptz AND msg.created_at < $4::timestamptz+interval '1 day' AND msg.presentation='message' AND msg.deleted_at IS NULL GROUP BY 1`,
+    WHERE msg.created_at >= ($3::date::timestamp AT TIME ZONE 'America/New_York') AND msg.created_at < (($4::date+1)::timestamp AT TIME ZONE 'America/New_York') AND msg.presentation='message' AND msg.deleted_at IS NULL GROUP BY 1`,
   wau: `${ELIGIBLE}, activity AS MATERIALIZED (
-    SELECT DISTINCT msg.author_id, (msg.created_at AT TIME ZONE 'UTC')::date date
+    SELECT DISTINCT msg.author_id, (msg.created_at AT TIME ZONE 'America/New_York')::date date
     FROM messages msg JOIN rooms r ON r.id=msg.room_id
     JOIN production_workspaces w ON w.id=r.workspace_id JOIN eligible e ON e.id=msg.author_id
-    WHERE msg.created_at >= $3::timestamptz AND msg.created_at < $4::timestamptz+interval '1 day'
+    WHERE msg.created_at >= ($3::date::timestamp AT TIME ZONE 'America/New_York') AND msg.created_at < (($4::date+1)::timestamp AT TIME ZONE 'America/New_York')
       AND msg.presentation='message' AND msg.deleted_at IS NULL
   ), days AS (SELECT generate_series($3::date+6,$4::date,interval '1 day')::date date)
   SELECT days.date::text date,count(DISTINCT a.author_id) value FROM days
@@ -88,7 +89,11 @@ export async function dashboardOverview(
   platforms: readonly string[],
   measuredAt: string,
 ) {
-  const today = measuredAt.slice(0, 10);
+  const utcToday = measuredAt.slice(0, 10);
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(measuredAt));
+  const utcDays = dates(utcToday, 90);
   const days = dates(today, 90);
   const read = async <T>(
     sql: string,
@@ -104,8 +109,8 @@ export async function dashboardOverview(
   const values = [
     platforms.length === 6,
     [...platforms],
-    days[0] + 'T00:00:00.000Z',
-    today + 'T00:00:00.000Z',
+    days[0],
+    today,
   ];
   const series: Record<string, ReadState<{ daily: Point[]; weekly: Point[] }>> = {};
   // Sequential reads keep an operator refresh from occupying the app pool.
@@ -132,7 +137,7 @@ export async function dashboardOverview(
       AND msg.created_at < (c.joined+8)::timestamp AT TIME ZONE 'UTC'
       AND msg.presentation='message' AND msg.deleted_at IS NULL
   ) SELECT count(*) cohort,count(r.author_id) retained FROM cohort c LEFT JOIN returned_people r ON r.author_id=c.id`,
-    [values[0], values[1], today + 'T00:00:00.000Z'],
+    [values[0], values[1], utcToday + 'T00:00:00.000Z'],
     (rows) => {
       const cohort = Number(rows[0]?.cohort),
         retained = Number(rows[0]?.retained);
@@ -141,18 +146,18 @@ export async function dashboardOverview(
         retained,
         rate: cohort ? retained / cohort : null,
         day: 7,
-        from: dates(today, 29)[0],
-        through: dates(today, 9)[0],
+        from: dates(utcToday, 29)[0],
+        through: dates(utcToday, 9)[0],
       };
     },
   );
   const failures = await read(
-    `SELECT ${DAY('created_at')} date,count(*) total,
+    `SELECT (created_at AT TIME ZONE 'UTC')::date::text date,count(*) total,
     count(*) FILTER(WHERE status='failed') failed FROM agent_turns
     WHERE created_at >= $1::timestamptz GROUP BY 1 ORDER BY 1`,
-    [days[0]],
+    [utcDays[0]],
     (rows) =>
-      days.map((date) => {
+      utcDays.map((date) => {
         const row = rows.find((r) => r.date === date);
         const total = Number(row?.total ?? 0),
           failed = Number(row?.failed ?? 0);
@@ -174,7 +179,7 @@ export async function dashboardOverview(
       AND msg.presentation='message' AND msg.deleted_at IS NULL GROUP BY msg.author_id
   ) SELECT count(*) samples,percentile_cont(.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM r.at-p.at)*1000) median_ms
     FROM paired p JOIN replies r ON r.author_id=p.agent_id WHERE r.at>=p.at`,
-    [values[2]],
+    [utcDays[0] + 'T00:00:00.000Z'],
     (rows) => {
       const samples = Number(rows[0]?.samples);
       return {
@@ -211,10 +216,10 @@ export async function dashboardOverview(
   );
   const spend = await read(
     `SELECT day::text date,usd FROM free_agent_budget WHERE day >= $1::date ORDER BY day`,
-    [days[0]],
+    [utcDays[0]],
     (rows) => ({
-      today,
-      usd: numeric(rows.find((r) => r.date === today)?.usd),
+      today: utcToday,
+      usd: numeric(rows.find((r) => r.date === utcToday)?.usd),
       capUsd: freeAgentLimitsFromEnv(process.env).dailyBudgetUsd,
       history: rows.map((r) => ({ date: String(r.date), usd: numeric(r.usd) })),
     }),
@@ -272,6 +277,7 @@ export async function dashboardOverview(
     state: 'measured' as const,
     measuredAt,
     windowDays: 90,
+    timeZone: TIME_ZONE,
     series,
     retention,
     failures,

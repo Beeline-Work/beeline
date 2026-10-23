@@ -92,7 +92,7 @@ export function EmptyLedgerState({
   }
   return (
     <View style={styles.pressable} testID={testID}>
-      <EmptyState title={copy.title} description={copy.body}
+      <EmptyState title={variant === 'corner' ? 'Nothing in the log yet' : copy.title} description={copy.body}
         action={{label:copy.title, onPress, accessibilityLabel:`${copy.title}. ${copy.body}`}} />
     </View>
   );

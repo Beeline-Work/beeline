@@ -222,6 +222,8 @@ describe('beeline-agent post_artifact', () => {
     const names = tools.map((tool) => tool.name);
     expect(names.indexOf('post_artifact')).toBeGreaterThan(names.indexOf('open_corner') - 1);
     const tool = tools.find((entry) => entry.name === 'post_artifact');
+    expect(tool?.description).toContain('25 MiB (26,214,400 bytes)');
+    expect(tool?.description).toContain('total limit per reply');
     expect(tool?.inputSchema).toMatchObject({ required: ['path'] });
     expect(Object.keys((tool?.inputSchema as { properties: object }).properties)).toEqual([
       'path',

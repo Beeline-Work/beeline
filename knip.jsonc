@@ -25,6 +25,8 @@
       // Shell hooks and device harnesses invoke these by path, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
+        // Discovery spawns launch/MCP helpers; its runbook invokes the grading CLI by path.
+        "scripts/discovery-{launch,mcp,grade}.mjs",
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",

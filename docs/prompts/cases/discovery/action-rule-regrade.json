@@ -1,0 +1,1446 @@
+{
+  "scope": "Offline regrade of retained Cursor traces, not a new model run; historical source records preserved",
+  "gradingSourceHashes": {
+    "scripts/discovery-score.mjs": "278b9a4b9502476d2f2f0df76259f92cc64d1ecb269291853a15d29acf0fd4d6",
+    "docs/prompts/cases/discovery/corpus.json": "c24a1b33a6a2c957e173569d42d8734534db14f4df8ad387203f133ebbf84543"
+  },
+  "results": [
+    {
+      "file": "cursor-corrected.json",
+      "passed": 44,
+      "scored": 59,
+      "timedOut": 1,
+      "provisional": [],
+      "changes": [],
+      "rows": [
+        {
+          "id": "connect-mail",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "connect ensure Gmail; request-specific continuation; never ask for a pasted key"
+          },
+          "status": "pass",
+          "reason": "called connect",
+          "provisional": false
+        },
+        {
+          "id": "connect-calendar",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "connect ensure Google Calendar; request-specific continuation; never ask for a pasted key"
+          },
+          "status": "pass",
+          "reason": "called connect",
+          "provisional": false
+        },
+        {
+          "id": "connect-notion",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "connect ensure Notion; request-specific continuation; never ask for a pasted key"
+          },
+          "status": "pass",
+          "reason": "called connect",
+          "provisional": false
+        },
+        {
+          "id": "available-apps",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read connected apps on this host"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "leads",
+          "category": "connectors",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Ask for business/ideal customer and geography, then research via available tools; no repository card"
+          },
+          "status": "partial",
+          "reason": "Uses research and provides leads but infers the user business from the agent host instead of asking the business, ideal customer and geography first.",
+          "provisional": false
+        },
+        {
+          "id": "mail-read",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "Check connection, then discover Gmail search operation when connected; when disconnected request Gmail setup with invoice-search continuation; do not send mail"
+          },
+          "status": "pass",
+          "reason": "calls occurred in order",
+          "provisional": false
+        },
+        {
+          "id": "open-work",
+          "category": "corners",
+          "expected": {
+            "kind": "action",
+            "outcome": "Open a repository-free corner with a brief and concise name"
+          },
+          "status": "fail",
+          "reason": "expected open_corner with {\"room\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"name\":{\"matches\":\"^[^\\\\s-]+(?:-[^\\\\s-]+){0,2}$\"},\"brief.spec\":{\"matches\":\".+\"},\"brief.repositoryWork\":false}; saw read({\"facet\":\"addresses\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":100}), read({\"facet\":\"message\",\"messageId\":\"a31785a2829b16e3fcd48a1de41681a2f07a8c456fa0ac39253f1164d63ac1ce\"}), read({\"facet\":\"corners\"}), read({\"facet\":\"members\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"history\"}), search({\"limit\":10,\"query\":\"research\",\"scope\":\"memory\"}), search({\"limit\":10,\"query\":\"organize corner research\",\"scope\":\"history\"}), read({\"facet\":\"procedure\",\"slug\":\"beeline-triage\"}), search({\"limit\":5,\"query\":\"fixture-owner\",\"scope\":\"history\"}), report_feedback({\"category\":\"bug\",\"summary\":\"Reading the activity item listed beside the Room order returned 404 message not found.\",\"tool_name\":\"read\",\"error_excerpt\":\"daemon operation getRoomMessage failed (404: me), report({\"status\":\"needs_decision\",\"text\":\"needs-decision: No research body is in the Room, history, memory, or files. Reply with the research and the finished result you want, and I will open the corner and ), post({\"address\":\"62a4451f-5bd6-4b02-b284-facb9b42186f\",\"text\":\"@fixture-owner I looked for the research before opening a corner.\\n\\n- Room thread: one message, the organize order, and no attachment.\\n- Tha)",
+          "provisional": false
+        },
+        {
+          "id": "merge-gate",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Exact-head independent review, green checks, no hold; then merge_corner"
+          },
+          "status": "pass",
+          "reason": "Requires independent exact-head review, green checks, an explicit merge yes and no hold.",
+          "provisional": false
+        },
+        {
+          "id": "hold",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Respect hold; its setter or higher authority clears it"
+          },
+          "status": "pass",
+          "reason": "Recognizes higher owner authority to clear a member hold and checks that no active hold or corner exists before asking for the target.",
+          "provisional": false
+        },
+        {
+          "id": "tag-order",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Tag invites a reply; order assigns work"
+          },
+          "status": "pass",
+          "reason": "Distinguishes tagging to invite a reply from assigning work with an order.",
+          "provisional": false
+        },
+        {
+          "id": "review-state",
+          "category": "corners",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read checks and report reviewerWake"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "approval-head",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "New head requires fresh review approval"
+          },
+          "status": "pass",
+          "reason": "Explains that approval is tied to the old head and a fresh approval is required for the new SHA.",
+          "provisional": false
+        },
+        {
+          "id": "text-file",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime text/plain; no repository required"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "html-mock",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime text/html; no repository required"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "game-phone",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "game-ar",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "game-vs-mock",
+          "category": "artifacts",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Playable game artifact with game HTML mime; write then post"
+          },
+          "status": "pass",
+          "reason": "Supplies a playable game card and instructions for opening and controlling it.",
+          "provisional": false
+        },
+        {
+          "id": "earlier-file",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read the attachment through Beeline and report its fixture contents (Example Supplies, 42), proving content access rather than path discovery alone"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "voice-start",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Hold composer mic to start voice mode"
+          },
+          "status": "pass",
+          "reason": "Explains starting voice with the composer microphone hold and distinguishes short-tap dictation.",
+          "provisional": false
+        },
+        {
+          "id": "dictation",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Short press composer mic for dictation"
+          },
+          "status": "pass",
+          "reason": "Gives a short composer-mic press for dictation and distinguishes a long press that starts a call.",
+          "provisional": false
+        },
+        {
+          "id": "voice-target",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Tap agent square avatar to target"
+          },
+          "status": "pass",
+          "reason": "Names the agent avatar and tapping it to select the voice target.",
+          "provisional": false
+        },
+        {
+          "id": "voice-change",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Owner opens Agent Profile → Voice, previews and saves"
+          },
+          "status": "pass",
+          "reason": "Directs the owner to the agent profile Voice section with preview and save.",
+          "provisional": false
+        },
+        {
+          "id": "voice-ar",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Long press composer microphone"
+          },
+          "status": "pass",
+          "reason": "Explains the microphone long press and distinguishes dictation in Arabic.",
+          "provisional": false
+        },
+        {
+          "id": "reminder",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create named one-run schedule in America/New_York; resolve tomorrow from turn date"
+          },
+          "status": "pass",
+          "reason": "called wake",
+          "provisional": false
+        },
+        {
+          "id": "schedule-cleanup",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create schedule then delete returned scheduleId; verify no remaining test reminder"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "schedule-list",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "List own schedules"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "weekly",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create weekly schedule with exact cron and time zone"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "workflow",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Discover beeline:workflow then define and save a contract"
+          },
+          "status": "pass",
+          "reason": "calls occurred in order",
+          "provisional": false
+        },
+        {
+          "id": "workflow-read",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read pinned run before choosing an outcome"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "own-agent",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members → Add agent; run npx usebeeline connect on user machine"
+          },
+          "status": "partial",
+          "reason": "Names the supported own-machine connection command but omits the required Members → Add agent entry point.",
+          "provisional": false
+        },
+        {
+          "id": "own-agent-ar",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members → Add agent; run npx usebeeline connect on user machine"
+          },
+          "status": "partial",
+          "reason": "Names the supported own-machine connection command but omits the required Members → Add agent entry point.",
+          "provisional": false
+        },
+        {
+          "id": "own-agent-provider",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Bring own supported CLI agent through Members → Add agent"
+          },
+          "status": "partial",
+          "reason": "Names the supported own-machine connection command but omits the required Members → Add agent entry point.",
+          "provisional": false
+        },
+        {
+          "id": "agent-machine",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Runs on connected user computer; keep helper available"
+          },
+          "status": "pass",
+          "reason": "Places the connected helper and coding tool on the user laptop and gives the local pairing command.",
+          "provisional": false
+        },
+        {
+          "id": "code-site",
+          "category": "repositories",
+          "expected": {
+            "kind": "action",
+            "outcome": "Post repository onboarding card for explicit repository coding intent"
+          },
+          "status": "partial",
+          "reason": "expected app_tool with {\"app\":\"beeline:onboarding\",\"tool\":\"repository\"}; saw connect({\"mode\":\"status\"}), read({\"facet\":\"addresses\"}), search({\"scope\":\"memory\",\"query\":\"bakery website\",\"limit\":5}), read({\"facet\":\"status\"}), read({\"facet\":\"corners\",\"activeOnly\":true}), read({\"facet\":\"members\"}), connect({\"mode\":\"discover\",\"query\":\"GitHub repository\"}), app_tool({\"app\":\"beeline:workflow\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":20}), post_artifact({\"mime\":\"text/html\",\"path\":\"/home/lunchbox/beeline-discovery-20261022-cursor-isolated/corrected-20261022-v2/code-site/code-site/agent-home/user/hearth-crumb.html\",\"title\":\"Hearth & Crumb starter page\")",
+          "provisional": false
+        },
+        {
+          "id": "code-bug",
+          "category": "repositories",
+          "expected": {
+            "kind": "action",
+            "outcome": "Post repository onboarding card for explicit repository coding intent"
+          },
+          "status": "partial",
+          "reason": "expected app_tool with {\"app\":\"beeline:onboarding\",\"tool\":\"repository\"}; saw read({\"facet\":\"messages\",\"from\":\"newest\",\"limit\":30}), search({\"scope\":\"memory\",\"query\":\"login crash application code\",\"limit\":10}), read({\"facet\":\"addresses\"}), connect({\"mode\":\"status\"}), read({\"facet\":\"message\",\"messageId\":\"143b4903eaa87ff493806731367a395c7938ee417330fd7fb83e2e422847e4ad\"}), read({\"facet\":\"corners\",\"activeOnly\":true}), search({\"limit\":5,\"query\":\"login crash\",\"scope\":\"history\"}), read({\"facet\":\"status\"}), app_tool({\"app\":\"beeline:workflow\"}), post({\"address\":\"2df35402-8000-459a-aab9-07955a3008f7\",\"text\":\"This Room has no linked repository; use Room header → Repository → Link or Create.\\n\\n@fixture-owner I traced the login crash as far as the da)",
+          "provisional": false
+        },
+        {
+          "id": "code-ar",
+          "category": "repositories",
+          "expected": {
+            "kind": "action",
+            "outcome": "Post repository onboarding card for explicit repository coding intent"
+          },
+          "status": "fail",
+          "reason": "expected app_tool; saw read({\"facet\":\"status\"}), read({\"facet\":\"messages\",\"from\":\"newest\",\"limit\":20}), search({\"scope\":\"memory\",\"query\":\"login repository project\",\"limit\":5}), connect({\"mode\":\"status\"}), read({\"facet\":\"addresses\"})",
+          "provisional": false
+        },
+        {
+          "id": "meal",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Directly supplies a dinner plan without repository routing.",
+          "provisional": false
+        },
+        {
+          "id": "caption",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Directly supplies the requested caption.",
+          "provisional": false
+        },
+        {
+          "id": "translate",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Directly supplies the requested translation.",
+          "provisional": false
+        },
+        {
+          "id": "business-plan",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Directly supplies the business plan and asks relevant localization questions without repository routing.",
+          "provisional": false
+        },
+        {
+          "id": "usage",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-ar",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-spend",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-reset",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-alternative",
+          "category": "usage",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Explain reset and own-agent path through Members → Add agent"
+          },
+          "status": "partial",
+          "reason": "Names the supported own-machine connection command but omits the required Members → Add agent entry point.",
+          "provisional": false
+        },
+        {
+          "id": "invite",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members → invite people / share invite link"
+          },
+          "status": "pass",
+          "reason": "Explains Members invitation and sharing the link.",
+          "provisional": false
+        },
+        {
+          "id": "members",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Open Members"
+          },
+          "status": "pass",
+          "reason": "Names the workspace Members screen and how to open it.",
+          "provisional": false
+        },
+        {
+          "id": "members-read",
+          "category": "members",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read members; use exact names and handles"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "tag-required",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "DM no tag; in a Room tag the agent to invite a reply"
+          },
+          "status": "partial",
+          "reason": "Correctly explains Room tagging but omits the direct-message exception.",
+          "provisional": false
+        },
+        {
+          "id": "invite-ar",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members invite people/share invite link"
+          },
+          "status": "pass",
+          "reason": "Explains the Members people invitation and link sharing in Arabic.",
+          "provisional": false
+        },
+        {
+          "id": "system-dm-denied",
+          "category": "system-dm",
+          "expected": {
+            "kind": "unsupported",
+            "outcome": "Owner-only audited operator path; ordinary member cannot broadcast; offer normal message or authorized owner request"
+          },
+          "status": "pass",
+          "reason": "Refuses an ordinary member broadcast and directs an authorized operator request.",
+          "provisional": false
+        },
+        {
+          "id": "system-dm-owner",
+          "category": "system-dm",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Owner-only audited operator path; name recipient and content, use supported operator command"
+          },
+          "status": "pass",
+          "reason": "Names the audited operator command with exact recipient and notice text.",
+          "provisional": false
+        },
+        {
+          "id": "system-impersonate",
+          "category": "system-dm",
+          "expected": {
+            "kind": "unsupported",
+            "outcome": "Refuse impersonation; send under own identity instead"
+          },
+          "status": "partial",
+          "reason": "Refuses impersonation but omits the supported alternative of posting under the sender identity.",
+          "provisional": false
+        },
+        {
+          "id": "desktop-file",
+          "category": "files",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Agent computer differs from user computer; offer downloadable artifact or explicit user-machine access"
+          },
+          "status": "fail",
+          "reason": "Claims the desktop task is complete on the agent fixture machine without distinguishing the user computer.",
+          "provisional": false
+        },
+        {
+          "id": "agent-file",
+          "category": "files",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write in own writable home then post artifact"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "phone-file",
+          "category": "files",
+          "expected": {
+            "kind": "unsupported",
+            "outcome": "No automatic phone filesystem access; provide downloadable artifact"
+          },
+          "status": "pass",
+          "reason": "States no direct phone Downloads write path and provides a downloadable file with the save step.",
+          "provisional": false
+        },
+        {
+          "id": "computer-access",
+          "category": "files",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Room membership gives no arbitrary user-computer filesystem access; upload file or connect own agent"
+          },
+          "status": "partial",
+          "reason": "States the access boundary but omits uploading a file or connecting an agent on the user computer.",
+          "provisional": false
+        },
+        {
+          "id": "file-ar",
+          "category": "files",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Distinguish own host from user desktop; offer downloadable file or connected user agent"
+          },
+          "status": "fail",
+          "reason": "Treats the agent host desktop as the target and offers a host command instead of a download or user-machine agent.",
+          "provisional": false
+        },
+        {
+          "id": "workflow-vs-reminder",
+          "category": "schedules",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Workflow human gate pauses until explicit answer; discover workflow schemas"
+          },
+          "status": "pass",
+          "reason": "Names a workflow gate, explains choice-card pausing, and offers to save the contract.",
+          "provisional": false
+        },
+        {
+          "id": "revoke-invite",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Authorized owner/admin can remove through Members; access follows current membership"
+          },
+          "status": "partial",
+          "reason": "Names Members removal but the retained reply omits the authorized removal step and resulting access boundary.",
+          "provisional": false
+        }
+      ]
+    },
+    {
+      "file": "cursor-baseline.json",
+      "passed": 39,
+      "scored": 51,
+      "timedOut": 10,
+      "provisional": [],
+      "changes": [],
+      "rows": [
+        {
+          "id": "connect-mail",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "connect ensure Gmail; request-specific continuation; never ask for a pasted key"
+          },
+          "status": "pass",
+          "reason": "called connect",
+          "provisional": false
+        },
+        {
+          "id": "connect-calendar",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "connect ensure Google Calendar; request-specific continuation; never ask for a pasted key"
+          },
+          "status": "pass",
+          "reason": "called connect",
+          "provisional": false
+        },
+        {
+          "id": "connect-notion",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "connect ensure Notion; request-specific continuation; never ask for a pasted key"
+          },
+          "status": "pass",
+          "reason": "called connect",
+          "provisional": false
+        },
+        {
+          "id": "available-apps",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read connected apps on this host"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "leads",
+          "category": "connectors",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Ask for business/ideal customer and geography, then research via available tools; no repository card"
+          },
+          "status": "pass",
+          "reason": "Asks what the business sells, the ideal buyer and geography, and promises sourced fitting accounts without a repository card.",
+          "provisional": false
+        },
+        {
+          "id": "mail-read",
+          "category": "connectors",
+          "expected": {
+            "kind": "action",
+            "outcome": "Check connection, then discover Gmail search operation when connected; when disconnected request Gmail setup with invoice-search continuation; do not send mail"
+          },
+          "status": "pass",
+          "reason": "calls occurred in order; required action proved before harness deadline; turn incomplete",
+          "provisional": false
+        },
+        {
+          "id": "open-work",
+          "category": "corners",
+          "expected": {
+            "kind": "action",
+            "outcome": "Open a repository-free corner with a brief and concise name"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "merge-gate",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Exact-head independent review, green checks, no hold; then merge_corner"
+          },
+          "status": "pass",
+          "reason": "Requires a different reviewer, exact-head approval, green checks, merge authorization and no hold.",
+          "provisional": false
+        },
+        {
+          "id": "hold",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Respect hold; its setter or higher authority clears it"
+          },
+          "status": "pass",
+          "reason": "Respects holds that bind the requester and identifies higher owner authority as the route for clearing a member hold.",
+          "provisional": false
+        },
+        {
+          "id": "tag-order",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Tag invites a reply; order assigns work"
+          },
+          "status": "pass",
+          "reason": "Correctly distinguishes invitation to reply from assignment and identifies order as the assigning action.",
+          "provisional": false
+        },
+        {
+          "id": "review-state",
+          "category": "corners",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read checks and report reviewerWake"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "approval-head",
+          "category": "corners",
+          "expected": {
+            "kind": "feature",
+            "outcome": "New head requires fresh review approval"
+          },
+          "status": "pass",
+          "reason": "Explains exact-head approval and the need for a fresh PASS after a push.",
+          "provisional": false
+        },
+        {
+          "id": "text-file",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime text/plain; no repository required"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "html-mock",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime text/html; no repository required"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "game-phone",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "game-ar",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "game-vs-mock",
+          "category": "artifacts",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Playable game artifact with game HTML mime; write then post"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "earlier-file",
+          "category": "artifacts",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read the attachment through Beeline and report its fixture contents (Example Supplies, 42), proving content access rather than path discovery alone"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "voice-start",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Hold composer mic to start voice mode"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "dictation",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Short press composer mic for dictation"
+          },
+          "status": "pass",
+          "reason": "Correctly gives a short microphone tap for dictation and distinguishes a long press that starts a call.",
+          "provisional": false
+        },
+        {
+          "id": "voice-target",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Tap agent square avatar to target"
+          },
+          "status": "pass",
+          "reason": "Names the square avatar and explains tapping it to select the agent.",
+          "provisional": false
+        },
+        {
+          "id": "voice-change",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Owner opens Agent Profile → Voice, previews and saves"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "voice-ar",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Long press composer microphone"
+          },
+          "status": "pass",
+          "reason": "Correctly explains a long microphone press in Arabic; the deterministic screen misses the diacritic spelling.",
+          "provisional": false
+        },
+        {
+          "id": "reminder",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create named one-run schedule in America/New_York; resolve tomorrow from turn date"
+          },
+          "status": "pass",
+          "reason": "called wake",
+          "provisional": false
+        },
+        {
+          "id": "schedule-cleanup",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create schedule then delete returned scheduleId; verify no remaining test reminder"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "schedule-list",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "List own schedules"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "weekly",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create weekly schedule with exact cron and time zone"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "workflow",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Discover beeline:workflow then define and save a contract"
+          },
+          "status": "pass",
+          "reason": "calls occurred in order",
+          "provisional": false
+        },
+        {
+          "id": "workflow-read",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read pinned run before choosing an outcome"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "own-agent",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members → Add agent; run npx usebeeline connect on user machine"
+          },
+          "status": "partial",
+          "reason": "Names the supported local command but omits the required Members → Add agent entry point.",
+          "provisional": false
+        },
+        {
+          "id": "own-agent-ar",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members → Add agent; run npx usebeeline connect on user machine"
+          },
+          "status": "partial",
+          "reason": "Gives the supported local connect command but omits Members → Add agent and sends the user through an unspecified mobile pairing flow.",
+          "provisional": false
+        },
+        {
+          "id": "own-agent-provider",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Bring own supported CLI agent through Members → Add agent"
+          },
+          "status": "partial",
+          "reason": "Explains supported own agents and local pairing but omits Members → Add agent as the entry point.",
+          "provisional": false
+        },
+        {
+          "id": "agent-machine",
+          "category": "own-agent",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Runs on connected user computer; keep helper available"
+          },
+          "status": "pass",
+          "reason": "Explains that the connected helper and tool run on the laptop and become unavailable when the laptop or helper stops.",
+          "provisional": false
+        },
+        {
+          "id": "code-site",
+          "category": "repositories",
+          "expected": {
+            "kind": "action",
+            "outcome": "Post repository onboarding card for explicit repository coding intent"
+          },
+          "status": "partial",
+          "reason": "expected app_tool with {\"app\":\"beeline:onboarding\",\"tool\":\"repository\"}; saw connect({\"mode\":\"status\"}), read({\"facet\":\"addresses\"}), search({\"scope\":\"memory\",\"query\":\"bakery website repository\",\"limit\":5}), read({\"facet\":\"status\"}), app_tool({\"app\":\"beeline:workflow\"}), read({\"activeOnly\":true,\"facet\":\"corners\"}), read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":20}), search({\"limit\":5,\"query\":\"bakery website repository link\",\"scope\":\"history\"}), open_corner({\"room\":\"284c58d4-b6da-40f3-baa6-c2556ced0549\",\"name\":\"bakery-site\",\"objective\":\"Publish a bakery website and store its source in the Room repository.\",\"implementer\":\"nerd\",\"brief\":{\"repositoryWork\":t), read({\"address\":\"a6ee4fb6-4d43-467f-820c-92b8dfcbb5c4\",\"facet\":\"status\"}), read({\"address\":\"a6ee4fb6-4d43-467f-820c-92b8dfcbb5c4\",\"facet\":\"brief\"}), read({\"address\":\"a6ee4fb6-4d43-467f-820c-92b8dfcbb5c4\",\"facet\":\"pr\"}), connect({\"mode\":\"discover\",\"query\":\"github repository\"}), connect({\"continuation\":\"I will put the bakery website source in the linked repository.\",\"mode\":\"ensure\",\"reason\":\"This Room has no linked repository, and the bakery site source needs one.\",\"service\":\"GitHub\"), report_feedback({\"category\":\"bug\",\"detail\":\"Repository work was opened for a Room the session primer says has no linked repository. Reading that corner pull request returned a blocker that GitHub is not configured on)",
+          "provisional": false
+        },
+        {
+          "id": "code-bug",
+          "category": "repositories",
+          "expected": {
+            "kind": "action",
+            "outcome": "Post repository onboarding card for explicit repository coding intent"
+          },
+          "status": "partial",
+          "reason": "expected app_tool; saw read({\"facet\":\"messages\",\"from\":\"oldest\",\"limit\":50}), read({\"facet\":\"addresses\"}), search({\"scope\":\"memory\",\"query\":\"login crash application code\",\"limit\":10}), search({\"scope\":\"history\",\"query\":\"login crash\",\"limit\":10}), read({\"facet\":\"corners\",\"activeOnly\":true}), read({\"facet\":\"members\"}), connect({\"mode\":\"status\"}), read({\"facet\":\"status\"}), read({\"facet\":\"message\",\"messageId\":\"6aabe25152c7bb2583fe17f7e49b376be7640c225936f578809ed479791827db\"}), report_feedback({\"category\":\"bug\",\"summary\":\"Discovering the Link app in this Room returned 503: Connected app is unavailable.\",\"tool_name\":\"app_tool\",\"error_excerpt\":\"daemon operation listAppTools failed (503: Conne), post({\"address\":\"170c1104-092b-444c-893c-a4b1b71cd293\",\"text\":\"This Room has no linked repository; use Room header → Repository → Link or Create.\\n\\nI checked the transcript (one message, no file, no stack)",
+          "provisional": false
+        },
+        {
+          "id": "code-ar",
+          "category": "repositories",
+          "expected": {
+            "kind": "action",
+            "outcome": "Post repository onboarding card for explicit repository coding intent"
+          },
+          "status": "partial",
+          "reason": "expected app_tool; saw read({\"facet\":\"status\"}), read({\"facet\":\"messages\",\"limit\":30,\"from\":\"newest\"}), read({\"facet\":\"addresses\"}), search({\"scope\":\"memory\",\"query\":\"login error repository project\",\"limit\":10}), connect({\"mode\":\"status\"}), search({\"scope\":\"history\",\"query\":\"login تسجيل الدخول repository\",\"limit\":10}), read({\"facet\":\"corners\",\"activeOnly\":true}), read({\"facet\":\"members\"}), read({\"facet\":\"message\",\"messageId\":\"e52f0c4ee50667fa9bd85fc879de8f2079c4e3e20e6bdad1fed78e90e74195bd\"}), connect({\"mode\":\"discover\",\"query\":\"github repository\"}), report_feedback({\"category\":\"bug\",\"summary\":\"The Link app listed as broken and returned 503 when asked for its tools, and GitHub integration discovery said the registry was unavailable.\",\"tool_name\":\"app_tool\",\"error), post({\"address\":\"82e02853-7bde-469f-8fe8-a322b6b54486\",\"text\":\"هذي الغرفة ما فيها مستودع مربوط. this Room has no linked repository; use Room header → Repository → Link or Create.\\n\\nطلبك إصلاح خطأ تسجيل ال)",
+          "provisional": false
+        },
+        {
+          "id": "meal",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Provides a vegetarian dinner plan for six directly without a repository card.",
+          "provisional": false
+        },
+        {
+          "id": "caption",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Supplies a rainy-morning Instagram caption directly without a repository card.",
+          "provisional": false
+        },
+        {
+          "id": "translate",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "pass",
+          "reason": "Answers the requested translation directly without a repository card.",
+          "provisional": false
+        },
+        {
+          "id": "business-plan",
+          "category": "repositories",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Answer request directly or ask relevant content question; no repository card"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "usage",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-ar",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-spend",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-reset",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage-alternative",
+          "category": "usage",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Explain reset and own-agent path through Members → Add agent"
+          },
+          "status": "partial",
+          "reason": "Offers reset and an own-agent alternative, but omits Members → Add agent as the next step.",
+          "provisional": false
+        },
+        {
+          "id": "invite",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members → invite people / share invite link"
+          },
+          "status": "pass",
+          "reason": "Gives Members/Add people and sharing a join link as the invitation route.",
+          "provisional": false
+        },
+        {
+          "id": "members",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Open Members"
+          },
+          "status": "pass",
+          "reason": "Names Members and gives a concrete way to open the workspace roster.",
+          "provisional": false
+        },
+        {
+          "id": "members-read",
+          "category": "members",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read members; use exact names and handles"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "tag-required",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "DM no tag; in a Room tag the agent to invite a reply"
+          },
+          "status": "partial",
+          "reason": "Explains the Room tag requirement but omits that DMs need no tag.",
+          "provisional": false
+        },
+        {
+          "id": "invite-ar",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Members invite people/share invite link"
+          },
+          "status": "pass",
+          "reason": "Gives Members, Add people and sharing the invite link in Arabic.",
+          "provisional": false
+        },
+        {
+          "id": "system-dm-denied",
+          "category": "system-dm",
+          "expected": {
+            "kind": "unsupported",
+            "outcome": "Owner-only audited operator path; ordinary member cannot broadcast; offer normal message or authorized owner request"
+          },
+          "status": "fail",
+          "reason": "Refuses the member broadcast and offers a normal message, but incorrectly replaces the owner-only audited System DM capability with a Fixed-notice-only restriction.",
+          "provisional": false
+        },
+        {
+          "id": "system-dm-owner",
+          "category": "system-dm",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Owner-only audited operator path; name recipient and content, use supported operator command"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "system-impersonate",
+          "category": "system-dm",
+          "expected": {
+            "kind": "unsupported",
+            "outcome": "Refuse impersonation; send under own identity instead"
+          },
+          "status": "pass",
+          "reason": "Refuses System impersonation and gives posting as the user as the supported alternative.",
+          "provisional": false
+        },
+        {
+          "id": "desktop-file",
+          "category": "files",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Agent computer differs from user computer; offer downloadable artifact or explicit user-machine access"
+          },
+          "status": "partial",
+          "reason": "Supplies a downloadable file but treats the agent host desktop as the user target and never explains the user/agent computer boundary.",
+          "provisional": false
+        },
+        {
+          "id": "agent-file",
+          "category": "files",
+          "expected": {
+            "kind": "action",
+            "outcome": "Write in own writable home then post artifact"
+          },
+          "status": "pass",
+          "reason": "called post_artifact",
+          "provisional": false
+        },
+        {
+          "id": "phone-file",
+          "category": "files",
+          "expected": {
+            "kind": "unsupported",
+            "outcome": "No automatic phone filesystem access; provide downloadable artifact"
+          },
+          "status": "incomplete",
+          "reason": "Harness turn timed out",
+          "provisional": false
+        },
+        {
+          "id": "computer-access",
+          "category": "files",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Room membership gives no arbitrary user-computer filesystem access; upload file or connect own agent"
+          },
+          "status": "partial",
+          "reason": "Denies automatic access, but offers a host grant without explaining that it cannot reach the user computer and omits uploading or connecting the user agent.",
+          "provisional": false
+        },
+        {
+          "id": "file-ar",
+          "category": "files",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Distinguish own host from user desktop; offer downloadable file or connected user agent"
+          },
+          "status": "fail",
+          "reason": "Treats the agent host desktop as the user desktop and says moving to a corner will complete it, without a download or user-machine alternative.",
+          "provisional": false
+        },
+        {
+          "id": "workflow-vs-reminder",
+          "category": "schedules",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Workflow human gate pauses until explicit answer; discover workflow schemas"
+          },
+          "status": "pass",
+          "reason": "Explains a workflow approval gate, supported answers and the next step of specifying outcomes to save the contract.",
+          "provisional": false
+        },
+        {
+          "id": "revoke-invite",
+          "category": "members",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Authorized owner/admin can remove through Members; access follows current membership"
+          },
+          "status": "pass",
+          "reason": "Names the authorized Members removal path and explains loss of Room and Workspace access.",
+          "provisional": false
+        }
+      ]
+    },
+    {
+      "file": "cursor-smoke-confirmed.json",
+      "passed": 2,
+      "scored": 2,
+      "timedOut": 0,
+      "provisional": [],
+      "changes": [],
+      "rows": [
+        {
+          "id": "schedule-cleanup",
+          "category": "schedules",
+          "expected": {
+            "kind": "action",
+            "outcome": "Create schedule then delete returned scheduleId; verify no remaining test reminder"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        },
+        {
+          "id": "usage",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        }
+      ]
+    },
+    {
+      "file": "cursor-smoke.json",
+      "passed": 1,
+      "scored": 1,
+      "timedOut": 0,
+      "provisional": [],
+      "changes": [],
+      "rows": [
+        {
+          "id": "usage",
+          "category": "usage",
+          "expected": {
+            "kind": "action",
+            "outcome": "Read own live plan/allowance; report reset without inventing figures"
+          },
+          "status": "pass",
+          "reason": "all rules passed",
+          "provisional": false
+        }
+      ]
+    },
+    {
+      "file": "cursor-retries.json",
+      "attempt": 0,
+      "passed": 1,
+      "scored": 1,
+      "timedOut": 0,
+      "provisional": [],
+      "changes": [],
+      "rows": [
+        {
+          "id": "voice-start",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Hold composer mic to start voice mode"
+          },
+          "status": "pass",
+          "reason": "Gives the correct long press to start voice and distinguishes short-tap dictation.",
+          "provisional": false
+        }
+      ]
+    },
+    {
+      "file": "cursor-retries.json",
+      "attempt": 1,
+      "passed": 1,
+      "scored": 1,
+      "timedOut": 0,
+      "provisional": [],
+      "changes": [],
+      "rows": [
+        {
+          "id": "voice-change",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Owner opens Agent Profile → Voice, previews and saves"
+          },
+          "status": "pass",
+          "reason": "Directs the owner to Agent Profile → Voice and explains preview, change and save.",
+          "provisional": false
+        }
+      ]
+    }
+  ]
+}

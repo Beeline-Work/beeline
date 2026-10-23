@@ -1,0 +1,30 @@
+{
+  "code": 0,
+  "signal": null,
+  "args": [
+    "test",
+    "--workspace",
+    "@beeline/server",
+    "--",
+    "--run",
+    "--exclude",
+    "src/production-corpus-hot-reads.test.ts",
+    "--exclude",
+    "src/integration.test.ts",
+    "--exclude",
+    "src/agent-command.scaling.test.ts",
+    "--maxWorkers=2",
+    "--minWorkers=2",
+    "--shard=1/8"
+  ],
+  "completedAt": "2026-10-22T23:05:44.271Z",
+  "scope": "Exact previously failing CI shard command on the current branch; host proof, not a GitHub CI verdict.",
+  "sourceHeadBeforeReviewFixes": "caa3f2e4fa98f8736020e699816947e2a5d72308",
+  "filesPassed": 27,
+  "testsPassed": 630,
+  "testsSkipped": 1,
+  "dashboardTestsPassed": 20,
+  "durationSeconds": 484.61,
+  "memoryCapGiB": 12,
+  "cpuQuotaPercent": 400
+}

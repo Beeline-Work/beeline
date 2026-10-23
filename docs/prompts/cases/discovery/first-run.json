@@ -1,0 +1,641 @@
+{
+  "status": "incomplete",
+  "baselineEligible": false,
+  "reason": "The original Grok CLI controller used the wrong harness and its refusal is not a Cursor allowance verdict. The corrected Cursor smoke completed and passed (1/1); the full cohort is still outstanding.",
+  "agent": "nerd",
+  "model": "grok-4.7",
+  "effort": "xhigh",
+  "harness": "grok 1.0.52 (0920c8169e27)",
+  "startedAt": "2026-10-22T19:54:18.497Z",
+  "sourceCommit": "80d6403129022d67e7686077d45f48a063c5cb2f",
+  "completed": 0,
+  "total": 60,
+  "passRate": null,
+  "rows": [
+    {
+      "id": "connect-mail",
+      "category": "connectors",
+      "expected": {
+        "kind": "action",
+        "outcome": "connect ensure Gmail; request-specific continuation; never ask for a pasted key"
+      },
+      "status": "incomplete",
+      "reason": "ACP error -32603: Internal error; harness stderr: 2026-10-22T19:54:22.015875Z ERROR failed to decode Some(RawValue({})): Method not found 2026-10-22T19:54:22.604724Z ERROR responses API error status=\u2026"
+    },
+    {
+      "id": "connect-calendar",
+      "category": "connectors",
+      "expected": {
+        "kind": "action",
+        "outcome": "connect ensure Google Calendar; request-specific continuation; never ask for a pasted key"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "connect-notion",
+      "category": "connectors",
+      "expected": {
+        "kind": "action",
+        "outcome": "connect ensure Notion; request-specific continuation; never ask for a pasted key"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "available-apps",
+      "category": "connectors",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read connected apps on this host"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "leads",
+      "category": "connectors",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Ask for business/ideal customer and geography, then research via available tools; no repository card"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "mail-read",
+      "category": "connectors",
+      "expected": {
+        "kind": "action",
+        "outcome": "Check connection then discover Gmail search operation; do not send mail"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "open-work",
+      "category": "corners",
+      "expected": {
+        "kind": "action",
+        "outcome": "Open a repository-free corner with a brief and concise name"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "merge-gate",
+      "category": "corners",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Exact-head independent review, green checks, no hold; then merge_corner"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "hold",
+      "category": "corners",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Respect hold; its setter or higher authority clears it"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "tag-order",
+      "category": "corners",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Tag invites a reply; order assigns work"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "review-state",
+      "category": "corners",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read checks and report reviewerWake"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "approval-head",
+      "category": "corners",
+      "expected": {
+        "kind": "feature",
+        "outcome": "New head requires fresh review approval"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "text-file",
+      "category": "artifacts",
+      "expected": {
+        "kind": "action",
+        "outcome": "Write a file in writable session space; post_artifact mime text/plain; no repository required"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "html-mock",
+      "category": "artifacts",
+      "expected": {
+        "kind": "action",
+        "outcome": "Write a file in writable session space; post_artifact mime text/html; no repository required"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "game-phone",
+      "category": "artifacts",
+      "expected": {
+        "kind": "action",
+        "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "game-ar",
+      "category": "artifacts",
+      "expected": {
+        "kind": "action",
+        "outcome": "Write a file in writable session space; post_artifact mime application/vnd.beeline.game+html; no repository required"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "game-vs-mock",
+      "category": "artifacts",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Playable game artifact with game HTML mime; write then post"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "earlier-file",
+      "category": "artifacts",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read the attachment through Beeline, then read returned path"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "voice-start",
+      "category": "voice",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Hold composer mic to start voice mode"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "dictation",
+      "category": "voice",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Short press composer mic for dictation"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "voice-target",
+      "category": "voice",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Tap agent square avatar to target"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "voice-change",
+      "category": "voice",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Owner opens Agent Profile \u2192 Voice, previews and saves"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "voice-ar",
+      "category": "voice",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Long press composer microphone"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "reminder",
+      "category": "schedules",
+      "expected": {
+        "kind": "action",
+        "outcome": "Create named one-run schedule in America/New_York; resolve tomorrow from turn date"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "schedule-cleanup",
+      "category": "schedules",
+      "expected": {
+        "kind": "action",
+        "outcome": "Create schedule then delete returned scheduleId; verify no remaining test reminder"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "schedule-list",
+      "category": "schedules",
+      "expected": {
+        "kind": "action",
+        "outcome": "List own schedules"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "weekly",
+      "category": "schedules",
+      "expected": {
+        "kind": "action",
+        "outcome": "Create weekly schedule with exact cron and time zone"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "workflow",
+      "category": "schedules",
+      "expected": {
+        "kind": "action",
+        "outcome": "Discover beeline:workflow then define and save a contract"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "workflow-read",
+      "category": "schedules",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read pinned run before choosing an outcome"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "own-agent",
+      "category": "own-agent",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Members \u2192 Add agent; run npx usebeeline connect on user machine"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "own-agent-ar",
+      "category": "own-agent",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Members \u2192 Add agent; run npx usebeeline connect on user machine"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "own-agent-provider",
+      "category": "own-agent",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Bring own supported CLI agent through Members \u2192 Add agent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "agent-machine",
+      "category": "own-agent",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Runs on connected user computer; keep helper available"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "code-site",
+      "category": "repositories",
+      "expected": {
+        "kind": "action",
+        "outcome": "Post repository onboarding card for explicit repository coding intent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "code-bug",
+      "category": "repositories",
+      "expected": {
+        "kind": "action",
+        "outcome": "Post repository onboarding card for explicit repository coding intent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "code-ar",
+      "category": "repositories",
+      "expected": {
+        "kind": "action",
+        "outcome": "Post repository onboarding card for explicit repository coding intent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "meal",
+      "category": "repositories",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Answer request directly or ask relevant content question; no repository card"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "caption",
+      "category": "repositories",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Answer request directly or ask relevant content question; no repository card"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "translate",
+      "category": "repositories",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Answer request directly or ask relevant content question; no repository card"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "business-plan",
+      "category": "repositories",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Answer request directly or ask relevant content question; no repository card"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "usage",
+      "category": "usage",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read own live plan/allowance; report reset without inventing figures"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "usage-ar",
+      "category": "usage",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read own live plan/allowance; report reset without inventing figures"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "usage-spend",
+      "category": "usage",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read own live plan/allowance; report reset without inventing figures"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "usage-reset",
+      "category": "usage",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read own live plan/allowance; report reset without inventing figures"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "usage-alternative",
+      "category": "usage",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Explain reset and own-agent path through Members \u2192 Add agent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "invite",
+      "category": "members",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Members \u2192 invite people / share invite link"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "members",
+      "category": "members",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Open Members"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "members-read",
+      "category": "members",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read members; use exact names and handles"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "tag-required",
+      "category": "members",
+      "expected": {
+        "kind": "feature",
+        "outcome": "DM no tag; in a Room tag the agent to invite a reply"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "invite-ar",
+      "category": "members",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Members invite people/share invite link"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "system-dm-denied",
+      "category": "system-dm",
+      "expected": {
+        "kind": "unsupported",
+        "outcome": "Owner-only audited operator path; ordinary member cannot broadcast; offer normal message or authorized owner request"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "system-dm-owner",
+      "category": "system-dm",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Owner-only audited operator path; name recipient and content, use supported operator command"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "system-impersonate",
+      "category": "system-dm",
+      "expected": {
+        "kind": "unsupported",
+        "outcome": "Refuse impersonation; send under own identity instead"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "desktop-file",
+      "category": "files",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Agent computer differs from user computer; offer downloadable artifact or explicit user-machine access"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "agent-file",
+      "category": "files",
+      "expected": {
+        "kind": "action",
+        "outcome": "Write in own writable home then post artifact"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "phone-file",
+      "category": "files",
+      "expected": {
+        "kind": "unsupported",
+        "outcome": "No automatic phone filesystem access; provide downloadable artifact"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "computer-access",
+      "category": "files",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Room membership gives no arbitrary user-computer filesystem access; upload file or connect own agent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "file-ar",
+      "category": "files",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Distinguish own host from user desktop; offer downloadable file or connected user agent"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "workflow-vs-reminder",
+      "category": "schedules",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Workflow human gate pauses until explicit answer; discover workflow schemas"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    },
+    {
+      "id": "revoke-invite",
+      "category": "members",
+      "expected": {
+        "kind": "feature",
+        "outcome": "Authorized owner/admin can remove through Members; access follows current membership"
+      },
+      "status": "incomplete",
+      "reason": "Not run"
+    }
+  ],
+  "measuredSkillGaps": [],
+  "serviceProof": {
+    "reminder": "real local MCP created and deleted the same schedule",
+    "artifact": "real local MCP uploaded text/plain",
+    "unsafeMerge": "MCP wrapper recorded intent without forwarding",
+    "gameSchema": "The as-is advertised MIME enum rejects the existing playable game MIME; known separate fix corner game-mime-schema."
+  },
+  "asConfiguredSmoke": {
+    "evidence": "nerd-smoke.json",
+    "completed": 0,
+    "total": 1,
+    "passRate": null,
+    "configurationParity": {
+      "agentId": "2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762",
+      "profileSha256": "a9878abbf7f827f367a8481150286b1e2da0e4d15dd52501125c19ba81989171"
+    },
+    "startedAt": "2026-10-22T20:07:46.499Z"
+  },
+  "correctedCursorSmoke": {
+    "evidence": "cursor-smoke.json",
+    "completed": 1,
+    "total": 1,
+    "passed": 1,
+    "passRate": 1
+  }
+}

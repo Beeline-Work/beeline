@@ -1,0 +1,117 @@
+{
+  "sourceHashes": {
+    "scripts/discovery-live.mjs": "9016688396810d3c4b07ff6edb03d8e23aaa85bddfe7c2fc99804fdb1bf4d780",
+    "scripts/discovery-launch.mjs": "63e64ea6981c1807150f9e1f3c6fff719b7579f6cfd5c53b6f3087794c179a2a",
+    "scripts/discovery-mcp.mjs": "e6f25de970975104003a17e7bfe156a3aaf6df441d571b6bdefbcf81437e89c6",
+    "scripts/discovery-score.mjs": "573c5953878d00f75042601935f90bbcceeddad38d488404ec360a0467c34e47",
+    "docs/prompts/cases/discovery/corpus.json": "077836425b3a061509a617a1cbdb8f9d918ec4629178456a554007272b8a522c",
+    "apps/body/src/beeline-skill.ts": "ba0b92d8ee8166fc86fa3048092c7b0e7d515d5ccdd998dd91993e2a499c4009",
+    "apps/body/src/prompt-assembly.ts": "2c4ee143d62eb0819ef65061c515200f93397af1c6aa3426c8f45a1106757ea1",
+    "apps/body/src/minimal-tool-surface.ts": "f6dd71fe4036140d5252032dfe2dd9d6c4b0d0642c88bca4eecc603a06066cf8",
+    "apps/body/dist/read-only-mcp.js": "b4797b566447280b4c8c772dcdb1e0b67861c7907a688f20c654d2c1150a5996"
+  },
+  "configurationParity": {
+    "agentId": "2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762",
+    "profileSha256": "0ae9d90b65bf19854e6b4a826461f3d1ec7e36d80e44820654624f135ea50ba3"
+  },
+  "agent": "nerd",
+  "model": "grok-4.7-xhigh",
+  "effort": null,
+  "harness": "cursor",
+  "harnessVersion": "2026.09.28-64d2043",
+  "commit": "d4b8b32e3bd6fd2d2ce8e3663021b0dc02e5b10a",
+  "startedAt": "2026-10-22T20:40:44.610Z",
+  "rows": [
+    {
+      "id": "usage",
+      "category": "usage",
+      "expected": {
+        "kind": "action",
+        "outcome": "Read own live plan/allowance; report reset without inventing figures"
+      },
+      "status": "pass",
+      "reason": "all rules passed",
+      "provisional": false
+    }
+  ],
+  "passed": 1,
+  "completed": 1,
+  "total": 1,
+  "passRate": 1,
+  "provisionalPassRate": 1,
+  "completedPassRate": 1,
+  "gaps": [],
+  "observations": [
+    {
+      "id": "usage",
+      "room": "f389142f-576b-4e50-9ebd-2f8e12eea030",
+      "completed": true,
+      "calls": [
+        {
+          "type": "call",
+          "id": 2,
+          "name": "read",
+          "args": {
+            "facet": "usage"
+          },
+          "intendedOnly": false,
+          "response": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"summary\":\"Usage: Fixture plan plan included 25% (resets Thu 16:40), as of 16:40.\",\"usage\":{\"updatedAt\":1792701647.383,\"windows\":[{\"rateLimitType\":\"included_usage\",\"status\":\"allowed\",\"utilization\":0.25,\"resetsAt\":1793306447.383,\"updatedAt\":1792701647.383}],\"plan\":\"Fixture plan\"},\"old\":false}"
+              }
+            ]
+          },
+          "succeeded": true
+        },
+        {
+          "type": "call",
+          "id": 3,
+          "name": "search",
+          "args": {
+            "scope": "memory",
+            "query": "usage limits plan allowance spend",
+            "limit": 5
+          },
+          "intendedOnly": false,
+          "response": {
+            "content": [
+              {
+                "type": "text",
+                "text": "daemon operation searchInstitutionalMemory failed (400: institutional memory is disabled)"
+              }
+            ],
+            "isError": true
+          },
+          "succeeded": false
+        },
+        {
+          "type": "call",
+          "id": 4,
+          "name": "read",
+          "args": {
+            "facet": "addresses"
+          },
+          "intendedOnly": false,
+          "response": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"rooms\":[{\"roomId\":\"f389142f-576b-4e50-9ebd-2f8e12eea030\",\"name\":\"usage\",\"directMessage\":false}]}"
+              }
+            ]
+          },
+          "succeeded": true
+        }
+      ],
+      "text": "Your Fixture plan included allowance is a quarter used (25%), still allowed. It resets Thursday, October 29, 2026 at 16:40 (UTC-4). That reading is as of 16:40 today.\n\nThat is the limit this account exposes: one included-usage window, shown as how much of it is spent. There is no separate token or dollar cap on the usage read.",
+      "execution": "local-service",
+      "effects": {
+        "remainingSchedules": 0,
+        "objects": []
+      }
+    }
+  ],
+  "publicEvidenceRedaction": "Email addresses replaced with a fixture identity; source/profile hashes retained."
+}

@@ -1,0 +1,714 @@
+{
+  "scope": "Targeted longer-deadline retries only; do not replace the first retained attempt table or infer a full-cohort pass rate.",
+  "attempts": [
+    {
+      "sourceHashes": {
+        "scripts/discovery-live.mjs": "5882e43c82485a8bed161c6ed813ef91299a3a3ed3d670b30236645ad23816e2",
+        "scripts/discovery-launch.mjs": "63e64ea6981c1807150f9e1f3c6fff719b7579f6cfd5c53b6f3087794c179a2a",
+        "scripts/discovery-mcp.mjs": "e6f25de970975104003a17e7bfe156a3aaf6df441d571b6bdefbcf81437e89c6",
+        "scripts/discovery-score.mjs": "115ab5b1bb703f07e289ef960b915519ce4f5e941119e47e565c034ebbc8bcea",
+        "docs/prompts/cases/discovery/corpus.json": "efb0e52445ab9a164c984bc770a8a1da293769977795ab14cca86f39e258cf2a",
+        "apps/body/src/beeline-skill.ts": "ba0b92d8ee8166fc86fa3048092c7b0e7d515d5ccdd998dd91993e2a499c4009",
+        "apps/body/src/prompt-assembly.ts": "2c4ee143d62eb0819ef65061c515200f93397af1c6aa3426c8f45a1106757ea1",
+        "apps/body/src/minimal-tool-surface.ts": "f6dd71fe4036140d5252032dfe2dd9d6c4b0d0642c88bca4eecc603a06066cf8",
+        "apps/body/dist/read-only-mcp.js": "b4797b566447280b4c8c772dcdb1e0b67861c7907a688f20c654d2c1150a5996"
+      },
+      "configurationParity": {
+        "agentId": "2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762",
+        "profileSha256": "fb683a88bbf1b9d8bc242482b557ebf03c1f7ffdbf8dee68f4854d9cf1452e2c"
+      },
+      "agent": "nerd",
+      "model": "grok-4.7-xhigh",
+      "effort": null,
+      "harness": "cursor",
+      "harnessVersion": "2026.09.28-64d2043",
+      "commit": "76ba77159d24aea72f3436306d3255fa2ed0ff01",
+      "startedAt": "2026-10-22T22:34:36.665Z",
+      "caseTimeoutMs": 900000,
+      "independentWorkspaces": true,
+      "repositoryFreeWorkingDirectories": true,
+      "rows": [
+        {
+          "id": "voice-start",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Hold composer mic to start voice mode"
+          },
+          "status": "pass",
+          "reason": "Gives the correct long press to start voice and distinguishes short-tap dictation.",
+          "provisional": false
+        }
+      ],
+      "passed": 1,
+      "completed": 1,
+      "turnsCompleted": 1,
+      "total": 1,
+      "passRate": 1,
+      "provisionalPassRate": 1,
+      "completedPassRate": 1,
+      "gaps": [],
+      "observations": [
+        {
+          "id": "voice-start",
+          "room": "0c94f3d0-b8e3-41ec-8841-f831a35c198e",
+          "completed": true,
+          "calls": [
+            {
+              "type": "call",
+              "id": 2,
+              "name": "search",
+              "args": {
+                "scope": "memory",
+                "query": "talk by voice instead of typing how to start a voice call",
+                "limit": 10
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"quotedContext\":true,\"results\":[]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 3,
+              "name": "search",
+              "args": {
+                "scope": "history",
+                "query": "how to talk by voice instead of typing",
+                "limit": 5
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"results\":[{\"messageId\":\"ef4791f7483a4957558e8810bb019b79c5febd32a6217e82645429082d120dd6\",\"roomId\":\"0c94f3d0-b8e3-41ec-8841-f831a35c198e\",\"roomName\":\"voice-start\",\"authorId\":\"da6a26959719f746febbb71de912953fcce28d5d347892a34a84378231b60b64\",\"createdAt\":1792708482,\"snippet\":\"@nerd How do I talk to you instead of typing?\",\"rank\":7}],\"omitted\":0,\"capped\":false,\"windowDays\":180}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 4,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-memory"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"slug\":\"beeline-memory\",\"markdown\":\"---\\nname: beeline-memory\\ndescription: Save, find, use, update or prune facts, procedures and workflows that outlive this session.\\n---\\n\\n<!-- beeline-release: source -->\\n\\n# Memory\\n\\nYou keep memory yourself. No background reviewer exists: what you do not keep current, nothing does. Memory is shared across all machines.\\n\\n| Store | Holds | Write with |\\n| --- | --- | --- |\\n| `workspace-core` procedure | Capabilities per machine; the Squire credential checklist | remember(kind:procedure, action:save), whole text |\\n| Profile facts | Facts about the person who asked | remember(kind:fact, action:save) |\\n| Workspace facts | Facts about anyone or anything else | remember(kind:fact, action:save) |\\n| Procedures | Steps for a task that repeats | remember(kind:procedure, action:save) |\\n| Workflows | Roles and steps for a run across agents | app_tool(app:beeline:workflow, tool:save); run with app_tool(app:beeline:workflow, tool:start) |\\n| History | Every message in the Workspace | Nothing; read with search(scope:history) |\\n\\n- **Look up.** Before you say \\\"can't\\\" or \\\"not saved\\\", run search(scope:memory, query) and connect(mode:status); inspect vault metadata only when Squire is mounted and relevant.\\n- **Use.** Call remember(kind:fact, action:used) for what your answer used. When a saved item fails, fix it in the same turn.\\n- **Save.** Put each fact in one store only. Never save \\\"X is impossible\\\". Save the specific failure and the machine: \\\"On Niglet's host, the highroll Fly token returns 403.\\\"\\n- **Prune.** Rewrite `workspace-core` whole and keep it at most 2,200 characters. An agent-saved Workspace fact that nobody uses expires in the weekly pass. Replace a procedure or workflow by saving its slug again; remove it with remember(kind:procedure, action:delete).\\n\",\"source\":\"built-in\"}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 5,
+              "name": "read",
+              "args": {
+                "facet": "messages",
+                "from": "oldest",
+                "limit": 50
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"cornerId\":\"0c94f3d0-b8e3-41ec-8841-f831a35c198e\",\"items\":[{\"id\":\"ef4791f7483a4957558e8810bb019b79c5febd32a6217e82645429082d120dd6\",\"cursor\":\"1792708482393,ef4791f7483a4957558e8810bb019b79c5febd32a6217e82645429082d120dd6\",\"authorId\":\"da6a26959719f746febbb71de912953fcce28d5d347892a34a84378231b60b64\",\"createdAt\":1792708482,\"type\":\"message\",\"body\":\"@nerd How do I talk to you instead of typing?\"},{\"id\":\"4c182d2da9b4e7f19653aef13e1cd444d17cbfee15e57b5145eb2b0c9a30e332\",\"cursor\":\"1792708483067,4c182d2da9b4e7f19653aef13e1cd444d17cbfee15e57b5145eb2b0c9a30e332\",\"authorId\":\"bb58b5feca505c74edc000d8282fc556e51a1024fc8e7d7e56c6f887c5c8d5f2\",\"createdAt\":1792708483,\"type\":\"activity\",\"body\":\"\"}],\"limits\":{\"items\":8,\"bodyChars\":1000,\"responseChars\":12000}}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 6,
+              "name": "connect",
+              "args": {
+                "mode": "status"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"readiness\":\"Connectors for @fixture-owner on Nerd (this is the machine you run on; an accepted offer installs here).\\n\\nCatalog:\\n- trusty-squire (Trusty Squire): not added. Signs up and signs in to websites for you hands-off on this machine; its vault holds keys when needed without a raw key reaching chat.\\n- wallet (Wallet): not added — call connect. An on-chain wallet bound to a person; it connects when that person grants agents permission to sign, from Connectors or an offer card.\\n- tailscale (Tailscale): not added — call connect. Private network access between connected machines, including the Tailscale CLI, tailnet services, and Taildrop file exchange.\\n\\nConnections (keys already provisioned, by name only):\\n- none\\n\\nApps (connect; each use is authorized as app:<key>):\\n- Link (link) via Beeline: broken\\n- none\\n\\nI can reach Tailscale on this machine because this node is connected as lunchboxfortwo@gmail.com; to fix it, use the tailscale CLI for tailnet resources.\",\"capabilities\":[\"beeline:onboarding\",\"beeline:workflow\",\"beeline:wallet\",\"beeline:browser_share\",\"beeline:avatar\"]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 7,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:onboarding"
+              },
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"app\":\"beeline:onboarding\",\"tools\":[{\"name\":\"repository\",\"description\":\"Post the Room repository card: create a private repo, link an installation repo, switch repos or add an organization. Returns install_missing, no_repo_linked or repo_linked. Use this instead of settings or CLI instructions.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"starters\",\"description\":\"Read recent commits, CI and open issues in the linked repository and post 3–4 one-tap tasks. Empty repositories get useful starting tasks. A selection starts work through the normal corner flow.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 8,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:avatar"
+              },
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"app\":\"beeline:avatar\",\"tools\":[{\"name\":\"read\",\"description\":\"Read your current generated avatar drawing and saved soul for /draw-avatar. The daemon token selects you; no other agent can be targeted.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"set\",\"description\":\"Render and persist your /draw-avatar drawing directly as your current avatar. Follow the draw-avatar skill and its shipped Speakeasy references. Requires an active authorized turn; failure preserves the current face.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"drawing\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":128,\"items\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"path\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"d\":{\"type\":\"string\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"polygon\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"points\":{\"type\":\"string\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"circle\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"cx\":{\"type\":\"number\"},\"cy\":{\"type\":\"number\"},\"r\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"ellipse\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"cx\":{\"type\":\"number\"},\"cy\":{\"type\":\"number\"},\"rx\":{\"type\":\"number\"},\"ry\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"rect\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"},\"width\":{\"type\":\"number\"},\"height\":{\"type\":\"number\"},\"rx\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"line\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"x1\":{\"type\":\"number\"},\"y1\":{\"type\":\"number\"},\"x2\":{\"type\":\"number\"},\"y2\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false}]}}},\"required\":[\"drawing\"],\"additionalProperties\":false}}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 9,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-voice"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "daemon operation loadWorkspaceSkill failed (404: workspace skill beeline-voice not found)"
+                  }
+                ],
+                "isError": true
+              },
+              "succeeded": false
+            },
+            {
+              "type": "call",
+              "id": 10,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:browser_share"
+              },
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"app\":\"beeline:browser_share\",\"tools\":[{\"name\":\"start\",\"description\":\"Share an already open browser tab in this Room or corner while you keep using that same browser session. Squire requires an existing operate session id. Chromium attaches to an already running debug port and selects an open tab; it does not launch a browser. The tool returns as soon as the live card is ready. The live browser card is posted in this place. Ask the person to open the card. The result contains no URL. Human browser activity arrives as Room events. End the share explicitly with app_tool(app:beeline:browser_share, tool:end, args:...).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"source\"],\"properties\":{\"source\":{\"type\":\"string\",\"enum\":[\"squire\",\"chromium\"]},\"sessionId\":{\"type\":\"string\",\"description\":\"Existing Trusty Squire operate session id.\"},\"target\":{\"type\":\"string\",\"description\":\"Chromium tab id, URL fragment, or title fragment; omit for the first open tab.\"},\"debugUrl\":{\"type\":\"string\",\"description\":\"Chromium remote debugging origin; defaults to the local port 9222.\"},\"title\":{\"type\":\"string\",\"maxLength\":120}},\"additionalProperties\":false}},{\"name\":\"end\",\"description\":\"Explicitly end one of your live browser shares in this Room. Use the source sessionId returned by app_tool(app:beeline:browser_share, tool:start, args:...). Closing a viewer or handing control back leaves the share live.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"sessionId\"],\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"additionalProperties\":false}}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 11,
+              "name": "search",
+              "args": {
+                "limit": 5,
+                "query": "voice microphone call composer",
+                "scope": "memory"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"quotedContext\":true,\"results\":[]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 12,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "talking"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "daemon operation loadWorkspaceSkill failed (404: workspace skill talking not found)"
+                  }
+                ],
+                "isError": true
+              },
+              "succeeded": false
+            }
+          ],
+          "text": "Hold the mic in the message box for about half a second. That starts a call with me. A quick tap of the same mic only writes your words into the box.\n\nIf the box is empty, the Send slot is a waveform labeled Conversation mode. Tap that instead.\n\nAllow the microphone when the app asks. Then say \"Nerd,\" or tap my avatar, and talk. If you are the only person on the call, you can skip the name after I have already answered in this Room.\n\nEnd call hangs up when it is just you. If someone else has joined, Leave call drops only you. The Workspace has 60 minutes of call time a day, and it resets at 12:00 AM UTC.",
+          "execution": "local-service",
+          "bindings": {},
+          "effects": {
+            "remainingSchedules": 0,
+            "objects": []
+          }
+        }
+      ],
+      "judgments": [
+        {
+          "caseId": "voice-start",
+          "status": "pass",
+          "evidence": "Hold the mic in the message box for about half a second.",
+          "reason": "Gives the correct long press to start voice and distinguishes short-tap dictation.",
+          "model": "gpt-6",
+          "rubricSha256": "6127cefa6adb4e1cb3dbc872b801acc38082387b97e7fb6ebe549158db8507a4",
+          "transcriptSha256": "e8409e492f875f735308e31d603fe2ebb19375da9bda9ee292c9798236b4fb4a"
+        }
+      ]
+    },
+    {
+      "sourceHashes": {
+        "scripts/discovery-live.mjs": "5882e43c82485a8bed161c6ed813ef91299a3a3ed3d670b30236645ad23816e2",
+        "scripts/discovery-launch.mjs": "63e64ea6981c1807150f9e1f3c6fff719b7579f6cfd5c53b6f3087794c179a2a",
+        "scripts/discovery-mcp.mjs": "e6f25de970975104003a17e7bfe156a3aaf6df441d571b6bdefbcf81437e89c6",
+        "scripts/discovery-score.mjs": "115ab5b1bb703f07e289ef960b915519ce4f5e941119e47e565c034ebbc8bcea",
+        "docs/prompts/cases/discovery/corpus.json": "efb0e52445ab9a164c984bc770a8a1da293769977795ab14cca86f39e258cf2a",
+        "apps/body/src/beeline-skill.ts": "ba0b92d8ee8166fc86fa3048092c7b0e7d515d5ccdd998dd91993e2a499c4009",
+        "apps/body/src/prompt-assembly.ts": "2c4ee143d62eb0819ef65061c515200f93397af1c6aa3426c8f45a1106757ea1",
+        "apps/body/src/minimal-tool-surface.ts": "f6dd71fe4036140d5252032dfe2dd9d6c4b0d0642c88bca4eecc603a06066cf8",
+        "apps/body/dist/read-only-mcp.js": "b4797b566447280b4c8c772dcdb1e0b67861c7907a688f20c654d2c1150a5996"
+      },
+      "configurationParity": {
+        "agentId": "2310dc4ab514aa3019ebc61d2a4d2e59086cac78a53a7235f1903952ea48c762",
+        "profileSha256": "fb683a88bbf1b9d8bc242482b557ebf03c1f7ffdbf8dee68f4854d9cf1452e2c"
+      },
+      "agent": "nerd",
+      "model": "grok-4.7-xhigh",
+      "effort": null,
+      "harness": "cursor",
+      "harnessVersion": "2026.09.28-64d2043",
+      "commit": "76ba77159d24aea72f3436306d3255fa2ed0ff01",
+      "startedAt": "2026-10-22T22:34:36.679Z",
+      "caseTimeoutMs": 900000,
+      "independentWorkspaces": true,
+      "repositoryFreeWorkingDirectories": true,
+      "rows": [
+        {
+          "id": "voice-change",
+          "category": "voice",
+          "expected": {
+            "kind": "feature",
+            "outcome": "Owner opens Agent Profile → Voice, previews and saves"
+          },
+          "status": "pass",
+          "reason": "Directs the owner to Agent Profile → Voice and explains preview, change and save.",
+          "provisional": false
+        }
+      ],
+      "passed": 1,
+      "completed": 1,
+      "turnsCompleted": 1,
+      "total": 1,
+      "passRate": 1,
+      "provisionalPassRate": 1,
+      "completedPassRate": 1,
+      "gaps": [],
+      "observations": [
+        {
+          "id": "voice-change",
+          "room": "1582dda5-cbd5-4a0e-b1e6-2f9531c71d8e",
+          "completed": true,
+          "calls": [
+            {
+              "type": "call",
+              "id": 2,
+              "name": "search",
+              "args": {
+                "scope": "memory",
+                "query": "agent voice soul personality change",
+                "limit": 10
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"quotedContext\":true,\"results\":[]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 3,
+              "name": "search",
+              "args": {
+                "scope": "history",
+                "query": "where to change agent voice soul",
+                "limit": 10
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"results\":[{\"messageId\":\"38d280d5abaee54919b0614716aee208d9c1897aa942fd838cd0223b713804d3\",\"roomId\":\"1582dda5-cbd5-4a0e-b1e6-2f9531c71d8e\",\"roomName\":\"voice-change\",\"authorId\":\"da6a26959719f746febbb71de912953fcce28d5d347892a34a84378231b60b64\",\"createdAt\":1792708482,\"snippet\":\"@nerd Where do I change my agent’s voice?\",\"rank\":4}],\"omitted\":0,\"capped\":false,\"windowDays\":180}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 4,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-memory"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"slug\":\"beeline-memory\",\"markdown\":\"---\\nname: beeline-memory\\ndescription: Save, find, use, update or prune facts, procedures and workflows that outlive this session.\\n---\\n\\n<!-- beeline-release: source -->\\n\\n# Memory\\n\\nYou keep memory yourself. No background reviewer exists: what you do not keep current, nothing does. Memory is shared across all machines.\\n\\n| Store | Holds | Write with |\\n| --- | --- | --- |\\n| `workspace-core` procedure | Capabilities per machine; the Squire credential checklist | remember(kind:procedure, action:save), whole text |\\n| Profile facts | Facts about the person who asked | remember(kind:fact, action:save) |\\n| Workspace facts | Facts about anyone or anything else | remember(kind:fact, action:save) |\\n| Procedures | Steps for a task that repeats | remember(kind:procedure, action:save) |\\n| Workflows | Roles and steps for a run across agents | app_tool(app:beeline:workflow, tool:save); run with app_tool(app:beeline:workflow, tool:start) |\\n| History | Every message in the Workspace | Nothing; read with search(scope:history) |\\n\\n- **Look up.** Before you say \\\"can't\\\" or \\\"not saved\\\", run search(scope:memory, query) and connect(mode:status); inspect vault metadata only when Squire is mounted and relevant.\\n- **Use.** Call remember(kind:fact, action:used) for what your answer used. When a saved item fails, fix it in the same turn.\\n- **Save.** Put each fact in one store only. Never save \\\"X is impossible\\\". Save the specific failure and the machine: \\\"On Niglet's host, the highroll Fly token returns 403.\\\"\\n- **Prune.** Rewrite `workspace-core` whole and keep it at most 2,200 characters. An agent-saved Workspace fact that nobody uses expires in the weekly pass. Replace a procedure or workflow by saving its slug again; remove it with remember(kind:procedure, action:delete).\\n\",\"source\":\"built-in\"}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 5,
+              "name": "read",
+              "args": {
+                "facet": "addresses"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"rooms\":[{\"roomId\":\"1582dda5-cbd5-4a0e-b1e6-2f9531c71d8e\",\"name\":\"voice-change\",\"directMessage\":false}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 6,
+              "name": "read",
+              "args": {
+                "facet": "members"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"members\":[{\"id\":\"bb58b5feca505c74edc000d8282fc556e51a1024fc8e7d7e56c6f887c5c8d5f2\",\"kind\":\"agent\",\"name\":\"Nerd\",\"handle\":\"nerd\",\"role\":\"member\",\"model\":\"grok-4.7-xhigh\",\"billing\":\"subscription\",\"remainingAllowance\":{\"updatedAt\":1792708481.867,\"windows\":[{\"rateLimitType\":\"included_usage\",\"remaining\":0.75,\"resetsAt\":1793313281.867}]},\"owner\":{\"id\":\"da6a26959719f746febbb71de912953fcce28d5d347892a34a84378231b60b64\",\"handle\":\"fixture-owner\",\"name\":\"Fixture Owner\"},\"machine\":null},{\"id\":\"465cc6773977ea0f0f17396a64cb543ead9f4ebe3bbcfd7d6a0ab509fa123a04\",\"kind\":\"human\",\"name\":\"Fixture Member\",\"handle\":\"fixture-member\",\"role\":\"member\"},{\"id\":\"da6a26959719f746febbb71de912953fcce28d5d347892a34a84378231b60b64\",\"kind\":\"human\",\"name\":\"Fixture Owner\",\"handle\":\"fixture-owner\",\"role\":\"owner\"}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 7,
+              "name": "read",
+              "args": {
+                "facet": "messages",
+                "limit": 30,
+                "from": "oldest"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"cornerId\":\"1582dda5-cbd5-4a0e-b1e6-2f9531c71d8e\",\"items\":[{\"id\":\"38d280d5abaee54919b0614716aee208d9c1897aa942fd838cd0223b713804d3\",\"cursor\":\"1792708482408,38d280d5abaee54919b0614716aee208d9c1897aa942fd838cd0223b713804d3\",\"authorId\":\"da6a26959719f746febbb71de912953fcce28d5d347892a34a84378231b60b64\",\"createdAt\":1792708482,\"type\":\"message\",\"body\":\"@nerd Where do I change my agent’s voice?\"},{\"id\":\"b5471961f2e11c754e48adb58da28f7f8995622dd342b8318964958e1788169c\",\"cursor\":\"1792708483101,b5471961f2e11c754e48adb58da28f7f8995622dd342b8318964958e1788169c\",\"authorId\":\"bb58b5feca505c74edc000d8282fc556e51a1024fc8e7d7e56c6f887c5c8d5f2\",\"createdAt\":1792708483,\"type\":\"activity\",\"body\":\"\"}],\"limits\":{\"items\":8,\"bodyChars\":1000,\"responseChars\":12000}}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 8,
+              "name": "connect",
+              "args": {
+                "mode": "discover",
+                "query": "agent voice soul"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"integrations\":{\"matches\":[],\"unavailableSources\":[\"registry\"]},\"capabilities\":[\"beeline:onboarding\",\"beeline:workflow\",\"beeline:wallet\",\"beeline:browser_share\",\"beeline:avatar\"]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 9,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:avatar"
+              },
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"app\":\"beeline:avatar\",\"tools\":[{\"name\":\"read\",\"description\":\"Read your current generated avatar drawing and saved soul for /draw-avatar. The daemon token selects you; no other agent can be targeted.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"set\",\"description\":\"Render and persist your /draw-avatar drawing directly as your current avatar. Follow the draw-avatar skill and its shipped Speakeasy references. Requires an active authorized turn; failure preserves the current face.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"drawing\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":128,\"items\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"path\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"d\":{\"type\":\"string\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"polygon\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"points\":{\"type\":\"string\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"circle\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"cx\":{\"type\":\"number\"},\"cy\":{\"type\":\"number\"},\"r\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"ellipse\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"cx\":{\"type\":\"number\"},\"cy\":{\"type\":\"number\"},\"rx\":{\"type\":\"number\"},\"ry\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"rect\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"x\":{\"type\":\"number\"},\"y\":{\"type\":\"number\"},\"width\":{\"type\":\"number\"},\"height\":{\"type\":\"number\"},\"rx\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false},{\"type\":\"object\",\"properties\":{\"type\":{\"type\":\"string\",\"enum\":[\"line\"]},\"fill\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"stroke\":{\"type\":\"string\",\"enum\":[\"bone\",\"ink\",\"brass\",\"none\"]},\"strokeWidth\":{\"type\":\"number\"},\"x1\":{\"type\":\"number\"},\"y1\":{\"type\":\"number\"},\"x2\":{\"type\":\"number\"},\"y2\":{\"type\":\"number\"}},\"required\":[\"type\"],\"additionalProperties\":false}]}}},\"required\":[\"drawing\"],\"additionalProperties\":false}}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 10,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:onboarding"
+              },
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"app\":\"beeline:onboarding\",\"tools\":[{\"name\":\"repository\",\"description\":\"Post the Room repository card: create a private repo, link an installation repo, switch repos or add an organization. Returns install_missing, no_repo_linked or repo_linked. Use this instead of settings or CLI instructions.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}},{\"name\":\"starters\",\"description\":\"Read recent commits, CI and open issues in the linked repository and post 3–4 one-tap tasks. Empty repositories get useful starting tasks. A selection starts work through the normal corner flow.\",\"inputSchema\":{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 11,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-files-and-mocks"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"slug\":\"beeline-files-and-mocks\",\"markdown\":\"---\\nname: beeline-files-and-mocks\\ndescription: Open attachments, write a file, post an artifact, show an HTML mock or photo, or react to a message.\\n---\\n\\n<!-- beeline-release: source -->\\n\\n# Files, mocks and reactions\\n\\n## Opening attachments\\n\\nFiles and photos on the current message are already at local paths. For a file on an earlier message, call read(facet:attachment, messageId, attachmentId). For a file in the corner brief manifest, call read(facet:attachment, attachmentId) with the manifest objectId. Report a missing download to your commander.\\n\\n## Writing a file\\n\\n1. Write it with your native file tools: in a code corner, inside the worktree; elsewhere, inside your writable session home.\\n2. If a native write is refused and scratch_io is mounted, call scratch_io(action:write, path, content) instead; in a repo-less corner, scratch_io(action:quota) when mounted shows the space left.\\n3. In a Room, your native write and edit tools work inside the sandbox home the primer names. A path outside that home, a path with `..`, or a symlink that leaves it is refused, and the repository checkout stays read-only. When the work belongs beside a repository, or a home write fails and scratch_io is not mounted, do the file work in a repo-less corner, whose workspace is writable.\\n\\n## Posting a file\\n\\nCall post_artifact(path) on a file in your checkout or session home. Set title and mime when the file name does not show them. The artifact rides on your next reply or report, so post it before you report done.\\n\\n## Showing a mock\\n\\nWhen a design decision needs eyes, show it instead of describing it. Build ONE self-contained HTML page, save it as a session file, and post it with beeline-agent post_artifact(path, mime:\\\"text/html\\\"). Everything is inline: a single <style> element for all CSS and data: URLs for any image - no script, no external dependencies, no network references. The validator refuses every <script>, <link>, <iframe>, <object>, <embed>, <form>, inline event handler, and http(s) URL, so a page that reaches for the network never posts. Use the Obsidian Refined tokens: grayscale surfaces, one brass accent #d7af5f, 3px radii, IBM Plex Sans/Mono type. Lay the user stories out as frames - one bordered, labelled block per story, so each story can be judged on its own. After posting, ask for feedback here in the corner: the artifact is the thing people react to, not your prose.\\n\\n## Showing a photograph\\n\\nFor a single-file playable game, explicitly post with mime:\\\"application/vnd.beeline.game+html\\\". This runnable lane permits inline scripts in an isolated, offline viewer; ordinary text/html mocks stay inert. Inline every asset, include a mobile viewport meta tag, and use touch or pointer controls. No network, forms, other frames, storage, native bridge, or app navigation is available. Only open the game viewer on the person’s tap.\\n\\nWhen the mock needs a real product photo, do not draw an SVG stand-in. When scratch_io is mounted, call beeline-agent scratch_io(action:image) with the photo's http(s) URL. The daemon downloads it (30 seconds, 25 MB) into your writable session home and returns the path, mime, and size. Without it, download the photo with a shell command into a corner's writable workspace. Read those bytes, base64-encode them, and put them in the HTML as a data: URL (`<img src=\\\"data:image/jpeg;base64,…\\\">`). Then post_artifact as usual. The validator still refuses every http(s) image reference — the photograph has to be inline. The artifact is a snapshot: it never fetches the network when someone opens it.\\n\\n## Message links\\n\\nCite Room or corner messages with #beeline/<name>/<message_id> or [label](#beeline/<name>/<message_id>); use the real name and message id.\\n\\n## Reactions\\n\\nTo acknowledge a message without a reply, call react_to_message(messageId, emoji) with one of 👍 ❤️ 😂 🎉 👀 ✅. Repeating the same reaction changes nothing.\\n\",\"source\":\"built-in\"}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 12,
+              "name": "search",
+              "args": {
+                "query": "voice soul personality",
+                "scope": "memory",
+                "limit": 5
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"quotedContext\":true,\"results\":[]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 13,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:browser_share"
+              },
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"app\":\"beeline:browser_share\",\"tools\":[{\"name\":\"start\",\"description\":\"Share an already open browser tab in this Room or corner while you keep using that same browser session. Squire requires an existing operate session id. Chromium attaches to an already running debug port and selects an open tab; it does not launch a browser. The tool returns as soon as the live card is ready. The live browser card is posted in this place. Ask the person to open the card. The result contains no URL. Human browser activity arrives as Room events. End the share explicitly with app_tool(app:beeline:browser_share, tool:end, args:...).\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"source\"],\"properties\":{\"source\":{\"type\":\"string\",\"enum\":[\"squire\",\"chromium\"]},\"sessionId\":{\"type\":\"string\",\"description\":\"Existing Trusty Squire operate session id.\"},\"target\":{\"type\":\"string\",\"description\":\"Chromium tab id, URL fragment, or title fragment; omit for the first open tab.\"},\"debugUrl\":{\"type\":\"string\",\"description\":\"Chromium remote debugging origin; defaults to the local port 9222.\"},\"title\":{\"type\":\"string\",\"maxLength\":120}},\"additionalProperties\":false}},{\"name\":\"end\",\"description\":\"Explicitly end one of your live browser shares in this Room. Use the source sessionId returned by app_tool(app:beeline:browser_share, tool:start, args:...). Closing a viewer or handing control back leaves the share live.\",\"inputSchema\":{\"type\":\"object\",\"required\":[\"sessionId\"],\"properties\":{\"sessionId\":{\"type\":\"string\"}},\"additionalProperties\":false}}]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 14,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "draw-avatar"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "daemon operation loadWorkspaceSkill failed (404: workspace skill draw-avatar not found)"
+                  }
+                ],
+                "isError": true
+              },
+              "succeeded": false
+            },
+            {
+              "type": "call",
+              "id": 15,
+              "name": "app_tool",
+              "args": {
+                "app": "beeline:avatar",
+                "args": {},
+                "tool": "read"
+              },
+              "intendedOnly": true,
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 16,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "workspace-core"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "daemon operation loadWorkspaceSkill failed (404: workspace skill workspace-core not found)"
+                  }
+                ],
+                "isError": true
+              },
+              "succeeded": false
+            },
+            {
+              "type": "call",
+              "id": 17,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-connecting-services"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"slug\":\"beeline-connecting-services\",\"markdown\":\"---\\nname: beeline-connecting-services\\ndescription: Reach an app, API, website, GitHub, Tailscale, wallet or host command: connect, app_tool, Squire, grants and keys.\\n---\\n\\n<!-- beeline-release: source -->\\n\\n# Connecting services\\n\\n## Tools and keys\\n\\nA **tool** is something you can use once a human adds it; a **key** is the credential that tool holds for that human. You spend a key through the mounted connector and never see the credential itself.\\n\\nThe tools this build knows, what each is for, and which the owner of this machine already has are one call away: beeline-agent connect(mode:status). That read is the Connectors page for the machine and owner you actually run on, not the person who asked. Connected apps are listed once per app with a stable ID. Their sign-in and credentials stay with the server. When you cannot reach a tool, say: I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.\\n\\nKeys belong to the human who provisioned them. Your owner's keys serve whoever asks; another person's keys need that person's private scoped approval before you use them for anyone else, and your owner cannot authorize them. Use the connector without exposing or sharing raw keys. The Connectors page remains the place a person manages tools and keys by hand (Settings → Connectors); you point there to MANAGE what exists, not to add what you need.\\n\\n## Before you say you can't\\n\\n**Inspect your own host before answering.** When a question is about a system on the machine you run on, inspect its live state with the tools you have: processes, logs, local endpoints or service status. Say what you checked. Memory and Room history are not evidence of current state.\\n\\n**Use available tools before reporting a blocker.** Before asking a person for a code, a status or a file, call connect(mode:status) and check whether a tool or connected app you already have can get it, then use it. This includes an emailed verification code in an already-connected inbox. Report blocked: to your commander only when none can, and say why. The key-ownership and grant rules still apply.\\n\\n**Where you run.** Each agent runs on one owner's machine, with that owner's keys, hosts, and network. Agents in one Room can differ in what they reach. Check your own capabilities with connect(mode:status) and your tools; never infer another agent's. A failure saved from another machine is not proof here. Try it first.\\n\\n## Connect an app\\n\\nSearch by name, website, or intent with connect(mode:discover) when the service is unclear. Search shows the user nothing. Use the result's name with connect; the server chooses the route; follow its actual readiness or needs_squire response. Connecting is setup, never authority: it does not replace a grant, write permission, target-branch confirmation, or the merge gate, and never needs a raw credential in chat. You never pair a tool yourself and never ask anyone for a key value. Do not provision or pair a route yourself.\\n\\nFor an app that is not connected, call connect(mode:ensure) with its service name, one short reason, and a request-specific `continuation`: one sentence stating what you will do right after sign-in. Do not include a link, credential, account identifier, or private data in that sentence. The server returns ready, pending approval, unavailable or needs_squire. For needs_squire, drive the supplied goal locally and recheck connect. Pending approval: end the turn and await its wake. For a different Squire Google account, set switchGoogleAccount; use reconnect to repair a connection, or noApi for a browser route. When a card or Squire approval is pending, end the turn and wait for its connection wake. In a corner, call it from that corner so the sign-in card and connection wake return there. A provider outage is unavailable, not permission to change routes. Without mounted Squire tools, connect reports unavailable. After the person connects, read Connectors again and use the app ID.\\n\\nOnce connected, the route decides how you call it. Via composio, discover with app_tool(app), then call app_tool(app, tool, args) with the selected tool slug and arguments. Via squire-api, call its API with `use_credential` (service = the app key); via squire-browser, use the `operate_*` tools; via registry-mcp, use its mounted MCP tools. The server executes against that person’s account and decides permission on every call. If tool discovery reports an error, follow its cause; `needs_connection` means the account must be reconnected, and `needs_permission` means wait for the connected person's decision. Do not switch paths after denial or provider unavailability, except to correct a mistaken personal GitHub route for a linked-repository write as described under GitHub identity. No app token, provider key, or sign-in URL belongs in chat or a model prompt.\\n\\n## Websites through Trusty Squire\\n\\nTrusty Squire signs up and signs in to any website hands-off for the person; its vault holds keys when needed. Use operate_drive for a browser goal. If launch settings are required, start one configured session, then drive that same session. On a specific handback, flat steps (operate_click, operate_type, operate_select, operate_press, operate_scroll, operate_wait, operate_navigate, operate_read_inbox, operate_extract, and the rest of its flat operate_* actions) handle one action; then resume drive. Keep saved-login approvals in Squire, save the credential in its vault under the app key, then call connect again.\\n\\nTo show a browser to a person, call app_tool(app:beeline:browser_share, tool:start). After start succeeds, direct the person to this place's live browser card; the result provides identifiers and open-card guidance rather than a URL. It returns when the live card is ready, and you may keep using that same browser session while a person views or controls it. The Room sends you events when the person opens, controls, uses, hands back, or closes the view. End the share explicitly with app_tool(app:beeline:browser_share, tool:end) when it is finished.\\n\\n## GitHub repositories and identity\\n\\n**Coding from General.** General may have no repository. If gh cannot work there, check the Room's repository context before proposing a personal GitHub connection. Guide the person to the Room header → Repository → Link or Create; the repository picker’s “Add repositories, accounts, or organizations” opens GitHub installation setup for missing organization or repository access. Once the intended repository is linked, do repository changes in a corner there. The Beeline GitHub App supplies repository access through that setup; it is not a removable Connectors entry.\\n\\n**GitHub identity.** In Room, corner and DM sessions, use the Beeline GitHub App for code, branch and PR writes on a Room's linked repository, including Git Data API pushes, even when a personal connection exists. If you have no App checkout, do the work in a corner of the linked Room. Never use personal GitHub for linked-repository writes. Use your owner's personal connection for general lookups, repositories without App access, personal issues or notifications, and actions explicitly requested as that person: app_tool for managed tools, or Squire use_credential for a sealed API route. Use another owner's connection only with their approval. Report a denial with the exact error and route; repair that route. Never fall back from the App to personal GitHub for linked-repository writes, or retry a person-scoped action as the App. If a linked-repository write was mistakenly denied on the personal route, report it and use the authorized App route. Keep checkout authentication on its existing path; do not extract tokens to make a native git bridge. Repository membership, selected-repository access, branch restrictions and merge_corner's review gate still apply.\\n\\n## Host commands, Tailscale and the wallet\\n\\n- For a human-commanded Beeline production release, call dispatch_release with no inputs and no release worker; the server verifies the authorizing human command and records dispatch attribution. A scheduled release must retain its human authorization. Merging alone never authorizes a release.\\n- When run_granted_command is mounted, it runs a command an approved grant covers word for word. Ask for one with request_grant(action:request, kind, target, reason); request_grant(action:list) shows what you hold. Human approvals still govern.\\n- Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop.\\n- Connecting the wallet keeps its own owner approval rule; its operations are under app_tool(app:beeline:wallet).\\n\",\"source\":\"built-in\"}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 18,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-triage"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"slug\":\"beeline-triage\",\"markdown\":\"---\\nname: beeline-triage\\ndescription: Clarify and assess a user request before opening a Beeline corner, then bind a bugfix to its recorded reproduction. Use before open_corner and while implementing a bug in a corner.\\n---\\n\\n<!-- beeline-release: source -->\\n\\n# Beeline request triage\\n\\nRun these checks before opening a corner.\\n\\n## 1. Is it clear?\\n\\n- Rewrite the request as a concrete outcome and the user stories it enables.\\n- State material exclusions (non-goals) and the risks needed to prevent unrequested work or surprise.\\n- Keep the corner objective complete and within 24 words.\\n- Report needs-decision: to your commander for material unresolved intent. When a person asks for a spec or mock, produce it before building.\\n- Once it's resolved, say plainly if the request itself is suboptimal and give your own recommendation - you are expected to disagree, not just permitted to.\\n- On a judgment call you're still not sure of, order a reachable child or sibling corner for one adversarial second opinion (corners cannot order DMs or ancestor corners); have the chosen agent report back; a Room order wakes only the one agent you name; skip this only when you are the only agent in the Room.\\n\\n## 2. Is work warranted?\\n\\n- For a bug, try to reproduce the exact user-visible behavior and record the evidence.\\n- For another request, identify the unmet user need and the current behavior that does not meet it.\\n- Search current code, history, issues, and open or recently merged pull requests for released or unreleased work that resolves or supersedes the request.\\n- Treat similar titles as candidates. Confirm behavior and scope before calling work duplicate.\\n- If the need cannot be established, reproduction fails, or other work may obviate it, warn; do not block.\\n\\n## 3. Is it desirable?\\n\\n- Compare the request with repository-owned goals, invariants, architecture, and established product behavior.\\n- Look for concrete user benefit, the smallest coherent solution, and ongoing maintenance cost.\\n- Do not invent product strategy. If the evidence is absent or conflicting, warn; do not block.\\n\\n## Output\\n\\nWhen dispatching work, pass the complete brief to open_corner; approval is optional for opening; no separate outline post or human approval is required. Add applicable warnings to the brief:\\n\\n`Triage warning — warranted: <evidence-backed reason>`\\n`Triage warning — desirable: <evidence-backed reason>`\\n\\nFor repository bugfixes, record a real-target reproduction when feasible; otherwise one line must state why it is not feasible and name the closest stand-in. Done means that same reproduction or stand-in passes. When reproduction succeeds, also emit:\\n\\n`Reproduction <id>: <user path> → <observable wrong result>`\\n\\nDo not emit a warning merely because evidence is incomplete when the repository offers no practical way to obtain it. Never describe a warning as approval or rejection. Warnings inform the user and implementer; they do not block work.\\n\\n## Bugfix execution\\n\\nOnce a corner is open for a reported bug, follow these steps in order. They are instruction, not a server gate. They do not condition the fix on reproduction. Warranted-work and desirability warnings still do not block.\\n\\n### 1. Attempt to reproduce\\n\\n- Attempt to reproduce the bug as triage isolated it, using every tool the host offers: emulator, Playwright, browser, test runner.\\n- Record what was tried and what was observed.\\n- If a reproduction is obtained, record the exact user path and the observable wrong result under `Reproduction <id>`. Reuse the identifier triage emitted when it recorded one.\\n- If reproduction fails, warn and continue exactly as triage already does. Never stop. Never condition the fix on reproduction.\\n\\n### 2. Narrow fix\\n\\n- Narrow the fix to the reported behavior.\\n- When a reproduction exists, change only what removes that recorded reproduction.\\n- Nearby improvements stay out of scope.\\n\\n### 3. Proof matching triage\\n\\n- When a reproduction exists, re-run it, cite the same identifier, and show it now passing, plus the regression that would fail if the bug returned.\\n- When none was obtained, state that plainly and show the regression instead.\\n- Name the identifier in the pull request when one exists so the reviewer can check that proof, not merely that some test exists.\\n\",\"source\":\"built-in\"}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 19,
+              "name": "read",
+              "args": {
+                "facet": "procedure",
+                "slug": "beeline-spec"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"slug\":\"beeline-spec\",\"markdown\":\"---\\nname: beeline-spec\\ndescription: Prepare or revise a durable corner assignment from Room decisions before repository work. Do not use for ordinary conversation or unrelated artifact delivery.\\n---\\n\\n<!-- beeline-release: source -->\\n\\n# Durable corner brief\\n\\nCreate an assignment a fresh session can execute without the parent transcript. Set repositoryWork:false when the assignment excludes repository edits or PRs; deliverable attachments do not require repository work. A brief has three parts:\\n\\n- `spec`: one Markdown doc you write, with these headings:\\n  - `## Intent`: the commander's exact order and inherited human constraints, quoted exactly, each with its message or private order ID. Never substitute a summary.\\n  - `## User stories`: what this enables, one per line as \\\"a person who does X sees Y\\\". Only stories traceable to the quoted Intent; never import a plan, a teammate's suggestion, or your own idea as a story. Keep unaffected lines as they are across revisions.\\n  - `## Acceptance criteria`: the requester's own rules from `## Intent`, quoted verbatim and numbered, each naming the test (existing or to be written) that fails if the rule is broken anywhere. Criteria are the invariant; stories are examples of it. Write \\\"None beyond the stories.\\\" when the request states no rule.\\n  - `## Non-goals`: explicit exclusions.\\n  - `## Risks`: what could go wrong, and for whom.\\n  - `## References`: each reference or optional mock with what it is and whose call it is; use DESIGN.md or existing app styles when there is no mock.\\n  Add implementation guidance under further headings when it helps.\\n  For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; labels may be bold or italic, and Stand-in: may follow on another line in the same Reproduction section. Done repeats that reproduction or stand-in successfully.\\n- files (`attachments`): the Room files the worker needs, each with its purpose and whether it is required.\\n- `approval`: optional when opening; the initiating human message ID or private commander order ID. Without it or with an agent message, the server records the opening agent as agent-initiated. The corner commander may revise directly without a citation; other agents still require a human message or commander order. The server quotes that message's exact text and author; the quote wins any conflict with the spec.\\n\\nDo not infer approval from silence, assent to different prose, or the mere existence of a plan. Keep agent recommendations labelled as recommendations. Do not promote a plausible UX detail, algorithm, failure message, or extra test into a user story merely because it sounds helpful.\\n\\n## Compact path for a settled small fix\\n\\nUse this when the requested behavior, touched surface, exclusions, and proof are already obvious. Inspect the narrow current behavior, write a short spec (quoted intent, observable user stories, non-goals, risks, references), and use the initiating command as the approval. Keep the outline in the brief; no separate post or approval is required. “Change the message action label from Remove to Delete; leave confirmation and accessibility wording unchanged” needs the visible-label user story and both exclusions, not another confirmation question.\\n\\n## Complex-work planning loop\\n\\nUse your judgment about how much planning work needs. This loop can help for a large new feature or a genuinely ambiguous request; when a person asks for a spec or mock, produce it before building.\\n\\n### 1. Scope and current state\\n\\n- Collect every relevant human message, including corrections; later corrections supersede only what they explicitly change. Quote their exact text and IDs under `## Intent`.\\n- Inspect current code, data contracts, tests, recent related work, repository invariants, and existing behavior. State what exists, what is missing, and what is deliberately out of scope.\\n- Separate facts, human decisions, agent recommendations, and unresolved choices.\\n\\n### 2. User stories and product boundary\\n\\n- Write the actor/action/observable-result stories.\\n- Map each story to its own observable line and explicit non-goals.\\n- If one unresolved choice would materially change behavior, scope, irreversible effects, or the intended result, report needs-decision: with that choice or the affected brief slice to your commander. Use the answering message as the `approval`. Never treat no answer as approval.\\n\\n### 3. Architecture and data flow\\n\\n- Trace inputs, authorities, state transitions, persistence, outputs, and trust boundaries.\\n- Name the existing components to reuse and the smallest coherent changes.\\n- Describe migration and compatibility behavior only where the human intent or existing data requires it.\\n\\n### 4. Failure modes and test map\\n\\n- Enumerate missing/stale data, retries, concurrency, partial failure, authorization failure, rollback, and boundary-specific hazards that apply.\\n- Map every user story to its proof boundary: unit, integration, device/browser, server authorization, migration, or live harness. No story may be left without planned evidence.\\n\\n### 5. Mocks and references\\n\\n- When a visual or interaction decision needs eyes, create and post one self-contained mock with the beeline-files-and-mocks steps.\\n- A mock/file posted with `post_artifact` in this planning turn is added automatically to the brief attachment manifest; do not manually copy its object ID. Still list it under `## References` with whose call it is. Existing human-posted files must be named explicitly in attachments.\\n\\n### 6. Implementation tasks\\n\\n- Synthesize ordered, independently verifiable tasks. For each task name the affected boundary, user stories, expected files/components, failure handling, and proof.\\n- Keep the spec actionable, not a transcript summary.\\n\\n### 7. Bounded adversarial second read (default on)\\n\\n- Spend one pass, bounded to the drafted scope, trying to disprove completeness: find a missing story, authority mismatch, unhandled failure, user story without proof, mock ambiguity, accidental scope expansion, or task-order hazard.\\n- Return findings to the planning agent and repair the draft. Report a material product choice to your commander; engineering choices and mechanical gaps are resolved in the plan.\\n- End after one adversarial pass unless its repair exposes one new material product choice. Do not recursively review the review.\\n\\n## Dispatch and revision\\n\\nInclude \\\"no progress reports\\\" in the brief and any implementing order.\\n\\nThe dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for material unresolved intent; when a person asks for a spec or mock, produce it before building. Include a dispatching message as `approval` when available; opening on agent judgment needs no human approval. Revisions retain their approval requirement.\\n\\nPass the brief as `open_corner.brief`. Read the current revision before revising and use `revise_corner(action:brief)` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.\\n\",\"source\":\"built-in\"}"
+                  }
+                ]
+              },
+              "succeeded": true
+            },
+            {
+              "type": "call",
+              "id": 20,
+              "name": "connect",
+              "args": {
+                "mode": "status"
+              },
+              "intendedOnly": false,
+              "response": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"readiness\":\"Connectors for @fixture-owner on Nerd (this is the machine you run on; an accepted offer installs here).\\n\\nCatalog:\\n- trusty-squire (Trusty Squire): not added. Signs up and signs in to websites for you hands-off on this machine; its vault holds keys when needed without a raw key reaching chat.\\n- wallet (Wallet): not added — call connect. An on-chain wallet bound to a person; it connects when that person grants agents permission to sign, from Connectors or an offer card.\\n- tailscale (Tailscale): not added — call connect. Private network access between connected machines, including the Tailscale CLI, tailnet services, and Taildrop file exchange.\\n\\nConnections (keys already provisioned, by name only):\\n- none\\n\\nApps (connect; each use is authorized as app:<key>):\\n- Link (link) via Beeline: broken\\n- none\\n\\nI can reach Tailscale on this machine because this node is connected as lunchboxfortwo@gmail.com; to fix it, use the tailscale CLI for tailnet resources.\",\"capabilities\":[\"beeline:onboarding\",\"beeline:workflow\",\"beeline:wallet\",\"beeline:browser_share\",\"beeline:avatar\"]}"
+                  }
+                ]
+              },
+              "succeeded": true
+            }
+          ],
+          "text": "Open the agent profile and use the **Voice** section.\n\nThe shortest path is to tap the agent's name on one of their messages. That control is labeled \"Open Nerd profile.\" Scroll past Soul and Model / difficulty to **Voice**, tap **Change**, pick a voice, then **Save**. **Play** previews it, and the preview stops after 8 seconds.\n\nThe same profile is under the Room menu, then **Members**, then the agent, then **View profile**. From the Workspace, use the **Members** button, then **Agents**, then the agent.\n\n**Change** is there for the owner. Everyone else can see the current voice. Two agents in the same Room cannot keep the same voice. The save refuses, and you pick another.\n\nThe writing personality is the **Soul** block on that same profile. **Edit**, change the text, then **Save**. That control is separate from the speaking voice.",
+          "execution": "local-service",
+          "bindings": {},
+          "effects": {
+            "remainingSchedules": 0,
+            "objects": []
+          }
+        }
+      ],
+      "judgments": [
+        {
+          "caseId": "voice-change",
+          "status": "pass",
+          "evidence": "**Play** previews it",
+          "reason": "Directs the owner to Agent Profile → Voice and explains preview, change and save.",
+          "model": "gpt-6",
+          "rubricSha256": "6127cefa6adb4e1cb3dbc872b801acc38082387b97e7fb6ebe549158db8507a4",
+          "transcriptSha256": "1ae13b31b3faac112d5c1ed55b13a6aa33565158060d5a155c808004f2c2fb5e"
+        }
+      ]
+    }
+  ]
+}

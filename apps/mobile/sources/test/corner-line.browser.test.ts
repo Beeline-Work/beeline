@@ -66,10 +66,10 @@ async function main() {
   const callSite = format(line('call-site')).map(row => row.replace('latency-rig', 'NAME'));
   const room = format(line('room')).map(row => row.replace('font-check-android', 'NAME'));
   assert(callSite.length > 0 && JSON.stringify(callSite) === JSON.stringify(room), 'format differs: ' + JSON.stringify({callSite, room}));
-  assert(line('call-site').textContent === 'Opened corner #latency-rig', 'call-site words: ' + line('call-site').textContent);
-  assert(line('room').textContent === 'Opened corner #font-check-android', 'room words: ' + line('room').textContent);
+  assert(line('call-site').textContent === 'Opened latency-rig', 'call-site words: ' + line('call-site').textContent);
+  assert(line('room').textContent === 'Opened font-check-android', 'room words: ' + line('room').textContent);
   for (const name of ['call-site', 'dm', 'long']) assert(line(name).querySelectorAll('svg').length === 2, name + ': glyph and chevron');
-  assert(line('room').querySelectorAll('svg').length === 1, 'room: chevron only');
+  assert(line('room').querySelectorAll('svg').length === 2, 'room: branch and chevron');
   const long = line('long');
   const [, chevron] = long.querySelectorAll('svg');
   assert(chevron.getBoundingClientRect().right <= long.getBoundingClientRect().right, 'long name pushes the chevron out');

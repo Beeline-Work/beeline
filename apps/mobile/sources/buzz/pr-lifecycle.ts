@@ -45,7 +45,7 @@ export type NotificationLifecycleRun = {
 type LifecycleItem = NotificationLifecycleRun['items'][number];
 
 /** Presentation only: each committed event keeps its own line and destination. */
-function lifecycleItem(message: SystemLineMessage): LifecycleItem | undefined {
+export function lifecycleItem(message: SystemLineMessage): LifecycleItem | undefined {
   if (message.deleted) return;
   const fact = message.daemonFact;
   const event = message.githubEvent;
@@ -76,25 +76,20 @@ function lifecycleItem(message: SystemLineMessage): LifecycleItem | undefined {
     };
   }
   if (fact) {
-    if (fact.type === 'corner-open' || message.systemEvent?.kind === 'corner-opened') {
+    if (fact.type === 'corner-open' || fact.type === 'corner-complete') {
       return {
         ...base,
         title: lifecycleCornerTitle(fact),
-        state: 'Opened',
+        state:
+          fact.outcome === 'landed'
+            ? 'Merged'
+            : fact.type === 'corner-complete'
+              ? 'Closed'
+              : 'Opened',
         kind: 'corner',
         kindLine: 'corner',
         cornerId: fact.cornerId,
-      };
-    }
-    if (fact.type === 'corner-complete' && fact.outcome === 'landed' && fact.pullRequest) {
-      return {
-        ...base,
-        title: fact.pullRequest.title || lifecycleCornerTitle(fact),
-        state: 'Merged',
-        kind: 'pull-request',
-        kindLine: `PR${fact.pullRequest.number ? ` #${fact.pullRequest.number}` : ''}`,
-        url: fact.pullRequest.url,
-        cornerId: fact.cornerId,
+        ...(fact.outcome === 'landed' && fact.pullRequest ? { url: fact.pullRequest.url } : {}),
       };
     }
     if (fact.type !== 'checks-failing') return;
@@ -214,6 +209,7 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
     const fact = message.deleted ? undefined : message.daemonFact;
     if (
       (fact?.type === 'corner-complete' &&
+        !fact.sourceMessageId &&
         message.systemEvent?.kind !== 'corner-opened' &&
         !(fact.outcome === 'landed' && fact.pullRequest)) ||
       fact?.type === 'worktree-cleaned'

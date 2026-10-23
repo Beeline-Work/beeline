@@ -895,6 +895,9 @@ it('makes an owner-approved systemctl user-bus command available in a subsequent
 
 it('does not resolve an opening card against a corner belonging to another parent Room', async () => {
   const opened = await open();
+  // Exercise a visible call-site marker; source-free subscription records stay hidden.
+  await db.query(`UPDATE messages SET card=card||'{"sourceMessageId":"source"}'::jsonb
+    WHERE room_id=$1 AND card->>'cornerId'=$2`, [ROOM, opened.cornerId]);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, DM]);
   await db.query(`UPDATE corner_facts SET objective='Private goal in another Room' WHERE corner_id=$1`, [opened.cornerId]);
   const view = await phone.readRoom(ROOM, HUMAN);

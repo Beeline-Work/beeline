@@ -542,7 +542,7 @@ function CornerCockpit({
         item.cornerMarkers?.length ? (
           <View>
             {node}
-            <CornerOpenedMarkers message={item} onOpenCorner={onOpenCorner} />
+            <CornerOpenedMarkers message={item} onOpenCorner={onOpenCorner} onOpenUrl={openUrl} />
           </View>
         ) : node,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),

@@ -3215,6 +3215,11 @@ export async function migrate(
        WHERE state='active' AND embedding IS NULL`,
     ));
   await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
+  await createIndexConcurrently(
+    database, 'messages_corner_fact_idx',
+    `CREATE INDEX CONCURRENTLY messages_corner_fact_idx
+     ON messages ((card->>'cornerId')) WHERE card_type='daemon-fact'`,
+  );
   // Machine connection changes find their one open notice without scanning
   // transcript history. messages is busy, so this index builds concurrently.
   await retryMigrationStep('machine offline notice index', () => createIndexConcurrently(

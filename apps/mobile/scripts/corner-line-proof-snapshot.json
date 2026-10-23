@@ -1,0 +1,1330 @@
+{
+  "dm": {
+    "messages": [
+      {
+        "id": "ab46b2f05d3770985e9cf2a881132aaa6027f8f5e9f9b6acfa1c54ca55cd83ec",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764738,
+        "createdAtMs": 1792764738336,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "33333333-3333-4333-8333-333333333333",
+          "eventId": "ab46b2f05d3770985e9cf2a881132aaa6027f8f5e9f9b6acfa1c54ca55cd83ec",
+          "rootId": "ab46b2f05d3770985e9cf2a881132aaa6027f8f5e9f9b6acfa1c54ca55cd83ec"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "06d5a05165bef293c34251f3864989043abbade9b015123bf5cdb12787eceae3",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764739,
+        "createdAtMs": 1792764739336,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "267624ff-88b1-4976-868c-e7e26e819c09",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "267624ff-88b1-4976-868c-e7e26e819c09",
+          "objective": "Build the requested work",
+          "sourceMessageId": "ab46b2f05d3770985e9cf2a881132aaa6027f8f5e9f9b6acfa1c54ca55cd83ec"
+        }
+      }
+    ],
+    "roomMessages": []
+  },
+  "parent": {
+    "messages": [
+      {
+        "id": "76815ab16441d1e509911145304bf23f7da0201aef549acc8b32adde788d1e1f",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764738,
+        "createdAtMs": 1792764738907,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "3387b6b4-308c-418a-8329-bd775fafea52",
+          "eventId": "76815ab16441d1e509911145304bf23f7da0201aef549acc8b32adde788d1e1f",
+          "rootId": "76815ab16441d1e509911145304bf23f7da0201aef549acc8b32adde788d1e1f"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "8ec7e690e6cd490a5106313b396d450076d4aaf70f60ad742d18ccb76e7d1738",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764739,
+        "createdAtMs": 1792764739907,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "37146566-4bb2-4eb5-b6eb-ee0b6475cd78",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "37146566-4bb2-4eb5-b6eb-ee0b6475cd78",
+          "objective": "Build the requested work",
+          "sourceMessageId": "76815ab16441d1e509911145304bf23f7da0201aef549acc8b32adde788d1e1f"
+        }
+      }
+    ],
+    "roomMessages": []
+  },
+  "dm-opened": {
+    "messages": [
+      {
+        "id": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740207,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "33333333-3333-4333-8333-333333333333",
+          "eventId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19",
+          "rootId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "4986a7dacc43dc051903ed4293f2a5d79e8b43654c53b67a614c1cbcad113a7d",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741207,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+          "objective": "Build the requested work",
+          "sourceMessageId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19"
+        }
+      }
+    ],
+    "roomMessages": []
+  },
+  "dm-merged": {
+    "messages": [
+      {
+        "id": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740207,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "33333333-3333-4333-8333-333333333333",
+          "eventId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19",
+          "rootId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "4986a7dacc43dc051903ed4293f2a5d79e8b43654c53b67a614c1cbcad113a7d",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741207,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "8e77da16258edb9f5659984fb5a76b392344a692aa3ee7a6ca88fa16c992bc8d",
+        "text": "@owner merged PR title differs from the corner name",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740368,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "durableFact": "merge",
+        "systemEvent": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "text": "PR title differs from the corner name"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@owner"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
+    ]
+  },
+  "dm-closed": {
+    "messages": [
+      {
+        "id": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740207,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "33333333-3333-4333-8333-333333333333",
+          "eventId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19",
+          "rootId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "ed68f11f8bc6a96cc73f2116e775842d8d4f8ff2e542b174f1e5c7c003593316",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740455,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "33333333-3333-4333-8333-333333333333",
+          "eventId": "ed68f11f8bc6a96cc73f2116e775842d8d4f8ff2e542b174f1e5c7c003593316",
+          "rootId": "ed68f11f8bc6a96cc73f2116e775842d8d4f8ff2e542b174f1e5c7c003593316"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "4986a7dacc43dc051903ed4293f2a5d79e8b43654c53b67a614c1cbcad113a7d",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741207,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "eaf0dcc0261d9749c1eb70ca5156c6ac30ac190d7492fb8af8a82ed47dcfba19"
+        }
+      },
+      {
+        "id": "bf022807c4c48aa3af90f3c482e2c007a3f33b9d9b107eec358a6a633d0383bc",
+        "text": "@ruby opened a corner close-requested-work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741455,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "b3199ad3-4fcb-4bb7-87e2-84359f39cb23",
+            "text": "close-requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "close-requested-work",
+          "type": "corner-complete",
+          "outcome": "abandoned",
+          "cornerId": "b3199ad3-4fcb-4bb7-87e2-84359f39cb23",
+          "objective": "Build the requested work",
+          "sourceMessageId": "ed68f11f8bc6a96cc73f2116e775842d8d4f8ff2e542b174f1e5c7c003593316"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "8e77da16258edb9f5659984fb5a76b392344a692aa3ee7a6ca88fa16c992bc8d",
+        "text": "@owner merged PR title differs from the corner name",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740368,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "durableFact": "merge",
+        "systemEvent": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "text": "PR title differs from the corner name"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@owner"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "94193e8a-dffe-4000-b260-94f106a7dcb0",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
+    ]
+  },
+  "room-opened": {
+    "messages": [
+      {
+        "id": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740689,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+          "rootId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "50d166e92af972cec28db77da37eb6f66113862bf41243dbb04f087366521d24",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740753,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+          "objective": "Build the requested work",
+          "sourceMessageId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740689,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+          "rootId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "50d166e92af972cec28db77da37eb6f66113862bf41243dbb04f087366521d24",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740753,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+          "objective": "Build the requested work",
+          "sourceMessageId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        }
+      }
+    ]
+  },
+  "room-merged": {
+    "messages": [
+      {
+        "id": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740689,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+          "rootId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "50d166e92af972cec28db77da37eb6f66113862bf41243dbb04f087366521d24",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740753,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740689,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+          "rootId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "50d166e92af972cec28db77da37eb6f66113862bf41243dbb04f087366521d24",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740753,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        }
+      }
+    ]
+  },
+  "room-closed": {
+    "messages": [
+      {
+        "id": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740689,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+          "rootId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "50d166e92af972cec28db77da37eb6f66113862bf41243dbb04f087366521d24",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740753,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        }
+      },
+      {
+        "id": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740916,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0",
+          "rootId": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "a3b0f0c244388ffcf6b6fd948200f82f9f4f44ad442bfde862ed39ab6c625cd5",
+        "text": "@ruby opened a corner close-requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740986,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "e7891670-8431-4c61-9f01-a613f0419009",
+            "text": "close-requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "close-requested-work",
+          "type": "corner-complete",
+          "outcome": "abandoned",
+          "cornerId": "e7891670-8431-4c61-9f01-a613f0419009",
+          "objective": "Build the requested work",
+          "sourceMessageId": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740689,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa",
+          "rootId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "50d166e92af972cec28db77da37eb6f66113862bf41243dbb04f087366521d24",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740753,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "07ffee3e-ebc4-4145-a19e-c5b47ebd16c5",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "74066deaf85be3eb9d31a7ef5247185ca6df8e2c9cf91f93423e4a7ccd732aaa"
+        }
+      },
+      {
+        "id": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740916,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "22222222-2222-4222-8222-222222222222",
+          "eventId": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0",
+          "rootId": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "a3b0f0c244388ffcf6b6fd948200f82f9f4f44ad442bfde862ed39ab6c625cd5",
+        "text": "@ruby opened a corner close-requested-work",
+        "createdAt": 1792764740,
+        "createdAtMs": 1792764740986,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "kind": "corner-opened",
+          "verb": "opened a corner",
+          "object": {
+            "id": "e7891670-8431-4c61-9f01-a613f0419009",
+            "text": "close-requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "close-requested-work",
+          "type": "corner-complete",
+          "outcome": "abandoned",
+          "cornerId": "e7891670-8431-4c61-9f01-a613f0419009",
+          "objective": "Build the requested work",
+          "sourceMessageId": "aa09219c25d97378c60fd49198d2ce7e0f92b99c4727160965252266fa2a43f0"
+        }
+      }
+    ]
+  },
+  "parent-opened": {
+    "messages": [
+      {
+        "id": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741153,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "c9516130-f7ff-4cdc-91e5-75b3c0295ede",
+          "eventId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622",
+          "rootId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "5a721a5721025cedca548d9e70880802417d0f9c0bd17599bad15ef2dabef4ea",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764742,
+        "createdAtMs": 1792764742153,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "c8fa0377-9688-4826-8104-04cc265ba890",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-open",
+          "cornerId": "c8fa0377-9688-4826-8104-04cc265ba890",
+          "objective": "Build the requested work",
+          "sourceMessageId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622"
+        }
+      }
+    ],
+    "roomMessages": []
+  },
+  "parent-merged": {
+    "messages": [
+      {
+        "id": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741153,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "c9516130-f7ff-4cdc-91e5-75b3c0295ede",
+          "eventId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622",
+          "rootId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "5a721a5721025cedca548d9e70880802417d0f9c0bd17599bad15ef2dabef4ea",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764742,
+        "createdAtMs": 1792764742153,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "c8fa0377-9688-4826-8104-04cc265ba890",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "c8fa0377-9688-4826-8104-04cc265ba890",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "8e77da16258edb9f5659984fb5a76b392344a692aa3ee7a6ca88fa16c992bc8d",
+        "text": "@owner merged PR title differs from the corner name",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741313,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "durableFact": "merge",
+        "systemEvent": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "text": "PR title differs from the corner name"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@owner"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "c8fa0377-9688-4826-8104-04cc265ba890",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
+    ]
+  },
+  "parent-closed": {
+    "messages": [
+      {
+        "id": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741153,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "c9516130-f7ff-4cdc-91e5-75b3c0295ede",
+          "eventId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622",
+          "rootId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "cdb1ea5454f2e195bd237bd46afaf2f10327e6838c94db9bfb3cd4088a83aa95",
+        "text": "@ruby open a corner for the requested work",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741403,
+        "version": 0,
+        "author": {
+          "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "kind": "human",
+          "name": "Captain",
+          "handle": "captain"
+        },
+        "presentation": "message",
+        "reference": {
+          "channelId": "c9516130-f7ff-4cdc-91e5-75b3c0295ede",
+          "eventId": "cdb1ea5454f2e195bd237bd46afaf2f10327e6838c94db9bfb3cd4088a83aa95",
+          "rootId": "cdb1ea5454f2e195bd237bd46afaf2f10327e6838c94db9bfb3cd4088a83aa95"
+        },
+        "mentionPubkeys": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "id": "5a721a5721025cedca548d9e70880802417d0f9c0bd17599bad15ef2dabef4ea",
+        "text": "@ruby opened a corner requested-work",
+        "createdAt": 1792764742,
+        "createdAtMs": 1792764742153,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "c8fa0377-9688-4826-8104-04cc265ba890",
+            "text": "requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "c8fa0377-9688-4826-8104-04cc265ba890",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          },
+          "sourceMessageId": "bccf6666f9752bd120e0c1d5c88b354f15a2e98c2b06e4f00d8ba6e2cfb4c622"
+        }
+      },
+      {
+        "id": "a5a813a73ec611cc4833d0f9db86d893d74e78f53a42f8ab309be5e59bd07564",
+        "text": "@ruby opened a corner close-requested-work",
+        "createdAt": 1792764742,
+        "createdAtMs": 1792764742403,
+        "version": 1,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "systemEvent": {
+          "verb": "opened a corner",
+          "object": {
+            "id": "cc4218e4-97dc-44dd-84e1-c8bf36a61c9f",
+            "text": "close-requested-work"
+          },
+          "subject": {
+            "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "kind": "agent",
+            "name": "@ruby"
+          }
+        },
+        "daemonFact": {
+          "name": "close-requested-work",
+          "type": "corner-complete",
+          "outcome": "abandoned",
+          "cornerId": "cc4218e4-97dc-44dd-84e1-c8bf36a61c9f",
+          "objective": "Build the requested work",
+          "sourceMessageId": "cdb1ea5454f2e195bd237bd46afaf2f10327e6838c94db9bfb3cd4088a83aa95"
+        }
+      }
+    ],
+    "roomMessages": [
+      {
+        "id": "8e77da16258edb9f5659984fb5a76b392344a692aa3ee7a6ca88fa16c992bc8d",
+        "text": "@owner merged PR title differs from the corner name",
+        "createdAt": 1792764741,
+        "createdAtMs": 1792764741313,
+        "version": 0,
+        "author": {
+          "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "kind": "agent",
+          "name": "Ruby",
+          "handle": "ruby"
+        },
+        "presentation": "card",
+        "durableFact": "merge",
+        "systemEvent": {
+          "kind": "merged",
+          "verb": "merged",
+          "object": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "text": "PR title differs from the corner name"
+          },
+          "subject": {
+            "kind": "github",
+            "name": "@owner"
+          }
+        },
+        "daemonFact": {
+          "name": "requested-work",
+          "type": "corner-complete",
+          "outcome": "landed",
+          "cornerId": "c8fa0377-9688-4826-8104-04cc265ba890",
+          "objective": "Build the requested work",
+          "pullRequest": {
+            "url": "https://github.com/owner/widgets/pull/2832",
+            "title": "PR title differs from the corner name",
+            "number": 2832,
+            "headSha": "1111111111111111111111111111111111111111",
+            "mergedAt": "2026-10-23T10:00:00Z",
+            "mergedBy": "owner",
+            "targetBranch": "main",
+            "mergeCommitSha": "ffffffffffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -12,6 +12,8 @@
       "row"
     ],
     "components/buzz/GrantRequestCard.tsx": ["GrantRequestCard"],
+    "components/buzz/AgentApprovalCard.tsx": ["AgentApprovalCard"],
+    "components/buzz/approval-decision-copy.ts": [],
     "components/buzz/AgentProfileView.tsx": ["AgentProfileView"],
     "components/buzz/AgentSignInCard.tsx": [
       "AgentSignInCard",

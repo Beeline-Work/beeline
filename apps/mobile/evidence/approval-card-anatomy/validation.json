@@ -1,0 +1,202 @@
+{
+  "reproduction": "APPROVAL-V3",
+  "briefRevision": 4,
+  "mobile": {
+    "fullRun": {
+      "files": 602,
+      "passed": 4971,
+      "failed": 2,
+      "skipped": 5
+    },
+    "unchangedFailedTestsRerun": {
+      "passed": 14,
+      "failed": 0
+    },
+    "finalCardAndAttributionRerun": {
+      "passed": 173,
+      "failed": 0
+    },
+    "updatedThemeMatrix": {
+      "passed": 53,
+      "failed": 0
+    }
+  },
+  "server": {
+    "files": 213,
+    "coverageAfterReruns": {
+      "passed": 3633,
+      "skipped": 19
+    },
+    "initialFailures": [
+      "history fetch under load",
+      "Room read timing bound",
+      "approved System message snapshots required refresh"
+    ],
+    "historyRerun": {
+      "passed": 1
+    },
+    "unchangedTimingAndLockGuardRerun": {
+      "passed": 92
+    },
+    "finalSquireDecisionAndResumeRerun": {
+      "passed": 4
+    }
+  },
+  "bodyResourceAndRelay": {
+    "passed": 68,
+    "failed": 0
+  },
+  "previousClientCompatibility": {
+    "passed": 1
+  },
+  "rootTypecheck": "passed",
+  "deadCodeNewFindings": 0,
+  "note": "Full-suite coverage plus focused reruns; not a single all-green invocation. Squire provider supplies no verified human identity, so its attribution remains neutral.",
+  "reviewRepairs": {
+    "findings": [
+      "Tray subject hidden when reason exists",
+      "Settled grants lost Once/Always scope"
+    ],
+    "mobile": {
+      "themeMatrix": 63,
+      "decisionCopy": 2,
+      "unchangedHostAndOtherCardTests": 120,
+      "calmLint": 8,
+      "designLint": 9,
+      "totalPassed": 202
+    },
+    "previousClientCommandAndReason": {
+      "passed": 1
+    },
+    "trayExistingCopyRegression": {
+      "passed": 1
+    },
+    "server": {
+      "needsYouSuitePassed": 36,
+      "includesThreeKindPayloadRegression": true
+    },
+    "finalMobileTypecheck": "passed",
+    "approvedMockSha256": "b6600fcf2a52071b3248b273d265e73ea2b93d6ccbefc7928ec70723ce67b0c8",
+    "android": {
+      "cases": 31,
+      "themes": [
+        "Bone",
+        "Obsidian"
+      ],
+      "screenshots": 62,
+      "checks": [
+        "active theme canvas",
+        "native subject and reason",
+        "native Once/Always scope and Allowed attribution"
+      ]
+    }
+  },
+  "approvedConnectorStatusCorrection": {
+    "existingTestChange": "connector-offers.test.ts:27 adds denied; pending/connecting/accepted unchanged",
+    "sharedPackages": {
+      "passed": 653,
+      "failed": 0,
+      "feedbackSignals": 6,
+      "nostr": 8,
+      "apiContract": 499,
+      "buzzClient": 140
+    },
+    "mobile": {
+      "filesPassed": 599,
+      "filesSkipped": 4,
+      "passed": 4990,
+      "skipped": 5,
+      "failed": 0
+    },
+    "server": {
+      "files": 212,
+      "passedAfterUnchangedReruns": 3620,
+      "skipped": 19,
+      "parallelPerformanceFailures": 2,
+      "isolatedPerformanceRerunPassed": 7,
+      "integrationCasesPassed": 255,
+      "execution": "All files covered in memory-bounded groups; two performance-budget cases passed unchanged in an isolated single-worker rerun."
+    },
+    "historicalDeniedConnectorCompatibility": "old-client-connector-denied.json"
+  },
+  "productionPhoneParserRepair": {
+    "reproduction": "APPROVAL-PHONE-PARSER",
+    "receipt": "production-parser.json",
+    "path": [
+      "readRoomViewMessage",
+      "displayRoomMessage",
+      "production approval cards"
+    ],
+    "sharedPackagesPassed": 660,
+    "mobile": {
+      "filesPassed": 599,
+      "filesSkipped": 4,
+      "passed": 5000,
+      "skipped": 5,
+      "failed": 0
+    },
+    "themeAndDecisionCopyPassed": 75,
+    "calmAndDesignLintPassed": 17,
+    "uiPolicyPassed": 29,
+    "rootTypecheck": "passed",
+    "android": {
+      "screenshots": 62,
+      "themes": [
+        "Bone",
+        "Obsidian"
+      ],
+      "parsedSettledControls": "absent",
+      "nativeOutcomeAssertions": "passed"
+    },
+    "server": {
+      "files": 212,
+      "passed": 3620,
+      "skipped": 19,
+      "failed": 0,
+      "integrationCases": 255,
+      "execution": "Full coverage in memory-bounded groups; no failed cases."
+    }
+  },
+  "completeParsedStateMatrix": {
+    "redParserHead": "e1a6ab5801c52caa33fd050328a6684d26997ad0",
+    "redThemeSuite": {
+      "passed": 91,
+      "failed": 106
+    },
+    "redNewMatrix": {
+      "failedRegressions": 90,
+      "passedBaselineCases": 34
+    },
+    "greenThemeSuite": {
+      "passed": 197,
+      "failed": 0
+    },
+    "nativeCases": 62,
+    "nativeScreenshots": 124,
+    "themes": [
+      "Bone",
+      "Obsidian"
+    ],
+    "sharedPackagesPassed": 660,
+    "mobile": {
+      "filesPassed": 599,
+      "filesSkipped": 4,
+      "passed": 5124,
+      "skipped": 5,
+      "failed": 0
+    },
+    "server": {
+      "files": 212,
+      "passed": 3620,
+      "skipped": 19,
+      "failed": 0,
+      "integrationCases": 255,
+      "execution": "Full coverage in memory-bounded groups; no failed cases."
+    },
+    "rootTypecheck": "passed",
+    "uiPolicyTestsPassed": 29,
+    "calmDesignLintPassed": 17,
+    "decisionCopyPassed": 2,
+    "greenCommit": "See SHA-labelled final rerun output posted in the corner."
+  }
+}

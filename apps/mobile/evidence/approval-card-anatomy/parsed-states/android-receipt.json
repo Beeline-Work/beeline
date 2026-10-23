@@ -1,0 +1,754 @@
+{
+  "path": [
+    "readRoomViewMessage",
+    "displayRoomMessage",
+    "production cards"
+  ],
+  "screenshots": 124,
+  "checks": [
+    {
+      "case": "grant-legacy--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--once",
+      "theme": "bone",
+      "state": "once",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--always",
+      "theme": "bone",
+      "state": "always",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--once",
+      "theme": "bone",
+      "state": "once",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--always",
+      "theme": "bone",
+      "state": "always",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--failed",
+      "theme": "bone",
+      "state": "failed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--expired",
+      "theme": "bone",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--failed",
+      "theme": "bone",
+      "state": "failed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "target-branch--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "target-branch--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "target-branch--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-add--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-add--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-add--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-switch--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-switch--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-switch--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-reconnect--pending",
+      "theme": "bone",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-reconnect--allowed",
+      "theme": "bone",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-reconnect--denied",
+      "theme": "bone",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--once",
+      "theme": "obsidian",
+      "state": "once",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--always",
+      "theme": "obsidian",
+      "state": "always",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-legacy--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--once",
+      "theme": "obsidian",
+      "state": "once",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--always",
+      "theme": "obsidian",
+      "state": "always",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "grant-purpose--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-key--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-purchase--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-login--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-key--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-delete-key--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-edit-card--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-vouch--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "squire-passkey--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "spending--failed",
+      "theme": "obsidian",
+      "state": "failed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--expired",
+      "theme": "obsidian",
+      "state": "expired",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "edit-corner--failed",
+      "theme": "obsidian",
+      "state": "failed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "target-branch--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "target-branch--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "target-branch--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-add--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-add--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-add--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-switch--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-switch--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-switch--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-reconnect--pending",
+      "theme": "obsidian",
+      "state": "pending",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-reconnect--allowed",
+      "theme": "obsidian",
+      "state": "allowed",
+      "nativeAssertions": "passed"
+    },
+    {
+      "case": "connector-reconnect--denied",
+      "theme": "obsidian",
+      "state": "denied",
+      "nativeAssertions": "passed"
+    }
+  ]
+}

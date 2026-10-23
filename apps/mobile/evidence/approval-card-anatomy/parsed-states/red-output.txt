@@ -1,0 +1,39 @@
+RED parser head: e1a6ab5801c52caa33fd050328a6684d26997ad0
+Harness: expanded raw payload -> production parser -> display adapter -> cards
+Theme suite: 91 passed, 106 failed (197 total)
+New matrix: 90 failed regressions; 34 passed grant/connector baseline cases.
+The unchanged old parser was substituted into the built API package; the repaired package was restored afterward.
+
+every parsed approval state in bone renders server payload squire-key--pending through the production parser
+AssertionError: expected undefined to be truthy
+    at /home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/sources/app/(app)/beeline/chat/ApprovalCards.theme.test.tsx:276:46
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:863:59
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_mo
+
+every parsed approval state in bone renders server payload squire-key--allowed through the production parser
+AssertionError: expected undefined to be truthy
+    at /home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/sources/app/(app)/beeline/chat/ApprovalCards.theme.test.tsx:276:46
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:863:59
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_mo
+
+every parsed approval state in bone renders server payload squire-key--denied through the production parser
+AssertionError: expected undefined to be truthy
+    at /home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/sources/app/(app)/beeline/chat/ApprovalCards.theme.test.tsx:276:46
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:863:59
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///home/lunchbox/.local/state/beeline/corners/7396becb-76d7-4cd4-aa23-8bfb72ed1702/apps/mobile/node_mo
+

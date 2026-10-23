@@ -1,3 +1,4 @@
+import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { approvalAsk } from './tray-approval-ask.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
@@ -150,7 +151,7 @@ export function needsYouRowText(message: string, readerHandle: string | null, as
   return shortenAsk(withoutReaderTags(ask || needsYouSentence(message), readerHandle));
 }
 
-type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; appName?: string; reason?: string; script?: CommandGrantScript };
+type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; appName?: string; reason?: string; purpose?: string; script?: CommandGrantScript };
 
 /** The raw card fields the approval rows read; every kind's card is a subset. */
 type ApprovalCard = {
@@ -161,6 +162,8 @@ type ApprovalCard = {
   repository?: string;
   tool?: string;
   purpose?: string;
+  action?: string;
+  intent?: 'add' | 'switch' | 'reconnect';
   title?: string;
   detail?: string;
   linkKind?: 'approval' | 'passkey' | 'vouch';
@@ -542,7 +545,9 @@ export async function needsYouItems(
     roomName: row.room_name,
     roomKind: row.room_kind,
     ...(row.parent_room_name ? { parentRoomName: row.parent_room_name } : {}),
-    text: approval
+    text: approval && ['grant', 'write-access', 'connector', 'squire'].includes(approval.kind)
+      ? approval.subject
+      : approval
       ? approvalAsk(approval.kind === 'sign-in' && row.card?.harness ? 'agent-sign-in' : approvalTypes[approval.kind],
           approval.kind === 'grant'
             ? { ...row.card, ask: undefined, grants: row.card?.grants?.filter(entry => entry.grantId && row.pending_grant_ids?.includes(entry.grantId)) }
@@ -571,16 +576,10 @@ export function needsYouExpiresAt(firstSeenAt: Date): number {
   return Math.floor(firstSeenAt.getTime() / 1000) + NEEDS_YOU_EXPIRY_HOURS * 60 * 60;
 }
 
-const SQUIRE_ASKS: Record<NonNullable<ApprovalCard['linkKind']>, string> = {
-  approval: 'asks you to approve',
-  passkey: 'needs your passkey for',
-  vouch: 'asks you to vouch for',
-};
-
 /**
  * One approval card as the tray's text row, or nothing when the card lacks
- * what the row needs. The verb carries the kind (`asks to run`,
- * `asks for write access to`), so the row needs no type label.
+ * what the row needs. The verb carries the kind (`wants to run`,
+ * `wants to open an edit corner`), so the row needs no type label.
  */
 function approvalView(
   row: Pick<Row, 'approval_kind' | 'card' | 'pending_grant_ids' | 'actor_name' | 'author_name'>,
@@ -630,39 +629,39 @@ function approvalView(
       const appName = connectionInstallName({ kind: first.kind, target: first.target, appName: first.appName });
       const result = view(
         'grant',
-        appName ? 'wants to connect' : `asks to ${AGENT_GRANT_VERBS[first.kind] ?? 'use'}`,
+        appName ? 'wants to connect' : first.kind === 'command' ? `wants to run a ${first.script ? 'script' : 'command'}` : `wants to ${AGENT_GRANT_VERBS[first.kind] ?? 'use'}`,
         appName ?? first.target,
         !appName,
-        text(`${first.reason ?? ''}${more}`),
+        text(`${first.purpose ?? first.reason ?? ''}${more}`),
         forName,
       );
       if (!result || !first.grantId) return result;
       return { ...result,
         ...(isCommandGrantScript(first.script) ? { script: first.script } : {}),
         actions: [
-          ...((first.kind === 'shared_asset') ? [] : [{ kind: 'grant' as const, label: 'Approve once', grantId: first.grantId, decision: 'once' as const }]),
-          { kind: 'grant', label: 'Always allow', grantId: first.grantId, decision: 'always' },
-          { kind: 'grant', label: 'Deny', grantId: first.grantId, decision: 'deny' },
+          ...((first.kind === 'shared_asset') ? [] : [{ kind: 'grant' as const, label: 'Once', grantId: first.grantId, decision: 'once' as const }]),
+          { kind: 'grant', label: 'Always', grantId: first.grantId, decision: 'always' },
+          { kind: 'grant', label: 'No', grantId: first.grantId, decision: 'deny' },
         ],
       };
     }
     case 'write-access': {
       const result = card.purpose === 'squire-spending'
-        ? view('write-access', 'asks to spend with', text(card.tool), false, undefined, forName)
+        ? view('write-access', 'wants to spend with', 'Trusty Squire', false, text(card.reason), forName)
         : view(
             'write-access',
-            'asks for write access to',
+            'wants to open an edit corner',
             text(card.repository),
             true,
-            undefined,
+            text(card.reason),
             forName,
           );
       if (!result || !card.permissionId || !card.requestId || !card.agent?.pubkey || typeof card.repository !== 'string') return result;
       const action = { kind: 'write-access' as const, permissionId: card.permissionId,
         requestId: card.requestId, agentId: card.agent.pubkey, repository: card.repository };
       return { ...result, actions: [
-        { ...action, label: 'Approve', decision: 'allow' },
-        { ...action, label: 'Deny', decision: 'deny' },
+        { ...action, label: card.purpose === 'squire-spending' ? 'Allow once' : 'Allow', decision: 'allow' },
+        { ...action, label: 'No', decision: 'deny' },
       ] };
     }
     case 'choice': {
@@ -690,7 +689,7 @@ function approvalView(
     case 'connector':
       return view(
         'connector',
-        'asks to connect',
+        `wants to ${card.intent === 'switch' ? 'switch' : card.intent === 'reconnect' ? 'reconnect' : 'add'}`,
         text(card.connectorName),
         false,
         text(card.reason),
@@ -705,18 +704,18 @@ function approvalView(
     case 'squire': {
       const result = view(
         'squire',
-        SQUIRE_ASKS[card.linkKind ?? 'approval'] ?? SQUIRE_ASKS.approval,
-        text(card.title),
+        'wants to',
+        card.action ?? squireApprovalAction(card.tool ?? '', card.detail ?? '', card.linkKind),
         // A passkey guards a secret, which the mock sets in mono.
         card.linkKind === 'passkey',
-        text(card.detail),
+        text(card.reason),
       );
       if (!result || !card.approvalUrl) return result;
       let url: URL;
       try { url = new URL(card.approvalUrl); } catch { return result; }
       if (url.protocol !== 'https:') return result;
       return { ...result, actions: [{ kind: 'external', url: url.toString(),
-        label: card.linkKind === 'passkey' ? 'Use passkey' : card.linkKind === 'vouch' ? 'Vouch' : 'Review approval' }] };
+        label: card.linkKind === 'passkey' ? 'Use passkey ↗' : card.linkKind === 'vouch' ? 'Vouch ↗' : 'Review ↗' }] };
     }
     default:
       return undefined;

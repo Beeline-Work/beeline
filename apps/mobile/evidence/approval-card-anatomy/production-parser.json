@@ -1,0 +1,212 @@
+{
+  "reproduction": "APPROVAL-PHONE-PARSER",
+  "input": {
+    "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "text": "Approval",
+    "createdAt": 1792760000,
+    "author": {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "agent",
+      "name": "Ruby",
+      "handle": "ruby"
+    },
+    "presentation": "card",
+    "squireApproval": {
+      "agent": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "tool": "fetch_credential",
+      "title": "Reveal a key",
+      "detail": "Fly deploy key",
+      "approvalUrl": "https://example.test/approval",
+      "linkKind": "approval",
+      "status": "denied",
+      "decidedAt": 1792760240,
+      "action": "reveal a key",
+      "reason": "Deploy the preview.",
+      "reference": "vault://owner/fly/key",
+      "facts": [
+        {
+          "label": "Key",
+          "value": "Fly deploy"
+        }
+      ]
+    },
+    "targetBranch": {
+      "proposalId": "proposal",
+      "from": "main",
+      "to": "release",
+      "status": "denied",
+      "decidedBy": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "decidedAt": 1792760240,
+      "purpose": "Ship fixes."
+    },
+    "permission": {
+      "permissionId": "p",
+      "requestId": "r",
+      "agent": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "requester": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "tool": "edit_file",
+      "status": "allowed",
+      "decider": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "reason": "Update README.",
+      "decidedAt": 1792760240
+    }
+  },
+  "before": {
+    "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "text": "Approval",
+    "createdAt": 1792760000,
+    "author": {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "agent",
+      "name": "Ruby",
+      "handle": "ruby"
+    },
+    "presentation": "card",
+    "permission": {
+      "permissionId": "p",
+      "requestId": "r",
+      "agent": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "requester": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "tool": "edit_file",
+      "status": "allowed",
+      "decider": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      }
+    },
+    "squireApproval": {
+      "agent": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "tool": "fetch_credential",
+      "title": "Reveal a key",
+      "detail": "Fly deploy key",
+      "approvalUrl": "https://example.test/approval",
+      "linkKind": "approval"
+    },
+    "targetBranch": {
+      "proposalId": "proposal",
+      "from": "main",
+      "to": "release"
+    }
+  },
+  "after": {
+    "id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "text": "Approval",
+    "createdAt": 1792760000,
+    "author": {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "agent",
+      "name": "Ruby",
+      "handle": "ruby"
+    },
+    "presentation": "card",
+    "permission": {
+      "permissionId": "p",
+      "requestId": "r",
+      "agent": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "requester": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "tool": "edit_file",
+      "status": "allowed",
+      "decider": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "reason": "Update README.",
+      "decidedAt": 1792760240
+    },
+    "squireApproval": {
+      "agent": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "tool": "fetch_credential",
+      "title": "Reveal a key",
+      "detail": "Fly deploy key",
+      "approvalUrl": "https://example.test/approval",
+      "linkKind": "approval",
+      "status": "denied",
+      "decidedAt": 1792760240,
+      "reason": "Deploy the preview.",
+      "action": "reveal a key",
+      "reference": "vault://owner/fly/key",
+      "facts": [
+        {
+          "label": "Key",
+          "value": "Fly deploy"
+        }
+      ]
+    },
+    "targetBranch": {
+      "proposalId": "proposal",
+      "purpose": "Ship fixes.",
+      "status": "denied",
+      "decidedBy": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "human",
+        "name": "Owner",
+        "handle": "owner"
+      },
+      "decidedAt": 1792760240,
+      "from": "main",
+      "to": "release"
+    }
+  },
+  "androidPath": "readRoomViewMessage -> displayRoomMessage -> production approval cards",
+  "result": "passed",
+  "beforeHead": "e1a6ab5801c52caa33fd050328a6684d26997ad0"
+}

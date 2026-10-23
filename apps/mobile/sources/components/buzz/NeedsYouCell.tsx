@@ -41,7 +41,7 @@ function sourcePath(item: NeedsYouItemView): string {
 }
 
 /**
- * One Needs-you cell: who asks and what (`Hoots asks to run`)
+ * One Needs-you cell: who asks and what (`Hoots wants to run`)
  * with the age at the right, the exact thing asked for (literals in mono),
  * the request's reason or a choice's options, then where it sits, who it is
  * for and when it expires. The verb names the kind, so there is no type
@@ -70,19 +70,21 @@ export function NeedsYouCell({
   const [hovered, setHovered] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const sending = useRef(false);
-  const approval = item.approval;
+  const unifiedApproval = item.approval && ['grant', 'write-access', 'connector', 'squire'].includes(item.approval.kind);
+  const subject = unifiedApproval ? item.approval!.subject : item.text;
+  const approval = item.approval?.detail === subject ? { ...item.approval, detail: undefined } : item.approval;
   const age = compactRelativeTime(item.createdAt, now);
   const stale = now / 1000 - item.createdAt > STALE_SECONDS;
   const expiry = needsYouExpiryLabel(item.expiresAt, now);
   const actor = approval?.actor ?? item.author?.name;
   const ask = approval?.ask ?? 'asks you';
-  const subject = item.text;
   const actions = onAction ? (approval?.actions ?? []) : [];
   // Inline choice options already name every option, so the "a · b" line goes.
   const choiceActions = actions.some((action) => action.kind === 'choice');
   const meta = [
-    ...(approval?.forName ? [`for ${approval.forName}`] : []),
+    ...(!unifiedApproval && approval?.forName ? [`for ${approval.forName}`] : []),
     sourcePath(item),
+    ...(unifiedApproval ? [approval?.forName ? `for @${approval.forName.replace(/^@/, '')}` : 'for you'] : []),
     ...(expiry ? [approval?.kind === 'choice' ? expiry.replace('expires', 'closes') : expiry] : []),
   ].join(' · ');
   const send = async (action: NeedsYouActionView, index: number) => {
@@ -216,7 +218,10 @@ export function NeedsYouCell({
           {actions.some((action) => action.kind !== 'choice') ? (
             <HullDialogActions
               style={styles.actions}
-              actions={actions.flatMap((action, index) =>
+              actions={actions.map((action, index) => ({ action, index })).sort((a, b) => {
+                const denied = (action: NeedsYouActionView) => (action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny';
+                return Number(denied(b.action)) - Number(denied(a.action));
+              }).flatMap(({ action, index }) =>
                 action.kind === 'choice'
                   ? []
                   : [

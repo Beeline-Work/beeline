@@ -194,7 +194,7 @@ describe('PhoneService Needs-you tray', () => {
       card: { permissionId: 'source-ask', requestId: 'request', agent: { pubkey: AGENT, name: 'Hoots' }, repository: 'owner/beeline', status: 'pending' } });
     expect((await database.query(`SELECT card->>'ask' ask FROM messages WHERE id='source-approval'`)).rows[0])
       .toEqual({ ask: 'Approve write access to owner/beeline?' });
-    expect((await read()).items[0]?.text).toBe('Approve write access to owner/beeline?');
+    expect((await read()).items[0]?.text).toBe('owner/beeline');
   });
 
   it('R12e: projects the switcher room count and unread/approval mark', async () => {
@@ -502,11 +502,11 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(1);
     expect(item).toMatchObject({
       messageId: card,
-      text: 'Allow running gh pr checks?',
+      text: 'gh pr checks',
       approval: {
         kind: 'grant',
         actor: 'Hoots',
-        ask: 'asks to run',
+        ask: 'wants to run a command',
         subject: 'gh pr checks',
         literal: true,
         detail: 'watch CI',
@@ -561,8 +561,8 @@ describe('PhoneService Needs-you tray', () => {
     expect(items.find(item => item.approval?.subject === 'python3 checks.py')?.approval?.script).toEqual(script);
     expect(items.find(item => item.approval?.subject === 'codex-plugin-cache')?.approval?.actions)
       .toEqual([
-        { kind: 'grant', label: 'Always allow', grantId: sharedId, decision: 'always' },
-        { kind: 'grant', label: 'Deny', grantId: sharedId, decision: 'deny' },
+        { kind: 'grant', label: 'Always', grantId: sharedId, decision: 'always' },
+        { kind: 'grant', label: 'No', grantId: sharedId, decision: 'deny' },
       ]);
   });
 
@@ -608,12 +608,12 @@ describe('PhoneService Needs-you tray', () => {
       {
         kind: 'write-access',
         actor: 'Hoots',
-        ask: 'asks for write access to',
+        ask: 'wants to open an edit corner',
         subject: 'owner/beeline',
         literal: true,
         actions: [
-          { kind: 'write-access', label: 'Approve', permissionId: 'write-1', requestId: 'request-1', agentId: AGENT, repository: 'owner/beeline', decision: 'allow' },
-          { kind: 'write-access', label: 'Deny', permissionId: 'write-1', requestId: 'request-1', agentId: AGENT, repository: 'owner/beeline', decision: 'deny' },
+          { kind: 'write-access', label: 'Allow', permissionId: 'write-1', requestId: 'request-1', agentId: AGENT, repository: 'owner/beeline', decision: 'allow' },
+          { kind: 'write-access', label: 'No', permissionId: 'write-1', requestId: 'request-1', agentId: AGENT, repository: 'owner/beeline', decision: 'deny' },
         ],
       },
     ]);
@@ -671,6 +671,22 @@ describe('PhoneService Needs-you tray', () => {
     expect(await approvals()).toEqual([]);
   });
 
+  it('APPROVAL-V3: keeps each tray subject and reason separate for previous clients', async () => {
+    await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'command','python3 cleanup.py','Free disk space',$2,$4,'pending')`, [GRANT, AGENT, WORKSPACE, ROOM]);
+    const grant = await card(ROOM, 'grant-request', { agent: hoots,
+      grants: [{ grantId: GRANT, kind: 'command', target: 'python3 cleanup.py', reason: 'Free disk space', status: 'pending' }] });
+    const connector = await card(ROOM, 'connector-offer', { agent: hoots, connectorName: 'Gmail', reason: 'Read the release thread.', status: 'pending' });
+    await database.query(`INSERT INTO connector_offers(id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,message_id)
+      VALUES('77777777-7777-4777-8777-777777777777',$1,$2,$3,$4,'gmail','Read the release thread.','machine',$5)`, [AGENT, WORKSPACE, ROOM, VIEWER, connector]);
+    const squire = await card(ROOM, 'squire-approval', { agent: hoots, tool: 'fetch_credential', title: 'Credential access approval', detail: 'Reveal a saved credential',
+      action: 'reveal a key', reason: 'Sign in the Fly CLI.', sourceRoomId: CORNER, approvalUrl: 'https://squire.example/approve/1', approvalId: 'approval-1', expiresAt: Date.now() + 600000, linkKind: 'passkey' });
+    const items = (await read()).items;
+    for (const [id, subject, reason] of [[grant, 'python3 cleanup.py', 'Free disk space'], [connector, 'Gmail', 'Read the release thread.'], [squire, 'reveal a key', 'Sign in the Fly CLI.']]) {
+      expect(items.find(item => item.messageId === id)).toMatchObject({ text: subject, approval: { subject, detail: reason } });
+    }
+  });
+
   it('shows a pending connector offer and sign-in to the person who decides each', async () => {
     const offerMessage = await card(
       ROOM,
@@ -708,7 +724,7 @@ describe('PhoneService Needs-you tray', () => {
       {
         kind: 'connector',
         actor: 'Hoots',
-        ask: 'asks to connect',
+        ask: 'wants to add',
         subject: 'Gmail',
         literal: false,
         detail: 'Read the release thread.',
@@ -741,11 +757,10 @@ describe('PhoneService Needs-you tray', () => {
       {
         kind: 'squire',
         actor: 'Hoots',
-        ask: 'needs your passkey for',
-        subject: 'Reveal GROQ_API_KEY',
+        ask: 'wants to',
+        subject: 'reveal a key',
         literal: true,
-        detail: 'Write it into the push gateway secret.',
-        actions: [{ kind: 'external', label: 'Use passkey', url: 'https://squire.example/approve/1' }],
+        actions: [{ kind: 'external', label: 'Use passkey ↗', url: 'https://squire.example/approve/1' }],
       },
     ]);
     await card(CORNER, 'squire-approval-decision', {

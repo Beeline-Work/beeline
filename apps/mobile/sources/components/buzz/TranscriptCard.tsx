@@ -99,11 +99,13 @@ export type TranscriptCardProps = {
   codeTestID?: string;
   codePath?: string;
   foldCode?: boolean;
+  codeLabel?: string;
   facts?: readonly { label: string; value: string }[];
   footerNote?: ReactNode;
   footerNoteTestID?: string;
   footerNoteTone?: 'quiet' | 'failed';
   decisionNote?: boolean;
+  decisionScope?: 'Once' | 'Always';
   actions?: readonly TranscriptCardAction[];
   onHeaderPress?(): void;
   headerExpanded?: boolean;
@@ -248,11 +250,13 @@ export function TranscriptCard({
   codeTestID,
   codePath,
   foldCode = false,
+  codeLabel,
   facts = [],
   footerNote,
   footerNoteTestID,
   footerNoteTone = 'quiet',
   decisionNote = false,
+  decisionScope,
   actions = [],
   onHeaderPress,
   headerExpanded,
@@ -460,7 +464,7 @@ export function TranscriptCard({
           {foldCode && code !== undefined ? (
             <View style={styles.detailInset}><ShowMoreRow
               inset="none"
-              label={codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
+              label={codeLabel ? `${codeOpen ? 'Hide' : 'Show'} ${codeLabel}` : codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
               expanded={codeOpen}
               testID={codeTestID ? `${codeTestID}-toggle` : undefined}
               onPress={() => setCodeOpen((open) => !open)}
@@ -516,6 +520,7 @@ export function TranscriptCard({
           ) : null}
           {hasFooter ? (
             <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider]}>
+              {decisionScope ? <Text style={styles.decisionScope}>{`Scope: ${decisionScope}`}</Text> : null}
               {footerNote !== undefined ? (
                 <Text
                   testID={footerNoteTestID}
@@ -872,6 +877,7 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textTransform: 'none', textAlign: 'right' },
+    decisionScope: { ...card.type.meta, fontFamily: card.proseRegular, color: card.ledgerQuiet },
     footerNoteFailed: { color: card.diffRemoved },
     actions: { flexShrink: 1 },
     action: { ...card.type.body, fontSize: metric.actionSize, color: card.ledgerQuiet },

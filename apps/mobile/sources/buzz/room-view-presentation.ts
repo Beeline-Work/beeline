@@ -291,6 +291,10 @@ export type ChatDisplayMessage = {
   };
   targetBranchProposal?: {
     proposalId: string;
+    purpose?: string;
+    status?: 'allowed' | 'denied';
+    decidedBy?: RoomViewIdentity;
+    decidedAt?: number;
     from: string;
     to: string;
     repository?: string;
@@ -333,6 +337,10 @@ export type ChatDisplayMessage = {
     tool: string;
     repository?: string;
     purpose?: 'squire-spending';
+    reason?: string;
+    decider?: RoomViewIdentity;
+    requester?: RoomViewIdentity;
+    decidedAt?: number;
     status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     subchannelId?: string;
   };
@@ -425,6 +433,7 @@ export function displayRoomMessage(
     ...(message.targetBranch
       ? {
           targetBranchProposal: {
+            ...message.targetBranch,
             proposalId: message.targetBranch.proposalId,
             from: message.targetBranch.from,
             to: message.targetBranch.to,
@@ -467,6 +476,7 @@ export function displayRoomMessage(
     ...(message.permission
       ? {
           writePermission: {
+            ...message.permission,
             permissionId: message.permission.permissionId,
             requestId: message.permission.requestId,
             agentPubkey: message.permission.agent.pubkey,

@@ -1,3 +1,4 @@
+import { ledgerStamp } from '@/buzz/relative-time';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
@@ -417,7 +418,7 @@ describe('Room message variant components', () => {
         onOpenCorner={onOpenCorner}
       />,
     );
-    expect(JSON.stringify(owner.toJSON())).toContain('Deny');
+    expect(JSON.stringify(owner.toJSON())).toContain('No');
     expect(JSON.stringify(owner.toJSON())).toContain('Allow');
     expect(
       owner.root.findByProps({ testID: 'write-permission-pending-title' }).props.numberOfLines,
@@ -494,7 +495,7 @@ describe('Room message variant components', () => {
           />,
         ).toJSON(),
       ),
-    ).toContain('confirmed');
+    ).toContain('Allowed ·');
     expect(
       JSON.stringify(
         render(
@@ -508,7 +509,7 @@ describe('Room message variant components', () => {
           />,
         ).toJSON(),
       ),
-    ).toContain('workspace manager only');
+    ).toContain('waiting for a Workspace manager');
   });
 
   it('dispatches GitHub pull-request and issue cards through the explicit URL callback', () => {
@@ -2497,10 +2498,10 @@ describe('Room message variant components', () => {
     );
     expect(JSON.stringify(ownerView.toJSON())).toContain('wants');
     expect(ownerView.root.findByProps({ testID: 'grant-g-1-ask' }).props.children).toBe(
-      'Alex wants @Terra to use fly deploy -a beeline-preview --with FLY_TOKEN',
+      '@Terra wants to run a command',
     );
     expect(ownerView.root.findByProps({ testID: 'grant-g-2-ask' }).props.children).toBe(
-      'Alex wants @Terra to use api.fly.io',
+      '@Terra wants to reach api.fly.io',
     );
     // Permission text is never cut to one line.
     for (const grantId of ['g-1', 'g-2'])
@@ -2575,9 +2576,9 @@ describe('Room message variant components', () => {
     expect(settled.root.findAllByProps({ testID: 'grant-g-1-always' })).toHaveLength(0);
     expect(settled.root.findByProps({ testID: 'grant-request-settled' })).toBeDefined();
     expect(settled.root.findByProps({ testID: 'grant-g-1-outcome' }).props.children).toBe(
-      'allowed once',
+      `Allowed by you · ${ledgerStamp(1_756_900_060)}`,
     );
-    expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe('denied');
+    expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe(`Denied by you · ${ledgerStamp(1_756_900_061)}`);
   });
 
   it.each([
@@ -2679,7 +2680,7 @@ describe('Room message variant components', () => {
     );
     expect(
       ownerView.root.findByProps({ testID: 'grant-squire-grant-ask' }).props.children,
-    ).toContain('Alex wants');
+    ).toContain('@Terra wants');
     act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-source' }).props.onPress());
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
     act(() => ownerView.root.findByProps({ testID: 'grant-squire-grant-once' }).props.onPress());
@@ -2736,8 +2737,8 @@ describe('Room message variant components', () => {
     expect(
       view.root.findByProps({ testID: 'squire-approval-card-title' }).props.numberOfLines,
     ).toBeUndefined();
-    expect(view.root.findByProps({ testID: 'squire-approval-detail' }).props.children).toContain(
-      'Headphones · at Acme · 199.00 USD',
+    expect(view.root.findByProps({ testID: 'squire-approval-card-title' }).props.children).toContain(
+      'wants to buy Headphones',
     );
     act(() => view.root.findByProps({ testID: 'squire-approval-open' }).props.onPress());
     expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
@@ -2747,24 +2748,20 @@ describe('Room message variant components', () => {
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
   });
 
-  it.each(['fetch_credential', 'Link'])('R-SQUIRE-CARD: uses the service identity and no footer note for %s', (tool) => {
+  it.each(['fetch_credential', 'Link'])('R-SQUIRE-CARD: uses the asking agent avatar and no footer note for %s', (tool) => {
     const approval = message({ squireApproval: {
       agent: { pubkey: 'agent', kind: 'agent', name: 'Terra', handle: 'terra' },
       tool, title: 'Credential access approval', detail: 'Reveal a test credential',
       approvalUrl: 'https://approve.example.test/test', approvalId: 'test', linkKind: 'approval',
       sourceRoomId: 'source-room', sourceMessageId: 'source-message',
     } });
-    const view = render(<SquireApprovalCard message={approval} onOpenSource={vi.fn()} />);
-    const identity = view.root.findByType('IdentityMark' as never);
-    if (tool !== 'Link') {
-      expect(identity.props.avatarUrl).toMatch(/\/v1\/connectors\/logo\/trusty-squire\.svg$/);
-      expect(identity.props.name).toBe('Trusty Squire');
-    } else {
-      expect(identity.props.seed).toBe('agent');
-    }
+    const avatar = 'https://server.test/v1/agent-avatars/11111111-1111-4111-8111-111111111111';
+    const view = render(<SquireApprovalCard message={approval} agent={{ pubkey: 'agent', displayName: 'Terra', avatar }} onOpenSource={vi.fn()} />);
+    expect(view.root.findByType('IdentityMark' as never).props.avatarUrl).toBe(avatar);
+    expect(view.root.findByType('IdentityMark' as never).props.seed).toBe('agent');
+    expect(view.root.findByProps({ testID: 'squire-approval-card-title' }).props.children).toContain('@Terra wants to');
     expect(view.root.findAll((node: ReactTestInstance) => node.type === 'Text' &&
       typeof node.props.children === 'string' && node.props.children.startsWith('approval stays with'))).toHaveLength(0);
-    expect(view.root.findByProps({ testID: 'squire-approval-detail' }).props.children).toContain('requested by @terra');
     expect(view.root.findByProps({ testID: 'squire-approval-open' })).toBeDefined();
     expect(view.root.findByProps({ testID: 'squire-approval-source' })).toBeDefined();
   });
@@ -2855,22 +2852,22 @@ describe('Room message variant components', () => {
       expect(
         card.root.findByProps({ testID: 'connector-offer-pending-title' }).props.numberOfLines,
       ).toBeUndefined();
-      expect(json).toContain('Add Trusty Squire as a tool?');
+      expect(json).toContain('@Otter wants to add Trusty Squire');
       // ONE subtitle: the server-owned consequence + boundary, including the
       // agent's reason. Not a second line of agent prose.
       expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children).toBe(
-        consequence,
+        'Connectors · for you',
       );
-      expect(json).toContain('still no raw key in chat');
-      expect(json).not.toContain('to provision the 1inch API key into its vault');
+      expect(json).toContain('Sign in to sites · use vault keys');
+      expect(json).toContain('to provision the 1inch API key into its vault');
       // One action, with the check glyph; no menu, no second button.
       const accept = card.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
-      expect(accept.props.accessibilityLabel).toBe('✓ Add Trusty Squire');
+      expect(accept.props.accessibilityLabel).toBe('Add');
       const actionLabels = card.root
         .findAllByType('Button')
         .filter((node: ReactTestInstance) => node.props.accessibilityLabel !== undefined)
         .map((node: ReactTestInstance) => node.props.accessibilityLabel);
-      expect(actionLabels).toEqual(['✓ Add Trusty Squire']);
+      expect(actionLabels).toEqual(['Add']);
       expect(
         card.root.findAllByProps({ testID: 'connector-offer-offer-1-workbench' }),
       ).toHaveLength(0);
@@ -2945,7 +2942,7 @@ describe('Room message variant components', () => {
       const json = JSON.stringify(reconnecting.toJSON());
       // The reconnect title, never the "Add ... as a tool?" question — nothing
       // is being added, the session just needs a fresh sign-in.
-      expect(json).toContain('Sign in to Google again');
+      expect(json).toContain('@Otter wants to reconnect Trusty Squire');
       expect(json).not.toContain('Add Trusty Squire as a tool?');
       expect(
         reconnecting.root.findAllByProps({ testID: 'connector-offer-offer-1-accept' }),
@@ -2980,10 +2977,10 @@ describe('Room message variant components', () => {
         />,
       );
       const json = JSON.stringify(switching.toJSON());
-      expect(json).toContain("Switch Trusty Squire's Google account?");
+      expect(json).toContain('@Otter wants to switch Trusty Squire');
       expect(json).not.toContain('Add Trusty Squire as a tool?');
       const accept = switching.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
-      expect(accept.props.accessibilityLabel).toBe('✓ Switch account');
+      expect(accept.props.accessibilityLabel).toBe('Switch');
       act(() => accept.props.onPress());
       expect(onAccept).toHaveBeenCalledWith('offer-1', 'trusty-squire');
     });
@@ -3068,7 +3065,7 @@ describe('Room message variant components', () => {
       // Room has many possible tappers where the reference product had one.
       const outcome = settled.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props
         .children as string;
-      expect(outcome).toMatch(/^added by @mara · \d{1,2}:\d{2}/);
+      expect(outcome).toMatch(/^Allowed by @mara · \d{1,2}:\d{2}/);
       const door = settled.root.findByProps({ testID: 'connector-offer-offer-1-workbench' });
       expect(door.props.accessibilityRole).toBe('link');
       // The longer "Manage in Workbench ›" overflowed the settled card.

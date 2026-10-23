@@ -5645,6 +5645,7 @@ export function BuzzChatSurface({
         return (
           <WritePermissionCard
             message={item}
+            roomName={roomName}
             agent={agentByPubkey.get(item.writePermission.agentPubkey)}
             viewerIsAgent={viewerIsAgent}
             viewerPubkey={cacheViewerPubkey}
@@ -5678,6 +5679,8 @@ export function BuzzChatSurface({
         return (
           <SquireApprovalCard
             message={item}
+            agent={agentByPubkey.get(item.squireApproval.agent.pubkey)}
+            viewerPubkey={cacheViewerPubkey}
             onOpenSource={(roomId, messageId) =>
               router.navigate(messageJumpHref(roomId, messageId, `squire-approval:${item.id}`))
             }
@@ -5775,6 +5778,13 @@ export function BuzzChatSurface({
             viewerRole={viewerChannelRole}
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
+            onDecline={async offerId => {
+              if (connectorOfferActionId) return;
+              setConnectorOfferActionId(offerId);
+              try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
+              catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
+              finally { setConnectorOfferActionId(null); }
+            }}
             onContinue={(offerId, connectorType, pairedConnectorId) =>
               void continueConnectorOffer(offerId, connectorType, pairedConnectorId, item.connectorOffer!.intent === 'reconnect')
             }
@@ -5807,6 +5817,7 @@ export function BuzzChatSurface({
         return (
           <TargetBranchProposalCard
             message={item}
+            roomName={roomName}
             agent={
               item.targetBranchProposal.agentPubkey
                 ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
@@ -5818,6 +5829,14 @@ export function BuzzChatSurface({
             actionId={targetBranchActionId}
             notice={notice}
             onConfirm={handleConfirmTargetBranch}
+            viewerPubkey={cacheViewerPubkey}
+            onDeny={async () => {
+              if (targetBranchActionId) return;
+              setTargetBranchActionId(item.targetBranchProposal!.proposalId);
+              try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
+              catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
+              finally { setTargetBranchActionId(null); }
+            }}
           />
         );
       }

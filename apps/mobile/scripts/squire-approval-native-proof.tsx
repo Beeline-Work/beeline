@@ -1,49 +1,36 @@
-/** Disposable Android fixture for the production approval card. */
+/** Android proof of every approved call site using the production theme runtime. */
 import 'react-native-get-random-values';
 import React from 'react';
 import { registerRootComponent } from 'expo';
-import { LogBox, View, Text } from 'react-native';
+import { LogBox, ScrollView, View, Text } from 'react-native';
 import { useFonts } from 'expo-font';
+import { useUnistyles } from 'react-native-unistyles';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 require('../sources/unistyles');
-import { SquireApprovalCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
-import type { ChatDisplayMessage } from '../sources/buzz/room-view-presentation';
+import { setAppAppearance } from '../sources/unistyles';
+import { Button } from '../sources/components/buzz/Button';
+import { approvalCases, approvalCaseElement } from './approval-card-cases';
 LogBox.ignoreAllLogs();
-const message = {
-  id: 'proof',
-  timestamp: 1792760000,
-  squireApproval: {
-    agent: { pubkey: 'b'.repeat(64), kind: 'agent', name: 'Jellybean', handle: 'jellybean' },
-    tool: 'fetch_credential',
-    title: 'Credential access approval',
-    detail: 'Reveal test credential',
-    approvalUrl: 'https://approve.example.test/test',
-    approvalId: 'proof',
-    linkKind: 'approval',
-    sourceRoomId: 'proof-room',
-    sourceMessageId: 'proof-request',
-  },
-} as ChatDisplayMessage;
 function Proof() {
+  const [index, setIndex] = React.useState(0);
+  const [acted, setActed] = React.useState(false);
+  const { theme } = useUnistyles();
   const [fonts] = useFonts({
     'SpaceGrotesk-Regular': require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),
     'SpaceGrotesk-Medium': require('../sources/assets/fonts/SpaceGrotesk-Medium.ttf'),
     'SpaceGrotesk-SemiBold': require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
     'IBMPlexMono-Regular': require('../sources/assets/fonts/IBMPlexMono-Regular.ttf'),
   });
-  return fonts ? (
-    <View style={{ flex: 1, backgroundColor: '#14091A', paddingTop: 80, paddingHorizontal: 16 }}>
-      <Text
-        style={{
-          color: '#f0f0f3',
-          fontFamily: 'SpaceGrotesk-Medium',
-          fontSize: 22,
-          marginBottom: 24,
-        }}
-      >
-        System
-      </Text>
-      <SquireApprovalCard message={message} onOpenSource={() => {}} />
+  if (!fonts) return null;
+  return <GestureHandlerRootView style={{flex:1}}><ScrollView style={{flex:1,backgroundColor:theme.buzz.bgBase}} contentContainerStyle={{paddingTop:64,paddingHorizontal:16,paddingBottom:32,gap:24}}>
+    <Text accessibilityLabel={`Variant ${approvalCases[index]}`} style={{...theme.buzz.type.hero,color:theme.buzz.textPrimary}}>{approvalCases[index]}</Text>
+    <View style={{flexDirection:'row',gap:8}}>
+      <Button label="Bone" onPress={() => setAppAppearance('light', 'medium')} />
+      <Button label="Obsidian" onPress={() => setAppAppearance('dark', 'medium')} />
+      <Button label="Next" accessibilityLabel="Next variant" onPress={() => {setIndex((index+1)%approvalCases.length);setActed(false);}} />
     </View>
-  ) : null;
+    <View key={`${index}-${theme.buzz.bgBase}`}>{approvalCaseElement(approvalCases[index]!, () => setActed(true))}</View>
+    {acted && <Text style={{...theme.buzz.type.meta,color:theme.buzz.textSecondary}}>Action received</Text>}
+  </ScrollView></GestureHandlerRootView>;
 }
 registerRootComponent(Proof);

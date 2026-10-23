@@ -12932,6 +12932,49 @@ describe('monolith integration', () => {
     expect(resumeExpired.rows).toEqual([{ action: 'resume' }]);
   });
 
+  it.each(['approved', 'denied', 'expired'] as const)('APPROVAL-V3: settles the System card for %s without changing the Room decision or resume', async status => {
+    const asked = (await (await operation('sendRoomMessage', { roomId: ROOM, text: '@bee use the test credential', mentions: [AGENT] })).json()) as { messageId: string };
+    await daemonOperation('postSquireApproval', { roomId: ROOM, requestId: asked.messageId, tool: 'fetch_credential', title: 'Credential access approval', detail: 'Reveal test',
+      action: 'reveal a key', reason: 'Run the requested check.', facts: [{ label: 'Key', value: 'Test service' }], reference: 'vault://test/reference',
+      approvalUrl: 'https://approve.example.test/test', approvalId: 'v3-test', linkKind: 'approval' });
+    const posted = (await database.query<{ id: string; room_id: string }>(`SELECT id,room_id FROM messages WHERE card_type='squire-approval'`)).rows[0]!;
+    expect((await phone.readRoom(posted.room_id, HUMAN))?.messages.find(message => message.id === posted.id)?.squireApproval).toMatchObject({ reason: 'Run the requested check.', action: 'reveal a key', facts: [{ label: 'Key', value: 'Test service' }] });
+    const response = await daemonOperation('postSquireApprovalDecision', { roomId: ROOM, requestId: asked.messageId, approvalId: 'v3-test', status, tool: 'fetch_credential', title: 'Credential access approval', detail: 'Reveal test' });
+    expect(response.status).toBe(200);
+    const { id } = await response.json() as { id: string };
+    const card = (await phone.readRoom(posted.room_id, HUMAN))?.messages.find(message => message.id === posted.id)?.squireApproval;
+    expect(card).toMatchObject({ status, decidedAt: expect.any(Number) });
+    if (status !== 'expired') expect(card?.decidedBy?.pubkey).toBe(HUMAN);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === id)?.presentation).toBe('card');
+    expect((await database.query(`SELECT action FROM agent_commands WHERE source_message_id=$1 AND turn_request_id=$2`, [id, asked.messageId])).rows).toEqual([{ action: 'resume' }]);
+  });
+
+  it('APPROVAL-V3: records No on a target proposal and attributes a confirmed branch change', async () => {
+    await database.query(`UPDATE rooms SET repository_key='owner/repo',repository_remote='https://github.com/owner/repo.git',repository_target_branch='main' WHERE id=$1`, [ROOM]);
+    const proposal = await daemonOperation('postTargetBranchProposal', { roomId: ROOM, requestId: 'v3-target', from: 'main', to: 'release', repository: 'owner/repo', purpose: 'Ship from the release branch.' });
+    const { id } = await proposal.json() as { id: string };
+    await expect(phone.execute('decideApprovalCard', { roomId: ROOM, messageId: id, decision: 'deny' }, AGENT)).rejects.toThrow('person');
+    expect((await operation('decideApprovalCard', { roomId: ROOM, messageId: id, decision: 'deny' })).status).toBe(200);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === id)?.targetBranch).toMatchObject({ status: 'denied', decidedBy: { pubkey: HUMAN }, purpose: 'Ship from the release branch.' });
+    const next = await daemonOperation('postTargetBranchProposal', { roomId: ROOM, requestId: 'v3-target-again', from: 'main', to: 'release', repository: 'owner/repo' });
+    const { id: nextId } = await next.json() as { id: string };
+    expect((await operation('setRoomTargetBranch', { roomId: ROOM, targetBranch: 'release' })).status).toBe(200);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === nextId)?.targetBranch).toMatchObject({ status: 'allowed', decidedBy: { pubkey: HUMAN }, decidedAt: expect.any(Number) });
+  });
+
+  it('APPROVAL-V3: declining a connector closes the offer and resumes its asking command', async () => {
+    const offerId = '99999999-9999-4999-8999-999999999999';
+    const messageId = 'e'.repeat(64);
+    const asked = (await (await operation('sendRoomMessage', { roomId: ROOM, text: '@bee add a connector', mentions: [AGENT] })).json()) as { messageId: string };
+    const command = (await database.query<{ id: string }>(`SELECT id FROM agent_commands WHERE turn_request_id=$1 AND agent_id=$2`, [asked.messageId, AGENT])).rows[0]!;
+    await database.query(`INSERT INTO connector_offers(id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,status,command_id) VALUES($1,$2,$3,$4,$5,'trusty-squire','Use a test connector','proof-machine','pending',$6)`, [offerId, AGENT, WORKSPACE, ROOM, HUMAN, command.id]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card) VALUES($1,$2,$3,'Connector ask','card','connector-offer',$4::jsonb)`, [messageId, ROOM, AGENT, JSON.stringify({ offerId, agent: { pubkey: AGENT, kind: 'agent', name: 'Bee' }, addressee: { pubkey: HUMAN, kind: 'human', name: 'Owner' }, connectorName: 'Trusty Squire', connectorType: 'trusty-squire', status: 'pending' })]);
+    expect((await operation('decideApprovalCard', { roomId: ROOM, messageId, decision: 'deny' })).status).toBe(200);
+    expect((await database.query(`SELECT status FROM connector_offers WHERE id=$1`, [offerId])).rows).toEqual([{ status: 'denied' }]);
+    expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === messageId)?.connectorOffer).toMatchObject({ status: 'denied', acceptedBy: { pubkey: HUMAN } });
+    expect((await database.query(`SELECT action FROM agent_commands WHERE room_id=$1 AND turn_request_id=$2 AND action='resume'`, [ROOM, asked.messageId])).rows).toEqual([{ action: 'resume' }]);
+  });
+
   it("lets another human trigger the agent owner's mounted Squire without a card", async () => {
     const MACHINE = 'machine-squire-box';
     const SIBLING = 'd'.repeat(64);

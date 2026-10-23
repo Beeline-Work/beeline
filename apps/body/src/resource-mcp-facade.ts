@@ -1,3 +1,4 @@
+import { squireApprovalAction, type SquireApprovalDetails } from '@beeline/api-contract/phone';
 /** Host MCP transport gate. Authorization belongs to each call, not the harness session. */
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -54,7 +55,7 @@ type SquireApprovalLink = {
   readonly linkKind: 'approval' | 'passkey' | 'vouch';
 };
 
-export type SquireApprovalRelay = SquireApprovalLink & {
+export type SquireApprovalRelay = SquireApprovalDetails & SquireApprovalLink & {
   readonly tool: string;
   readonly title: string;
   readonly detail: string;
@@ -331,7 +332,26 @@ export function squireApprovalFromMcp(
   if (!link) return undefined;
   const args = record(params?.arguments) ?? {};
   const expiresAt = approvalExpiryIn(response.result);
-  return { tool, ...squireApprovalCopy(tool, args), ...link,
+  const copy = squireApprovalCopy(tool, args);
+  const reference = stringArg(args, 'reference');
+  const credential = stringArg(args, 'service') ?? stringArg(args, 'label') ?? stringArg(args, 'name');
+  let site = credential;
+  try { site = new URL(stringArg(args, 'url') ?? '').hostname || site; } catch { /* A saved login need not supply a URL. */ }
+  const purchaseAmount = copy.detail.split(' · ').slice(stringArg(args, 'merchant') ? 2 : 1).join(' · ');
+  const keyTool = ['fetch_credential', 'edit_credential', 'delete_credential', 'edit_payment_card'].includes(tool);
+  const facts = tool === 'inject_card'
+    ? [{ label: 'From', value: stringArg(args, 'merchant') ?? 'Checkout' },
+       ...(purchaseAmount ? [{ label: 'Amount', value: purchaseAmount }] : [{ label: 'Can', value: 'Authorize this purchase' }])]
+    : tool === 'operate_login' || tool === 'operate_fill_credential'
+      ? [{ label: 'Site', value: site ?? 'Saved login' }, { label: 'Can', value: 'Fill the saved password' }]
+      : keyTool ? [{ label: tool === 'edit_payment_card' ? 'Card' : 'Key', value: credential ?? (tool === 'edit_payment_card' ? 'Saved card' : 'Saved credential') },
+         { label: 'Can', value: tool === 'fetch_credential' ? 'Read the key value' : tool === 'delete_credential' ? 'Delete the saved key' : tool === 'edit_payment_card' ? 'Edit the saved card' : 'Edit the saved key' }]
+        : [{ label: 'Site', value: site ?? 'Current browser session' }, { label: 'Can', value: link.linkKind === 'passkey' ? 'Use your passkey' : link.linkKind === 'vouch' ? 'Confirm your identity' : `Continue ${tool.replace(/_/g, ' ')}` }];
+  const action = tool === 'operate_login' || tool === 'operate_fill_credential'
+    ? `sign in to ${site ?? 'a site'}` : squireApprovalAction(tool, copy.detail, link.linkKind);
+  return { tool, ...copy, action, facts,
+    ...(stringArg(args, 'reason') ? { reason: stringArg(args, 'reason') } : {}),
+    ...(reference ? { reference } : {}), ...link,
     ...(expiresAt !== undefined ? { expiresAt } : {}) };
 }
 

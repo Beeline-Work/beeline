@@ -4788,6 +4788,10 @@ export class DaemonService {
   }
 
   private async squireApproval(input: Input<'postSquireApproval'>, agentId: string, database = this.database) {
+    for (const key of ['action', 'reason', 'reference'] as const) {
+      if (input[key] !== undefined && (typeof input[key] !== 'string' || input[key]!.length > 1000)) throw new Error(`Squire ${key} is invalid`);
+    }
+    if (input.facts !== undefined && (!Array.isArray(input.facts) || input.facts.length > 3 || input.facts.some(fact => !fact || typeof fact.label !== 'string' || fact.label.length > 40 || typeof fact.value !== 'string' || fact.value.length > 500))) throw new Error('Squire facts are invalid');
     if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
     if (!input.title.trim() || input.title.length > 120)
       throw new Error('Squire approval title is invalid');
@@ -4874,6 +4878,10 @@ export class DaemonService {
         tool: input.tool.trim(),
         title: input.title.trim(),
         detail: input.detail.trim(),
+        ...(input.reason ? { reason: input.reason.trim().slice(0, 1000) } : {}),
+        ...(input.action ? { action: input.action.trim().slice(0, 240) } : {}),
+        ...(input.reference ? { reference: input.reference.trim().slice(0, 1000) } : {}),
+        ...(input.facts ? { facts: input.facts.slice(0, 3).map(fact => ({ label: fact.label.slice(0, 40), value: fact.value.slice(0, 500) })) } : {}),
         approvalUrl: approvalUrl.toString(),
         ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),
         expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60_000,
@@ -4930,7 +4938,9 @@ export class DaemonService {
     const id = createHash('sha256')
       .update(`squire-approval-decided:v1:${input.roomId}:${agentId}:${approvalId}`)
       .digest('hex');
-    const line = await systemLine(this.database, {
+    const settledRooms: string[] = [];
+    const line = await this.database.transaction(async database => {
+    const decision = await systemLine(database, {
       id,
       roomId: input.roomId,
       authorId: SYSTEM_IDENTITY_ID,
@@ -4947,6 +4957,22 @@ export class DaemonService {
       cardType: 'squire-approval-decision',
       card: { approvalId, tool, title, detail, status: input.status, agentId, agentName: agent.name },
     });
+    const owner = (await database.query<{ id: string; name: string; handle: string | null }>(
+      `SELECT identity.id,identity.name,identity.handle FROM agents agent JOIN identities identity ON identity.id=agent.owner_id WHERE agent.agent_id=$1`, [agentId],
+    )).rows[0];
+    const changed = await database.query<{ room_id: string }>(
+      `UPDATE messages approval SET card=approval.card || $4::jsonb
+       WHERE approval.card_type='squire-approval' AND approval.card->'agent'->>'pubkey'=$1
+         AND approval.card->>'approvalId'=$2 AND approval.card->>'status' IS NULL
+         AND approval.room_id IN (SELECT id FROM rooms WHERE workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3))
+       RETURNING approval.room_id`,
+      [agentId, approvalId, input.roomId, JSON.stringify({ status: input.status, decidedAt: Math.floor(Date.now()/1000),
+        ...(owner && input.status !== 'expired' ? { decidedBy: { pubkey: owner.id, kind: 'human', name: owner.name, ...(owner.handle ? { handle: owner.handle } : {}) } } : {}) })],
+    );
+    settledRooms.push(...changed.rows.map(row => row.room_id));
+    return decision;
+    });
+    for (const roomId of new Set(settledRooms)) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     if (line.inserted)
       this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
@@ -5069,6 +5095,8 @@ export class DaemonService {
 
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.purpose !== undefined && (typeof input.purpose !== 'string' || !input.purpose.trim() || input.purpose.trim().length > 240))
+      throw new Error('permission purpose must be 1–240 characters');
     const scope = input.scope;
     const repository =
       scope.type === 'room.create'
@@ -5146,6 +5174,7 @@ export class DaemonService {
         requestId: input.requestId,
         cardType: 'permission',
         card: {
+          ...(input.purpose ? { reason: input.purpose.trim().slice(0, 240) } : {}),
           permissionId: input.permissionId,
           requestId: input.requestId,
           agent,
@@ -6137,6 +6166,8 @@ export class DaemonService {
   }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.purpose !== undefined && (typeof input.purpose !== 'string' || !input.purpose.trim() || input.purpose.trim().length > 240))
+      throw new Error('target branch purpose must be 1–240 characters');
     const messageId = id();
     const agent = await this.identity(agentId);
     await systemLine(this.database, {
@@ -6150,6 +6181,7 @@ export class DaemonService {
       requestId: input.requestId,
       cardType: 'target-branch',
       card: {
+        ...(input.purpose ? { purpose: input.purpose.trim().slice(0, 240) } : {}),
         proposalId: messageId,
         from: input.from,
         to: input.to,

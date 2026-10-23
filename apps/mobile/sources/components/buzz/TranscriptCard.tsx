@@ -99,6 +99,7 @@ export type TranscriptCardProps = {
   codeTestID?: string;
   codePath?: string;
   foldCode?: boolean;
+  codeLabel?: string;
   facts?: readonly { label: string; value: string }[];
   footerNote?: ReactNode;
   footerNoteTestID?: string;
@@ -248,6 +249,7 @@ export function TranscriptCard({
   codeTestID,
   codePath,
   foldCode = false,
+  codeLabel,
   facts = [],
   footerNote,
   footerNoteTestID,
@@ -460,7 +462,7 @@ export function TranscriptCard({
           {foldCode && code !== undefined ? (
             <View style={styles.detailInset}><ShowMoreRow
               inset="none"
-              label={codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
+              label={codeLabel ? `${codeOpen ? 'Hide' : 'Show'} ${codeLabel}` : codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
               expanded={codeOpen}
               testID={codeTestID ? `${codeTestID}-toggle` : undefined}
               onPress={() => setCodeOpen((open) => !open)}

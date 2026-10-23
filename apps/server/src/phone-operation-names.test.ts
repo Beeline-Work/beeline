@@ -44,6 +44,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   createWallet: true,
   createWorkspace: true,
   decideAgentGrant: true,
+  decideApprovalCard: true,
   decideWritePermission: true,
   deleteAccount: true,
   deleteRoom: true,

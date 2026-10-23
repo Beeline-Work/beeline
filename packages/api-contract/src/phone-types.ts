@@ -1,3 +1,4 @@
+import type { SquireApprovalDetails } from './approval-copy.js';
 import type { RepositoryOnboardingCard } from './repository-onboarding.js';
 import type { AgentUsage } from './agent-usage.js';
 import type { SystemEvent } from './system-events.js';
@@ -287,6 +288,8 @@ export type RoomViewMessage = {
     readonly tool: string;
     readonly repository?: string;
     readonly purpose?: 'squire-spending';
+    readonly reason?: string;
+    readonly decidedAt?: number;
     readonly status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     readonly cornerId?: string;
   };
@@ -324,6 +327,10 @@ export type RoomViewMessage = {
   readonly choice?: ChoiceCardView;
   readonly targetBranch?: {
     readonly proposalId: string;
+    readonly purpose?: string;
+    readonly status?: 'allowed' | 'denied';
+    readonly decidedBy?: RoomViewIdentity;
+    readonly decidedAt?: number;
     readonly from: string;
     readonly to: string;
     readonly repository?: string;
@@ -549,7 +556,11 @@ export type GrantRequestCardView = {
   readonly sourceMessageId?: string;
 };
 
-export type SquireApprovalCardView = {
+export type SquireApprovalCardView = SquireApprovalDetails & {
+  readonly owner?: RoomViewIdentity;
+  readonly status?: 'approved' | 'denied' | 'expired';
+  readonly decidedBy?: RoomViewIdentity;
+  readonly decidedAt?: number;
   readonly agent: RoomViewIdentity;
   readonly tool: string;
   readonly title: string;

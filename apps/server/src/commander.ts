@@ -193,9 +193,8 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
 }) {
   const recipient = (await db.query<{ name: string; handle: string | null }>(
     'SELECT name,handle FROM identities WHERE id=$1', [input.recipientId])).rows[0];
-  const id = createHash('sha256').update(`agent-command-card:${input.id}`).digest('hex');
   await systemLine(db, {
-    id,
+    id: createHash('sha256').update(`agent-command-card:${input.id}`).digest('hex'),
     roomId: input.cornerId,
     authorId: input.authorId,
     subject: { kind: 'agent', id: input.authorId, name: input.authorId },
@@ -211,7 +210,6 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
       text: input.text,
     },
   });
-  return id;
 }
 
 export const AGENT_COMMAND_CARD_TYPE = 'agent-command';
@@ -334,10 +332,10 @@ export async function reportToCommander(
   let reportMessageId = member.kind === 'human' ? reportId : null;
   if (!options.automatic && (returnRoom !== roomId || member.kind === 'agent') &&
     (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount) {
-    const cardMessageId = await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
+    await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
       recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] });
     if (member.kind === 'agent' && returnRoom === roomId)
-      reportMessageId = cardMessageId;
+      reportMessageId = createHash('sha256').update(`agent-command-card:${reportId}`).digest('hex');
   }
   if (!options.automatic && origin && (await db.query(
     'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {

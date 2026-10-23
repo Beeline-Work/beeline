@@ -1,3 +1,4 @@
+// Workspace bootstrap failure classification approved by lunchboxfortwo, message 763d8e665ec25825aa5d743f9354bf1d85d644695a0868868363e0c8ca1620a1 (yes to dc2b6595424352a29596120be6b9c92ac48797767d42672b19434011da7e3e6c); PR #2842, two inscribeSilence entries only.
 // Approval language alignment approved by lunchboxfortwo, message b4cce318d8678714e46c5f81e7e0bcdc489a94369e6e9aaf09f69a504dfbdf53 (brief revision 4); Squire decision snapshots only.
 // Approval-card anatomy and decisions approved by lunchboxfortwo, message d521a13a (mock 52a31072; brief revision 3); associated card, mutation and wrapper snapshots only.
 // In-place corner merge card approved by lunchboxfortwo, message bc700bca2b7ea5243ca2a368b52d98a0e45f06e4f0f67c0244db352e8806444b (brief revision 1: same call-site line updates to Merged).
@@ -5051,7 +5052,8 @@
       "'agent'",
       "'claimed'",
       "'hiccup'",
-      "'unreported_order:'"
+      "'unreported_order:'",
+      "'workspace-failure'"
     ],
     "occurrences": 1
   },
@@ -5068,7 +5070,8 @@
       "'failed'",
       "'hiccup'",
       "'turn-failed'",
-      "'unreported_order:'"
+      "'unreported_order:'",
+      "'workspace-failure'"
     ],
     "occurrences": 1
   },

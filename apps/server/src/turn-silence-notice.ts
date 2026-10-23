@@ -304,11 +304,15 @@ async function inscribeSilence(
   // (and the card it carries) identify failed provider authentication
   // without assuming whether the helper's login expired.
   const renderClassified = givingUp ? escalateExhaustedHiccup(classified) : classified;
-  const phrase = phraseTurnSilence(agentName, renderClassified, {
-    givingUp,
-    restarting: restart,
-    ...(login ? { login } : {}),
-  });
+  // Bootstrap has no generation. Render its diagnostic with the existing
+  // bounded fault formatter, without changing its workspace classification
+  // or implying that another attempt was scheduled.
+  const bootstrapDiagnostic = input.generationId == null && classified.kind === 'workspace-failure' && reason;
+  const phrase = phraseTurnSilence(
+    agentName,
+    bootstrapDiagnostic ? { kind: 'hiccup', fault: bootstrapDiagnostic } : renderClassified,
+    { givingUp, restarting: restart, ...(login ? { login } : {}) },
+  );
   const systemPhrase: SystemPhrase = {
     subject: { kind: 'agent', id: input.agentId, name: agentName },
     verb: phrase.verb,
@@ -335,7 +339,12 @@ async function inscribeSilence(
     [input.roomId, input.requestId, input.agentId, reason || classified.fault || null],
   );
 
-  if (!command?.private_payload) {
+  // Private orders still report to their commander below. A corner also
+  // needs the failure on its own surface when no worker could start.
+  const cornerFailure = command?.private_payload && input.generationId == null && (await database.query(
+    `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [input.roomId],
+  )).rowCount > 0;
+  if (!command?.private_payload || cornerFailure) {
     const recent = (
       await database.query<{ id: string }>(
         `SELECT id FROM messages WHERE room_id=$1 AND card_type='turn-failed'

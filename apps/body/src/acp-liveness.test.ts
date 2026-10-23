@@ -129,7 +129,8 @@ describe('ACP turn liveness over real stdio', () => {
     for (let i = 1; i < 2800; i++) {
       await expect(callAgentTool('no_reply_needed', {}, 'silent-' + i)).rejects.toThrow('turn has ended');
     }
-    expect(fetch).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith(new URL('http://localhost/v1/daemon/operations/markAgentTurnSilent'), expect.objectContaining({ method: 'POST' }));
     await new Promise(resolve => setTimeout(resolve, 30));
     expect(settled).toBe(true);
     expect((await prompt).agentText).toBe('');

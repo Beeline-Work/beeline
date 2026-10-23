@@ -3234,7 +3234,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'corner-before-late-join',
       name: 'Existing-corner',
-      objective: 'Keep this corner readable from its durable parent Room card',
+      objective: 'Keep this corner readable through inherited public Room access',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -3245,7 +3245,9 @@ describe('monolith integration', () => {
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
-    expect(parent.messages).toContainEqual(
+    // A source-free opening has no requesting message to anchor a line to.
+    // Its absence from the transcript must not affect inherited corner access.
+    expect(parent.messages).not.toContainEqual(
       expect.objectContaining({
         daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
       }),

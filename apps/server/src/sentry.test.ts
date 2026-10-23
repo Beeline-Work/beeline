@@ -258,7 +258,7 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
         const over = await call({...input,attachment:{...input.attachment,size:1}});
         console.log('ATTACH-CAP-1 over-cap HTTP response',JSON.stringify(over));
         assert.equal(over.status,400);
-        assert.deepEqual(over.body,{error:'queued attachments exceed the size cap'});
+        assert.deepEqual(over.body,{error:'Queued attachments exceed the 10-byte total limit per reply: 10 bytes already queued; artifact size: 1 bytes. Use smaller files, or deliver the queued attachments with your next reply or report before posting more.'});
         assert.deepEqual(await queue(),before);
         await db.query('DELETE FROM agent_pending_attachments');
         assert.equal((await call({...input,attachment:{...input.attachment,size:11}})).status,400);

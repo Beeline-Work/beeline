@@ -78,7 +78,7 @@ Files and photos on the current message are already at local paths. For a file o
 
 ## Posting a file
 
-Call post_artifact(path) on a file in your checkout or session home. Set title and mime when the file name does not show them. The artifact rides on your next reply or report, so post it before you report done.
+Call post_artifact(path) on a file in your checkout or session home. Set title and mime when the file name does not show them. The artifact rides on your next reply or report, so post it before you report done. Plan each batch within the default combined attachment budget of 25 MiB (26,214,400 bytes) per reply. A server override may change this budget; a refusal gives its actual limit and the bytes already queued. If the batch will not fit, reduce file sizes or send the queued files in your next reply or report before uploading the rest.
 
 ## Showing a mock
 

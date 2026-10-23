@@ -14,7 +14,8 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { isNoReplyDeclaration } from './no-reply.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -564,6 +565,17 @@ export class DaemonService {
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
     ]);
+    // Final text is normally published unconditionally by the helper's stream
+    // settle. Older harnesses express silence as prose instead of the no-reply
+    // tool. Settle that outcome before either public insertion or private routing.
+    if (!this.commandTransaction && name === 'postRoomMessage' && scopedRoom &&
+      candidate.presentation !== 'card' && isNoReplyDeclaration(String(candidate.text ?? ''))) {
+      return await this.execute('postAgentTurnReceipt', {
+        agentId: authenticatedAgentId, roomId: scopedRoom, requestId: String(candidate.requestId ?? ''),
+        generationId: candidate.generationId as string | undefined,
+        status: 'complete', completionKind: 'no-reply',
+      }, authenticatedAgentId) as Output<Name>;
+    }
     if (
       !this.commandTransaction &&
       scopedRoom &&
@@ -5879,6 +5891,17 @@ export class DaemonService {
     return this.writeResult();
   }
   private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) {
+    // An informational continuation has no automatic return obligation. An
+    // actual incoming assignment may receive its first result here;
+    // reportToCommander fences that obligation across all later continuations.
+    if (automatic && command.private_payload?.kind !== 'order') {
+      const incoming = await commandOrder(database, command);
+      const ownOrder = incoming.agent_id === agentId && (incoming.private_payload?.kind === 'order' ||
+        (!incoming.private_payload && incoming.source_message_id && (await database.query(
+          `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
+           WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [incoming.source_message_id])).rowCount));
+      if (!ownOrder) return { ...this.writeResult(), delivered: true, skipped: true };
+    }
     const receivedPrefix = text.match(/^([^\s:]{1,64}):/)?.[1];
     const prefix = text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-');
     if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
@@ -5937,7 +5960,7 @@ export class DaemonService {
     });
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
       createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask });
-    if ('delivered' in result && !result.delivered) return result;
+    if (result.skipped || ('delivered' in result && !result.delivered)) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
       [command.room_id, agentId, attachment.id]);

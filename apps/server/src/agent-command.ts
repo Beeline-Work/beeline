@@ -110,6 +110,7 @@ ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT 
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS renudged_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS review_context jsonb;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS report_outcome text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS cancellation_reason text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS recovery_context text;
@@ -193,6 +194,7 @@ export type CommandRow = {
   result_message_id: string | null;
   hiccup_attempts: number;
   lifecycle_before: string | null;
+  review_context?: Record<string, unknown> | null;
   restart_confirmed_at: Date | null;
   recovery_context: string | null;
   wake_after?: Date | null;
@@ -247,6 +249,23 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
       AND (latest_card IS NULL OR latest_card->'cancellation' IS NOT NULL
         OR COALESCE(start_card->>'runStatus','live')<>'live'
         OR (attempt IS NOT NULL AND attempt IS DISTINCT FROM latest_card->>'seq') OR expired)
+    UNION
+    SELECT command.id FROM recovery_scope command WHERE command.reason='report' AND (
+      EXISTS (SELECT 1 FROM rooms origin LEFT JOIN corner_facts fact ON fact.corner_id=origin.id
+        WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
+          AND origin.parent_id IS NOT NULL AND (origin.archived_at IS NOT NULL
+            OR fact.lifecycle->>'lifecycle' IN ('closed','landed')))
+      OR (command.private_payload->>'text' LIKE 'failed:%'
+        AND EXISTS (SELECT 1 FROM rooms origin WHERE origin.parent_id IS NOT NULL AND origin.id::text=
+          COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId'))
+        AND EXISTS (
+        SELECT 1 FROM agent_commands earlier WHERE earlier.room_id=command.room_id
+          AND earlier.agent_id=command.agent_id AND earlier.reason='report'
+          AND earlier.state IN ('pending','claimed') AND earlier.inbox_sequence<command.inbox_sequence
+          AND earlier.private_payload->>'authorId'=command.private_payload->>'authorId'
+          AND COALESCE(earlier.private_payload->>'originCornerId',earlier.private_payload->>'fromRoomId')=
+            COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
+          AND earlier.private_payload->>'text'=command.private_payload->>'text')))
   )`;
   if (checkOnly) return recovery;
   // Corner wakes name the PR head or brief revision they were queued for. A

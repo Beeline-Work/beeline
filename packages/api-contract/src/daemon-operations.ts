@@ -495,6 +495,7 @@ export type DaemonOperationMap = {
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
+  markAgentTurnSilent: Operation<RoomInput & TurnOutputAuthority, WriteResult>;
   postAgentTurnReceipt: Operation<PostTurnReceiptInput, WriteResult>;
   postAgentActivity: Operation<PostAgentActivityInput, WriteResult>;
   /** Push a continuation when a tool from this command finishes after its prompt ended. */

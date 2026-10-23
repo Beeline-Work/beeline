@@ -3234,7 +3234,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'corner-before-late-join',
       name: 'Existing-corner',
-      objective: 'Keep this corner readable from its durable parent Room card',
+      objective: 'Keep this corner readable through inherited public Room access',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -3245,7 +3245,9 @@ describe('monolith integration', () => {
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
-    expect(parent.messages).toContainEqual(
+    // A source-free opening has no requesting message to anchor a line to.
+    // Its absence from the transcript must not affect inherited corner access.
+    expect(parent.messages).not.toContainEqual(
       expect.objectContaining({
         daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
       }),
@@ -6411,13 +6413,7 @@ describe('monolith integration', () => {
     const parent = await phone.readRoom(ROOM, HUMAN);
     expect(
       parent?.messages.find((message) => message.daemonFact?.cornerId === cornerId)?.daemonFact,
-    ).toMatchObject({
-      type: 'corner-complete',
-      cornerId,
-      name: 'Close-request',
-      objective: 'Close this corner from the phone',
-      outcome: 'abandoned',
-    });
+    ).toBeUndefined();
   });
 
   it('creates a human corner that inherits only Room-level subscriptions from a stale parent row', async () => {
@@ -7807,20 +7803,20 @@ describe('monolith integration', () => {
           kind: 'merged',
           object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
         },
-        daemonFact: {
+        daemonFact: expect.objectContaining({
           type: 'corner-complete',
           cornerId,
           name: 'Ship-widget',
           objective: 'Ship widget',
           outcome: 'landed',
-          pullRequest: {
+          pullRequest: expect.objectContaining({
             number: 42,
             title: 'Ship the widget',
             url: 'https://github.com/owner/widgets/pull/42',
             targetBranch: 'main',
             mergeCommitSha: 'f'.repeat(40),
-          },
-        },
+          }),
+        }),
       }),
     );
     const listed = (await (await request(`/v1/phone/rooms/${ROOM}/corners`)).json()) as {
@@ -10438,7 +10434,8 @@ describe('monolith integration', () => {
     const { cornerId } = (await created.json()) as { cornerId: string };
     // A card written before the name existed carries only the objective.
     await database.query(
-      `UPDATE messages SET card=card-'name' WHERE room_id=$1 AND card->>'cornerId'=$2`,
+      `UPDATE messages SET card=(card-'name')||'{"sourceMessageId":"legacy-request"}'::jsonb
+       WHERE room_id=$1 AND card->>'cornerId'=$2`,
       [ROOM, cornerId],
     );
     const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;

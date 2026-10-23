@@ -2725,9 +2725,23 @@ export class GitHubOperations {
           ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
         },
       });
+      // Updating the existing cards also invalidates off-Room transcripts.
+      await database.query(
+        `UPDATE messages SET card=card||$2::jsonb
+         WHERE card_type='daemon-fact' AND card->>'cornerId'=$1 AND card->>'type'='corner-open'
+           AND card->>'sourceMessageId' IS NOT NULL`,
+        [target.corner_id, JSON.stringify({ type: 'corner-complete', outcome: 'landed',
+          pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } })],
+      );
       const summary = target.summary.trim() || pullRequest.title;
-      // Completion cards belong only to corners that actually close.
-      if (!locked) await systemLine(database, {
+      // A Room call site already displays this merge in place. Off-Room
+      // requests get their only Room card here, at the end of the transcript.
+      const roomCallSite = await database.query(
+        `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact'
+           AND card->>'cornerId'=$2 AND card->>'sourceMessageId' IS NOT NULL LIMIT 1`,
+        [target.parent_id, target.corner_id],
+      );
+      if (!locked && !roomCallSite.rowCount) await systemLine(database, {
         id: hash(`beeline:${target.parent_id}:${mergeKey}`),
         roomId: target.parent_id,
         authorId: target.author_id,

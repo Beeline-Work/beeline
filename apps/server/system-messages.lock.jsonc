@@ -1,5 +1,6 @@
 // Approval language alignment approved by lunchboxfortwo, message b4cce318d8678714e46c5f81e7e0bcdc489a94369e6e9aaf09f69a504dfbdf53 (brief revision 4); Squire decision snapshots only.
 // Approval-card anatomy and decisions approved by lunchboxfortwo, message d521a13a (mock 52a31072; brief revision 3); associated card, mutation and wrapper snapshots only.
+// In-place corner merge card approved by lunchboxfortwo, message bc700bca2b7ea5243ca2a368b52d98a0e45f06e4f0f67c0244db352e8806444b (brief revision 1: same call-site line updates to Merged).
 // Hold source line and revised idle alert approved by lunchboxfortwo, message d11eb900ed471847b1901ecca1d8086fb000a7731e0ee9c43ae0181367a5c4d8; associated producer/wrapper snapshots only.
 // Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
@@ -3137,6 +3138,17 @@
       "'The request can continue.'",
       "'connected'",
       "'person'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/github-operations.ts:GitHubOperations.mergeCorner:message-write:5222d510a1eecb28",
+    "file": "apps/server/src/github-operations.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=card | | JSON.stringify({ type: 'corner-complete', outcome: 'landed',\n    pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } }) :: jsonb",
+    "literals": [
+      "'corner-complete'",
+      "'landed'"
     ],
     "occurrences": 1
   },

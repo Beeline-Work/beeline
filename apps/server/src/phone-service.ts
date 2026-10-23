@@ -9040,21 +9040,35 @@ export class PhoneService {
   private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
     messages = await this.decorateApprovalSources(messages);
     messages = await this.decorateVoiceCallReasons(roomId, messages);
+    // Source-free opening records carry lifecycle subscriptions, not a Room row.
+    // An off-Room request becomes visible here only through its merge completion.
+    messages = messages.filter(message => !((message.daemonFact?.type === 'corner-open' ||
+      message.systemEvent?.kind === 'corner-opened') && !message.daemonFact?.sourceMessageId));
     const cornerIds = [...new Set(messages.flatMap((message) => {
       const card = message.daemonFact;
-      return card?.type === 'corner-open' && UUID_PATTERN.test(card.cornerId) ? [card.cornerId] : [];
+      return card && ['corner-open', 'corner-complete'].includes(card.type) && UUID_PATTERN.test(card.cornerId)
+        ? [card.cornerId] : [];
     }))];
     if (!cornerIds.length) return messages;
-    const rows = await this.database.query<{ id: string; name: string; objective: string }>(
-      `SELECT corner.id,corner.name,fact.objective
+    const rows = await this.database.query<{
+      id: string; name: string; objective: string; archived_at: Date | null; lifecycle: CornerLifecycleView;
+    }>(
+      `SELECT corner.id,corner.name,fact.objective,corner.archived_at,fact.lifecycle
        FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
        WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2`, [cornerIds, roomId],
     );
     const current = new Map(rows.rows.map((row) => [row.id, row]));
     return messages.map((message) => {
       const card = message.daemonFact;
-      const corner = card?.type === 'corner-open' ? current.get(card.cornerId) : undefined;
-      return corner ? { ...message, daemonFact: { ...card!, name: corner.name, objective: corner.objective } } : message;
+      const corner = card ? current.get(card.cornerId) : undefined;
+      if (!corner || !card) return message;
+      const landed = corner.lifecycle.outcome === 'landed';
+      return { ...message, daemonFact: {
+        ...card, name: corner.name, objective: corner.objective,
+        ...(landed ? { type: 'corner-complete' as const, outcome: 'landed' as const,
+          ...(corner.lifecycle.pr ? { pullRequest: corner.lifecycle.pr } : {}) }
+          : corner.archived_at ? { type: 'corner-complete' as const, outcome: 'abandoned' as const } : {}),
+      } };
     });
   }
 

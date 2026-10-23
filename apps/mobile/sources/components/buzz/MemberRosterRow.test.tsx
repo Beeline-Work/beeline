@@ -29,6 +29,7 @@ vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}) },
 }));
 vi.mock('./IdentityMark', () => ({ IdentityMark: 'IdentityMark' }));
+vi.mock('./ChevronGlyph', () => ({ CHEVRON_ROW_SIZE: 16, ChevronGlyph: 'ChevronGlyph' }));
 
 import { MemberRosterRow, memberRosterModel, memberRosterSubtitle } from './MemberRosterRow';
 
@@ -84,6 +85,31 @@ describe('MemberRosterRow', () => {
     expect(memberRosterModel({ kind: 'agent', model: 'openrouter/openai/Codex' })).toBe('Codex');
     expect(memberRosterSubtitle({ kind: 'agent', ownerHandle: 'captain' })).toBe('@captain');
     expect(memberRosterSubtitle({ kind: 'agent' })).toBeUndefined();
+  });
+
+  it('gives a long model 60% of the text line and ends it beside the built-in chevron', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <MemberRosterRow
+          chevron="right"
+          divider="bottom"
+          kind="agent"
+          name="Ruby"
+          pubkey="agent-key"
+          handle="ruby"
+          model="openrouter/deepseek/deepseek-v4.1-flash"
+          ownerHandle="viewer"
+          testID="agent"
+        />,
+      );
+    });
+    const model = renderer.root
+      .findAllByType('Text' as any)
+      .find((node: any) => node.props.children === 'deepseek-v4.1-flash')!;
+    expect(model.props.style.maxWidth).toBe('60%');
+    expect(renderer.root.findAllByType('ChevronGlyph' as any)).toHaveLength(1);
+    expect(renderer.root.findByType('ChevronGlyph' as any).props.direction).toBe('right');
   });
 });
 

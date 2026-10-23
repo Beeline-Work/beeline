@@ -148,9 +148,10 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           {/* One head over one list. A manager keeps it on an empty Room
               because the head is where the add control lives: with the Room
               header's `+` retired (C83), an agentless Room would otherwise
-              have no way to reach an agent at all. */}
+              have no way to reach an agent at all. The sheet title already
+              says Members, so the head carries only the count and `+`. */}
           <RoomListSectionHeader
-            title={MEMBERS_LABEL}
+            title=""
             count={members.length}
             testID="room-roster-members-head"
             surface="sheet"
@@ -173,13 +174,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             const agentWorking =
               participant.kind === 'agent' && Boolean(workingByPubkey[participant.pubkey]);
             // Every row discloses, so every row wears the mark.
-            const trailing = (
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction={open ? 'down' : 'right'}
-                size={CHEVRON_ROW_SIZE}
-              />
-            );
+            const chevron = open ? 'down' : 'right';
             return (
               <View key={participant.pubkey}>
                 {participant.kind === 'agent' ? (
@@ -197,7 +192,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     pubkey={participant.pubkey}
                     seed={display?.avatarSeed}
                     testID={`room-roster-agent-${participant.pubkey}`}
-                    trailing={trailing}
+                    chevron={chevron}
                   />
                 ) : (
                   <MemberRosterRow
@@ -211,7 +206,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     pubkey={participant.pubkey}
                     role={targetRole ?? 'member'}
                     testID={`room-roster-person-${participant.pubkey}`}
-                    trailing={trailing}
+                    chevron={chevron}
                   />
                 )}
                 {open && (

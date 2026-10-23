@@ -521,7 +521,7 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       flexShrink: 0,
       marginLeft: 'auto',
-      maxWidth: '50%',
+      maxWidth: '60%',
       textAlign: 'right',
       color: hull.textMuted,
     },

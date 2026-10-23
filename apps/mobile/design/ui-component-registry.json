@@ -289,7 +289,7 @@
     "components/buzz/RoomDeckComposeMenu.tsx": ["ComposeGlyph", "RoomDeckComposeMenu"],
     "components/buzz/RoomDeckLoadingView.tsx": ["RoomDeckLoadingView"],
     "components/buzz/RoomGlyph.tsx": ["RoomGlyph"],
-    "components/buzz/RoomListSectionHeader.tsx": ["LABEL_LINE", "RoomListSectionHeader"],
+    "components/buzz/RoomListSectionHeader.tsx": ["LABEL_LINE", "RoomListSectionHeader", "SectionAddGlyph"],
     "components/buzz/RoomListToolbar.tsx": ["RoomListToolbar", "actions", "filters", "search"],
     "components/buzz/RoomMemberPickerActions.tsx": ["RoomMemberPickerActions"],
     "components/buzz/RoomOpenTraceOverlay.tsx": ["RoomOpenTraceOverlay"],

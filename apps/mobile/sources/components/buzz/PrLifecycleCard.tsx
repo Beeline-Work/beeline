@@ -39,7 +39,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   const repositoryRun = items.every(isRepositoryLifecycleItem);
   if (repositoryRun)
     return (
-      <View style={anchored ? undefined : styles.run} testID={testID ?? `notification-run-${message.id}`}>
+      <View style={anchored || items.length > 1 ? undefined : styles.run} testID={testID ?? `notification-run-${message.id}`}>
         {items.length > 1 ? (
           <Pressable
             style={styles.header}

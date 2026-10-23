@@ -388,6 +388,7 @@ test('shared components cannot hand-roll rows, buttons or headers; their owners 
     'custom-header',
   ]);
   assert.deepEqual(offences('components/buzz/IndexRow.tsx'), []);
+  assert.deepEqual(offences('components/buzz/LedgerDisclosure.tsx'), []);
   assert.deepEqual(
     scan(
       "import {TextInput} from 'react-native'; export const F=()=> <TextInput/>;",

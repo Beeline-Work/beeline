@@ -120,6 +120,17 @@ describe('one-line tool ledger', () => {
     expect(renderedText(renderer)).not.toContain('FAILED');
   });
 
+  it('keeps the steps disclosure borderless with a full-height tap target', () => {
+    const renderer = render(<TurnStepsLine items={TOOLS} />);
+    const [row] = hostNodes(renderer, /^tool-run-group-read$/);
+    expect(row.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    expect(row.props.style.borderTopWidth ?? 0).toBe(0);
+    expandRun(renderer, 'read');
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
+    expandRun(renderer, 'read');
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+  });
+
   it('a failed step carries its distilled reason inline, a success stays quiet', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
     expandRun(renderer, 'read');

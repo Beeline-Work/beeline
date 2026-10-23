@@ -1,0 +1,41 @@
+{
+  "serial": "emulator-5558",
+  "phase": "before",
+  "density": 2.625,
+  "themes": {
+    "bone": [
+      {
+        "label": "1 step, expandable",
+        "heightDp": 43.80952380952381,
+        "edgeTaps": "expanded then collapsed"
+      },
+      {
+        "label": "1 issue filed \u00b7 1 PR merged",
+        "heightDp": 44.19047619047619,
+        "edgeTaps": "expanded then collapsed"
+      },
+      {
+        "label": "1 check passed",
+        "heightDp": 43.80952380952381,
+        "edgeTaps": "expanded then collapsed"
+      }
+    ],
+    "obsidian": [
+      {
+        "label": "1 step, expandable",
+        "heightDp": 43.80952380952381,
+        "edgeTaps": "expanded then collapsed"
+      },
+      {
+        "label": "1 issue filed \u00b7 1 PR merged",
+        "heightDp": 44.19047619047619,
+        "edgeTaps": "expanded then collapsed"
+      },
+      {
+        "label": "1 check passed",
+        "heightDp": 43.80952380952381,
+        "edgeTaps": "expanded then collapsed"
+      }
+    ]
+  }
+}

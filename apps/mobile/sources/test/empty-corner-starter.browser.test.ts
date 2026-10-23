@@ -83,9 +83,9 @@ it('empty corner surface fills its first agent mention, focuses, and preserves d
       });
       expect(proof.status, proof.stderr).toBe(0);
       expect(JSON.parse(proof.result)).toEqual({
-        empty: { text: 'Tag @beebee to startAgents here reply only when tagged.Tag @beebee to start', draft: '@beebee ', focused: true, mentions: [['beebee', 'beebee-key']], agents: [['beebee', 'beebee-key']] },
-        draft: { text: 'Tag @beebee to startAgents here reply only when tagged.Tag @beebee to start', draft: 'Keep my thought', focused: true, mentions: [], agents: [] },
-        fallback: { text: 'Tag an agent to startAgents here reply only when tagged.Tag an agent to start', draft: '', focused: true, mentions: [], agents: [] },
+        empty: { text: 'Nothing in the log yetAgents here reply only when tagged.Tag @beebee to start', draft: '@beebee ', focused: true, mentions: [['beebee', 'beebee-key']], agents: [['beebee', 'beebee-key']] },
+        draft: { text: 'Nothing in the log yetAgents here reply only when tagged.Tag @beebee to start', draft: 'Keep my thought', focused: true, mentions: [], agents: [] },
+        fallback: { text: 'Nothing in the log yetAgents here reply only when tagged.Tag an agent to start', draft: '', focused: true, mentions: [], agents: [] },
         agentHidden: true, conversationHidden: true,
       });
     }

@@ -48,7 +48,7 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * is what keeps it from stranding a reader in a dead channel. `onStop` is a
  * different thing in the trailing slot: not navigation but the one action a
  * turn in progress admits, withdrawing the question. It is passed only to the
- * requester or Room manager (`viewerMayStopTurn`), so for everyone else this component
+ * person who may act in the Room (`viewerMayStopTurn`), so for everyone else this component
  * renders exactly what it rendered before. A press is acknowledged here —
  * the control dims and the counter says `stopping` — before the cancelled
  * receipt lands; a failed stop enables it again.
@@ -66,7 +66,7 @@ export function TurnProgressLine({
   startedAt?: number;
   /** A new human steer was committed against this running turn. */
   received?: boolean;
-  /** Present only for a requester or Room manager; absent renders no control. */
+  /** Present only for someone who may act in the Room; absent renders no control. */
   onStop?: () => void;
   /** The asker already pressed stop; the cancelled receipt has not landed yet. */
   stopping?: boolean;

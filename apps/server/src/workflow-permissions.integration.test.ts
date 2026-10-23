@@ -116,7 +116,7 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
     expect(nextStart.status, JSON.stringify(nextStart.body)).toBe(200);
   });
 
-  it.each([['requester', REQUESTER], ['role owner', ROLE_OWNER], ['Room admin', ROOM_ADMIN], ['Workspace admin', WORKSPACE_ADMIN]])(
+  it.each([['requester', REQUESTER], ['role owner', ROLE_OWNER], ['Workspace admin', WORKSPACE_ADMIN]])(
     'allows %s to reassign through a different agent', async (_label, actor) => {
       const { context, name } = await savedWorkflow();
       const started = await call(SAVER, 'startWorkflow', { ...context, name, roleBindings: { worker: WORKER } });
@@ -128,7 +128,7 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
       expect(latest.roleBindings).toEqual({ worker: SAVER });
     });
 
-  it.each([['saved requester', REQUESTER], ['saving agent', SAVER], ['saving agent owner', ROLE_OWNER], ['Room admin', ROOM_ADMIN], ['Workspace admin', WORKSPACE_ADMIN]])(
+  it.each([['saved requester', REQUESTER], ['saving agent', SAVER], ['saving agent owner', ROLE_OWNER], ['Workspace admin', WORKSPACE_ADMIN]])(
     'allows %s to archive through a different agent', async (_label, actor) => {
       const { name } = await savedWorkflow(actor === ROLE_OWNER || actor === SAVER ? SAVER : REQUESTER);
       const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(actor, DELEGATE), name });
@@ -140,6 +140,18 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
       expect(unavailable.status).toBeGreaterThanOrEqual(400);
       expect(JSON.stringify(unavailable.body)).toContain('workflow is unavailable');
     });
+
+  it('refuses a Room admin who is only a Workspace member to reassign or archive', async () => {
+    const { context, name } = await savedWorkflow();
+    const started = await call(SAVER, 'startWorkflow', { ...context, name, roleBindings: { worker: WORKER } });
+    expect(started.status).toBe(200);
+    const assigned = await call(DELEGATE, 'assignWorkflowRole', { ...await turn(ROOM_ADMIN, DELEGATE),
+      runId: started.body.runId, role: 'worker', targetAgentId: SAVER });
+    expect(assigned.status).toBe(403);
+    const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(ROOM_ADMIN, DELEGATE), name });
+    expect(archived.status).toBe(403);
+    expect((await db.query(`SELECT state FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.state).toBe('active');
+  });
 
   it('allows the owner of an unselected list member to reassign, just as cancel does', async () => {
     const { context, name } = await savedWorkflow();
@@ -231,8 +243,11 @@ describe('Reproduction run-id-prefix: authenticated run lookup and control', () 
     const uniqueDespiteHidden = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId: prefix });
     expect(uniqueDespiteHidden.status).toBe(200);
     expect(uniqueDespiteHidden.body.runId).toBe(runId);
-    const deniedControl = await call(DELEGATE, 'cancelWorkflowRun', { ...await turn(OUTSIDER, DELEGATE), runId: prefix, reason: 'Not authorized' });
-    expect(deniedControl.status).toBe(403);
+    // Cancelling is open to anyone in the Room, so the unrelated member's
+    // prefix resolves and the run ends.
+    const memberCancel = await call(DELEGATE, 'cancelWorkflowRun', { ...await turn(OUTSIDER, DELEGATE), runId: prefix, reason: 'Anyone in the Room' });
+    expect(memberCancel.status, JSON.stringify(memberCancel.body)).toBe(200);
+    expect(memberCancel.body.status).toBe('abandoned');
     const longer = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId: runId.slice(0, 9) });
     expect(longer.status).toBe(200);
     expect(longer.body.runId).toBe(runId);

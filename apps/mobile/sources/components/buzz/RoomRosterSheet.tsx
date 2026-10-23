@@ -24,7 +24,7 @@ export type RoomRosterParticipant = {
   model?: string;
   /** The owner's raw handle; the shared subtitle formatter owns the "by @" copy. */
   ownerHandle?: string;
-  /** People only: the Room role the roster and @-mention menu show. */
+  /** People only: the Workspace role the roster and @-mention menu show. */
   role?: string;
   /** People only: the chosen face on record. An agent's assigned face rides
    *  on `agent` and is read through `resolveAgentDisplayIdentity`. */
@@ -56,7 +56,7 @@ function rosterRowNote({
  * The Room's members, in the Members page's vocabulary so the two views read
  * as one: "Members" over ONE counted section head that includes the viewer, a
  * 64pt row per identity with its handle at body size and one quiet metadata
- * line: a person's Room role, or an agent's model and owner. People lead and
+ * line: a person's Workspace role, or an agent's model and owner. People lead and
  * agents follow inside that single list. The gold ring on the tile means
  * WORKING (`workingByPubkey`, C77), never delivery availability, and there is
  * no status square beside the name (C76). Every row carries a chevron and

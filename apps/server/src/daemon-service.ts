@@ -3346,9 +3346,13 @@ export class DaemonService {
         access_policy: unknown;
         owner_id: string | null;
       }>(
-        `SELECT r.workspace_id,m.role,i.kind,r.archived_at IS NOT NULL archived,a.access_policy,a.owner_id
+        `SELECT r.workspace_id,CASE WHEN m.identity_id IS NOT NULL THEN COALESCE(workspace_member.role,m.role) END role,
+           i.kind,r.archived_at IS NOT NULL archived,a.access_policy,a.owner_id
          FROM rooms r
          LEFT JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
+         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
          LEFT JOIN identities i ON i.id=$2
          LEFT JOIN agents a ON a.agent_id=$3
          WHERE r.id=$1`,
@@ -5178,6 +5182,12 @@ export class DaemonService {
         ...(agentRow.handle ? { handle: agentRow.handle } : {}),
         ...(agentRow.avatar ? { avatar: agentRow.avatar } : {}),
       };
+      // Squire spending is the agent owner's call; the card names who decides.
+      const spendingOwnerId = scope.type === 'money.spend'
+        ? (await database.query<{ owner_id: string | null }>(
+            `SELECT owner_id FROM agents WHERE agent_id=$1`, [agentId],
+          )).rows[0]?.owner_id ?? undefined
+        : undefined;
       const created = id();
       await systemLine(database, {
         id: created,
@@ -5195,7 +5205,9 @@ export class DaemonService {
           requester,
           tool,
           ...(repository ? { repository } : {}),
-          ...(scope.type === 'money.spend' ? { purpose: 'squire-spending' } : {}),
+          ...(scope.type === 'money.spend'
+            ? { purpose: 'squire-spending', ...(spendingOwnerId ? { ownerId: spendingOwnerId } : {}) }
+            : {}),
           status: 'pending',
         },
       });
@@ -8424,8 +8436,12 @@ export class DaemonService {
       handle: string | null;
       role: string;
     }>(
-      `SELECT identity.id,identity.kind,identity.name,identity.handle,member.role
+      `SELECT identity.id,identity.kind,identity.name,identity.handle,
+         COALESCE(workspace_member.role,member.role) role
        FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+       LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=member.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+         AND workspace_member.removed_at IS NULL
        WHERE member.room_id=$1 AND member.removed_at IS NULL
        ORDER BY identity.kind,identity.name`,
       [roomId],

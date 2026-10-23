@@ -19,7 +19,7 @@ import {
   completeAgentSignInCard,
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
-import { humanRoomAdmin } from './workflow-admin.js';
+import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
@@ -489,7 +489,6 @@ function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSum
 }
 interface RoomReadRow {
   room: RoomRow & {
-    viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
     viewer_push_muted: boolean;
     workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
     read_cursor: RoomView['viewer']['readCursor'] | null;
@@ -2250,7 +2249,8 @@ export class PhoneService {
           kind: 'human',
           name: `Person ${viewerId.slice(0, 8)}`,
         },
-        role: room.viewer_role,
+        // The Workspace role: a Room, corner or DM role grants nothing.
+        role: room.workspace_role,
         permissions: {
           send:
             room.workspace_role !== 'spectator' &&
@@ -2742,7 +2742,6 @@ export class PhoneService {
     const cornerQuery = this.cornerRowsSql(roomViewFamilyOrder, archived, before);
     const result = await this.database.query<{
       room_row: RoomRow & {
-        viewer_role: 'owner' | 'admin' | 'member' | 'spectator';
         workspace_role: 'owner' | 'admin' | 'member' | 'spectator';
       };
       corner_rows: CornerRow[];
@@ -2750,7 +2749,7 @@ export class PhoneService {
       app_rows: Array<{ id: string; manifest: unknown }>;
       deck: DeckCornerFacts | null;
     }>(`WITH authorized AS (
-        SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
+        SELECT r.*,workspace_member.role workspace_role
         FROM rooms r JOIN memberships m ON m.room_id=r.id
         JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -2804,7 +2803,8 @@ export class PhoneService {
       }),
       viewer: {
         identity: viewerIdentity,
-        role: room.viewer_role,
+        // The Workspace role: a Room, corner or DM role grants nothing.
+        role: room.workspace_role,
         permissions: {
           send: room.workspace_role !== 'spectator' && !room.archived_at,
           manage: room.workspace_role === 'owner' || room.workspace_role === 'admin',
@@ -2830,7 +2830,7 @@ export class PhoneService {
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
-           SELECT room.*,membership.role viewer_role,
+           SELECT room.*,
              CASE WHEN room.parent_id IS NULL THEN membership.push_muted ELSE COALESCE(
                (SELECT state.push_muted FROM corner_person_state state
                 WHERE state.corner_id=room.id AND state.identity_id=$2),false) END viewer_push_muted,
@@ -2855,11 +2855,14 @@ export class PhoneService {
            WHERE room.id=$1
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
-             roster_member.role,NULL::jsonb presence_body,
+             COALESCE(roster_workspace.role,roster_member.role) role,NULL::jsonb presence_body,
              NULL::timestamptz presence_updated_at
            FROM authorized_room room
            JOIN memberships roster_member ON roster_member.workspace_id=room.workspace_id
              AND roster_member.room_id=COALESCE(room.parent_id,room.id)
+           LEFT JOIN memberships roster_workspace ON roster_workspace.workspace_id=room.workspace_id
+             AND roster_workspace.room_id IS NULL AND roster_workspace.identity_id=roster_member.identity_id
+             AND roster_workspace.removed_at IS NULL
            JOIN identities i ON i.id=roster_member.identity_id
            WHERE roster_member.removed_at IS NULL AND i.hidden_from_roster=false
            ORDER BY (i.id<>$2),i.id LIMIT (SELECT CASE WHEN parent_id IS NULL THEN 2147483647
@@ -4181,7 +4184,7 @@ export class PhoneService {
       case 'listRoomSubscriptions': {
         const roomId = (input as Input<'listRoomSubscriptions'>).roomId;
         await this.requireTopLevelRoom(roomId);
-        if (!(await humanRoomAdmin(this.database, roomId, viewerId))) throw new Error('room manager required');
+        if (!(await humanRoomAdmin(this.database, roomId, viewerId))) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
         return await listRoomSubscriptions(this.database, roomId) as Output<Name>;
       }
       case 'readScheduledWork':
@@ -4191,7 +4194,7 @@ export class PhoneService {
       case 'deleteRoomSubscription': {
         const i = input as Input<'deleteRoomSubscription'>;
         await this.requireTopLevelRoom(i.roomId);
-        if (!(await humanRoomAdmin(this.database, i.roomId, viewerId))) throw new Error('room manager required');
+        if (!(await humanRoomAdmin(this.database, i.roomId, viewerId))) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
         await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId, this.composio);
         return undefined as Output<Name>;
       }
@@ -4316,8 +4319,9 @@ export class PhoneService {
       }
       case 'startOwnedWorkflow': {
         const request = input as Input<'startOwnedWorkflow'>;
-        if (!(await humanRoomAdmin(this.database, request.roomId, viewerId)))
-          throw new Error('human Room/Workspace admin required');
+        // Starting a run is open to anyone in the Room; it is attributed to them.
+        if (!(await humanRoomMember(this.database, request.roomId, viewerId)))
+          throw new Error('room access denied: only a person in this Room can start a run here');
         return (await startWorkflow(
           this.database,
           { room_id: request.roomId, agent_id: viewerId },
@@ -5072,7 +5076,7 @@ export class PhoneService {
   private async listRoomSchedules(roomId: string, viewerId: string) {
     await this.requireTopLevelRoom(roomId);
     if (!(await humanRoomAdmin(this.database, roomId, viewerId)))
-      throw new Error('room manager required');
+      throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
@@ -5090,7 +5094,7 @@ export class PhoneService {
   private async readScheduledWork(roomId: string, viewerId: string): Promise<Output<'readScheduledWork'>> {
     await this.requireTopLevelRoom(roomId);
     if (!(await humanRoomAdmin(this.database, roomId, viewerId)))
-      throw new Error('room manager required');
+      throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
     const [room, schedules, subscriptions] = await Promise.all([
       this.database.query<{ name: string | null; agent_id: string; agent_name: string }>(
         `SELECT room.name, agent.id agent_id, agent.name agent_name
@@ -5127,7 +5131,7 @@ export class PhoneService {
   ): Promise<void> {
     await this.requireTopLevelRoom(input.roomId);
     if (!(await humanRoomAdmin(this.database, input.roomId, viewerId)))
-      throw new Error('room manager required');
+      throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id
@@ -6081,8 +6085,8 @@ export class PhoneService {
    */
   private async cancelAgentTurn(input: Input<'cancelAgentTurn'>, viewerId: string) {
     if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
-    // A corner's root request may live in its parent Room. Authority is
-    // checked against current membership under lock before settling it.
+    // Anyone in the Room may stop any agent turn there; a Room role never
+    // changes that. Membership is checked again under lock before settling.
     const running = (
       await this.database.query<{ author_id: string }>(
         `SELECT trigger.author_id
@@ -6100,8 +6104,8 @@ export class PhoneService {
     const agent = await this.requireIdentity(input.agentId);
     await this.database.transaction(async (database) => {
       const member = (
-        await database.query<{ role: string }>(
-          `SELECT room_member.role FROM memberships room_member
+        await database.query(
+          `SELECT 1 FROM memberships room_member
          JOIN rooms room ON room_member.room_id=COALESCE(room.parent_id,room.id)
          JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
            AND workspace_member.room_id IS NULL AND workspace_member.identity_id=room_member.identity_id
@@ -6112,8 +6116,6 @@ export class PhoneService {
         )
       ).rows[0];
       if (!member) throw new Error('room access denied');
-      if (running.author_id !== viewerId && member.role !== 'owner' && member.role !== 'admin')
-        throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
       await lockAgentCommandQueue(database, input.roomId, input.agentId);
       const commands = await database.query<CommandRow>(
         `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
@@ -6223,10 +6225,17 @@ export class PhoneService {
       )
     ).rows[0];
     if (!pending || pending.status !== 'pending') throw new Error('permission not found');
-    if (viewerId !== pending.principal_id)
-      await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const card = pending.card;
     const cardAgent = card?.agent as { pubkey?: unknown } | undefined;
+    if (card?.purpose === 'squire-spending') {
+      // Trusty Squire spending is the spending agent's owner's call alone.
+      const owner = await this.database.query(
+        `SELECT 1 FROM agents WHERE agent_id=$1 AND owner_id=$2`,
+        [cardAgent?.pubkey, viewerId],
+      );
+      if (!owner.rowCount) throw new Error(SPENDING_OWNER_AUTHORITY_MESSAGE);
+    } else if (viewerId !== pending.principal_id)
+      await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     if (
       pending.request_id !== input.requestId ||
       cardAgent?.pubkey !== input.agentId ||
@@ -6920,7 +6929,7 @@ export class PhoneService {
       [input.roomId, input.memberId],
     );
     if (!target.rowCount) throw new Error('room membership required');
-    if (input.memberId === viewerId) throw new Error('room managers cannot remove themselves');
+    if (input.memberId === viewerId) throw new Error('access denied: you cannot remove yourself from a Room; leave it instead');
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
     await this.database.transaction(async (database) => {
@@ -6966,7 +6975,7 @@ export class PhoneService {
       const actor = roles.rows.find((row) => row.identity_id === viewerId);
       const target = roles.rows.find((row) => row.identity_id === input.memberId);
       if (!actor || actor.removed_at || (actor.role !== 'owner' && actor.role !== 'admin')) {
-        throw new Error('workspace manager required');
+        throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
       }
       if (
         target?.role === 'owner' ||
@@ -7054,7 +7063,7 @@ export class PhoneService {
       const actor = roles.rows.find((row) => row.identity_id === viewerId);
       const target = roles.rows.find((row) => row.identity_id === input.memberId);
       if (!actor || (actor.role !== 'owner' && actor.role !== 'admin')) {
-        throw new Error('workspace manager required');
+        throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
       }
       if (!target) throw new Error('workspace membership required');
       if (target.role === 'owner') {
@@ -10025,7 +10034,7 @@ export class PhoneService {
        WHERE room.id=$1`,
       [roomId, identityId],
     );
-    if (!row.rowCount) throw new Error('room manager required');
+    if (!row.rowCount) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
   }
   private async requireHumanRoomWorkspaceManager(roomId: string, identityId: string) {
     const row = await this.database.query(
@@ -10037,7 +10046,7 @@ export class PhoneService {
        WHERE room.id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL`,
       [roomId, identityId],
     );
-    if (!row.rowCount) throw new Error('room manager required');
+    if (!row.rowCount) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
   }
   private async requireTopLevelChatMember(
     roomId: string,
@@ -10082,7 +10091,7 @@ export class PhoneService {
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND role IN ('owner','admin') AND removed_at IS NULL`,
       [workspaceId, identityId],
     );
-    if (!row.rowCount) throw new Error('workspace manager required');
+    if (!row.rowCount) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
   }
   /** Owner-only: stricter than requireWorkspaceManager (owner|admin), for the
    *  one action an admin may never take — deleting the whole workspace. */
@@ -10265,8 +10274,12 @@ export class PhoneService {
       `SELECT i.id,
          i.kind,i.name,i.handle,i.avatar,
          i.face_id,
-         m.role,NULL::jsonb presence_body,NULL::timestamptz presence_updated_at
+         COALESCE(workspace_member.role,m.role) role,NULL::jsonb presence_body,
+         NULL::timestamptz presence_updated_at
        FROM memberships m JOIN identities i ON i.id=m.identity_id
+       LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=m.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=m.identity_id
+         AND workspace_member.removed_at IS NULL
        WHERE m.workspace_id=$1 AND ($2::uuid IS NULL AND m.room_id IS NULL OR m.room_id=$2)
          AND m.removed_at IS NULL AND i.hidden_from_roster=false
          AND ($3::text IS NULL OR i.id=$3)`,
@@ -10556,15 +10569,14 @@ export const CONNECTOR_OFFER_AUTHORITY_MESSAGE =
 export const CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE =
   'Only the person the agent addressed can connect their own wallet';
 
+/** Workspace, Room and corner management belongs to Workspace owners and admins. */
+export const WORKSPACE_ADMIN_AUTHORITY_MESSAGE = 'workspace admins only';
+
 /** Agent configuration belongs only to the human who connected that agent. */
 export const AGENT_OWNER_AUTHORITY_MESSAGE = "Only the agent's owner can change this";
 
-/**
- * A requester or current Room owner/admin may stop a turn.
- * Named here so `server.ts` answers 403 rather than a generic failure.
- */
-export const TURN_REQUESTER_AUTHORITY_MESSAGE =
-  'Only the requester, Room owner or admin can stop this turn';
+/** Trusty Squire spending belongs only to the spending agent's owner. */
+export const SPENDING_OWNER_AUTHORITY_MESSAGE = 'Only its owner can approve this spending';
 
 /** The same owner-only axis, for who may address an agent. */
 export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;

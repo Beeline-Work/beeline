@@ -287,6 +287,8 @@ export type RoomViewMessage = {
     readonly tool: string;
     readonly repository?: string;
     readonly purpose?: 'squire-spending';
+    /** Squire spending only: the spending agent's owner, the one person who decides. */
+    readonly ownerId?: string;
     readonly status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     readonly cornerId?: string;
   };

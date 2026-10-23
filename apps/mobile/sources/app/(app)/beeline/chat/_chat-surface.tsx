@@ -1208,7 +1208,6 @@ export function BuzzChatSurface({
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
   const viewerPubkey = roomSurface?.viewer.identity.pubkey;
-  const viewerChannelRole = roomSurface?.viewer.role ?? null;
   const canManageWorkspace = roomSurface?.viewer.permissions.manage ?? false;
   const canRenameTitle = isCorner
     ? !viewerIsAgent && !isArchived
@@ -2878,7 +2877,6 @@ export function BuzzChatSurface({
       pendingCornerRequest,
       pendingTargetBranchProposal,
       targetBranchActionId,
-      viewerChannelRole,
       viewerIsAgent,
       roomSurface?.repositoryResolution,
       roomSurface?.viewer.permissions.send,
@@ -3447,7 +3445,7 @@ export function BuzzChatSurface({
   const composerAck = useMemo((): ComposerAckPresentation | null => {
     return selectComposerAckPresentation({
       isCorner,
-      viewerRole: roomSurface?.viewer.role,
+      viewerCanSend: roomSurface?.viewer.permissions.send,
       ...(activeAgentTurn?.agentPubkey ? { activeTurnPubkey: activeAgentTurn.agentPubkey } : {}),
       ...(activeAgentTurn
         ? {
@@ -3468,7 +3466,7 @@ export function BuzzChatSurface({
     });
   }, [
     activeAgentTurn,
-    roomSurface?.viewer.role,
+    roomSurface?.viewer.permissions.send,
     agentByPubkey,
     conversationIdentities,
     isCorner,
@@ -3512,7 +3510,7 @@ export function BuzzChatSurface({
   /**
    * Withdraw the question this turn is answering.
    *
-   * The control is offered to the requester or Room manager (`viewerMayStopTurn`), and the
+   * The control is offered to anyone who may act in the Room (`viewerMayStopTurn`), and the
    * server refuses anyone else, so the two agree on one rule rather than the
    * phone guessing at it. The press is acknowledged on this line immediately
    * (`stoppingTurn`); the cancelled receipt is still what settles the durable
@@ -4446,7 +4444,7 @@ export function BuzzChatSurface({
         !permission.repository ||
         permission.status !== 'pending' ||
         viewerIsAgent ||
-        (permission.purpose === 'squire-spending' && viewerChannelRole !== 'owner')
+        (permission.purpose === 'squire-spending' && permission.ownerPubkey !== cacheViewerPubkey)
       )
         return;
       setPermissionActionId(permission.permissionId);
@@ -4470,7 +4468,7 @@ export function BuzzChatSurface({
         setPermissionActionId(null);
       }
     },
-    [cacheViewerPubkey, decodedId, transport, viewerChannelRole, viewerIsAgent],
+    [cacheViewerPubkey, decodedId, transport, viewerIsAgent],
   );
 
   /**
@@ -5640,7 +5638,7 @@ export function BuzzChatSurface({
             agent={agentByPubkey.get(item.writePermission.agentPubkey)}
             viewerIsAgent={viewerIsAgent}
             viewerPubkey={cacheViewerPubkey}
-            viewerRole={viewerChannelRole}
+            viewerCanManage={canManageWorkspace}
             actionId={permissionActionId}
             targetBranch={roomRepository?.targetBranch}
             onDecision={handleWritePermission}
@@ -5656,7 +5654,6 @@ export function BuzzChatSurface({
             agent={agentByPubkey.get(item.grantRequest.agent.pubkey)}
             viewerIsAgent={viewerIsAgent}
             viewerPubkey={cacheViewerPubkey}
-            viewerRole={viewerChannelRole}
             viewerCanManageWorkspace={canManageWorkspace}
             actionId={grantActionId}
             onDecision={handleGrantDecision}
@@ -5764,7 +5761,7 @@ export function BuzzChatSurface({
             agent={agentByPubkey.get(item.connectorOffer.agent.pubkey)}
             viewerIsAgent={viewerIsAgent}
             viewerPubkey={cacheViewerPubkey}
-            viewerRole={viewerChannelRole}
+            viewerCanManage={canManageWorkspace}
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
             onContinue={(offerId, connectorType, pairedConnectorId) =>
@@ -5994,7 +5991,6 @@ export function BuzzChatSurface({
       roomParticipants,
       targetBranchActionId,
       targetBranchNotice,
-      viewerChannelRole,
       canManageWorkspace,
       viewerIsAgent,
       speakerWorking,

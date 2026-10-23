@@ -51,7 +51,7 @@ export default function RoomWorkflows() {
       }
       const relayUrl = await getEffectiveRelayUrl();
       const room = await new RoomViewClient({ baseUrl: relayUrl, identity }).room(roomId);
-      if (!room.viewer.permissions.manage) throw new Error('Room manager required');
+      if (!room.viewer.permissions.manage) throw new Error('Workspace admins only');
       if (room.repositoryResolution !== 'repository') throw new Error('Room repository required');
       const workflows = await monolithPhoneOperation('listRoomWorkflows', { roomId });
       setRoomName(room.room.name);

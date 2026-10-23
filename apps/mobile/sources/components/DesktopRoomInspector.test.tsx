@@ -498,13 +498,18 @@ describe('DesktopRoomInspector work pane', () => {
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
-  it.each(['member', 'owner', 'admin'] as const)(
-    'shares corner stop authority for a %s',
-    async (role) => {
+  // Stop is open to anyone who may act in the Room, whatever their role.
+  it.each([
+    ['member', true],
+    ['owner', false],
+    ['admin', true],
+  ] as const)(
+    'shares corner stop authority for a %s when send is %s',
+    async (role, manage) => {
       const detail = {
         ...room(),
         room: corners[0].corner,
-        viewer: { ...room().viewer, role },
+        viewer: { ...room().viewer, role, permissions: { send: manage, manage: role !== 'member' } },
         latestAgentTurns: [
           {
             agentPubkey: agent.pubkey,
@@ -522,9 +527,9 @@ describe('DesktopRoomInspector work pane', () => {
       });
       const composer = tree.root.findByType('ConversationComposer' as any);
       const progress = tree.root.findByType('TurnProgressLine' as any);
-      expect(Boolean(composer.props.onStop)).toBe(role !== 'member');
-      expect(Boolean(progress.props.onStop)).toBe(role !== 'member');
-      if (role !== 'member') {
+      expect(Boolean(composer.props.onStop)).toBe(manage);
+      expect(Boolean(progress.props.onStop)).toBe(manage);
+      if (manage) {
         let release!: (value: any) => void;
         client.room.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
         let stopped!: Promise<boolean>;

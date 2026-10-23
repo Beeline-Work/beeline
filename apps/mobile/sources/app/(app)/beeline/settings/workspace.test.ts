@@ -742,7 +742,7 @@ describe('Workspace Settings authority', () => {
       ]),
     );
     roomViews.chats.mockResolvedValue(chatListView([]));
-    phoneOperation.mockRejectedValue(new Error('workspace manager required'));
+    phoneOperation.mockRejectedValue(new Error('workspace admins only'));
 
     const renderer = await render();
     act(() => renderer.root.findByProps({ testID: 'room-visibility-fantastik' }).props.onPress());
@@ -753,7 +753,7 @@ describe('Workspace Settings authority', () => {
 
     expect(navigation.push).not.toHaveBeenCalled();
     expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
-      'Could not join #fantastik: Error: workspace manager required',
+      'Could not join #fantastik: Error: workspace admins only',
     );
   });
 

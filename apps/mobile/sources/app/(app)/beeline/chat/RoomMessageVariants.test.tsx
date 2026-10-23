@@ -416,7 +416,7 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="owner"
+        viewerCanManage
         actionId={null}
         onDecision={onDecision}
         onOpenCorner={onOpenCorner}
@@ -435,7 +435,6 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="other"
-        viewerRole="member"
         actionId={null}
         onDecision={onDecision}
         onOpenCorner={onOpenCorner}
@@ -443,6 +442,30 @@ describe('Room message variant components', () => {
     );
     expect(outsider.root.findAllByProps({ testID: 'write-permission-allow' })).toHaveLength(0);
     expect(outsider.root.findByProps({ testID: 'corner-approval-audience-wait' })).toBeDefined();
+
+    // Squire spending is the spending agent's owner's call alone: neither the
+    // requester nor a Workspace owner or admin who is not its owner decides.
+    const spending = message({
+      writePermission: { ...pending.writePermission!, purpose: 'squire-spending', ownerPubkey: 'agent-owner' },
+    });
+    for (const [viewerPubkey, manage, allowed] of [
+      ['agent-owner', false, true],
+      ['requester', false, false],
+      ['workspace-admin', true, false],
+    ] as const) {
+      const card = render(
+        <WritePermissionCard
+          message={spending}
+          viewerIsAgent={false}
+          viewerPubkey={viewerPubkey}
+          viewerCanManage={manage}
+          actionId={null}
+          onDecision={onDecision}
+          onOpenCorner={onOpenCorner}
+        />,
+      );
+      expect(card.root.findAllByProps({ testID: 'write-permission-allow' }).length > 0).toBe(allowed);
+    }
 
     const allowed = render(
       <WritePermissionCard
@@ -455,7 +478,6 @@ describe('Room message variant components', () => {
         })}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="owner"
         actionId={null}
         onDecision={onDecision}
         onOpenCorner={onOpenCorner}
@@ -2539,7 +2561,6 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="member"
         actionId={null}
         onDecision={onDecision}
       />,
@@ -2570,7 +2591,7 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="someone-else"
-        viewerRole="admin"
+        viewerCanManageWorkspace
         actionId={null}
         onDecision={onDecision}
       />,
@@ -2584,7 +2605,6 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="alex"
-        viewerRole="member"
         actionId={null}
         onDecision={onDecision}
       />,
@@ -2616,7 +2636,7 @@ describe('Room message variant components', () => {
         })}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="owner"
+        viewerCanManageWorkspace
         actionId={null}
         onDecision={onDecision}
       />,
@@ -2665,7 +2685,7 @@ describe('Room message variant components', () => {
           })}
           viewerIsAgent={false}
           viewerPubkey={viewerPubkey}
-          viewerRole={viewerRole}
+          viewerCanManageWorkspace={viewerRole === 'admin'}
           actionId={null}
           onDecision={vi.fn()}
         />,
@@ -2708,7 +2728,7 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="admin"
-        viewerRole="admin"
+        viewerCanManageWorkspace
         actionId={null}
         onDecision={onDecision}
         onOpenSource={onOpenSource}
@@ -2720,7 +2740,6 @@ describe('Room message variant components', () => {
         message={pending}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="member"
         actionId={null}
         onDecision={onDecision}
         onOpenSource={onOpenSource}
@@ -2756,7 +2775,7 @@ describe('Room message variant components', () => {
       store = useRoomMessageStore({ roomId: 'source-room', tailMessages: [],
         roomClient: { historyAround, history: vi.fn() }, enabled: true, initialVisibleCount: 30 });
       return <GrantRequestCard message={card} viewerIsAgent={false} viewerPubkey="owner"
-        viewerRole="member" actionId={null} onDecision={vi.fn()}
+        actionId={null} onDecision={vi.fn()}
         onOpenSource={(roomId, id) => { expect(roomId).toBe('source-room'); void store.jumpTo(id); }} />;
     }
     const renderer = render(<Probe />);
@@ -2871,7 +2890,6 @@ describe('Room message variant components', () => {
           message={pending}
           viewerIsAgent={false}
           viewerPubkey="zeke"
-          viewerRole="member"
           actionId={null}
           onAccept={onAccept}
           onOpenWorkbench={vi.fn()}
@@ -2920,7 +2938,6 @@ describe('Room message variant components', () => {
           })}
           viewerIsAgent={false}
           viewerPubkey="zeke"
-          viewerRole="member"
           actionId={null}
           onAccept={vi.fn()}
           onContinue={onContinue}
@@ -2962,7 +2979,6 @@ describe('Room message variant components', () => {
           })}
           viewerIsAgent={false}
           viewerPubkey="zeke"
-          viewerRole="member"
           actionId={null}
           onAccept={onAccept}
           onContinue={onContinue}
@@ -3000,7 +3016,6 @@ describe('Room message variant components', () => {
           })}
           viewerIsAgent={false}
           viewerPubkey="zeke"
-          viewerRole="member"
           actionId={null}
           onAccept={onAccept}
           onOpenWorkbench={vi.fn()}
@@ -3021,7 +3036,7 @@ describe('Room message variant components', () => {
           message={pending}
           viewerIsAgent={false}
           viewerPubkey="mara"
-          viewerRole="admin"
+          viewerCanManage
           actionId={null}
           onAccept={vi.fn()}
           onOpenWorkbench={vi.fn()}
@@ -3036,7 +3051,6 @@ describe('Room message variant components', () => {
           message={pending}
           viewerIsAgent={false}
           viewerPubkey="bystander"
-          viewerRole="member"
           actionId={null}
           onAccept={vi.fn()}
           onOpenWorkbench={vi.fn()}
@@ -3054,7 +3068,7 @@ describe('Room message variant components', () => {
           message={pending}
           viewerIsAgent
           viewerPubkey="zeke"
-          viewerRole="owner"
+          viewerCanManage
           actionId={null}
           onAccept={vi.fn()}
           onOpenWorkbench={vi.fn()}
@@ -3081,7 +3095,6 @@ describe('Room message variant components', () => {
           })}
           viewerIsAgent={false}
           viewerPubkey="zeke"
-          viewerRole="member"
           actionId={null}
           onAccept={vi.fn()}
           onOpenWorkbench={onOpenWorkbench}
@@ -3127,7 +3140,7 @@ describe('Room message variant components', () => {
         ...(status !== 'pending' ? { decidedBy: owner, decidedAt: 1756900060 } : {}),
         script: { path: '/tmp/cleanup.py', sha256: 'a'.repeat(64), bytes: 17, contents: 'print("cleanup")\n' },
       }],
-    } })} viewerIsAgent={false} viewerPubkey="owner" viewerRole="owner" actionId={null} onDecision={vi.fn()} />);
+    } })} viewerIsAgent={false} viewerPubkey="owner" viewerCanManageWorkspace actionId={null} onDecision={vi.fn()} />);
     const texts = () => card.root.findAllByType('Text').map((node: { props: { children: unknown } }) => node.props.children);
     expect(texts()).toContain(purpose);
     expect(texts()).toContain('python3 cleanup.py');
@@ -3186,7 +3199,7 @@ describe('Room message variant components', () => {
         })}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="owner"
+        viewerCanManageWorkspace
         actionId={null}
         onDecision={vi.fn()}
       />,
@@ -3227,7 +3240,7 @@ describe('Room message variant components', () => {
         })}
         viewerIsAgent={false}
         viewerPubkey="owner"
-        viewerRole="owner"
+        viewerCanManageWorkspace
         actionId={null}
         onDecision={vi.fn()}
       />,

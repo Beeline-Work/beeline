@@ -40,7 +40,7 @@ async function mayViewComputer(database: SqlDatabase, row: ComputerSessionRow, v
      JOIN identities viewer ON viewer.id=$3 AND viewer.kind='human'
      JOIN rooms room ON room.id=$1 AND room.archived_at IS NULL
      JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$3
-       AND member.removed_at IS NULL AND member.role<>'spectator'
+       AND member.removed_at IS NULL
      JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
        AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
        AND workspace_member.removed_at IS NULL AND workspace_member.role<>'spectator'

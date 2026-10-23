@@ -12,6 +12,7 @@
 // Onboarding producers approved by lunchboxfortwo, DM bdf39511 (yes), relayed by Ruby; snapshot only.
 // Connection-install card wording for PR #2765 approved by lunchboxfortwo, DM e9967365 (yes), relayed by Ruby; three requestAgentGrant entries only.
 // Corner failure report wording approved by lunchboxfortwo (message 26355fa9), relayed by Ruby: failed: <corner name> (<corner id>): <reason>.
+// Workspace-wide permissions approved by lunchboxfortwo, message cdced5f2 (go, brief revision 3): lifecycle refusal lines removed because restart/stop/retry/debug are open to the Room; Squire spending card names its owner; run cancel opens to the Room. Wording unchanged elsewhere.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -233,16 +234,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:043906d77a8fde7f",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "wrapper",
-    "template": "deny('only the requester, its owner, or a Room manager may stop that turn')",
-    "literals": [
-      "'only the requester, its owner, or a Room manager may stop that turn'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:1d8d42aedd1fea8b",
     "file": "apps/server/src/agent-command.ts",
     "kind": "wrapper",
@@ -374,26 +365,6 @@
     "kind": "wrapper",
     "template": "dropQueuedOrdersForStop(db, parent)",
     "literals": [],
-    "occurrences": 1
-  },
-  {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:b93f05723718ea26",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "wrapper",
-    "template": "deny('only the requester, its owner, or a Room manager may retry that turn')",
-    "literals": [
-      "'only the requester, its owner, or a Room manager may retry that turn'"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:d73dcc0eef679bf7",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "wrapper",
-    "template": "deny('only its owner or a Room manager may use that command')",
-    "literals": [
-      "'only its owner or a Room manager may use that command'"
-    ],
     "occurrences": 1
   },
   {
@@ -2854,10 +2825,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.permissionRequest:systemLine:357267cebf0c187d",
+    "id": "src/daemon-service.ts:DaemonService.permissionRequest:systemLine:1f6ea7a1be67d755",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    id: created,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: agent.name },\n    verb: `asked ${requester.handle ? `@${requester.handle}` : ''} to`,\n    object: tool,\n    presentation: 'card',\n    requestId: input.requestId,\n    cardType: 'permission',\n    card: {\n        permissionId: input.permissionId,\n        requestId: input.requestId,\n        agent,\n        requester,\n        tool,\n        ...(repository ? { repository } : {}),\n        ...(scope.type === 'money.spend' ? { purpose: 'squire-spending' } : {}),\n        status: 'pending',\n    },\n})",
+    "template": "systemLine(database, {\n    id: created,\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: agent.name },\n    verb: `asked ${requester.handle ? `@${requester.handle}` : ''} to`,\n    object: tool,\n    presentation: 'card',\n    requestId: input.requestId,\n    cardType: 'permission',\n    card: {\n        permissionId: input.permissionId,\n        requestId: input.requestId,\n        agent,\n        requester,\n        tool,\n        ...(repository ? { repository } : {}),\n        ...(scope.type === 'money.spend'\n            ? { purpose: 'squire-spending', ...(spendingOwnerId ? { ownerId: spendingOwnerId } : {}) }\n            : {}),\n        status: 'pending',\n    },\n})",
     "literals": [
       "''",
       "'agent'",
@@ -5156,6 +5127,7 @@
     "kind": "wrapper",
     "template": "closeRun(db, scope, {\n    status: 'abandoned',\n    outcome: 'cancelled',\n    reason,\n    cancellation: { reason, actorId },\n    line: {\n        authorId: SYSTEM_IDENTITY_ID,\n        subject: identitySubject(await loadIdentityRow(db, actorId)),\n        verb: 'cancelled workflow',\n        object: run.workflowSlug,\n        consequence: `run ${shortRunId(input.runId)}`,\n    },\n})",
     "literals": [
+      "'a person in this Room, the run requester, a bound role owner'",
       "'abandoned'",
       "'agent'",
       "'cancel this run'",

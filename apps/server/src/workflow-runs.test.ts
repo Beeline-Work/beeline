@@ -2227,8 +2227,9 @@ describe('agent workflow run reads and cancellation', () => {
     expect((await cancelWorkflowRun(database, command, { runId, reason: 'Owner withdrew' })).status).toBe('abandoned');
   });
 
-  it('allows a human Room admin and records that human as the actor', async () => {
+  it('allows a human Workspace admin and records that human as the actor', async () => {
     await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
     await cancelWorkflowRun(database, command, { runId, reason: 'Admin stopped' });
@@ -2241,7 +2242,6 @@ describe('agent workflow run reads and cancellation', () => {
     expect(notice.author_id).toBe(SYSTEM_IDENTITY_ID);
     expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId.slice(0, 8)}`);
     expect(notice.actor_id).toBe(OWNER);
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     const room = await new PhoneService(database, 'http://localhost').readRoom(ROOM, OWNER);
     const displayedNotice = room?.messages.find(message => message.text === notice.text);
     expect(displayedNotice?.author).toMatchObject({ pubkey: SYSTEM_IDENTITY_ID, name: 'System' });
@@ -2917,7 +2917,8 @@ describe('gates with a timeout and a default', () => {
     expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('sign_off');
   });
 
-  it('sends the notice to the Room admins when the owner has left the Room', async () => {
+  it('sends the notice to the Workspace admins when the owner has left the Room', async () => {
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, OUTSIDER]);
     const runId = await startedGatedRun(await commandFor(WORKER_A, await rootMessage(OUTSIDER, 'please run gated')));
     expect((await runCards(runId))[0]!.card.ownerId).toBe(OUTSIDER);
@@ -2973,6 +2974,7 @@ describe('run owner', () => {
   });
 
   it('is null for an older agent-made schedule with no recorded owner, so notices go to admins', async () => {
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(GATED) });
     await database.query(
       `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)

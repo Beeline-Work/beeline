@@ -59,7 +59,6 @@ function Card({ offer, viewer }: { offer: ConnectorOfferCardView; viewer: string
       message={{ id: offer.offerId, text: '', isUser: false, timestamp: offer.createdAt, connectorOffer: offer } as never}
       viewerIsAgent={false}
       viewerPubkey={viewer}
-      viewerRole="member"
       actionId={null}
       onAccept={() => undefined}
       onContinue={() => undefined}

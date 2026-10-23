@@ -110,7 +110,8 @@ export interface WritePermissionCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
+  /** The server's Workspace owner/admin decision (`viewer.permissions.manage`). */
+  viewerCanManage?: boolean;
   actionId: string | null;
   targetBranch?: string;
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
@@ -122,7 +123,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   agent,
   viewerIsAgent,
   viewerPubkey,
-  viewerRole,
+  viewerCanManage = false,
   actionId,
   targetBranch,
   onDecision,
@@ -133,18 +134,21 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   const display = resolveAgentDisplayIdentity(permission.agentPubkey, agent);
   const pending = permission.status === 'pending';
   const busy = actionId === permission.permissionId;
+  // Squire spending is the spending agent's owner's call alone (the server
+  // names them on the card); other write requests go to the requester or a
+  // Workspace owner or admin, the same rule `decidePermission` enforces.
   const canDecide =
     !viewerIsAgent &&
-    (viewerPubkey === permission.requesterPubkey ||
-      viewerRole === 'admin' ||
-      viewerRole === 'owner');
+    (squireSpending
+      ? Boolean(permission.ownerPubkey) && viewerPubkey === permission.ownerPubkey
+      : viewerPubkey === permission.requesterPubkey || viewerCanManage);
   const footerNote = pending
     ? !permission.repository
       ? 'missing target'
-      : squireSpending && viewerRole !== 'owner'
+      : squireSpending
         ? 'owner confirmation'
         : !canDecide
-          ? 'requester or room admin'
+          ? 'requester or workspace admin'
           : 'owner confirmation'
     : permission.status === 'allowed'
       ? 'allowed once'
@@ -154,7 +158,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
           ? 'corner could not open'
           : 'request expired';
   const actions: TranscriptCardAction[] =
-    pending && canDecide && permission.repository && (!squireSpending || viewerRole === 'owner')
+    pending && canDecide && permission.repository
       ? [
           {
             label: 'Deny',
@@ -212,7 +216,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
       }
       body={
         squireSpending
-          ? 'Trusty Squire stays in its vault-backed process. Only the Room owner can confirm this spending or checkout-capable action.'
+          ? 'Trusty Squire stays in its vault-backed process. Only its owner can confirm this spending or checkout-capable action.'
           : permission.repository
             ? 'Opening a corner gives the agent a branch, not merge authority. A person still approves the merge.'
             : 'This write request is missing its repository target and cannot be allowed.'
@@ -300,7 +304,8 @@ export interface ConnectorOfferCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
+  /** The server's Workspace owner/admin decision (`viewer.permissions.manage`). */
+  viewerCanManage?: boolean;
   /** The offer whose acceptance is in flight. */
   actionId: string | null;
   onAccept(
@@ -396,7 +401,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   agent,
   viewerIsAgent,
   viewerPubkey,
-  viewerRole,
+  viewerCanManage = false,
   actionId,
   onAccept,
   onContinue,
@@ -409,7 +414,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   const connecting = offer.status === 'connecting';
   const canAccept =
     !viewerIsAgent &&
-    (viewerPubkey === offer.addressee.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+    (viewerPubkey === offer.addressee.pubkey || viewerCanManage);
   const busy = actionId === offer.offerId;
   const actions: TranscriptCardAction[] =
     pending && canAccept

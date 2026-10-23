@@ -40,7 +40,7 @@ export default function ApprovalProof() {
       <Text style={{ ...theme.type.hero, color: theme.textPrimary }}>@System</Text>
       <Text style={{ ...theme.type.meta, color: theme.textSecondary }}>Announcements only</Text>
     </View>
-    <GrantRequestCard message={message} viewerIsAgent={false} viewerPubkey="owner" viewerRole="owner" actionId={null}
+    <GrantRequestCard message={message} viewerIsAgent={false} viewerPubkey="owner" viewerCanManageWorkspace actionId={null}
       onDecision={(_, decision) => setStatus(decision === 'deny' ? 'denied' : decision === 'once' ? 'once' : 'approved')} />
   </ScrollView>;
 }

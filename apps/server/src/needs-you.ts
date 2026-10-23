@@ -318,7 +318,8 @@ const APPROVAL_BRANCHES: readonly string[] = [
        SELECT 1 FROM jsonb_array_elements(m.card->'grants') entry
        WHERE entry->>'grantId' IN (SELECT grant_id FROM decidable)
      )`,
-  // `decidePermission`: the person the agent asked, or a Workspace manager.
+  // `decidePermission`: the spending agent's owner for Squire spending;
+  // otherwise the person the agent asked, or a Workspace manager.
   // Deciding posts a second card; only the original one still says pending.
   `${APPROVAL_FROM('write-access')}
    JOIN permission_authority permission ON permission.room_id=room.id
@@ -327,7 +328,10 @@ const APPROVAL_BRANCHES: readonly string[] = [
      AND m.card->>'permissionId'=permission.permission_id AND m.card->>'status'='pending'
    ${APPROVAL_JOINS}
    WHERE m.deleted_at IS NULL
-     AND (permission.principal_id=$2 OR ${VIEWER_MANAGES_WORKSPACE})`,
+     AND CASE WHEN m.card->>'purpose'='squire-spending' THEN EXISTS (
+         SELECT 1 FROM agents spender
+         WHERE spender.agent_id=m.card->'agent'->>'pubkey' AND spender.owner_id=$2)
+       ELSE (permission.principal_id=$2 OR ${VIEWER_MANAGES_WORKSPACE}) END`,
   // An open question addressed to the viewer: tagged, or asked of its
   // requester when it tags nobody (`addressedToPersonSql`'s reading).
   `${APPROVAL_FROM('choice', 'choice.closes_at')}

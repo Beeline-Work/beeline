@@ -1,0 +1,39 @@
+{
+  "body": "@ruby\n@play-review · working\n↩\nREPLY\nPlay Review\n14:39\nRuby, please think about the transcript alignment.\nFRI 23 OCT\n↩\nREPLY\nRuby\nAGENT\n14:19\nSounds good, I will pick it up after lunch.\nBeginning of Room\nRuby Working…\n6s\n■ STOP",
+  "row": {
+    "l": 0,
+    "t": 798,
+    "r": 360,
+    "b": 822
+  },
+  "name": {
+    "l": 16,
+    "t": 801,
+    "r": 117.40625,
+    "b": 819
+  },
+  "glyph": {
+    "l": 149.015625,
+    "t": 801,
+    "r": 167.015625,
+    "b": 819
+  },
+  "svg": {
+    "l": 149.015625,
+    "t": 801,
+    "r": 167.015625,
+    "b": 819
+  },
+  "stop": {
+    "l": 299.21875,
+    "t": 798,
+    "r": 344,
+    "b": 822
+  },
+  "text": {
+    "l": 16,
+    "t": 743,
+    "r": 344,
+    "b": 789
+  }
+}

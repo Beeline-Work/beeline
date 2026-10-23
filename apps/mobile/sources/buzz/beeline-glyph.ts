@@ -71,6 +71,7 @@ export const ribbon = (() => {
     fillRule: beelineMark.fillRule,
     transform: beelineMark.transform,
     iconViewBox: beelineMark.viewBox,
+    cellInkInset: ((minX - originX) / side) * MARK_CELL,
     cellViewBox: `${originX.toFixed(3)} ${originY.toFixed(3)} ${side.toFixed(3)} ${side.toFixed(3)}`,
   };
 })();

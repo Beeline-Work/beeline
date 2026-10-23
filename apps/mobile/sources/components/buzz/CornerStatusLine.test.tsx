@@ -14,16 +14,6 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
-vi.mock('react-native-unistyles', async () => {
-  const { typeRoles } = await import('@/buzz/groknight');
-  return {
-    StyleSheet: {
-      hairlineWidth: 1,
-      create: (factory: (theme: unknown) => unknown) =>
-        factory({ buzz: { accent: '#gold', ledgerQuiet: '#quiet', type: typeRoles } }),
-    },
-  };
-});
 
 import { CornerStatusLine } from './CornerStatusLine';
 
@@ -71,7 +61,7 @@ const lifecycle = {
 };
 
 describe('CornerStatusLine', () => {
-  it('is one inscribed link with the ↗ affordance and no button', () => {
+  it('is one inscribed link with a chevron affordance and no button', () => {
     const onOpenPullRequest = vi.fn();
     const renderer = render(
       <CornerStatusLine archived={false} lifecycle={lifecycle} onOpenPullRequest={onOpenPullRequest} />,
@@ -86,14 +76,10 @@ describe('CornerStatusLine', () => {
         .filter((node: any) => typeof node.type === 'string'),
     ).toHaveLength(0);
     expect(renderer.root.findAllByType('Button' as any)).toHaveLength(0);
-    expect(renderer.root.findAllByType('View' as any)).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'corner-status-copy' }).props.children).toBe(
       'PR #840 · 1/15 tests passed · running',
     );
-    expect(renderer.root.findByProps({ testID: 'corner-status-affordance' }).props.children).toBe(
-      '↗',
-    );
-    act(() => renderer.root.findByProps({ testID: 'corner-status-line' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'corner-status-affordance' }).props.onPress());
     expect(onOpenPullRequest).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/840');
   });
 

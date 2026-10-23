@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { InlineRow, TranscriptFactRow } from './IndexRow';
-import { ShowMoreRow } from './ShowMoreRow';
+import { LedgerDisclosure } from './LedgerDisclosure';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { HullDialogActions } from './HullDialog';
 import React, {
@@ -462,13 +462,13 @@ export function TranscriptCard({
           ))}</View> : null}
           {children}
           {foldCode && code !== undefined ? (
-            <View style={styles.detailInset}><ShowMoreRow
-              inset="none"
-              label={codeLabel ? `${codeOpen ? 'Hide' : 'Show'} ${codeLabel}` : codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
+            <View style={styles.detailInset}><LedgerDisclosure
               expanded={codeOpen}
-              testID={codeTestID ? `${codeTestID}-toggle` : undefined}
+              rowTestID={codeTestID ? `${codeTestID}-toggle` : undefined}
+              accessibilityLabel={codeLabel ?? 'Script'}
+              accessibilityState={{ expanded: codeOpen }}
               onPress={() => setCodeOpen((open) => !open)}
-            /></View>
+            >{`${codeLabel ?? 'Script'} · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}</LedgerDisclosure></View>
           ) : null}
           {code !== undefined && (!foldCode || codeOpen) ? (
             <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>

@@ -1,4 +1,4 @@
-"""Capture both themes and verify edge taps on a task-owned Android emulator."""
+"""Exercise shared disclosure rows and capture both themes on a leased emulator."""
 import argparse
 import json
 import math
@@ -10,9 +10,11 @@ import xml.etree.ElementTree as ET
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--serial', required=True)
-parser.add_argument('--phase', choices=['before', 'after'], required=True)
+parser.add_argument('--out')
+parser.add_argument('--phase', choices=['before', 'after'], default='after')
+parser.add_argument('--theme', choices=['bone', 'obsidian'])
 args = parser.parse_args()
-out = pathlib.Path('evidence/disclosure-top-edge') / args.phase
+out = pathlib.Path(args.out or f'evidence/disclosure-top-edge/{args.phase}')
 out.mkdir(parents=True, exist_ok=True)
 
 
@@ -25,50 +27,90 @@ def nodes():
     return list(ET.fromstring(adb('shell', 'cat', '/sdcard/disclosure-proof.xml')).iter('node'))
 
 
-def find(label):
-    return next(node for node in nodes() if node.get('content-desc') == label)
-
-
 def bounds(node):
     return tuple(map(int, re.findall(r'\d+', node.get('bounds'))))
 
 
-def tap(node, edge=False):
+def scroll(top=False):
+    adb('shell', 'input', 'swipe', '500', '500' if top else '2050', '500', '2050' if top else '500', '250')
+    time.sleep(.4)
+
+
+def find(key):
+    for _ in range(5):
+        for node in nodes():
+            if key in [node.get('resource-id'), node.get('content-desc')]:
+                x1, y1, x2, y2 = bounds(node)
+                if y1 > 120 and y2 < 2350:
+                    return node
+        scroll()
+    raise AssertionError(f'Missing control {key}')
+
+
+def tap(key):
+    node = find(key)
     x1, y1, x2, y2 = bounds(node)
-    adb('shell', 'input', 'tap', str(x2 - 3 if edge else x1 + 3), str(y1 + 3 if edge else y2 - 3))
-    time.sleep(.3)
+    adb('shell', 'input', 'tap', str((x1 + x2) // 2), str((y1 + y2) // 2))
+    time.sleep(.15)
+    return node
+
+
+def capture(name):
+    time.sleep(.5)
+    (out / f'{name}.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+    (out / f'{name}.xml').write_bytes(adb('shell', 'cat', '/sdcard/disclosure-proof.xml'))
 
 
 density = int(re.findall(r'\d+', adb('shell', 'wm', 'density').decode())[-1]) / 160
-results = {'serial': args.serial, 'phase': args.phase, 'density': density, 'themes': {}}
-for theme in ['bone', 'obsidian']:
-    # Starts in Bone; the theme button switches to Obsidian after the first pass.
-    screen = adb('exec-out', 'screencap', '-p')
-    (out / f'android-{theme}.png').write_bytes(screen)
-    rows = ['1 step, expandable', '1 issue filed · 1 PR merged', '1 check passed']
+rows = [
+    ('tool-run-group-read', 'tool-ledger-line-read'),
+    ('1 issue filed · 1 corner merged', 'notification-run-cell-76c08267b80dae037530c6be9e3ebe33d582acb4198d79e878446b65149b2985'),
+    ('notification-run-expand-checks', 'notification-run-cell-check'),
+    ('notification-run-expand-payments', 'notification-run-cell-pay-1'),
+    ('notification-run-expand-notices', 'notification-run-cell-notice-1'),
+    ('inline-output-toggle', 'inline-output-body'),
+    ('script-toggle', 'script'),
+]
+results = {'serial': args.serial, 'density': density, 'themes': {}}
+for theme in ([args.theme] if args.theme else ['bone', 'obsidian']):
+    for _ in range(3):
+        scroll(top=True)
+    nodes()
+    capture(f'android-{theme}-collapsed')
     receipts = []
-    for label in rows:
-        row = find(label)
-        x1, y1, x2, y2 = bounds(row)
-        # Android rounds the two bounds independently to whole device pixels.
-        assert y2 - y1 >= math.floor(44 * density), f'{label}: target below rounded 44dp'
-        tap(row, edge=True)
+    for key, child in rows:
+        node = tap(key)
+        assert bounds(node)[3] - bounds(node)[1] >= math.floor(44 * density), f'{key}: touch height'
         expanded = nodes()
-        if label.startswith('1 step'):
-            assert any(node.get('resource-id', '').endswith('tool-ledger-line-read') for node in expanded)
-        elif label.startswith('1 issue'):
-            assert any(node.get('content-desc') == 'Open Issue #2722' for node in expanded)
-        else:
-            assert any('Required checks' in node.get('text', '') for node in expanded)
-        tap(find(label))
-        collapsed = nodes()
-        assert not any(node.get('resource-id', '').endswith('tool-ledger-line-read') for node in collapsed)
-        assert not any(node.get('content-desc') == 'Open Issue #2722' for node in collapsed)
-        assert not any('Required checks' in node.get('text', '') for node in collapsed)
-        receipts.append({'label': label, 'heightDp': (y2 - y1) / density, 'edgeTaps': 'expanded then collapsed'})
-    (out / f'android-{theme}.xml').write_bytes(adb('shell', 'cat', '/sdcard/disclosure-proof.xml'))
+        assert any(n.get('resource-id') == child for n in expanded), f'{key}: child not revealed'
+        if key == 'tool-run-group-read' and theme == 'bone':
+            assert not any(n.get('resource-id') == 'tool-ledger-line-edit' for n in expanded), 'long run must cap at two'
+            tap('tool-run-more-read')
+            assert any(n.get('resource-id') == 'tool-ledger-line-edit' for n in nodes()), 'N more must reveal remaining steps'
+        tap(key)
+        assert not any(n.get('resource-id') == child for n in nodes()), f'{key}: child not collapsed'
+        receipts.append({'row': key, 'expandedThenCollapsed': True})
+    for _ in range(3):
+        scroll(top=True)
+    for key, _ in rows:
+        tap(key)
+    for _ in range(3):
+        scroll(top=True)
+    for index in range(3):
+        nodes()
+        capture(f'android-{theme}-expanded-{index + 1}')
+        scroll()
     results['themes'][theme] = receipts
+    (out / 'android-results.json').write_text(json.dumps(results, indent=2) + '\n')
+    print(f'PASS {theme}: shared disclosures, capped steps, 44dp targets', flush=True)
+    # Reset disclosure state before switching theme, then return to the top.
+    for _ in range(3):
+        scroll(top=True)
+    for key, _ in rows:
+        tap(key)
+    for _ in range(3):
+        scroll(top=True)
     if theme == 'bone':
-        tap(find('Switch theme'))
+        tap('Switch theme')
 (out / 'android-results.json').write_text(json.dumps(results, indent=2) + '\n')
 print(json.dumps(results))

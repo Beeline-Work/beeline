@@ -33,7 +33,7 @@ const checkCollapsed = (id: string) => {
     element.clientHeight <= parseFloat(getComputedStyle(element).lineHeight) * 2 + 1,
     `${id} taller than two lines`,
   );
-  assert(toggle(id)?.textContent === 'More', `${id} missing More`);
+  assert(toggle(id)?.querySelector('polyline')?.getAttribute('points') === '9 6 15 12 9 18', `${id} missing closed chevron`);
 };
 async function measure() {
   const root = document.getElementById('root')!;
@@ -90,15 +90,14 @@ async function measure() {
     'collapsed accessibility state missing',
   );
   assert(control.clientHeight >= 44 && control.clientWidth >= 44, 'small toggle target');
-  assert(
-    getComputedStyle(control.firstElementChild!).color ===
-      getComputedStyle(get('system-line-name-first-0')).color,
-    'More is not brass',
-  );
+  const chevron = control.querySelector('polyline')!;
+  const muted = location.search.includes('bone') ? '#8B7F6E' : '#83838d';
+  assert(chevron.getAttribute('stroke') === muted, 'system disclosure must be muted');
+  assert(chevron.getAttribute('points') === '9 6 15 12 9 18', 'closed chevron must point right');
   assert(control.getAttribute('tabindex') === '0', 'control is not keyboard reachable');
   control.click();
   await settle();
-  assert(toggle('first').textContent === 'Less', 'Less missing');
+  assert(toggle('first').querySelector('polyline')?.getAttribute('points') === '6 9 12 15 18 9', 'open chevron must point down');
   assert(
     toggle('first').getAttribute('aria-expanded') === 'true',
     'expanded accessibility state missing',
@@ -136,6 +135,6 @@ async function measure() {
   await settle();
   get('system-line-second').scrollIntoView();
   document.getElementById('result')!.textContent =
-    'PASS: two-line previews, brass More/Less, full original text, short and legacy messages, independent expansion, accessible controls, stamps and links';
+    'PASS: two-line previews, muted right/down chevrons, full original text, short and legacy messages, independent expansion, accessible controls, stamps and links';
 }
 measure().catch((error) => (document.getElementById('result')!.textContent = String(error)));

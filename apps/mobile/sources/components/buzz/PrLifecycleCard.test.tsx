@@ -13,7 +13,6 @@ vi.mock('react-native', () => {
 });
 import { NotificationLifecycleCard } from './PrLifecycleCard';
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
-vi.mock('./LifecycleRow', () => ({ LifecycleRow: () => null }));
 import { LifecycleRecordCard } from './LifecycleCard';
 import { CornerOpenedMarker } from './CornerOpenedMarker';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
@@ -79,15 +78,10 @@ describe('mock A lifecycle rows', () => {
     expect(render().get('notification-run-run').props.style?.borderTopWidth ?? 0).toBe(0);
   });
 
-  it('keeps the shared check-event disclosure borderless and at least 44 high', () => {
+  it('shows a single check as a child row without a group header', () => {
     const { get } = render([{ ...item, kind: 'check', state: 'Checks passed' }] as any);
-    const row = get('notification-run-expand-run');
-    expect(row.props.style.borderTopWidth ?? 0).toBe(0);
-    expect(row.props.style.minHeight).toBeGreaterThanOrEqual(44);
-    act(() => row.props.onPress());
+    expect(get('notification-run-expand-run')).toBeUndefined();
     expect(get('notification-run-cell-pr')).toBeDefined();
-    act(() => row.props.onPress());
-    expect(get('notification-run-cell-pr')).toBeUndefined();
   });
 
   it('shows a single row without a header and keeps the two destinations separate', () => {

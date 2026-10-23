@@ -1,16 +1,11 @@
+import { TranscriptNavigationRow } from './IndexRow';
 import React from 'react';
-import { Pressable, Text } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { cornerStatusLine } from '@/buzz/corner-status-line';
 
-/**
- * A corner's PR state, inscribed above the transcript, never framed: one dim
- * mono line at the prose margin (`PR #840 · 6/15 tests passed · running`) with
- * `↗` hung in the right gutter where the timestamps live. The whole line is
- * one link into GitHub — the user reviews and merges there, or tells the agent
- * to merge in the corner. Nothing renders until a pull request exists.
- */
+/** A 44px transcript link to the corner's pull request. */
 export const CornerStatusLine = React.memo(function CornerStatusLine({
   lifecycle,
   archived,
@@ -24,20 +19,13 @@ export const CornerStatusLine = React.memo(function CornerStatusLine({
   const url = lifecycle?.pr?.url;
   if (!line || !url) return null;
   return (
-    <Pressable
-      accessibilityLabel={`${line}. Opens the pull request on GitHub`}
-      accessibilityRole="link"
-      onPress={() => onOpenPullRequest(url)}
-      style={({ pressed }) => [styles.line, pressed && styles.linePressed]}
-      testID="corner-status-line"
-    >
-      <Text numberOfLines={1} style={styles.copy} testID="corner-status-copy">
-        {line}
-      </Text>
-      <Text style={styles.affordance} testID="corner-status-affordance">
-        ↗
-      </Text>
-    </Pressable>
+    <View style={styles.line}>
+      <TranscriptNavigationRow testID="corner-status-line" singleDestination divider={false}
+        trailing={{ accessibilityLabel: `${line}. Opens the pull request on GitHub`,
+          onPress: () => onOpenPullRequest(url), testID: 'corner-status-affordance' }}>
+        <Text numberOfLines={1} style={styles.copy} testID="corner-status-copy">{line}</Text>
+      </TranscriptNavigationRow>
+    </View>
   );
 });
 
@@ -45,27 +33,17 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     line: {
-      flexDirection: 'row',
-      alignItems: 'center',
+      width: '100%',
       minWidth: 0,
+      minHeight: 44,
       // The transcript's content inset, so the line sits on the prose margin.
       paddingHorizontal: 16,
-      paddingVertical: 8,
     },
-    linePressed: { opacity: 0.6 },
     copy: {
-      ...hull.type.machine,
+      ...hull.type.meta,
       flexShrink: 1,
       minWidth: 0,
       color: hull.ledgerQuiet,
-    },
-    // The ledger's marginalia gutter (`LEDGER_MARGINALIA_WIDTH`), right-aligned.
-    affordance: {
-      ...hull.type.machine,
-      flexShrink: 0,
-      width: 36,
-      textAlign: 'right',
-      color: hull.accent,
     },
   };
 });

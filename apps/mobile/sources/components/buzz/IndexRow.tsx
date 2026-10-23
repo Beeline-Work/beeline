@@ -34,6 +34,7 @@ export function TranscriptNavigationRow({
   primary,
   trailing,
   singleDestination = false,
+  divider = true,
   testID,
 }: {
   children: React.ReactNode;
@@ -41,6 +42,7 @@ export function TranscriptNavigationRow({
   primary?: IndexRowTrailingPress;
   trailing?: IndexRowTrailingPress;
   singleDestination?: boolean;
+  divider?: boolean;
   testID?: string;
 }) {
   const chevron = (
@@ -61,7 +63,7 @@ export function TranscriptNavigationRow({
           hitSlop={{ top: 6, bottom: 6 }}
           style={({ pressed }) => [
             navigationStyles.row,
-            !leading && navigationStyles.divider,
+            !leading && divider && navigationStyles.divider,
             pressed && navigationStyles.pressed,
           ]}
         >
@@ -72,7 +74,7 @@ export function TranscriptNavigationRow({
       </View>
     );
   return (
-    <View style={[navigationStyles.row, navigationStyles.divider]} testID={testID}>
+    <View style={[navigationStyles.row, divider && navigationStyles.divider]} testID={testID}>
       {primary ? (
         <Pressable accessibilityRole="link" {...primary} style={navigationStyles.copyTarget}>
           {children}

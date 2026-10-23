@@ -201,12 +201,10 @@
     ],
     "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure"],
     "components/buzz/LifecycleCard.tsx": [
-      "LifecycleCard",
       "LifecycleRecordCard",
       "GitHubEventCard",
       "DaemonFactCard"
     ],
-    "components/buzz/LifecycleRow.tsx": ["LifecycleRow", "body"],
     "components/buzz/MemberGrantRow.tsx": ["MemberGrantRow"],
     "components/buzz/MemberPickerSheet.tsx": ["MemberPickerSheet"],
     "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow"],
@@ -739,12 +737,6 @@
     },
     "components/buzz/LifecycleCard.tsx": {
       "5e612178855374c7fff6": 1
-    },
-    "components/buzz/LifecycleRow.tsx": {
-      "24f8c4d3af3376fc07e9": 1,
-      "68c6efaa09cf2ac0e899": 1,
-      "9293320136ba5f74bb37": 1,
-      "e15ded891f25a9971a7f": 1
     },
     "components/buzz/MemberGrantRow.tsx": {
       "396374bb114f5bbc0926": 1

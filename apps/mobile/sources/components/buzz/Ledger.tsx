@@ -1,3 +1,4 @@
+import { LedgerDisclosure } from './LedgerDisclosure';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Platform,
@@ -869,17 +870,11 @@ export function LedgerSystemLine({
         </Text>
       </View>
       {overflows && (
-        <Pressable
-          style={styles.systemLineToggle}
-          accessibilityRole="button"
+        <LedgerDisclosure expanded={expanded} accessibilityState={{ expanded }}
           accessibilityLabel={expanded ? 'Show less of system message' : 'Show full system message'}
-          accessibilityState={{ expanded }}
-          aria-expanded={expanded}
-          onPress={() => setExpanded((value) => !value)}
-          testID={`system-line-toggle-${id}`}
-        >
-          <Text style={styles.systemLineToggleText}>{expanded ? 'Less' : 'More'}</Text>
-        </Pressable>
+          onPress={() => setExpanded(value => !value)} rowTestID={`system-line-toggle-${id}`}>
+          {null}
+        </LedgerDisclosure>
       )}
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
@@ -932,21 +927,13 @@ export function LedgerGhostLine({
   const [expanded, setExpanded] = useState(false);
   return (
     <View style={styles.ghostBlock} testID={testID}>
-      <Pressable
-        accessibilityLabel={expanded ? `Collapse ${label}` : `${label}. Expand`}
-        accessibilityRole="button"
+      <LedgerDisclosure
+        expanded={expanded}
+        accessibilityLabel={label}
+        accessibilityState={{ expanded }}
+        rowTestID={testID ? `${testID}-toggle` : undefined}
         onPress={() => setExpanded((open) => !open)}
-        style={styles.ghostRow}
-      >
-        {/* Two Texts, one line. A single truncating Text would eat the
-            disclosure copy first — the affordance is the whole point of the
-            line, so it is the part that must never be the one to go. Both hold
-            plain string children, clear of the Android blank-flex-Text bug. */}
-        <Text numberOfLines={1} style={styles.ghostLine}>
-          ⋯ {label}
-        </Text>
-        <Text style={styles.ghostAffordance}> · tap to {expanded ? 'collapse' : 'expand'}</Text>
-      </Pressable>
+      >{label}</LedgerDisclosure>
       {expanded ? (
         <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator>
           <Text selectable style={styles.ghostBody} testID={testID ? `${testID}-body` : undefined}>
@@ -1106,16 +1093,11 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     paddingVertical: theme.buzz.space.xs,
     paddingRight: LEDGER_MARGINALIA_WIDTH + 8,
-    marginBottom: theme.buzz.space.sm,
+    marginBottom: theme.buzz.space.md,
   },
   roomUpdateLine: {
     ...theme.buzz.type.meta,
     fontFamily: theme.buzz.proseRegular,
-    // Space Grotesk ships without an italic face. Asking React Native for
-    // `fontStyle: 'italic'` can therefore substitute a platform/default face;
-    // keep the committed caption cut and apply the quiet editorial slant
-    // geometrically instead.
-    transform: [{ skewX: '-8deg' }],
     color: theme.buzz.ledgerQuiet,
   },
   roomUpdateLineBrass: { color: theme.buzz.accent },
@@ -1160,18 +1142,6 @@ const styles = StyleSheet.create((theme) => ({
     right: 0,
     opacity: 0,
   },
-  systemLineToggle: {
-    alignSelf: 'flex-start',
-    minWidth: 44,
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  systemLineToggleText: {
-    ...theme.buzz.type.meta,
-    fontFamily: theme.buzz.proseMedium,
-    color: theme.buzz.accent,
-    textDecorationLine: 'underline',
-  },
   systemLineName: { fontFamily: theme.buzz.proseRegular, color: theme.buzz.accent },
   systemLineLink: {
     fontFamily: theme.buzz.proseRegular,
@@ -1207,21 +1177,6 @@ const styles = StyleSheet.create((theme) => ({
     width: '100%',
     minWidth: 0,
     marginTop: theme.buzz.space.sm,
-    borderLeftWidth: 2,
-    borderLeftColor: theme.buzz.agentRail,
-    paddingLeft: theme.buzz.space.md,
-  },
-  ghostRow: { minWidth: 0, flexDirection: 'row', alignItems: 'baseline' },
-  ghostLine: {
-    ...theme.buzz.type.machine,
-    flexShrink: 1,
-    minWidth: 0,
-    color: theme.buzz.ledgerGhost,
-  },
-  ghostAffordance: {
-    ...theme.buzz.type.machine,
-    flexShrink: 0,
-    color: theme.buzz.ledgerGhost,
   },
   ghostBody: {
     ...theme.buzz.type.machine,

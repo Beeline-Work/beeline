@@ -15,8 +15,10 @@ for (const width of [390, 1280])
           `beelineThemes.${theme}`,
         );
         shims['./ToolOutputSheet'] = 'export const ToolOutputSheet = () => null;';
-        shims['./Ledger'] =
-          'export const LedgerBylineView = () => null; export const ledgerEntryRhythm = () => ({}); export const provisionalProseStyle = () => ({}); export const settledAgentProseStyle = () => ({});';
+        shims['react-native-reanimated'] += '\nexport const FadeOut = FadeInDown; export const interpolateColor = (_, __, colors) => colors[1];';
+        shims['expo-router'] = 'export const router = {}; export const useRouter = () => ({});';
+        shims['@/components/buzz/HullDialog'] = 'export const HullDialogInput = () => null;';
+        shims['./HullDialog'] = 'export const HullDialogActions = () => null;';
         shims['./MonoMarkdown'] = 'export const MonoMarkdown = () => null;';
         const screenshotDir = process.env.DISCLOSURE_SCREENSHOT_DIR;
         if (screenshotDir) mkdirSync(screenshotDir, { recursive: true });
@@ -32,8 +34,9 @@ for (const width of [390, 1280])
           mobile,
           shims,
           width,
+          height: 2300,
           head,
-          query: process.env.DISCLOSURE_BEFORE === '1' ? '?before' : '',
+          query: `?${theme}${process.env.DISCLOSURE_BEFORE === '1' ? '&before' : ''}`,
           screenshotPath: screenshotDir
             ? path.join(screenshotDir, `web-${width}-${theme}.png`)
             : undefined,

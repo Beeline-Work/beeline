@@ -3156,7 +3156,7 @@ describe('Room message variant components', () => {
     expect(card.root.findByProps({ testID: 'grant-purpose-ask' }).props.children).toBe('@Jellybean wants to run a script');
     expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
     const toggle = () => card.root.findByProps({ testID: 'grant-purpose-script-toggle' });
-    expect(toggle().props.expanded).toBe(false);
+    expect(toggle().props.accessibilityState.expanded).toBe(false);
     act(() => toggle().props.onPress());
     expect(card.root.findByProps({ testID: 'grant-purpose-script' })).toBeDefined();
     expect(texts()).toContain('print("cleanup")\n');

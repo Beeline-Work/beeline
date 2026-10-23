@@ -3,6 +3,7 @@ import {
   formatToolCallDuration,
   TOOL_CALL_DURATION_FLOOR_MS,
   toolCallLabel,
+  toolCallVerb,
   toolCallOutput,
 } from './tool-call-row';
 
@@ -72,6 +73,7 @@ export type ToolLedgerLine = {
   kind: 'tool' | 'thought' | 'note';
   glyph: string;
   label: string;
+  verb?: string;
   outcome: 'running' | 'success' | 'failure';
   /** Distilled failure reason, inline on the line; undefined on success. */
   reason?: string;
@@ -108,6 +110,7 @@ export function toolLedgerLines(
       // whole text; a tool's label is the call's object (tool-call-row.ts) —
       // the glyph carries the family.
       label: step.kind === 'tool' ? toolCallLabel(step) : step.label,
+      verb: toolCallVerb(step),
       outcome,
       ...(outcome === 'failure' && step.reason ? { reason: step.reason } : {}),
       ...(durationMs ? { durationMs } : {}),

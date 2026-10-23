@@ -25,14 +25,15 @@ export function LedgerDisclosure({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
+      aria-expanded={expanded}
       onPress={onPress}
       style={styles.row}
       testID={rowTestID}
     >
       <View style={styles.chevron}>
         <ChevronGlyph
-          color={theme.buzz.ledgerGhost}
-          direction={expanded ? 'up' : 'down'}
+          color={theme.buzz.textMuted}
+          direction={expanded ? 'down' : 'right'}
           size={CHEVRON_ROW_SIZE}
         />
       </View>
@@ -43,13 +44,12 @@ export function LedgerDisclosure({
 const styles = StyleSheet.create(({ buzz }) => ({
   row: {
     minHeight: 44,
-    minWidth: 0,
+    minWidth: 44,
     justifyContent: 'center',
-    paddingHorizontal: buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'center',
     gap: buzz.space.sm,
   },
-  chevron: { width: 24, flexShrink: 0, justifyContent: 'center' },
-  label: { ...buzz.type.machine, flex: 1, minWidth: 0, color: buzz.ledgerQuiet },
+  chevron: { width: CHEVRON_ROW_SIZE, flexShrink: 0, justifyContent: 'center' },
+  label: { ...buzz.type.meta, flex: 1, minWidth: 0, color: buzz.textSecondary },
 }));

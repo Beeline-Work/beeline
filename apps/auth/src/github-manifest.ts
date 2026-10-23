@@ -1,3 +1,4 @@
+import { githubFetch } from './external-fetch.js';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 /**
@@ -112,7 +113,7 @@ export async function convertAppManifestCode(
 ): Promise<GitHubAppManifestConversion> {
   let response: Response;
   try {
-    response = await fetch(`${apiBaseUrl}/app-manifests/${encodeURIComponent(code)}/conversions`, {
+    response = await githubFetch(`${apiBaseUrl}/app-manifests/${encodeURIComponent(code)}/conversions`, {
       method: 'POST',
       headers: {
         accept: 'application/vnd.github+json',

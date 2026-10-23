@@ -396,6 +396,11 @@ jobs:
       # built dist, the same as every app that imports those packages.
       - name: Test feedback grouping and ranking
         run: npm run test:feedback-signals
+      - name: Block unbounded outside requests and waiting-screen regressions
+        run: |
+          node --test scripts/external-request-deadlines.test.mjs
+          npm test -w @beeline/auth -- --run src/external-fetch.test.ts
+          npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx'
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr && npm test -w @beeline/api-contract && npm test -w @beeline/buzz-client
 

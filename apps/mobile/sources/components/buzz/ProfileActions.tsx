@@ -6,6 +6,7 @@ import { HullDialogActions } from './HullDialog';
 
 export type ProfileAction = {
   readonly disabled?: boolean;
+  readonly loading?: boolean;
   readonly label: string;
   readonly onPress: () => void;
   readonly testID?: string;

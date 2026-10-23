@@ -71,7 +71,7 @@ export function monolithOrigins(baseUrl: string): readonly string[] {
 
 export class MonolithRequestTimeoutError extends Error {
   constructor() {
-    super('The server timed out before it responded.');
+    super('The server did not answer in time. The result is unknown. Refresh to check before trying again.');
     this.name = 'MonolithRequestTimeoutError';
   }
 }

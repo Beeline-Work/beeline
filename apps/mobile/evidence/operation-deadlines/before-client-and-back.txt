@@ -1,0 +1,774 @@
+
+> @beeline/mobile@0.2.22 test
+> vitest --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx sources/app/(app)/beeline/human-profile.waiting.test.tsx --testTimeout 100
+
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+Close corner failed: Error: The result is unknown. Refresh to check before trying again.
+    at /home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/sources/components/buzz/CornerActionsSheet.test.tsx:68:19
+    at file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:155:11
+    at file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:752:26
+    at file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1897:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1863:10)
+    at runTest (file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1574:12)
+    at runSuite (file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+    at runSuite (file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1729:8)
+    at runFiles (file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile/node_modules/@vitest/runner/dist/chunk-hooks.js:1787:3)
+The current testing environment is not configured to support act(...)
+
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx (4 tests | 4 failed) 43ms
+   × Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success 23ms
+     → expected "spy" to be called once, but got 0 times
+   × Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success 5ms
+     → expected true not to be true // Object.is equality
+   × Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success 3ms
+     → expected false not to be false // Object.is equality
+   × Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out 9ms
+     → expected "spy" to be called with arguments: [ …(1) ]
+
+Received:
+
+  1st spy call:
+
+  [
+-   Error {
+-     "message": "The result is unknown. Refresh to check before trying again.",
+-   },
++   "The result is unknown. Refresh to check before trying again.",
+  ]
+
+
+Number of calls: 1
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+ ❯ sources/app/(app)/beeline/human-profile.waiting.test.tsx (2 tests | 2 failed) 41ms
+   × Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate 30ms
+     → expected "spy" to be called once, but got 0 times
+   × Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate 9ms
+     → expected "spy" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st spy call:
+
+    Array [
+      Object {
+        "back": [Function spy],
+      },
+      "dm",
+    ]
+
+
+Number of calls: 1
+
+ ❯ sources/sync/transport/monolith-operation.test.ts (133 tests | 131 failed) 2937ms
+   × monolith phone operation > treats a successful no-content response as a void operation result 14ms
+     → expected "spy" to be called with arguments: [ …(3) ]
+
+Received:
+
+  1st spy call:
+
+  [
+    "https://server.example/v1/phone/operations/sendPushTest",
+-   ObjectContaining {
++   {
+      "body": "{}",
+-     "method": "POST",
++     "headers": {
++       "content-type": "application/json",
+      },
+-   ObjectContaining {
+-     "timeoutMs": 20000,
++     "method": "POST",
+    },
+  ]
+
+
+Number of calls: 1
+
+   ✓ monolith phone operation > carries a refusal's own reason out to the caller that has to show it 4ms
+   ✓ every registered phone operation has a complete deadline > discovers the registry rather than testing a hand list 1ms
+   × every registered phone operation has a complete deadline > openComputerSession leaves a transport that never answers 3ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > handbackComputerSession leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > endComputerSession leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readWelcomeCards leaves a transport that never answers 102ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > completeWelcomeCards leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readStarPrompt leaves a transport that never answers 102ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > answerStarPrompt leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > sendRoomMessage leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > sendRoomReply leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > reportMessageIssue leaves a transport that never answers 5ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > reactToMessage leaves a transport that never answers 2ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > deleteRoomMessage leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > setMessageBookmark leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > clearMessageBookmarks leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > listMessageBookmarks leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readNeedsYou leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readTray leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > countNeedsYou leaves a transport that never answers 104ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > markNeedsYouSeen leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > clearNeedsYou leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > clearNeedsYouSection leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > listRoomSchedules leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readScheduledWork leaves a transport that never answers 103ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > deleteRoomSchedule leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > listRoomWorkflowRuns leaves a transport that never answers 100ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readWorkflowRun leaves a transport that never answers 102ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readWorkflowDefinition leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > listWorkflowDefinitions leaves a transport that never answers 104ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > startOwnedWorkflow leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > cancelAgentTurn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createHumanCorner leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > requestCornerClose leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > setCornerLocked leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > setCornerHold leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > decideWritePermission leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > decideAgentGrant leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > listRoomSubscriptions leaves a transport that never answers 103ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > deleteRoomSubscription leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > revokeAgentGrant leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > acceptConnectorOffer leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createRoomPoll leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > answerChoice leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > skipChoice leaves a transport that never answers 2ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createWorkspace leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateWorkspace leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > leaveWorkspace leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > deleteWorkspace leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > addWorkspaceMember leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > removeWorkspaceMember leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createRoom leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateRoom leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > deleteRoom leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > leaveRoom leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > closeChat leaves a transport that never answers 102ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > reopenChat leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > addRoomMember leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > removeRoomMember leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > resolveDirectMessage leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createInvite leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > resolveInvite leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > redeemInvite leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createAgentPairingCode leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > claimAgentPairing leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateAgentSoul leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateAgentModelSelection leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > refreshAgentUsage leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > refreshAgentModelCatalog leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > completeAgentSignIn leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateAgentYolo leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateAgentAccessPolicy leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > removeAgent leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updatePersonProfile leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateIdentityFace leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > updateRoomPushState leaves a transport that never answers 102ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > updateIdentityPushLevel leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > actOnRepositoryCard leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > setRoomRepository leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > setRoomTargetBranch leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > removeRoomRepository leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > listRoomWorkflows leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > dispatchRoomWorkflow leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > approveCornerMerge leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > getAuthCapabilities leaves a transport that never answers 100ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > beginGitHubIdentityBind leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > completeGitHubIdentityBind leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > recoverGitHubIdentity leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > getIdentityRecovery leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > getManagedIdentity leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readIdentitySettings leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > readAgentProfile leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > adoptGitHubHandle leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > claimManagedHandle leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > listGitHubRepositories leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > beginGitHubInstallation leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createGitHubRepository leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > getGitHubRepositoryAccess leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > uploadMedia leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > registerPushDevice leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readWebPushKey leaves a transport that never answers 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > unregisterPushDevice leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > sendPushTest leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > reportRunningUpdate leaves a transport that never answers 2ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readWorkbench leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readConnectApp leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > searchWorkbenchApps leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readConnectorInstall leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > pairConnector leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > cancelGoogleSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > beginGoogleSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readGoogleSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > disconnectGoogleSignIn leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > beginLinkSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > cancelLinkSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > disconnectLinkSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > unpairConnector leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > connectWorkbenchApp leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > beginAppSignIn leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > completeAppSignIn leaves a transport that never answers 2ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > disconnectWorkbenchApp leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readConnectionDetail leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > revokeConnectionGrants leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > createWallet leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readWallet leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > sendFromWallet leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > grantWalletDelegation leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > revokeWalletDelegation leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > readWalletHistory leaves a transport that never answers 0ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > deleteAccount leaves a transport that never answers 1ms
+     → actual value must be number or bigint, received "undefined"
+   × every registered phone operation has a complete deadline > preserves an explicit longer deadline for a slow transaction 101ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   × every registered phone operation has a complete deadline > also bounds a body that never arrives after successful headers 103ms
+     → Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 137 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+AssertionError: expected "spy" to be called once, but got 0 times
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx:61:21
+     59|       (method === 'cancel' ? button.props.onPress : button.props.onClo…
+     60|     });
+     61|     expect(onClose).toHaveBeenCalledOnce();
+       |                     ^
+     62|     await act(async () => { tree.update(<CornerActionsSheet {...props}…
+     63|     expect(onClosed).not.toHaveBeenCalled();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/137]⎯
+
+ FAIL  sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+AssertionError: expected true not to be true // Object.is equality
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx:58:41
+     56|       if (method === 'backdrop') expect(sheet.props.dismissOnBackdrop)…
+     57|       const button = method === 'cancel' ? tree.root.findByType('Cance…
+     58|       expect(button.props.disabled).not.toBe(true);
+       |                                         ^
+     59|       (method === 'cancel' ? button.props.onPress : button.props.onClo…
+     60|     });
+ ❯ Proxy.process.env.NODE_ENV.exports.act node_modules/react/cjs/react.development.js:814:22
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx:54:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/137]⎯
+
+ FAIL  sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+AssertionError: expected false not to be false // Object.is equality
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx:56:76
+     54|     await act(async () => {
+     55|       const sheet = tree.root.findByType('Sheet');
+     56|       if (method === 'backdrop') expect(sheet.props.dismissOnBackdrop)…
+       |                                                                            ^
+     57|       const button = method === 'cancel' ? tree.root.findByType('Cance…
+     58|       expect(button.props.disabled).not.toBe(true);
+ ❯ Proxy.process.env.NODE_ENV.exports.act node_modules/react/cjs/react.development.js:814:22
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx:54:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/137]⎯
+
+ FAIL  sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+AssertionError: expected "spy" to be called with arguments: [ …(1) ]
+
+Received:
+
+  1st spy call:
+
+  [
+-   Error {
+-     "message": "The result is unknown. Refresh to check before trying again.",
+-   },
++   "The result is unknown. Refresh to check before trying again.",
+  ]
+
+
+Number of calls: 1
+
+ ❯ sources/components/buzz/CornerActionsSheet.test.tsx:74:21
+     72|       onClosed={vi.fn()} onSaved={vi.fn()} onError={onError} />); });
+     73|     await act(async () => tree.root.findByType('Row').props.onPress());
+     74|     expect(onError).toHaveBeenCalledWith(error);
+       |                     ^
+     75|     expect(tree.root.findByType('Row').props.disabled).toBe(false);
+     76|     await act(async () => tree.unmount());
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/137]⎯
+
+ FAIL  sources/sync/transport/monolith-operation.test.ts > monolith phone operation > treats a successful no-content response as a void operation result
+AssertionError: expected "spy" to be called with arguments: [ …(3) ]
+
+Received:
+
+  1st spy call:
+
+  [
+    "https://server.example/v1/phone/operations/sendPushTest",
+-   ObjectContaining {
++   {
+      "body": "{}",
+-     "method": "POST",
++     "headers": {
++       "content-type": "application/json",
+      },
+-   ObjectContaining {
+-     "timeoutMs": 20000,
++     "method": "POST",
+    },
+  ]
+
+
+Number of calls: 1
+
+ ❯ sources/sync/transport/monolith-operation.test.ts:23:28
+     21|
+     22|     await expect(monolithPhoneOperation('sendPushTest', {})).resolves.…
+     23|     expect(controls.fetch).toHaveBeenCalledWith(
+       |                            ^
+     24|       'https://server.example/v1/phone/operations/sendPushTest',
+     25|       expect.objectContaining({ method: 'POST', body: '{}' }),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/137]⎯
+
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > openComputerSession leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > handbackComputerSession leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > endComputerSession leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > completeWelcomeCards leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > answerStarPrompt leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > sendRoomMessage leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > sendRoomReply leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > reportMessageIssue leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > reactToMessage leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > deleteRoomMessage leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > clearMessageBookmarks leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > markNeedsYouSeen leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > clearNeedsYouSection leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > deleteRoomSchedule leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > startOwnedWorkflow leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > cancelAgentTurn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createHumanCorner leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > requestCornerClose leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > setCornerLocked leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > setCornerHold leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > decideWritePermission leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > decideAgentGrant leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > deleteRoomSubscription leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > revokeAgentGrant leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > acceptConnectorOffer leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createRoomPoll leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > answerChoice leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > skipChoice leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createWorkspace leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateWorkspace leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > leaveWorkspace leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > deleteWorkspace leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > addWorkspaceMember leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > removeWorkspaceMember leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createRoom leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateRoom leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > deleteRoom leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > leaveRoom leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > addRoomMember leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > removeRoomMember leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > resolveDirectMessage leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createInvite leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > redeemInvite leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createAgentPairingCode leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > claimAgentPairing leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateAgentSoul leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateAgentModelSelection leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > refreshAgentUsage leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > refreshAgentModelCatalog leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > completeAgentSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateAgentYolo leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateAgentAccessPolicy leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > removeAgent leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updatePersonProfile leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateIdentityFace leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateIdentityPushLevel leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > setRoomRepository leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > setRoomTargetBranch leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > removeRoomRepository leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listRoomWorkflows leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > dispatchRoomWorkflow leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > approveCornerMerge leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > beginGitHubIdentityBind leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > completeGitHubIdentityBind leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > recoverGitHubIdentity leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > adoptGitHubHandle leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > claimManagedHandle leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listGitHubRepositories leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > beginGitHubInstallation leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createGitHubRepository leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > getGitHubRepositoryAccess leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > uploadMedia leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > registerPushDevice leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > unregisterPushDevice leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > sendPushTest leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > reportRunningUpdate leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWorkbench leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readConnectApp leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > searchWorkbenchApps leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readConnectorInstall leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > pairConnector leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > cancelGoogleSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > beginGoogleSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readGoogleSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > disconnectGoogleSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > beginLinkSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > cancelLinkSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > disconnectLinkSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > unpairConnector leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > connectWorkbenchApp leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > beginAppSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > completeAppSignIn leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > disconnectWorkbenchApp leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readConnectionDetail leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > revokeConnectionGrants leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > createWallet leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWallet leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > sendFromWallet leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > grantWalletDelegation leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > revokeWalletDelegation leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWalletHistory leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > deleteAccount leaves a transport that never answers
+TypeError: actual value must be number or bigint, received "undefined"
+ ❯ sources/sync/transport/monolith-operation.test.ts:74:19
+     72|     const result = monolithPhoneOperation(name, {} as never).catch((er…
+     73|     const limit = phoneOperationRequestOptions(name, {})?.timeoutMs;
+     74|     expect(limit).toBeGreaterThan(0);
+       |                   ^
+     75|     expect(limit).toBeLessThanOrEqual(name === 'actOnRepositoryCard' ?…
+     76|     await vi.advanceTimersByTimeAsync(limit!);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/137]⎯
+
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWelcomeCards leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readStarPrompt leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > setMessageBookmark leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listMessageBookmarks leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readNeedsYou leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readTray leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > countNeedsYou leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > clearNeedsYou leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listRoomSchedules leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readScheduledWork leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listRoomWorkflowRuns leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWorkflowRun leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWorkflowDefinition leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listWorkflowDefinitions leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > listRoomSubscriptions leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > closeChat leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > reopenChat leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > resolveInvite leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > updateRoomPushState leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > actOnRepositoryCard leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > getAuthCapabilities leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > getIdentityRecovery leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > getManagedIdentity leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readIdentitySettings leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readAgentProfile leaves a transport that never answers
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > readWebPushKey leaves a transport that never answers
+Error: Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ sources/sync/transport/monolith-operation.test.ts:69:25
+     67|   afterEach(() => vi.useRealTimers());
+     68|   it('discovers the registry rather than testing a hand list', () => e…
+     69|   it.each(operationNames)('%s leaves a transport that never answers', …
+       |                         ^
+     70|     vi.useFakeTimers();
+     71|     controls.fetch.mockImplementation(() => new Promise(() => {}));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/137]⎯
+
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > preserves an explicit longer deadline for a slow transaction
+Error: Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ sources/sync/transport/monolith-operation.test.ts:80:3
+     78|     expect(vi.getTimerCount()).toBe(0);
+     79|   });
+     80|   it('preserves an explicit longer deadline for a slow transaction', a…
+       |   ^
+     81|     vi.useFakeTimers();
+     82|     controls.fetch.mockImplementation(() => new Promise(() => {}));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/137]⎯
+
+ FAIL  sources/sync/transport/monolith-operation.test.ts > every registered phone operation has a complete deadline > also bounds a body that never arrives after successful headers
+Error: Test timed out in 100ms.
+If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+ ❯ sources/sync/transport/monolith-operation.test.ts:91:3
+     89|     expect(await result).toBeInstanceOf(Error);
+     90|   });
+     91|   it('also bounds a body that never arrives after successful headers',…
+       |   ^
+     92|     vi.useFakeTimers();
+     93|     controls.fetch.mockResolvedValue({ok: true, status: 200, json: () …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/137]⎯
+
+ FAIL  sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+AssertionError: expected "spy" to be called once, but got 0 times
+ ❯ sources/app/(app)/beeline/human-profile.waiting.test.tsx:44:21
+     42|     });
+     43|     expect(prevented).not.toHaveBeenCalled();
+     44|     expect(onClose).toHaveBeenCalledOnce();
+       |                     ^
+     45|     const loading = tree.root.findByType('Actions').props.actions[0].l…
+     46|     await act(async()=>tree.unmount());
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/137]⎯
+
+ FAIL  sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+AssertionError: expected "spy" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st spy call:
+
+    Array [
+      Object {
+        "back": [Function spy],
+      },
+      "dm",
+    ]
+
+
+Number of calls: 1
+
+ ❯ sources/app/(app)/beeline/human-profile.waiting.test.tsx:48:32
+     46|     await act(async()=>tree.unmount());
+     47|     await act(async()=>resolve({id:'dm'}));
+     48|     expect(state.navigate).not.toHaveBeenCalled();
+       |                                ^
+     49|     expect(loading).toBe(true);
+     50|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/137]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  137 failed | 2 passed (139)
+   Start at  11:36:01
+   Duration  4.26s (transform 889ms, setup 347ms, collect 2.28s, tests 3.02s, environment 1ms, prepare 378ms)

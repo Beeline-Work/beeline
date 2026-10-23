@@ -47,8 +47,9 @@ describe('Room participant roster layout', () => {
   });
 
   it('reads in the Members page vocabulary: one word over one counted head, roles from the type scale', () => {
-    expect(source).toContain('{MEMBERS_LABEL}');
-    expect(source).toMatch(/<RoomListSectionHeader\s+title={MEMBERS_LABEL}\s+count={members.length}/);
+    // The sheet title says Members once; the head below it keeps only the count and +.
+    expect(source).toMatch(/rosterModalTitle}>{MEMBERS_LABEL}</);
+    expect(source).toMatch(/<RoomListSectionHeader\s+title=""\s+count={members.length}/);
     // One section, so no per-kind heads are left to drift apart.
     expect(source).not.toContain('room-roster-people-head');
     expect(source).not.toContain('room-roster-agents-head');

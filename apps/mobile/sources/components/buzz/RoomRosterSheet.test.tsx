@@ -196,7 +196,7 @@ describe('RoomRosterSheet', () => {
       const renderer = render(sheet({ parentChannelId }));
       expect(
         renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-      ).toEqual('MEMBERS');
+      ).toEqual('');
       expect(renderer.root.findAllByProps({ testID: 'room-roster-people-head' })).toHaveLength(0);
       expect(renderer.root.findAllByProps({ testID: 'room-roster-agents-head' })).toHaveLength(0);
 
@@ -274,7 +274,7 @@ describe('RoomRosterSheet', () => {
     const renderer = render(sheet({ members: [viewer, ana, ox] }));
     expect(
       renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-    ).toEqual('MEMBERS');
+    ).toEqual('');
     expect(renderer.root.findByType(RoomListSectionHeader).props.count).toBe(3);
 
     expect(rowIds(renderer)).toEqual([
@@ -311,7 +311,7 @@ describe('RoomRosterSheet', () => {
     // The head counts all thirteen even while ten are on screen.
     expect(
       renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-    ).toEqual('MEMBERS');
+    ).toEqual('');
     expect(renderer.root.findByType(RoomListSectionHeader).props.count).toBe(13);
     expect(visible()).toHaveLength(10);
     expect(visible().at(-1)).toBe('room-roster-person-person-9');
@@ -346,7 +346,7 @@ describe('RoomRosterSheet', () => {
     const onAddMembers = vi.fn();
     const empty = render(sheet({ onAddMembers, members: [] }));
     const head = empty.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!;
-    expect(head.props.children).toEqual('MEMBERS');
+    expect(head.props.children).toEqual('');
     expect(empty.root.findByType(RoomListSectionHeader).props.count).toBe(0);
     act(() => empty.root.findByProps({ testID: 'room-roster-add-members' }).props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);

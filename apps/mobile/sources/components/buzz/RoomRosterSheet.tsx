@@ -148,9 +148,10 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           {/* One head over one list. A manager keeps it on an empty Room
               because the head is where the add control lives: with the Room
               header's `+` retired (C83), an agentless Room would otherwise
-              have no way to reach an agent at all. */}
+              have no way to reach an agent at all. The sheet title already
+              says Members, so the head carries only the count and `+`. */}
           <RoomListSectionHeader
-            title={MEMBERS_LABEL}
+            title=""
             count={members.length}
             testID="room-roster-members-head"
             surface="sheet"

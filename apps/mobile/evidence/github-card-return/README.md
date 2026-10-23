@@ -4,7 +4,15 @@
 Android capture. `normal.png`, `error.png`, `linked.png` and `workspace.png` show
 the four requested states. The agent mark is the real IdentityMark, using
 Beebee's production public identity and owl face. The state selectors and
-developer-menu bubble belong to the local proof harness.
+developer-menu bubble belong to the local proof harness. All four captures were
+recaptured after the text-style corrections. The comparison preserves the full
+Workspace mock panel, including its left edge.
+
+The normal body uses primary ink; only the error icon/title use danger color.
+The reason and regular-weight Dismiss use secondary text. The welcome title
+uses the existing large name typography with semibold, fitting only on overflow.
+Create Workspace uses the existing `PlusGlyph` from `MicGlyph.tsx`; Join keeps
+the existing `MembersAgentsGlyph`. No new glyph or color is introduced.
 
 ## Reproduced
 

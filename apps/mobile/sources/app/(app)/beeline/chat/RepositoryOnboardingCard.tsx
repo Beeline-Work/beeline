@@ -90,7 +90,7 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
   const linked = card.kind === 'repository' && card.status === 'settled' && Boolean(card.repository);
   const needsConnection = card.kind === 'repository' && card.githubLinked === false && !card.installationId;
   const shownActions: TranscriptCardAction[] = linked ? [] : error ? (canAct ? [
-    { label: 'Dismiss', onPress: () => { setError(null); setPicker(false); router.setParams({ githubConnectionError: undefined }); }, testID: 'repo-card-dismiss' },
+    { label: 'Dismiss', labelTone: 'quiet', onPress: () => { setError(null); setPicker(false); router.setParams({ githubConnectionError: undefined }); }, testID: 'repo-card-dismiss' },
     { label: 'Try again', primary: true, onPress: () => { router.setParams({ githubConnectionError: undefined }); void act(lastAction.current.action, lastAction.current.extra); }, testID: 'repo-card-retry' },
   ] : []) : actions;
   return <TranscriptCard
@@ -99,7 +99,7 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
     testID={`repository-onboarding-${card.kind}`}
     title={linked ? 'Repository linked' : card.kind === 'starters' ? 'Pick a starting task' : card.repository ? 'Switch repository' : !card.canLink ? 'No repository yet' : 'Choose a repository'}
     subline={linked ? `${card.repository}${card.repositoryPrivate === undefined ? '' : ` · ${card.repositoryPrivate ? 'private' : 'public'}`}` : undefined}
-    compactBody footerDivider={false}
+    compactBody primaryBody footerDivider={false}
     inlineError={!linked && error ? { title: "GitHub didn't connect", description: error } : undefined}
     body={linked || error ? undefined : card.kind === 'repository' ? card.canLink ? needsConnection
       ? 'Connect GitHub to link one you own or create a new private repo. You approve once on github.com, then come back here.'

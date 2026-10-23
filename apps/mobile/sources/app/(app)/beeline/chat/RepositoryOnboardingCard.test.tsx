@@ -72,6 +72,7 @@ it('R-GITHUB-CARD: consumes the return only on its initiating card, once', async
   expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
   expect(cards[0].props.actions.map((action:any) => action.label)).toEqual(['Dismiss', 'Try again']);
   expect(cards[0].props.actions[1].primary).toBe(true);
+  expect(cards[0].props.actions[0].labelTone).toBe('quiet');
   expect(cards[1].props.inlineError).toBeUndefined();
   expect(mocks.params.githubConnectionError).toBeUndefined();
   expect(mocks.params.installed).toBe('0');
@@ -124,6 +125,7 @@ it('R-GITHUB-CARD: keeps an operation failure local and retries the failed actio
   const cards = renderer.root.findAllByType('TranscriptCard');
   expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
   expect(cards[0].props.compactBody).toBe(true);
+  expect(cards[0].props.primaryBody).toBe(true);
   expect(cards[0].props.subline).toBeUndefined();
   expect(cards[0].props.actions.map((a:any) => a.label)).toEqual(['Dismiss', 'Try again']);
   expect(cards[1].props.inlineError).toBeUndefined();

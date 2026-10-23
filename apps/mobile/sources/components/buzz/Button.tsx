@@ -27,6 +27,8 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
    * `brass`: outlined in the accent, for a highlighted secondary action.
    */
   variant?: ButtonVariant;
+  /** Recedes a dismissal label without changing its control or hit target. */
+  labelTone?: 'quiet';
   /** Shows the compact pixel loader, marks the button busy and disables it. */
   loading?: boolean;
   /** Stretch across the parent's cross axis. */
@@ -47,6 +49,7 @@ export function Button({
   icon,
   iconOnly = false,
   variant = 'primary',
+  labelTone,
   loading = false,
   fullWidth = false,
   disabled,
@@ -102,6 +105,7 @@ export function Button({
                 : variant === 'destructive'
                   ? styles.destructiveLabel
                   : styles.secondaryLabel,
+            labelTone === 'quiet' && styles.quietLabel,
             isDisabled && variant !== 'provider' && styles.disabledLabel,
           ]}
         >
@@ -143,6 +147,7 @@ const styles = StyleSheet.create((theme) => {
     fullWidth: { alignSelf: 'stretch' },
     label: { ...buzz.type.body, fontFamily: buzz.proseMedium },
     primaryLabel: { color: buzz.buttonPrimaryText },
+    quietLabel: { ...buzz.type.body, color: buzz.textSecondary },
     secondaryLabel: { color: buzz.buttonSecondaryText },
     brassLabel: { color: buzz.accent },
     disabledLabel: { color: buzz.textDisabled },

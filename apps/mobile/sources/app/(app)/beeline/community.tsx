@@ -24,7 +24,8 @@ import { Typography } from '@/constants/Typography';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { RoomGlyph } from '@/components/buzz/RoomGlyph';
+import { PlusGlyph } from '@/components/buzz/MicGlyph';
+import { useAutoFitText } from '@/buzz/use-autofit-text';
 import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -58,6 +59,8 @@ export default function WorkspaceChoice() {
   );
   const hasWorkspaces = communities.length > 0;
   const viewerName = workspaceList?.viewer.name?.trim() ?? '';
+  const welcomeText = viewerName ? `Welcome,\n${viewerName}` : 'Welcome';
+  const welcomeRef = useAutoFitText(welcomeText);
   const workspaceName = draftName ?? (viewerName ? `${viewerName}'s team` : 'My team');
   const createWorkspace = async () => {
     if (!identity || creating || !workspaceName.trim()) return;
@@ -153,7 +156,7 @@ export default function WorkspaceChoice() {
         testID="workspace-choice"
       >
         <View style={styles.column}>
-          <Text accessibilityRole="header" testID="choice-title" style={styles.title}>{viewerName ? `Welcome,\n${viewerName}` : 'Welcome'}</Text>
+          <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={2} accessibilityRole="header" testID="choice-title" style={styles.title}>{welcomeText}</Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}
           </Text>
@@ -165,7 +168,7 @@ export default function WorkspaceChoice() {
               onSubmitEditing={() => void createWorkspace()} /> : null}
             <ChoiceCard
               description={creating ? "Creating your Workspace…" : "Uses the name above"}
-              glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
+              glyph={<PlusGlyph color={theme.buzz.accent} />}
               onPress={() => enabled ? void createWorkspace() : router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
               title="Create Workspace"
@@ -253,7 +256,7 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-    title: { ...hull.type.hero, color: hull.textPrimary },
+    title: { ...hull.agentProfileTypography.name, ...Typography.default('semiBold'), color: hull.textPrimary },
     fieldLabel: { ...hull.type.meta, color: hull.textSecondary, marginTop: hull.space.lg },
     copy: {
       ...Typography.default(),

@@ -57,6 +57,7 @@ export type TranscriptCardAction = {
   onPress(): void;
   primary?: boolean;
   secondary?: boolean;
+  labelTone?: 'quiet';
   disabled?: boolean;
   loading?: boolean;
   testID?: string;
@@ -86,6 +87,7 @@ export type TranscriptCardProps = {
   body?: ReactNode;
   quietBody?: boolean;
   compactBody?: boolean;
+  primaryBody?: boolean;
   inlineError?: { title: string; description: string };
   footerDivider?: boolean;
   /** Controls an ask needs beyond rows and choices (a field, a step list). */
@@ -236,6 +238,7 @@ export function TranscriptCard({
   body,
   quietBody = false,
   compactBody = false,
+  primaryBody = false,
   inlineError,
   footerDivider = true,
   rows = [],
@@ -437,8 +440,8 @@ export function TranscriptCard({
             <SettlingText
               active={animateArrival}
               durationMs={TRANSCRIPT_SETTLE_MS}
-              steadyColor={quietBody ? steady.quiet : steady.body}
-              style={[styles.body, compactBody && styles.bodyCompact, quietBody && styles.bodyQuiet]}
+              steadyColor={primaryBody ? theme.buzz.textPrimary : quietBody ? steady.quiet : steady.body}
+              style={[styles.body, compactBody && styles.bodyCompact, primaryBody && styles.bodyPrimary, quietBody && styles.bodyQuiet]}
             >
               {body}
             </SettlingText>
@@ -535,6 +538,7 @@ export function TranscriptCard({
                   accessibilityRole: action.accessibilityRole ?? 'button',
                   variant: action.primary ? 'primary' : action.secondary ? 'secondary' : 'quiet',
                   busy: action.loading,
+                  labelTone: action.labelTone,
                   disabled: action.disabled,
                   onPress: action.onPress,
                   testID: action.testID,
@@ -778,7 +782,8 @@ const styles = StyleSheet.create((theme) => {
     inlineError: { flexDirection: 'row', gap: card.space.sm, paddingHorizontal: metric.side, paddingTop: card.space.sm },
     errorCopy: { flex: 1, minWidth: 0, gap: card.space.xs },
     errorTitle: { ...card.type.meta, fontFamily: card.proseMedium, color: card.dialogDanger },
-    errorDescription: { ...card.type.meta, color: card.dialogDanger },
+    errorDescription: { ...card.type.meta, color: card.textSecondary },
+    bodyPrimary: { color: card.textPrimary },
     bodyCompact: { ...card.type.meta },
     footerWithoutDivider: { borderTopWidth: 0 },
     bodyQuiet: { color: card.ledgerQuiet },

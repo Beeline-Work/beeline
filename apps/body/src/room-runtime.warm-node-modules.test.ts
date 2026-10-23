@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { materializeCornerWorktree } from './room-runtime.js';
 import { harvestWarmNodeModules, warmNodeModulesStoreDir } from './warm-node-modules.js';
 
@@ -46,10 +46,15 @@ async function scratch(prefix: string): Promise<string> {
 let remote: string;
 let remoteRoot: string;
 beforeAll(async () => {
+  // File-only fixtures do not need the host's GitHub credential launcher.
+  vi.stubEnv('PATH', `/usr/bin:/bin:${process.env.PATH ?? ''}`);
   remoteRoot = await mkdtemp(resolve(tmpdir(), 'beeline-warm-remote-'));
   remote = await remoteWithLockfile(remoteRoot);
 });
-afterAll(async () => rm(remoteRoot, { recursive: true, force: true }));
+afterAll(async () => {
+  vi.unstubAllEnvs();
+  await rm(remoteRoot, { recursive: true, force: true });
+});
 
 /** A bare remote whose `main` carries the lockfile a corner would install. */
 async function remoteWithLockfile(root: string): Promise<string> {
@@ -104,6 +109,19 @@ async function materialize(supervisorRoot: string, remote: string, cornerId: str
 }
 
 describe('a new corner worktree', () => {
+  it('STARTUP-RACE-1: starts concurrent corners against one real mirror', async () => {
+    const supervisorRoot = await scratch('beeline-concurrent-corners-');
+    const worktrees = await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      materialize(supervisorRoot, remote, `concurrent-${index}`),
+    ));
+    expect(new Set(worktrees.map(tree => tree.gitCommonDir)).size).toBe(1);
+    for (const [index, tree] of worktrees.entries()) {
+      const branch = await execFileAsync('git', ['-C', tree.path, 'branch', '--show-current']);
+      expect(branch.stdout.trim()).toBe(`feature/concurrent-${index}`);
+      expect((await execFileAsync('git', ['-C', tree.path, 'status', '--porcelain'])).stdout).toBe('');
+    }
+  }, 60_000);
+
   it('arrives with the warm tree already hardlinked in', async () => {
     const supervisorRoot = await scratch('beeline-warm-supervisor-');
     const key = await warmStore(supervisorRoot);

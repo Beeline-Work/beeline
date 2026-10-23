@@ -93,6 +93,21 @@ const post = async (id: string, text: string, author = WORKER, age = '0 hours') 
   );
 const commanderFlags = async () => (await readAgentCommands(db, ROOM, COMMANDER)).commands;
 
+it('STARTUP-FAILURE-1: a bootstrap failure is idle immediately and visible in its corner', async () => {
+  const command = await wake();
+  expect(await state()).toBe('working');
+  await daemon.execute('postAgentTurnReceipt', {
+    roomId: C, requestId: command!.turn_request_id, status: 'failed',
+    reason: 'git fetch failed: cannot lock ref', reasonKind: 'workspace-failure',
+  }, WORKER);
+  expect(await state()).toBe('idle');
+  const failures = await db.query<{ text: string }>(
+    `SELECT text FROM messages WHERE room_id=$1 AND card_type='turn-failed'`, [C],
+  );
+  expect(failures.rows).toHaveLength(1);
+  expect(failures.rows[0]!.text).toContain('cannot lock ref');
+});
+
 async function turn(agent = WORKER) {
   await db.query(
     `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)

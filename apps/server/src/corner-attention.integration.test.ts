@@ -189,6 +189,7 @@ it('CI failure and the stuck-CI deadline each open exactly one Idle stretch', as
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
+  expect((await commanderFlags())[0]!.source.body).toMatchSnapshot('approved idle alert');
   await ci('pending');
   await runCornerAttention(db);
   await db.query(
@@ -240,7 +241,7 @@ it('a merge hold shows Waiting with its real message and sends no extra wake', a
   expect(row).toMatchObject({ state: 'waiting', blocker: { kind: 'merge-hold' } });
   expect(
     (await db.query('SELECT text FROM messages WHERE id=$1', [row.itemId])).rows[0],
-  ).toMatchObject({ text: expect.stringContaining('set a merge hold') });
+  ).toMatchSnapshot('approved hold source line');
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(0);
   await phone.execute('setCornerHold', { cornerId: C, releaseHoldId: holdId }, HUMAN);

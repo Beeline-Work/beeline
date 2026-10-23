@@ -9,7 +9,7 @@ The isolated server proof in `apps/server/src/corner-attention.integration.test.
 - [Bone](bone.png)
 - [Obsidian](obsidian.png)
 
-These are local component browser screenshots, not production screenshots. The requested signed-in proof at web.usebeeline.app remains pending: Squire finds the reviewer bypass credential but browser-fill rejects the stored link type (`unsupported_credential_type`). Passing its vault reference directly to browser navigation also fails. A live browser share was posted for reviewer sign-in handback. No production deployment was performed.
+These are local component browser screenshots. Ruby accepted this Bone/Obsidian Chromium proof as the browser requirement for merge because web.usebeeline.app serves the released build, which cannot display this unmerged PR. The browser share is closed. Ruby owns the production check after the next release; no production deployment was performed here.
 
 Run from `apps/mobile`:
 

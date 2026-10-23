@@ -546,7 +546,7 @@ export async function needsYouItems(
     roomKind: row.room_kind,
     ...(row.parent_room_name ? { parentRoomName: row.parent_room_name } : {}),
     text: approval && ['grant', 'write-access', 'connector', 'squire'].includes(approval.kind)
-      ? shortenAsk(approval.detail ?? approval.subject)
+      ? approval.subject
       : approval
       ? approvalAsk(approval.kind === 'sign-in' && row.card?.harness ? 'agent-sign-in' : approvalTypes[approval.kind],
           approval.kind === 'grant'

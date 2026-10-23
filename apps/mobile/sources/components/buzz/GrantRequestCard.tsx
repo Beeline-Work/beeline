@@ -61,6 +61,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
           try { const rule = parseCommandGrantTarget(grant.target); runs = rule.argv.map(basename).join(' '); uses = rule.secrets.join(', ') || undefined; }
           catch { /* Legacy targets may predate the command grammar. */ }
         }
+        const scope = grant.status === 'once' ? 'Once' : grant.status === 'approved' ? 'Always' : undefined;
         const facts = [
           ...(runs ? [{ label: 'Runs', value: runs }] : []),
           ...(uses && !(grant.purpose && grant.touches && grant.capabilities) ? [{ label: 'Uses', value: uses }] : []),
@@ -139,6 +140,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                 : approvalDecisionNote(grant.status, grant.decidedBy, grant.decidedAt ?? message.timestamp, viewerPubkey)
             }
             decisionNote={!pendingGrant}
+            decisionScope={scope}
             footerNoteTone={
               grant.status === 'denied' || grant.status === 'revoked' ? 'failed' : 'quiet'
             }

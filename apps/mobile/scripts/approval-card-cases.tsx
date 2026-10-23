@@ -10,7 +10,7 @@ const timestamp = 1792760000;
 export const approvalCases = [
   'grant-legacy', 'grant-purpose', 'squire-key', 'squire-purchase', 'squire-login', 'squire-edit-key', 'squire-delete-key', 'squire-edit-card', 'squire-vouch', 'squire-passkey',
   'spending', 'edit-corner', 'target-branch', 'connector-add', 'connector-switch', 'connector-reconnect',
-  'grant-allowed', 'grant-denied', 'squire-allowed', 'squire-denied', 'squire-expired', 'permission-allowed', 'target-denied', 'connector-allowed', 'connector-denied', 'tray',
+  'grant-allowed', 'grant-always', 'grant-denied', 'squire-allowed', 'squire-denied', 'squire-expired', 'permission-allowed', 'target-denied', 'connector-allowed', 'connector-denied', 'tray', 'tray-write', 'tray-connector', 'tray-squire', 'tray-legacy',
 ] as const;
 export type ApprovalCase = typeof approvalCases[number];
 export function approvalCaseElement(name: ApprovalCase, onAction: () => void = noop) {
@@ -20,7 +20,7 @@ export function approvalCaseElement(name: ApprovalCase, onAction: () => void = n
     agent: proofAgent, owner: proofOwner, requester: proofOwner,
     grants: [{ grantId: 'proof-grant', kind: 'command', target: 'fly deploy -a beeline-preview --with FLY_TOKEN', reason: 'Publish the preview build.',
       ...(name === 'grant-purpose' ? { purpose: 'Publish the preview build.', touches: 'Preview deployment', capabilities: 'Deploy the preview' } : {}),
-      machine: 'squire', status: name === 'grant-allowed' ? 'once' : name === 'grant-denied' ? 'denied' : 'pending',
+      machine: 'squire', status: name === 'grant-allowed' ? 'once' : name === 'grant-always' ? 'approved' : name === 'grant-denied' ? 'denied' : 'pending',
       decidedBy: proofOwner, decidedAt: timestamp + 240, requestedBy: proofOwner, roomId: 'proof-room', createdAt: timestamp, auto: false }],
   } })} viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerRole="owner" actionId={null} onDecision={onAction} />;
   if (name.startsWith('squire-')) {
@@ -48,8 +48,16 @@ export function approvalCaseElement(name: ApprovalCase, onAction: () => void = n
   if (name.startsWith('connector-')) return <ConnectorOfferCard agent={agent} viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerRole="owner" actionId={null} onAccept={onAction} onDecline={onAction} onContinue={onAction} onOpenWorkbench={onAction}
     message={message({ connectorOffer: { offerId: 'proof-connector', agent: proofAgent, addressee: proofOwner, connectorName: 'Trusty Squire', connectorType: 'trusty-squire', reason: 'Provision the API key into its vault.', consequence: 'Sign in to sites · use vault keys', helper: { machineId: 'squire', name: 'squire' },
       status: name === 'connector-allowed' ? 'accepted' : name === 'connector-denied' ? 'denied' : name === 'connector-reconnect' ? 'connecting' : 'pending', intent: name === 'connector-switch' ? 'switch' : name === 'connector-reconnect' ? 'reconnect' : 'add', connectorId: 'proof-connector', provider: 'google', createdAt: timestamp, acceptedBy: proofOwner, acceptedAt: timestamp + 240 } })} />;
+  const tray = name === 'tray-write'
+    ? { kind: 'write-access' as const, ask: 'wants to open an edit corner', subject: 'owner/repo', reason: 'Update README.md.' }
+    : name === 'tray-connector'
+      ? { kind: 'connector' as const, ask: 'wants to add', subject: 'Trusty Squire', reason: 'Provision the API key into its vault.' }
+      : name === 'tray-squire'
+        ? { kind: 'squire' as const, ask: 'wants to', subject: 'reveal a key', reason: 'Sign in the Fly command-line tool for this deploy.' }
+        : { kind: 'grant' as const, ask: 'wants to run a script', subject: 'python3 cleanup.py', reason: 'Free disk space so the Android test build can finish.' };
   return <NeedsYouCell desktop={false} now={timestamp * 1000 + 120000} onOpen={onAction} onDismiss={onAction} onAction={async () => onAction()}
-    item={{ messageId: name, workspaceId: 'proof-workspace', roomId: 'proof-room', roomName: 'squire', roomKind: 'room', text: 'Free disk space so the Android test build can finish.', createdAt: timestamp,
-      approval: { kind: 'grant', actor: 'Jellybean', ask: 'wants to run a script', subject: 'python3 cleanup.py', literal: false,
-        actions: [{ kind: 'grant', label: 'No', grantId: 'proof-grant', decision: 'deny' }, { kind: 'grant', label: 'Once', grantId: 'proof-grant', decision: 'once' }, { kind: 'grant', label: 'Always', grantId: 'proof-grant', decision: 'always' }] } }} />;
+    item={{ messageId: name, workspaceId: 'proof-workspace', roomId: 'proof-room', roomName: 'squire', roomKind: 'room', text: name === 'tray-legacy' ? tray.reason : tray.subject, createdAt: timestamp,
+      approval: { kind: tray.kind, actor: 'Jellybean', ask: tray.ask, subject: tray.subject, detail: tray.reason, literal: tray.kind === 'grant',
+        actions: tray.kind === 'grant' ? [{ kind: 'grant', label: 'No', grantId: 'proof-grant', decision: 'deny' }, { kind: 'grant', label: 'Once', grantId: 'proof-grant', decision: 'once' }, { kind: 'grant', label: 'Always', grantId: 'proof-grant', decision: 'always' }]
+          : [{ kind: 'external', label: 'Review ↗', url: 'https://approve.example.test/proof' }] } }} />;
 }

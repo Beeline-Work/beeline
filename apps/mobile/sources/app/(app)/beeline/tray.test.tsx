@@ -1240,7 +1240,7 @@ describe('Tray Needs you', () => {
       expect(actor.props.children).toBe('BBC');
       expect(ask).toBe(' asks to run');
       expect(tree.root.findByProps({ testID: 'needs-you-text-grant-1' }).props.children).toBe(
-        'Allow running git push --force-with-lease?',
+        'git push --force-with-lease',
       );
       expect(tree.root.findByProps({ testID: 'needs-you-detail-grant-1' }).props.children).toBe(
         'Push ledger fixes to feat/ledger.',

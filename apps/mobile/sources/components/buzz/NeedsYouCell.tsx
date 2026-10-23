@@ -70,21 +70,21 @@ export function NeedsYouCell({
   const [hovered, setHovered] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const sending = useRef(false);
-  const approval = item.approval?.detail === item.text ? { ...item.approval, detail: undefined } : item.approval;
+  const unifiedApproval = item.approval && ['grant', 'write-access', 'connector', 'squire'].includes(item.approval.kind);
+  const subject = unifiedApproval ? item.approval!.subject : item.text;
+  const approval = item.approval?.detail === subject ? { ...item.approval, detail: undefined } : item.approval;
   const age = compactRelativeTime(item.createdAt, now);
   const stale = now / 1000 - item.createdAt > STALE_SECONDS;
   const expiry = needsYouExpiryLabel(item.expiresAt, now);
   const actor = approval?.actor ?? item.author?.name;
   const ask = approval?.ask ?? 'asks you';
-  const subject = item.text;
   const actions = onAction ? (approval?.actions ?? []) : [];
   // Inline choice options already name every option, so the "a · b" line goes.
   const choiceActions = actions.some((action) => action.kind === 'choice');
-  const unifiedApproval = approval && ['grant', 'write-access', 'connector', 'squire'].includes(approval.kind);
   const meta = [
     ...(!unifiedApproval && approval?.forName ? [`for ${approval.forName}`] : []),
     sourcePath(item),
-    ...(unifiedApproval ? [approval.forName ? `for @${approval.forName.replace(/^@/, '')}` : 'for you'] : []),
+    ...(unifiedApproval ? [approval?.forName ? `for @${approval.forName.replace(/^@/, '')}` : 'for you'] : []),
     ...(expiry ? [approval?.kind === 'choice' ? expiry.replace('expires', 'closes') : expiry] : []),
   ].join(' · ');
   const send = async (action: NeedsYouActionView, index: number) => {

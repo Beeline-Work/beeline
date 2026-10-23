@@ -105,6 +105,7 @@ export type TranscriptCardProps = {
   footerNoteTestID?: string;
   footerNoteTone?: 'quiet' | 'failed';
   decisionNote?: boolean;
+  decisionScope?: 'Once' | 'Always';
   actions?: readonly TranscriptCardAction[];
   onHeaderPress?(): void;
   headerExpanded?: boolean;
@@ -255,6 +256,7 @@ export function TranscriptCard({
   footerNoteTestID,
   footerNoteTone = 'quiet',
   decisionNote = false,
+  decisionScope,
   actions = [],
   onHeaderPress,
   headerExpanded,
@@ -518,6 +520,7 @@ export function TranscriptCard({
           ) : null}
           {hasFooter ? (
             <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider]}>
+              {decisionScope ? <Text style={styles.decisionScope}>{`Scope: ${decisionScope}`}</Text> : null}
               {footerNote !== undefined ? (
                 <Text
                   testID={footerNoteTestID}
@@ -874,6 +877,7 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textTransform: 'none', textAlign: 'right' },
+    decisionScope: { ...card.type.meta, fontFamily: card.proseRegular, color: card.ledgerQuiet },
     footerNoteFailed: { color: card.diffRemoved },
     actions: { flexShrink: 1 },
     action: { ...card.type.body, fontSize: metric.actionSize, color: card.ledgerQuiet },

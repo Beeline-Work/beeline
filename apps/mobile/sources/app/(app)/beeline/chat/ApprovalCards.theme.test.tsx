@@ -203,21 +203,29 @@ describe.each(['bone', 'obsidian'] as const)('approved approval anatomy in %s', 
     expect(texts).toContain('wants to');
     expect(texts).not.toContain('approval stays with');
     expect(texts).not.toContain('owner confirmation');
-    if (name !== 'tray') {
+    if (!name.startsWith('tray')) {
       const mark = view.root.findByType('IdentityMark' as never);
       expect(mark.props.avatarUrl).toBe(proofRosterAgent.avatar);
       expect(mark.props.kind).toBe('agent');
-      if (!name.endsWith('-allowed') && !name.endsWith('-denied') && !name.endsWith('-expired')) {
+      if (!name.endsWith('-allowed') && !name.endsWith('-denied') && !name.endsWith('-expired') && name !== 'grant-always') {
         const frame = view.root.findAllByType('View').find((node: ReactTestInstance) => {
           const style = Object.assign({}, ...[node.props.style].flat(Infinity).filter(Boolean));
           return node.props.testID && style.backgroundColor === beelineThemes[themeName].bgRaised;
         });
         expect(frame).toBeDefined();
       } else if (name === 'squire-expired') expect(texts).toContain('The request to reveal a key expired');
+      else if (name === 'grant-always') { expect(texts).toContain('Always'); expect(texts).toContain('Allowed by you ·'); }
+      else if (name === 'grant-allowed') { expect(texts).toContain('Once'); expect(texts).toContain('Allowed by you ·'); }
       else if (name.startsWith('squire-')) {
         expect(texts).toContain(name.endsWith('-denied') ? 'Denied ·' : 'Allowed ·');
         expect(texts).not.toContain('by you');
       } else expect(texts).toContain(name.endsWith('-denied') ? 'Denied by you' : 'Allowed by you');
+    } else {
+      const expected = name === 'tray-write' ? ['owner/repo', 'Update README.md.']
+        : name === 'tray-connector' ? ['Trusty Squire', 'Provision the API key into its vault.']
+        : name === 'tray-squire' ? ['reveal a key', 'Sign in the Fly command-line tool for this deploy.']
+        : ['python3 cleanup.py', 'Free disk space so the Android test build can finish.'];
+      for (const value of expected) expect(texts).toContain(value);
     }
   });
 });

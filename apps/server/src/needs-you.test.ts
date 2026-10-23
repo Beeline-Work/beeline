@@ -502,7 +502,7 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(1);
     expect(item).toMatchObject({
       messageId: card,
-      text: 'watch CI',
+      text: 'gh pr checks',
       approval: {
         kind: 'grant',
         actor: 'Hoots',
@@ -669,6 +669,22 @@ describe('PhoneService Needs-you tray', () => {
     expect(await approvals(PEER)).toEqual([]);
     await database.query(`UPDATE room_choices SET status='answered'`);
     expect(await approvals()).toEqual([]);
+  });
+
+  it('APPROVAL-V3: keeps each tray subject and reason separate for previous clients', async () => {
+    await database.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'command','python3 cleanup.py','Free disk space',$2,$4,'pending')`, [GRANT, AGENT, WORKSPACE, ROOM]);
+    const grant = await card(ROOM, 'grant-request', { agent: hoots,
+      grants: [{ grantId: GRANT, kind: 'command', target: 'python3 cleanup.py', reason: 'Free disk space', status: 'pending' }] });
+    const connector = await card(ROOM, 'connector-offer', { agent: hoots, connectorName: 'Gmail', reason: 'Read the release thread.', status: 'pending' });
+    await database.query(`INSERT INTO connector_offers(id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,message_id)
+      VALUES('77777777-7777-4777-8777-777777777777',$1,$2,$3,$4,'gmail','Read the release thread.','machine',$5)`, [AGENT, WORKSPACE, ROOM, VIEWER, connector]);
+    const squire = await card(ROOM, 'squire-approval', { agent: hoots, tool: 'fetch_credential', title: 'Credential access approval', detail: 'Reveal a saved credential',
+      action: 'reveal a key', reason: 'Sign in the Fly CLI.', sourceRoomId: CORNER, approvalUrl: 'https://squire.example/approve/1', approvalId: 'approval-1', expiresAt: Date.now() + 600000, linkKind: 'passkey' });
+    const items = (await read()).items;
+    for (const [id, subject, reason] of [[grant, 'python3 cleanup.py', 'Free disk space'], [connector, 'Gmail', 'Read the release thread.'], [squire, 'reveal a key', 'Sign in the Fly CLI.']]) {
+      expect(items.find(item => item.messageId === id)).toMatchObject({ text: subject, approval: { subject, detail: reason } });
+    }
   });
 
   it('shows a pending connector offer and sign-in to the person who decides each', async () => {

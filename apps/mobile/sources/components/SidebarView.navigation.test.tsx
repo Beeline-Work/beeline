@@ -678,6 +678,12 @@ describe('desktop Workspace navigation', () => {
         .findAllByType('RoomListSectionHeader')
         .map((header: { props: { title: string } }) => header.props.title),
     ).toEqual(['Rooms', 'Direct messages']);
+    // The rows sit right below; a count beside the + only repeated them.
+    expect(
+      tree.root
+        .findAllByType('RoomListSectionHeader')
+        .map((header: { props: { count?: number } }) => header.props.count),
+    ).toEqual([undefined, undefined]);
     expect(
       tree.root
         .findAllByProps({ testID: 'desktop-new-room' })

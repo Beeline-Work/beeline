@@ -33,14 +33,14 @@ const readBaseline = (): CalmBaseline => JSON.parse(readFileSync(baselineUrl, 'u
 
 describe('Borrowing Calm lint', () => {
   it('admits only the role sizes, line heights and trackings', () => {
-    expect([...CALM_FONT_SIZES].sort((a, b) => a - b)).toEqual([10, 13, 15, 16, 22]);
-    expect([...CALM_LINE_HEIGHTS].sort((a, b) => a - b)).toEqual([15, 19, 22, 23, 32]);
+    expect([...CALM_FONT_SIZES].sort((a, b) => a - b)).toEqual([10, 12, 13, 15, 16, 22]);
+    expect([...CALM_LINE_HEIGHTS].sort((a, b) => a - b)).toEqual([15, 17, 19, 22, 23, 32]);
     expect([...CALM_LETTER_SPACINGS].sort((a, b) => a - b)).toEqual([-0.3, 0, 2]);
   });
 
   it('flags raw literals (including a local constant table) and passes role values', () => {
     const source = [
-      'const LOCAL_TYPE = { fontSize: 11, lineHeight: 17 };',
+      'const LOCAL_TYPE = { fontSize: 11, lineHeight: 18 };',
       'const s = StyleSheet.create({',
       '  a: { fontSize: 11 },',
       '  b: { fontSize: 16, letterSpacing: 0.8 },',
@@ -49,7 +49,7 @@ describe('Borrowing Calm lint', () => {
       "  d: { fontSize: theme.buzz.type.body.fontSize, fontSize: Platform.OS === 'web' ? 17 : 16 },",
       '});',
     ].join('\n');
-    const localTypeLine = 'const LOCAL_TYPE = { fontSize: 11, lineHeight: 17 };';
+    const localTypeLine = 'const LOCAL_TYPE = { fontSize: 11, lineHeight: 18 };';
     expect(scanCalmSource(source, 'x.tsx')).toEqual([
       { file: 'x.tsx', line: 1, text: localTypeLine },
       { file: 'x.tsx', line: 1, text: localTypeLine },

@@ -144,7 +144,7 @@ function slotInFlowHeight({ lineShown }: { lineShown: boolean }): number {
   const tree = (show: boolean) =>
     React.createElement(
       TurnBandSlot,
-      { testID: 'slot', thinking: show },
+      { testID: 'slot' },
       show
         ? React.createElement(TurnProgressLine, { label: 'nerd thinking…', testID: 'band' })
         : null,
@@ -178,10 +178,13 @@ function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): numb
 }
 
 describe('the Room turn line paints the transcript margin', () => {
-  it('paints the whole thinking band through the composer join', () => {
-    const line = React.createElement(TurnProgressLine, { label: 'Ruby working…' });
+  it.each(['working', 'settled'] as const)('paints the whole %s band through the composer join', (state) => {
+    const line = state === 'working'
+      ? React.createElement(TurnProgressLine, { label: 'Ruby working…' })
+      : React.createElement(TurnSettledLine, { line: 'Ruby finished' });
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot', thinking: true }, line)); });
+    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, line)); });
+    expect(Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style)).backgroundColor).toBeTruthy();
     const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
     const translation = style.transform?.[0]?.translateY ?? 0;
     const paintedHeight = TURN_LINE_BOX_HEIGHT + px(style.paddingTop) + px(style.paddingBottom);
@@ -207,15 +210,20 @@ describe('the Room turn line paints the transcript margin', () => {
     act(() => renderer.unmount());
   });
 
-  it('does not paint or extend coverage for a settled line after thinking stops', () => {
+  it('keeps the canvas behind the settled line, then drops it once the line is gone', () => {
     let renderer!: ReactTestRenderer;
-    const tree = (thinking: boolean) => React.createElement(TurnBandSlot, { testID: 'slot', thinking },
-      thinking ? React.createElement(TurnProgressLine, { label: 'Ruby thinking…' })
-        : React.createElement(TurnSettledLine, { line: 'Ruby finished' }));
-    act(() => { renderer = create(tree(true)); });
-    expect(Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style)).backgroundColor).toBeTruthy();
-    act(() => renderer.update(tree(false)));
-    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    const tree = (state: 'thinking' | 'settled' | 'idle') => React.createElement(TurnBandSlot, { testID: 'slot' },
+      state === 'thinking' ? React.createElement(TurnProgressLine, { label: 'Ruby thinking…' })
+        : state === 'settled' ? React.createElement(TurnSettledLine, { line: 'Ruby finished' }) : null);
+    const slotStyle = () => Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    act(() => { renderer = create(tree('thinking')); });
+    const thinking = slotStyle();
+    expect(thinking.backgroundColor).toBeTruthy();
+    // Scrolled transcript text must never show under a settled line.
+    act(() => renderer.update(tree('settled')));
+    expect(slotStyle()).toEqual(thinking);
+    act(() => renderer.update(tree('idle')));
+    const style = slotStyle();
     expect(style.backgroundColor).toBeUndefined();
     expect(style.paddingTop).toBeUndefined();
     expect(style.paddingBottom).toBeUndefined();
@@ -314,7 +322,7 @@ describe('jump disc follows native status measurements', () => {
       return React.createElement(React.Fragment, null,
         React.createElement(RoomUnreadControls, {corner: false, badgeCount: 0,
           discVisible: true, bottomInset: inset, onJumpToNewest: jumped}),
-        React.createElement(TurnBandSlot, {testID: 'measured-slot', thinking: line, onTopInset: setInset},
+        React.createElement(TurnBandSlot, {testID: 'measured-slot', onTopInset: setInset},
           line ? React.createElement(TurnProgressLine, {label: 'Ruby Mulling…'}) : null));
     }
     let renderer!: ReactTestRenderer;

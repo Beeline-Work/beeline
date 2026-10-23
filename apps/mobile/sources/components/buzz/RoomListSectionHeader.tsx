@@ -4,7 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { typeRoles } from '@/buzz/groknight';
 import { HULL_SHEET_INSET } from '@/buzz/hull-sheet-layout';
-import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
+import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 
 /** A word beside the label that acts on the whole section (CLEAR). */
 export type SectionHeaderWordAction = {
@@ -100,7 +101,7 @@ export function RoomListSectionHeader({
             style={({ pressed }) => [styles.sectionHeaderAction, tapLineHeight && styles.compactAction, pressed && styles.pressed]}
             testID={actionTestID}
           >
-            <Ionicons name="add" size={ACTION_GLYPH} color={styles.sectionHeaderActionGlyph.color} />
+            <SectionAddGlyph color={styles.sectionHeaderActionGlyph.color} />
           </Pressable>
         </View>
       ) : null}
@@ -108,12 +109,31 @@ export function RoomListSectionHeader({
   );
 }
 
+/** A heavy, round-capped plus: the old thin stroke was hard to see. */
+function SectionAddGlyph({ color }: { color: string }) {
+  return (
+    <Svg
+      {...DECORATIVE_GLYPH_PROPS}
+      width={ACTION_GLYPH}
+      height={ACTION_GLYPH}
+      viewBox="0 0 24 24"
+      stroke={color}
+      strokeWidth={ACTION_STROKE}
+      strokeLinecap="round"
+      fill="none"
+    >
+      <Path d="M12 5v14M5 12h14" />
+    </Svg>
+  );
+}
+
 /** Phones use a full target; desktop keeps its compact mark and tap-line wrapper. */
-const ACTION_GLYPH = 22;
+const ACTION_GLYPH = 24;
+const ACTION_STROKE = 2.4;
 const LABEL_LINE = typeRoles.sectionLabel.lineHeight;
 const ACTION_HIT_SLOP = {
-  top: (44 - LABEL_LINE) / 2,
-  bottom: (44 - LABEL_LINE) / 2,
+  top: (44 - ACTION_GLYPH) / 2,
+  bottom: (44 - ACTION_GLYPH) / 2,
   left: (44 - ACTION_GLYPH) / 2,
   right: (44 - ACTION_GLYPH) / 2,
 };
@@ -153,7 +173,7 @@ const styles = StyleSheet.create((theme) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
-    compactAction: { width: ACTION_GLYPH, height: LABEL_LINE },
+    compactAction: { width: ACTION_GLYPH, height: ACTION_GLYPH },
     sectionHeaderActionGlyph: { color: hull.accent },
     pressed: { opacity: 0.7 },
     disabled: { opacity: 0.42 },

@@ -113,7 +113,7 @@ export const typeRoles = {
   },
   /** Shared section header label and count, aligned on one line. */
   sectionLabel: {
-    fontFamily: sans.medium, fontSize: 13, lineHeight: calmLineHeight(13), letterSpacing: 2,
+    fontFamily: sans.medium, fontSize: 12, lineHeight: calmLineHeight(12), letterSpacing: 2,
   },
   sectionCount: {
     fontFamily: sans.regular, fontSize: 15, lineHeight: calmLineHeight(15), letterSpacing: 0,

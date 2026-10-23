@@ -137,6 +137,7 @@ export type PhoneOperationMap = {
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
   setCornerLocked: { input: RoomInput & { readonly locked: boolean }; output: void };
+  decideApprovalCard: { input: RoomInput & { readonly messageId: string; readonly decision: 'allow' | 'deny' }; output: MessageWriteResult };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
   decideAgentGrant: { input: DecideAgentGrantInput; output: AgentGrantDecisionResult };
   revokeAgentGrant: { input: RevokeAgentGrantInput; output: AgentGrantDecisionResult };

@@ -682,11 +682,14 @@ export function serveMachineSocket(
       return;
     }
     registering.add(agentId);
+    const registrationStartedAt = Date.now();
+    let registrationStage = 'authentication';
     try {
       const authenticated = await deps.auth.authenticateDaemon(token);
       if (!isOpen()) return;
       if (authenticated !== agentId) {
         // The same two answers HTTP gives: a settled removal, or a token to retry.
+        registrationStage = 'retirement-check';
         const retired = authenticated ? null : await deps.auth.retiredDaemonAgent(token);
         send({
           type: 'register-refused',
@@ -695,6 +698,7 @@ export function serveMachineSocket(
         });
         return;
       }
+      registrationStage = 'session-setup';
       sessions.get(agentId)?.close();
       const session: DaemonAgentSession = new DaemonAgentSession(
         deps,
@@ -718,6 +722,7 @@ export function serveMachineSocket(
         },
       );
       sessions.set(agentId, session);
+      registrationStage = 'presence-claim';
       await session.claim();
       if (session.closed || sessions.get(agentId) !== session) return;
       send({
@@ -727,7 +732,10 @@ export function serveMachineSocket(
       });
     } catch (error) {
       deps.errors.internal++;
-      console.error('[live] agent registration failed', error instanceof Error ? error.message : String(error));
+      console.error('[live] agent registration failed', JSON.stringify({
+        agentId, stage: registrationStage, elapsedMs: Date.now() - registrationStartedAt,
+        helperSourceSha: principal.helperSourceSha,
+      }), error instanceof Error ? error.message : String(error));
       if (isOpen()) send({ type: 'register-refused', agentId, code: 'registration_failed' });
     } finally {
       registering.delete(agentId);

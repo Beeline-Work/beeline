@@ -1,3 +1,4 @@
+import type { SquireApprovalDetails } from './approval-copy.js';
 import type { RepositoryOnboardingCard } from './repository-onboarding.js';
 import type { AgentUsage } from './agent-usage.js';
 import type { RoomSubscriptionListResult, RoomSubscriptionView, SubscriptionSource, SubscriptionEventCatalog } from './subscriptions.js';
@@ -494,6 +495,7 @@ export type DaemonOperationMap = {
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
+  markAgentTurnSilent: Operation<RoomInput & TurnOutputAuthority, WriteResult>;
   postAgentTurnReceipt: Operation<PostTurnReceiptInput, WriteResult>;
   postAgentActivity: Operation<PostAgentActivityInput, WriteResult>;
   /** Push a continuation when a tool from this command finishes after its prompt ended. */
@@ -554,7 +556,8 @@ export type DaemonOperationMap = {
   renameCorner: Operation<
     TurnOutputAuthority & CornerInput & {
       readonly roomId?: string;
-      readonly name: string;
+      readonly name?: string;
+      readonly reviewer?: string;
       readonly objective?: string;
       readonly brief?: CornerBriefDraft;
     },
@@ -1331,6 +1334,7 @@ export type PostAgentActivityInput = TurnOutputAuthority &
     readonly activity: readonly DaemonActivityItem[];
   };
 export type PostPermissionRequestInput = RoomPrincipalInput & {
+  readonly purpose?: string;
   readonly permissionId: string;
   readonly requestId: string;
   readonly scope: DaemonPermissionScope;
@@ -1417,6 +1421,7 @@ export type CornerAppWriteResult = WriteResult & {
   readonly revision: number;
 };
 export type PostTargetBranchProposalInput = RoomInput & {
+  readonly purpose?: string;
   readonly requestId: string;
   readonly from: string;
   readonly to: string;
@@ -1426,6 +1431,7 @@ export type CreateCornerInput = TurnOutputAuthority &
   RoomInput & {
     /** Exact handle, without @, of an agent member of the parent Room; defaults to the caller. */
     readonly implementer?: string;
+    readonly reviewer?: string;
     readonly hold?: boolean;
     /** Target parent Room; the active command may be in a DM or another Room. */
     readonly targetRoomId?: string;
@@ -1498,6 +1504,7 @@ export type CornerBrief = {
 };
 export type ReviseCornerBriefInput = TurnOutputAuthority &
   CornerInput & {
+    readonly reviewer?: string;
     readonly requestId: string;
     readonly roomId?: string;
     readonly expectedRevision: number;
@@ -1610,7 +1617,7 @@ export type AgentGrantRequestListResult = {
 /** A 'once' grant is spent by its first run. */
 export type ConsumeAgentGrantInput = { readonly grantId: string };
 export type AuthorizeSquireCallInput = TurnOutputAuthority & RoomInput;
-export type PostSquireApprovalInput = TurnOutputAuthority &
+export type PostSquireApprovalInput = SquireApprovalDetails & TurnOutputAuthority &
   RoomInput & {
     readonly tool: string;
     readonly title: string;

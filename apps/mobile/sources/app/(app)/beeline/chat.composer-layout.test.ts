@@ -23,6 +23,10 @@ const desktopInspectorSource = readFileSync(
 );
 
 describe('Room composer status layout', () => {
+  it('uses the existing desktop transcript inset once in both status surfaces', () => {
+    expect(source).toMatch(/<TurnProgressLine\s+inset=\{false\}/);
+    expect(desktopInspectorSource).toMatch(/<TurnProgressLine\s+inset=\{false\}/);
+  });
   // The invariant is about the TextInput element itself; the region after it
   // (the listening interim overlay, added with speech input) is a Text.
   const composerInput = composerSource.slice(

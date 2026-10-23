@@ -11,6 +11,7 @@ import { selectIdentities } from './identity-records';
 import { stripRetiredAgentNotices } from './retired-agent-notices';
 import { isUnsignedMonolithMessage } from './unsigned-monolith-message';
 import { SurfaceRegistry } from './surface-registry';
+import { deferRoomWrite } from './room-transition-work';
 import { webRuntimeStorage } from '@/utils/web-storage';
 
 const web = webRuntimeStorage();
@@ -46,7 +47,9 @@ const durableSurfaceCache = new SurfaceResponseCache(
   stripRetiredAgentNotices,
 );
 export const mobileSurfaceCache = new SurfaceRegistry(
-  durableSurfaceCache, stripRetiredAgentNotices, selectIdentities);
+  durableSurfaceCache, stripRetiredAgentNotices, selectIdentities,
+  (key, work) => /^\/room\/[^/]+$/.test(String((JSON.parse(key) as unknown[])[3]))
+    ? deferRoomWrite(key, work) : work());
 
 function storedValue(encoded: string | null): unknown {
   if (encoded === null) return undefined;

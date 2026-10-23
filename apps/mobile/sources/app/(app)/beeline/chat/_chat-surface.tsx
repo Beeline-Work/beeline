@@ -1,4 +1,5 @@
-import { CornerLockAction } from '@/components/buzz/CornerLockAction';
+import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import { CornerActionsSheet } from '@/components/buzz/CornerActionsSheet';
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 import { showVoiceJoinError } from '@/buzz/voice-update';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
@@ -36,7 +37,6 @@ import {
   type ViewProps,
   type ViewToken,
 } from 'react-native';
-import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
@@ -283,6 +283,7 @@ import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
   agentActivityReplyExcerpt,
   beginReplyTarget,
+  canBeginReply,
   prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
@@ -781,7 +782,7 @@ export function BuzzChatSurface({
       setPushMuteWorking(false);
     }
   };
-  const isFocused = useIsFocused();
+  const isFocused = useCallback(() => navigation.isFocused(), [navigation]);
   useFocusEffect(
     useCallback(() => {
       pushOpenBuzzChannelId(decodedId || null);
@@ -1191,7 +1192,7 @@ export function BuzzChatSurface({
     [workspaceChatList],
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
-  const { captureSend: captureUntaggedSend, hintMessageIds } = useUntaggedMessageHints({
+  const { captureSend: captureUntaggedSend, hintMessageIds, endVisit: endUntaggedHintVisit } = useUntaggedMessageHints({
     roomId: decodedId,
     viewerPubkey: userPubkey,
     active: isFocused,
@@ -1199,6 +1200,7 @@ export function BuzzChatSurface({
     isDirectMessage,
     hasAgentMembers: Boolean(roomSurface?.members.some(member => member.identity.kind === 'agent')),
   });
+  useFocusEffect(useCallback(() => () => endUntaggedHintVisit(), [endUntaggedHintVisit]));
   const roomVoiceAgents = useMemo(() => roomSurface?.members
     .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !isCorner), roomVoiceAgents);
@@ -1317,32 +1319,32 @@ export function BuzzChatSurface({
     [commitDesktopWorkPane, desktopWorkPanePrimary],
   );
   // Background stack screens stay mounted, so only the focused one listens.
-  useEffect(() => {
-    if (!desktopExperience || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (!desktopExperience || !isFocused()) return;
     return subscribeDesktopWorkCorner(({ roomId, cornerId }) => {
       if (roomId !== desktopWorkRoomId) return false;
       openDesktopCorner(roomId, cornerId);
       return true;
     });
-  }, [desktopExperience, desktopWorkRoomId, isFocused, openDesktopCorner]);
+  }, [desktopExperience, desktopWorkRoomId, isFocused, openDesktopCorner]));
   // The work pane and the Room route are siblings, so an artifact Open press
   // arrives as a module event. It replaces whatever the pane showed. When the
   // pane cannot take it, the card opens the full-screen viewer instead.
-  useEffect(() => {
-    if (!desktopExperience || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (!desktopExperience || !isFocused()) return;
     return subscribeDesktopArtifact(
       (artifact) =>
         commitDesktopWorkPane({ type: 'open-artifact', artifact, primary: desktopWorkPanePrimary })
           .placement === 'pane',
     );
-  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
-  useEffect(() => {
-    if (!desktopExperience || !isFocused) return;
+  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]));
+  useFocusEffect(useCallback(() => {
+    if (!desktopExperience || !isFocused()) return;
     return subscribeDesktopComputer((session) =>
       commitDesktopWorkPane({ type: 'open-computer', session, primary: desktopWorkPanePrimary })
         .placement === 'pane',
     );
-  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]);
+  }, [commitDesktopWorkPane, desktopExperience, desktopWorkPanePrimary, isFocused]));
   /** Navigate to exactly the referenced Room/Corner through the existing
    * conventions; a reference to the transcript you are already in is a no-op. */
   const openingChannelReferenceRef = useRef<string | null>(null);
@@ -2216,14 +2218,14 @@ export function BuzzChatSurface({
     return `${artifacts}:${thumbs}`;
   }, [roomSurface?.messages]);
   const starPrompt = useStarPrompt(starPromptKey, Boolean(roomSurface) && !isReadOnlyDirectMessage);
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const humanUi = roomSurface?.boundApp?.manifest.humanUi;
-    if (!isFocused || !isCorner || !humanUi) return;
+    if (!isFocused() || !isCorner || !humanUi) return;
     router.replace({
       pathname: '/beeline/corner-app/[slug]',
       params: { slug: roomSurface.boundApp!.manifest.slug, roomId: decodedId },
     } as Href);
-  }, [decodedId, isCorner, isFocused, roomSurface?.boundApp]);
+  }, [decodedId, isCorner, isFocused, roomSurface?.boundApp]));
   const currentSlashQuery = useMemo(() => slashVerbQuery(inputText), [inputText]);
   // Mention-scoped palette: `@agent /query` addresses THAT agent's advertised
   // commands. Mutually exclusive with `currentSlashQuery` by shape — the plain
@@ -3030,8 +3032,8 @@ export function BuzzChatSurface({
   // fetched tail must never be read over messages sitting below the fold. A
   // reader in history, a landing in progress, or a provisional draft/live lane
   // all write nothing.
-  useEffect(() => {
-    if (anchoredSegmentActive || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (anchoredSegmentActive || !isFocused()) return;
     const chronological = chronologicalMessagesRef.current;
     const report = pinnedTailReadReport(chronological, {
       pinnedToTail: scrollController.isPinnedToTail(),
@@ -3047,7 +3049,7 @@ export function BuzzChatSurface({
     newMessageHasObservedVisibility,
     newestTranscriptMessageId,
     scrollController,
-  ]);
+  ]));
   // Back from the code reader: center the row the reader opened it from.
   const scrollToArtifactOrigin = useCallback(
     (index: number) => {
@@ -3539,6 +3541,10 @@ export function BuzzChatSurface({
         );
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
+        if (err instanceof MonolithRequestTimeoutError) {
+          refreshSignal.force();
+          Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
+        }
         console.warn('Stopping the turn failed:', err);
         return false;
       }
@@ -4267,15 +4273,15 @@ export function BuzzChatSurface({
 
   // Fill modals render outside the Room tree. Give the viewer the Room's live
   // messages and its signed/outbox-backed send path without a second socket.
-  useEffect(() => {
-    if (!roomSurface || !isFocused) return;
+  useFocusEffect(useCallback(() => {
+    if (!roomSurface || !isFocused()) return;
     publishViewerConversation({
       roomId: decodedId,
       messages: roomSurface.messages,
       send: (message, dictated) => handleSend({ text: message.text, viewer: message }, dictated).then(Boolean),
     });
     return () => removeViewerConversation(decodedId);
-  }, [decodedId, handleSend, isFocused, roomSurface]);
+  }, [decodedId, handleSend, isFocused, roomSurface]));
 
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
@@ -4506,6 +4512,7 @@ export function BuzzChatSurface({
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
+        refreshSignal.force();
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4794,6 +4801,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
+        refreshSignal.force();
         setMembershipError(
           `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
         );
@@ -5249,37 +5257,21 @@ export function BuzzChatSurface({
     else router.replace('/beeline/channels');
   }, [cornerReturnTarget, liveDraftStore, navigation, parentChannelId]);
 
-  const [closingCorner, setClosingCorner] = useState(false);
+  const closeCornerPending = useRef(false);
   const handleCloseCorner = useCallback(async () => {
-    if (closingCorner) return;
-    // `if (!transport) return` — the shape this replaces — made every press a
-    // SILENT no-op until the screen had connected, and permanently if that
-    // ever failed. The screen paints from cache, so the button is on screen
-    // well before `transport` exists: pressing it did nothing, said nothing,
-    // and published nothing, which is exactly what the captain saw (a corner
-    // with zero close requests accepted by the server after many presses).
-    // A control the reader can see must either act or explain itself.
-    if (!transport) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert(
-        `Not connected yet`,
-        `This ${CORNER_LABEL} could not be closed because the app is still connecting to the server. Try again in a moment.`,
-      );
-      return;
-    }
-    setClosingCorner(true);
+    if (closeCornerPending.current) return;
+    closeCornerPending.current = true;
     try {
+      if (!transport) throw new Error('Still connecting. Try again in a moment.');
       await transport.closeCorner(decodedId);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       handleBack();
-    } catch (err) {
-      console.warn('Close corner failed:', err);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
+    } catch (error) {
+      refreshSignal.force();
+      Modal.alert('Could not close corner', error instanceof Error ? error.message : String(error));
     } finally {
-      setClosingCorner(false);
+      closeCornerPending.current = false;
     }
-  }, [closingCorner, decodedId, handleBack, transport]);
+  }, [decodedId, handleBack, transport, refreshSignal]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -5645,6 +5637,7 @@ export function BuzzChatSurface({
         return (
           <WritePermissionCard
             message={item}
+            roomName={roomName}
             agent={agentByPubkey.get(item.writePermission.agentPubkey)}
             viewerIsAgent={viewerIsAgent}
             viewerPubkey={cacheViewerPubkey}
@@ -5678,6 +5671,8 @@ export function BuzzChatSurface({
         return (
           <SquireApprovalCard
             message={item}
+            agent={agentByPubkey.get(item.squireApproval.agent.pubkey)}
+            viewerPubkey={cacheViewerPubkey}
             onOpenSource={(roomId, messageId) =>
               router.navigate(messageJumpHref(roomId, messageId, `squire-approval:${item.id}`))
             }
@@ -5775,6 +5770,13 @@ export function BuzzChatSurface({
             viewerRole={viewerChannelRole}
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
+            onDecline={async offerId => {
+              if (connectorOfferActionId) return;
+              setConnectorOfferActionId(offerId);
+              try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
+              catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
+              finally { setConnectorOfferActionId(null); }
+            }}
             onContinue={(offerId, connectorType, pairedConnectorId) =>
               void continueConnectorOffer(offerId, connectorType, pairedConnectorId, item.connectorOffer!.intent === 'reconnect')
             }
@@ -5807,6 +5809,7 @@ export function BuzzChatSurface({
         return (
           <TargetBranchProposalCard
             message={item}
+            roomName={roomName}
             agent={
               item.targetBranchProposal.agentPubkey
                 ? agentByPubkey.get(item.targetBranchProposal.agentPubkey)
@@ -5818,6 +5821,14 @@ export function BuzzChatSurface({
             actionId={targetBranchActionId}
             notice={notice}
             onConfirm={handleConfirmTargetBranch}
+            viewerPubkey={cacheViewerPubkey}
+            onDeny={async () => {
+              if (targetBranchActionId) return;
+              setTargetBranchActionId(item.targetBranchProposal!.proposalId);
+              try { await monolithPhoneOperation('decideApprovalCard', { roomId: decodedId, messageId: item.id, decision: 'deny' }); }
+              catch (error) { Modal.alert('Could not decline', phoneOperationFailureReason(error)); }
+              finally { setTargetBranchActionId(null); }
+            }}
           />
         );
       }
@@ -5946,7 +5957,7 @@ export function BuzzChatSurface({
       return item.cornerMarkers?.length ? (
         <View>
           {ledgerMessage}
-          <CornerOpenedMarkers message={item} onOpenCorner={openCorner} />
+          <CornerOpenedMarkers message={item} onOpenCorner={openCorner} onOpenUrl={handleOpenGitHubEvent} />
         </View>
       ) : (
         ledgerMessage
@@ -6737,6 +6748,7 @@ export function BuzzChatSurface({
                         ) : null}
                         {composerAck ? (
                           <TurnProgressLine
+                            inset={false}
                             label={composerAck.label}
                             startedAt={composerAck.startedAt}
                             received={composerAck.received}
@@ -7055,7 +7067,7 @@ export function BuzzChatSurface({
             testID="message-select-action"
           />
         ) : null}
-        {messageActionsTarget ? (
+        {messageActionsTarget && canBeginReply(messageActionsTarget, decodedId) ? (
           <HullActionSheetRow
             accessibilityLabel="Reply to message"
             label="Reply"
@@ -7308,41 +7320,31 @@ export function BuzzChatSurface({
         />
       </HullActionSheetModal>
 
-      <HullActionSheetModal
-        accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-        dismissOnBackdrop={!closingCorner}
-        onClose={() => { if (!closingCorner) setCornerActionsVisible(false); }}
-        testID="corner-actions-sheet"
+      <CornerActionsSheet
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
-      >
-        <CornerLockAction
-          locked={roomSurface?.cornerLocked === true}
-          disabled={closingCorner || !transport}
-          save={async (locked) => {
-            if (!transport) throw new Error('Still connecting. Try again in a moment.');
-            await transport.setCornerLocked(decodedId, locked);
-          }}
-          onSaved={() => refreshSignal.force()}
-          onError={(error) => Modal.alert('Could not change corner lock', error instanceof Error ? error.message : String(error))}
-        />
-        <HullActionSheetRow
-          accessibilityLabel={`Close ${CORNER_LABEL}`}
-          description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
-          destructive
-          disabled={closingCorner}
-          label={closingCorner ? `Closing ${CORNER_LABEL}…` : `Close ${CORNER_LABEL}`}
-          onPress={() => {
-            void handleCloseCorner();
-          }}
-          testID="close-corner-action"
-        />
-        <HullActionSheetCancel
-          disabled={closingCorner}
-          onPress={() => setCornerActionsVisible(false)}
-          testID="corner-actions-close"
-        />
-      </HullActionSheetModal>
+        locked={roomSurface?.cornerLocked === true}
+        connected={Boolean(transport)}
+        onClose={() => setCornerActionsVisible(false)}
+        closeCorner={async () => {
+          if (!transport) throw new Error('Still connecting. Try again in a moment.');
+          await transport.closeCorner(decodedId);
+        }}
+        setLocked={async (locked) => {
+          if (!transport) throw new Error('Still connecting. Try again in a moment.');
+          await transport.setCornerLocked(decodedId, locked);
+        }}
+        onClosed={() => {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          handleBack();
+        }}
+        onSaved={() => refreshSignal.force()}
+        onError={(error) => {
+          refreshSignal.force();
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          Modal.alert('Could not complete request', error instanceof Error ? error.message : String(error));
+        }}
+      />
 
       <HullDialog
         actions={[

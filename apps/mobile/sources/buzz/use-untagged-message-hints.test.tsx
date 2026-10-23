@@ -37,6 +37,18 @@ function mount(initial: Partial<Parameters<typeof useUntaggedMessageHints>[0]> =
 afterEach(() => act(() => trees.splice(0).forEach(tree => tree.unmount())));
 
 describe('private untagged send feedback', () => {
+  it('ignores a receipt from an ended visit when focus is read without rendering', async () => {
+    const sender = mount({ active: () => true });
+    await flush();
+    const delayed = sender.api.captureSend(false);
+    act(() => sender.api.endVisit());
+    act(() => delayed('late'));
+    await flush();
+    expect(sender.hints()).toEqual([]);
+    sender.send('fresh');
+    await flush();
+    expect(sender.hints()).toHaveLength(1);
+  });
   it('appears only on the device that sent, then clears all hints after tagging anyone', async () => {
     const sender = mount();
     await flush();

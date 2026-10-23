@@ -1,0 +1,122 @@
+[
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-back-0",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780667449,
+    "paintMs": 1792780667706,
+    "profiled": false,
+    "durationMs": 257,
+    "warmup": true
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-open-0",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780668845,
+    "paintMs": 1792780669076,
+    "profiled": false,
+    "durationMs": 231,
+    "warmup": true
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-back-1",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780670129,
+    "paintMs": 1792780670408,
+    "profiled": false,
+    "durationMs": 279,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-open-1",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780671519,
+    "paintMs": 1792780671762,
+    "profiled": false,
+    "durationMs": 243,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-back-2",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780672915,
+    "paintMs": 1792780673179,
+    "profiled": false,
+    "durationMs": 264,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-open-2",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780674311,
+    "paintMs": 1792780674526,
+    "profiled": false,
+    "durationMs": 215,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-back-3",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780675604,
+    "paintMs": 1792780675892,
+    "profiled": false,
+    "durationMs": 288,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-open-3",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780676998,
+    "paintMs": 1792780677228,
+    "profiled": false,
+    "durationMs": 230,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-back-4",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780678292,
+    "paintMs": 1792780678572,
+    "profiled": false,
+    "durationMs": 280,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-open-4",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780679703,
+    "paintMs": 1792780679945,
+    "profiled": false,
+    "durationMs": 242,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-back-5",
+    "needle": "aaaaaaaaaaaaaaaa",
+    "startMs": 1792780680992,
+    "paintMs": 1792780681245,
+    "profiled": false,
+    "durationMs": 253,
+    "warmup": false
+  },
+  {
+    "probe": "native-frame-commit-v1",
+    "case": "baseline-matched-corner-open-5",
+    "needle": "bbbbbbbbbbbbbbbb",
+    "startMs": 1792780682292,
+    "paintMs": 1792780682526,
+    "profiled": false,
+    "durationMs": 234,
+    "warmup": false
+  }
+]

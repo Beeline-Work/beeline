@@ -39,7 +39,7 @@ function findByType(node: any, type: string): any {
   return null;
 }
 
-function runAppearanceScript(scriptSource: string, storedSettings: unknown): string[] {
+function runAppearanceScript(scriptSource: string, storedSettings: unknown, migrated = true): string[] {
   const appended: string[] = [];
   const documentStub = {
     head: { appendChild: (node: { textContent: string }) => appended.push(node.textContent) },
@@ -50,7 +50,7 @@ function runAppearanceScript(scriptSource: string, storedSettings: unknown): str
       getItem: (key: string) =>
         key === 'beeline.settings.local-settings' && storedSettings !== undefined
           ? JSON.stringify(storedSettings)
-          : null,
+          : key === 'beeline.settings.appearance-system-v1' && migrated ? 'done' : null,
     },
   };
   // eslint-disable-next-line no-new-func
@@ -72,14 +72,17 @@ describe('the static HTML shell', () => {
     expect(runAppearanceScript(source, { appearance: 'light' })).toEqual([
       'body { background-color: #F3EEE4; }',
     ]);
-    expect(runAppearanceScript(source, { appearance: 'dark' })).toEqual([]);
+    expect(runAppearanceScript(source, { appearance: 'dark' })).toEqual(['body { background-color: #14091A; }']);
+    expect(runAppearanceScript(source, { appearance: 'dark' }, false)).toEqual([]);
+    expect(runAppearanceScript(source, { appearance: 'system' })).toEqual([]);
     expect(runAppearanceScript(source, undefined)).toEqual([]);
   });
 
-  it('defaults the static CSS to the Obsidian canvas, matching localSettingsDefaults', () => {
+  it('uses a light fallback and follows the OS before first paint', () => {
     const tree = renderRoot();
     const style = findByType(tree, 'style');
     expect(style.props.dangerouslySetInnerHTML.__html).toContain('#14091A');
-    expect(style.props.dangerouslySetInnerHTML.__html).not.toContain('prefers-color-scheme');
+    expect(style.props.dangerouslySetInnerHTML.__html).toContain('prefers-color-scheme');
+    expect(style.props.dangerouslySetInnerHTML.__html).toContain('#F3EEE4');
   });
 });

@@ -20,7 +20,8 @@ import { StateDot } from './StateDot';
 /** A horizontal composition for inline navigation and non-index layout.
  * Unlike an index entry, its children retain their own typography and targets.
  */
-export function InlineRow({ style, ...props }: ViewProps) {
+export function InlineRow({ style, onPress, ...props }: ViewProps & { onPress?: () => void }) {
+  if (onPress) return <Pressable {...props} onPress={onPress} style={[inlineStyles.row, style]} />;
   return <View {...props} style={[inlineStyles.row, style]} />;
 }
 
@@ -520,7 +521,7 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       flexShrink: 0,
       marginLeft: 'auto',
-      maxWidth: '50%',
+      maxWidth: '60%',
       textAlign: 'right',
       color: hull.textMuted,
     },
@@ -596,7 +597,7 @@ export function TranscriptFactRow({ label, value }: { label: string; value: stri
   </View>;
 }
 const factStyles = StyleSheet.create(({ buzz }) => ({
-  row: { flexDirection: 'row', gap: buzz.space.sm, paddingVertical: buzz.space.sm, borderTopWidth: 1, borderTopColor: buzz.borderStrong },
+  row: { flexDirection: 'row', gap: buzz.space.sm, paddingVertical: buzz.space.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },
   label: { ...buzz.type.meta, color: buzz.ledgerQuiet },
   value: { ...buzz.type.meta, color: buzz.textPrimary, flex: 1, textAlign: 'right' },
 }));

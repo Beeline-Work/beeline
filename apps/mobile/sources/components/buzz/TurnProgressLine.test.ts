@@ -110,6 +110,34 @@ describe('the per-turn progress indicator', () => {
     motion.reducedMotion = false;
   });
 
+  it.each([true, false])('leads with the visible mark and keeps STOP at the text edges (inset=%s)', (inset) => {
+    const renderer = render(React.createElement(TurnProgressLine, {
+      label: 'Ruby Pondering…', startedAt: 10, onStop: vi.fn(), testID: 'alignment', inset,
+    }));
+    const bar = renderer.root.findAllByType('View').find(node => node.props.testID === 'alignment');
+    const barStyle = Array.isArray(bar?.props.style) ? Object.assign({}, ...bar.props.style) : bar?.props.style;
+    expect(barStyle.paddingHorizontal).toBe(inset ? groknight.space.md : 0);
+    const row = renderer.root.findByType('AnimatedView');
+    const children = React.Children.toArray(row.props.children) as React.ReactElement<any>[];
+    expect(children[0].props.testID).toBe('alignment-glyph');
+    expect(children[1].props.children).toBe('Ruby Pondering…');
+    const cell = Object.assign({}, ...children[0].props.style);
+    expect(cell.width + ribbon.cellInkInset).toBe(MARK_CELL);
+    expect(cell.alignItems).toBe('flex-end');
+    expect(Object.assign({}, ...row.props.style).gap).toBe(8);
+    expect(children.findIndex(child => child.props.testID === 'alignment-glyph'))
+      .toBeLessThan(children.findIndex(child => child.props.testID === 'alignment-elapsed'));
+    expect(children.at(-1)?.props.testID).toBe('alignment-stop');
+  });
+
+  it('does not double the inspector transcript inset', () => {
+    const renderer = render(React.createElement(TurnProgressLine, {
+      label: 'Ruby Pondering…', inset: false, testID: 'inspector-alignment',
+    }));
+    const bar = renderer.root.findAllByType('View').find(node => node.props.testID === 'inspector-alignment');
+    expect(Object.assign({}, ...bar?.props.style).paddingHorizontal).toBe(0);
+  });
+
   it('says the agent is thinking, and nothing about any corner', () => {
     const renderer = render(
       React.createElement(TurnProgressLine, { label: 'beebee thinking\u2026' }),
@@ -361,11 +389,11 @@ describe('the per-turn progress indicator', () => {
     );
     const cell = renderer.root.findByProps({ testID: 'turn-progress-line-glyph' });
     expect(cell.findAllByType('Text')).toHaveLength(0);
-    expect(cell.props.style).toMatchObject({
-      width: MARK_CELL,
+    expect(Object.assign({}, ...cell.props.style)).toMatchObject({
+      width: MARK_CELL - ribbon.cellInkInset,
       height: MARK_CELL,
       flexShrink: 0,
-      alignItems: 'center',
+      alignItems: 'flex-end',
     });
     expect(MARK_CELL).toBe(18);
   });

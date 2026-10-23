@@ -1,3 +1,4 @@
+import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 /**
  * Agent health for the ordered agent lists a Room reviewer and a workflow
@@ -133,9 +134,10 @@ export async function isConfiguredReviewer(
   db: SqlDatabase,
   parentRoomId: string,
   agentId: string,
+  configuration?: { reviewer_agent_id: string | null; reviewer_fallback_ids: string[] | null },
 ): Promise<boolean> {
     db = new CornerAccessDatabase(db);
-  const room = (
+  const room = configuration ?? (
     await db.query<{ reviewer_agent_id: string | null; reviewer_fallback_ids: string[] | null }>(
       `SELECT reviewer_agent_id,reviewer_fallback_ids FROM rooms WHERE id=$1`,
       [parentRoomId],
@@ -152,8 +154,8 @@ export async function isConfiguredReviewer(
 }
 
 /**
- * The exact reviewer post `approve_merge` enforces for one corner: the parent
- * Room's configured reviewer (or a current-member fallback) that is also a
+ * The reviewer post for one corner: its override or the parent Room reviewer
+ * (or a current-member fallback when no override is set), also a
  * current member of the parent Room. It is the ONE predicate every reviewer
  * surface uses — `approveCornerMerge` and the reviewer instruction
  * `getAgentConfiguration.isReviewer` projects — so the instruction a reviewer
@@ -166,14 +168,15 @@ export async function isCornerReviewer(
 ): Promise<boolean> {
     db = new CornerAccessDatabase(db);
   const row = (
-    await db.query<{ parent_room_id: string }>(
-      `SELECT parent.id parent_room_id FROM rooms corner
+    await db.query<{ parent_room_id: string; reviewer_agent_id: string | null; reviewer_fallback_ids: string[] }>(
+      `SELECT parent.id parent_room_id,${cornerReviewerSql()} reviewer_agent_id,
+       ${cornerReviewerFallbacksSql()} reviewer_fallback_ids FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id WHERE corner.id=$1`,
       [cornerId],
     )
   ).rows[0];
   if (!row) return false;
-  if (!(await isConfiguredReviewer(db, row.parent_room_id, agentId))) return false;
+  if (!(await isConfiguredReviewer(db, row.parent_room_id, agentId, row))) return false;
   const member = await db.query(
     `SELECT 1 FROM effective_memberships reviewer
      JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'

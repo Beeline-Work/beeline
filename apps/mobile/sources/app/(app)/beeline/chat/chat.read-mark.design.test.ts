@@ -52,8 +52,8 @@ describe('the chat surface read-mark contract', () => {
     // suspension permanent for a reader who reopened the SAME Room: the id
     // never changed, so nothing resumed (review 2026-09-22).
     const focusEffect = sessionSource.slice(
-      sessionSource.indexOf('useEffect(() => {\n    if (isFocused) {'),
-      sessionSource.indexOf('}, [isFocused]);'),
+      sessionSource.indexOf('if (isFocused) {'),
+      sessionSource.indexOf('\n  useEffect', sessionSource.indexOf('if (isFocused) {')),
     );
     expect(focusEffect).toContain('readCursorRef.current?.resume()');
     expect(focusEffect).toContain('readCursorRef.current?.flush()');

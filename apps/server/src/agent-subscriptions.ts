@@ -1,3 +1,4 @@
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { validateScheduleTitle } from './schedule-title.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { isSubscribableEventKind } from '@beeline/api-contract/phone';
@@ -115,7 +116,7 @@ function legacyView(row: LegacyRow): RoomSubscriptionView | undefined {
 async function legacySubscriptions(db: SqlDatabase, roomId: string, agentId?: string) {
   const rows = await db.query<LegacyRow>(
     `SELECT surface.id room_id,member.identity_id agent_id,kind.event,
-       member.joined_at,surface.parent_id,surface.name room_name,parent.reviewer_agent_id
+       member.joined_at,surface.parent_id,surface.name room_name,${cornerReviewerSql('surface')} reviewer_agent_id
      FROM rooms surface
      JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
      JOIN effective_memberships member ON member.room_id=surface.id AND member.removed_at IS NULL
@@ -313,7 +314,7 @@ export async function deleteRoomSubscription(db: SqlDatabase, roomId: string, id
            AND member.removed_at IS NULL
          WHERE room.id=$2 AND (room.id=$1 OR room.parent_id=$1)
            AND member.event_subscriptions ? $4
-           AND NOT ($4='check-passed' AND parent.reviewer_agent_id=$3)
+           AND NOT ($4='check-passed' AND ${cornerReviewerSql('room')}=$3)
        ), room_update AS (
          UPDATE memberships member SET event_subscriptions=member.event_subscriptions-$4
          FROM surface WHERE surface.parent_id IS NULL AND member.room_id=surface.id

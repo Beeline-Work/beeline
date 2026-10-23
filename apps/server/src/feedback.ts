@@ -18,7 +18,6 @@ import {
 } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { CommandRow } from './agent-command.js';
-import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 import { PROHIBITED_SECRET_PATTERNS } from './institutional-memory-shadow.js';
 import { hasSystemReportMention } from './message-mentions.js';
@@ -131,8 +130,8 @@ async function roomWorkspace(database: SqlDatabase, roomId: string): Promise<str
 
 /**
  * `report_feedback`, from inside the agent's authorized turn. The same
- * category, tool and normalized summary match any open agent item; fifty
- * new items per agent per UTC day is the cap.
+ * category, tool and normalized summary match any open agent item. Reports
+ * beyond the daily safety ceiling share one bounded overflow item.
  */
 export async function reportAgentFeedback(
   database: SqlDatabase,
@@ -214,23 +213,36 @@ export async function reportAgentFeedback(
       [agentId],
     )
   ).rows[0]!.count;
-  if (today >= FEEDBACK_AGENT_DAILY_CAP)
-    throw new CommandRefusalError(
-      `feedback cap reached: ${FEEDBACK_AGENT_DAILY_CAP} reports per agent per UTC day`,
-      429,
-    );
+  const overflow = today >= FEEDBACK_AGENT_DAILY_CAP;
+  // A reserved key (not producible by summary normalization) keeps overflow
+  // separate from ordinary duplicate matching, including across agents.
+  const overflowKey = overflow
+    ? `overflow:${agentId}:${(await database.query<{ utc_day: string }>(
+        "SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD') AS utc_day",
+      )).rows[0]!.utc_day}`
+    : undefined;
   const owner = (
     await database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [
       agentId,
     ])
   ).rows[0]?.owner_id;
-  const id = feedbackItemId();
-  await database.query(
+  const id = overflowKey ? `fb_${overflowKey}` : feedbackItemId();
+  const stored = await database.query<{ occurrence_count: number }>(
     `INSERT INTO feedback_items(
        id,source_kind,reporter_identity_id,reporter_owner_id,workspace_id,room_id,
        trigger_message_id,message_ids,request_id,category,summary,summary_key,detail,
        tool_name,error_excerpt,prompt_section_ids
-     ) VALUES($1,'agent',$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::text[])`,
+     ) VALUES($1,'agent',$2,$3,$4,$5,$6,$7::text[],$8,$9,$10,$11,$12,$13,$14,$15::text[])
+     ${overflow ? `ON CONFLICT(id) DO UPDATE SET
+       occurrence_count=feedback_items.occurrence_count+1, last_occurrence_at=now(),
+       summary=EXCLUDED.summary, detail=EXCLUDED.detail, category=EXCLUDED.category,
+       tool_name=EXCLUDED.tool_name, error_excerpt=EXCLUDED.error_excerpt,
+       workspace_id=EXCLUDED.workspace_id, room_id=EXCLUDED.room_id,
+       trigger_message_id=EXCLUDED.trigger_message_id, message_ids=EXCLUDED.message_ids,
+       request_id=EXCLUDED.request_id, prompt_section_ids=EXCLUDED.prompt_section_ids,
+       status='new', issue_repository=NULL, issue_number=NULL, triage_reason=NULL,
+       triaged_at=NULL, resolved_notified_at=NULL` : ''}
+     RETURNING occurrence_count`,
     [
       id,
       agentId,
@@ -242,14 +254,14 @@ export async function reportAgentFeedback(
       command.turn_request_id,
       input.category,
       summary,
-      summaryKey,
+      overflowKey ?? summaryKey,
       detail ?? null,
       toolName ?? null,
       errorExcerpt ?? null,
       promptSectionIds,
     ],
   );
-  return { itemId: id, duplicate: false };
+  return { itemId: id, duplicate: stored.rows[0]!.occurrence_count > 1 };
 }
 
 const TAG_SUMMARY = 'Reported with @system';

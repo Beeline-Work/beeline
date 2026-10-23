@@ -1,0 +1,32 @@
+[
+  {
+    "case": "grant-legacy",
+    "action": "No",
+    "outcome": "Action received",
+    "theme": "bone"
+  },
+  {
+    "case": "squire-key",
+    "action": "View request",
+    "outcome": "Action received",
+    "theme": "bone"
+  },
+  {
+    "case": "spending",
+    "action": "Allow once",
+    "outcome": "Action received",
+    "theme": "bone"
+  },
+  {
+    "case": "target-branch",
+    "action": "No",
+    "outcome": "Action received",
+    "theme": "bone"
+  },
+  {
+    "case": "connector-add",
+    "action": "No",
+    "outcome": "Action received",
+    "theme": "bone"
+  }
+]

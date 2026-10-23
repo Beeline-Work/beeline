@@ -31,6 +31,7 @@ export function anchorCornerMarkers<T extends MarkerCarrier>(
     if (
       message.daemonFact?.type &&
       message.daemonFact.type !== 'corner-open' &&
+      message.daemonFact.type !== 'corner-complete' &&
       message.systemEvent?.kind !== 'corner-opened'
     )
       continue;

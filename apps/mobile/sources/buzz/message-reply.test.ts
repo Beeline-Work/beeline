@@ -5,6 +5,7 @@ import {
   activityReplyParent,
   agentActivityReplyExcerpt,
   beginReplyTarget,
+  canBeginReply,
   prepareMessageReply,
 } from './message-reply';
 
@@ -184,6 +185,19 @@ describe('message replies', () => {
         'corner-id',
       ),
     ).toBeNull();
+  });
+
+  it('offers reply only while the same row can install a target (Reproduction swipe-stuck)', () => {
+    const base = { id: 'final', text: 'Final answer', isUser: false, timestamp: 12 };
+    const display = { ...sol, messageId: 'final' };
+    for (const row of [base, { ...base, reference: { channelId: 'other', eventId: 'final', rootId: 'final' } },
+      { ...base, isAgentDraft: true, reference: { channelId: 'room', eventId: 'final', rootId: 'final' } }]) {
+      expect(canBeginReply(row, 'room')).toBe(false);
+      expect(beginReplyTarget(row, [], display, 'room')).toBeNull();
+    }
+    const hydrated = { ...base, reference: { channelId: 'room', eventId: 'final', rootId: 'final' } };
+    expect(canBeginReply(hydrated, 'room')).toBe(true);
+    expect(beginReplyTarget(hydrated, [], display, 'room')).toMatchObject({ preview: 'The final answer', reference: hydrated.reference });
   });
 
   it('sends an addressed message without copying working tool activity into the body', () => {

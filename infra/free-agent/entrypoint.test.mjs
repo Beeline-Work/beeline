@@ -76,7 +76,7 @@ test('startup watchdog exit stops this boot without refreshing or retrying', asy
 });
 
 for (const scenario of ['old helper', 'installer', 'repeated exits', 'serving']) {
-  test(`boot deadline handles ${scenario}`, { timeout: 8_000 }, async () => {
+  test(`boot deadline handles ${scenario}`, { timeout: scenario === 'serving' ? 18_000 : 8_000 }, async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-entrypoint-budget-'));
     let child;
     try {
@@ -89,12 +89,16 @@ for (const scenario of ['old helper', 'installer', 'repeated exits', 'serving'])
       const source = await readFile(new URL('./entrypoint.sh', import.meta.url), 'utf8');
       const script = resolve(root, 'entrypoint.sh');
       await writeFile(script, source.replaceAll('/opt/beeline/install.sh', installer)
-        .replace('+ 300', '+ 1').replace('START_DEADLINE + 10', 'START_DEADLINE + 1'));
+        // Serving must establish readiness before the wall-clock deadline. A
+        // one-second budget can expire during process startup on a busy runner.
+        // Keep failure cases short, but observe serving beyond its full budget.
+        .replace('+ 300', scenario === 'serving' ? '+ 10' : '+ 1')
+        .replace('START_DEADLINE + 10', 'START_DEADLINE + 1'));
       child = spawn('/bin/sh', [script], { env: { ...process.env, HOME: root } });
       let errors = '';
       child.stderr.on('data', chunk => { errors += chunk; });
       if (scenario === 'serving') {
-        await new Promise(done => setTimeout(done, 3_000));
+        await new Promise(done => setTimeout(done, 12_000));
         assert.equal(child.exitCode, null);
       } else {
         const [code] = await once(child, 'exit');

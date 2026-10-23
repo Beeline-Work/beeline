@@ -1,10 +1,11 @@
+import { squireApprovalAction } from '@beeline/api-contract/phone';
+import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
-import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
 import { FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_TURN_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -318,9 +319,10 @@ const MAX_REPLY_STEPS_BYTES = 4_000_000;
  * column stores, or null when it has none. Only tool rows and notes belong
  * there; anything else is refused rather than stored.
  */
-function replySteps(steps: unknown): string | null {
+// Reserve internal notes beyond the validated helper payload for closing prose.
+function replySteps(steps: unknown, summaryNotes = 0): string | null {
   if (steps === undefined) return null;
-  if (!Array.isArray(steps) || steps.length > MAX_REPLY_STEPS)
+  if (!Array.isArray(steps) || steps.length > MAX_REPLY_STEPS + summaryNotes)
     throw new Error('reply steps are invalid');
   for (const step of steps as Record<string, unknown>[]) {
     if (!step || typeof step !== 'object') throw new Error('reply steps are invalid');
@@ -334,7 +336,7 @@ function replySteps(steps: unknown): string | null {
       throw new Error('reply steps are invalid');
   }
   const json = JSON.stringify(steps);
-  if (Buffer.byteLength(json) > MAX_REPLY_STEPS_BYTES) throw new Error('reply steps are invalid');
+  if (Buffer.byteLength(json) > MAX_REPLY_STEPS_BYTES + summaryNotes * 100_000) throw new Error('reply steps are invalid');
   return steps.length ? json : null;
 }
 /** Corner reads and merge writes that also admit a current parent Room member. */
@@ -498,6 +500,7 @@ export class DaemonService {
       'postAgentThought',
       'retractAgentLiveOutput',
       'postAgentTurnReceipt',
+      'markAgentTurnSilent',
       'postAgentActivity',
       'postSquireApproval',
       'postComputerSession',
@@ -1475,6 +1478,19 @@ export class DaemonService {
           input as Input<'retractAgentLiveOutput'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'markAgentTurnSilent': {
+        const command = this.authorizedCommand;
+        if (!command) throw new CommandRefusalError('silence requires an active turn', 409);
+        if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
+          'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
+          'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
+          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed'].includes(command.reason))
+          throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
+        await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
+          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+          [command.room_id, authenticatedAgentId, command.turn_request_id]);
+        return this.writeResult() as Output<Name>;
+      }
       case 'postAgentTurnReceipt':
         return (await this.turnReceipt(
           input as Input<'postAgentTurnReceipt'>,
@@ -2060,11 +2076,11 @@ export class DaemonService {
         reviewer_agent_id: string | null;
         owner_agent_id: string;
       }>(
-        `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id
+        `SELECT ${cornerReviewerSql()} reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
-         WHERE corner.id=$1 AND (parent.reviewer_agent_id IS NULL OR parent.reviewer_agent_id<>$2)
+         WHERE corner.id=$1 AND (${cornerReviewerSql()} IS NULL OR ${cornerReviewerSql()}<>$2)
            AND ${cornerImplementerSql('fact', 'corner')}=$2
            AND fact.lifecycle ? 'pr'`,
         [cornerId, workerAgentId],
@@ -2098,7 +2114,7 @@ export class DaemonService {
           owner_agent_id: string;
           lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         }>(
-          `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,fact.lifecycle
+          `SELECT ${cornerReviewerSql()} reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,fact.lifecycle
            FROM rooms corner
            JOIN rooms parent ON parent.id=corner.parent_id
            JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -3185,11 +3201,39 @@ export class DaemonService {
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
       throw new Error('invalid message offset');
-    let row = (
+    // Private hand-offs expose the command id as their message id. Only the
+    // sender and recipient may reopen that payload, even in a shared Room.
+    const handoff = (await this.database.query<{
+      agent_id: string; author_id: string; body: string; total: number;
+      attachments: DaemonAttachment[]; accessible: boolean;
+    }>(
+      `SELECT command.agent_id,command.private_payload->>'authorId' author_id,
+              substring(command.private_payload->>'text' FROM $3::integer + 1 FOR 4000) body,
+              char_length(command.private_payload->>'text') total,
+              command.private_payload->'attachments' attachments,
+              EXISTS(SELECT 1 FROM effective_memberships member
+                     WHERE member.room_id=CASE WHEN command.agent_id=$2 THEN command.room_id
+                       ELSE NULLIF(command.private_payload->>'fromRoomId','')::uuid END
+                       AND member.identity_id=$2
+                       AND member.removed_at IS NULL) accessible
+       FROM agent_commands command
+       WHERE command.id=$1 AND command.private_payload IS NOT NULL`,
+      [input.messageId, agentId, offset],
+    )).rows[0];
+    if (handoff && (!handoff.accessible ||
+        (handoff.agent_id !== agentId && handoff.author_id !== agentId)))
+      throw new Error('message access denied: private hand-off');
+    let row = handoff ?? (
       await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
-        `SELECT substring(text FROM $3::integer + 1 FOR 4000) body,
-                char_length(text) total, attachments
-         FROM messages WHERE room_id=$1 AND id=$2 AND presentation='message'`,
+        `SELECT substring(CASE WHEN card_type='agent-command' THEN card->>'text' ELSE text END
+                         FROM $3::integer + 1 FOR 4000) body,
+                char_length(CASE WHEN card_type='agent-command' THEN card->>'text' ELSE text END) total, attachments
+         FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms output ON output.id=$1
+         WHERE message.id=$2 AND message.deleted_at IS NULL
+           AND COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
+           AND (presentation='message' OR card_type='agent-command')`,
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
@@ -3209,12 +3253,13 @@ export class DaemonService {
         row = (
           await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
             `WITH ${AUTHORIZED_ROOMS_CTE}
-             SELECT substring(message.text FROM $6::integer + 1 FOR 4000) body,
-                    char_length(message.text) total,message.attachments
+             SELECT substring(CASE WHEN message.card_type='agent-command' THEN message.card->>'text' ELSE message.text END
+                              FROM $6::integer + 1 FOR 4000) body,
+                    char_length(CASE WHEN message.card_type='agent-command' THEN message.card->>'text' ELSE message.text END) total,message.attachments
              FROM messages message
              JOIN authorized_rooms authorized ON authorized.id=message.room_id
              WHERE message.id=$5 AND message.deleted_at IS NULL
-               AND message.presentation='message'`,
+               AND (message.presentation='message' OR message.card_type='agent-command')`,
             [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
               input.messageId, offset],
           )
@@ -3222,14 +3267,13 @@ export class DaemonService {
       }
     }
     if (!row) {
-      // A message that exists elsewhere in this Workspace is a refusal, not a
-      // miss: download_attachment reports `forbidden` instead of `not_found`.
+      // Existing messages outside the readable scope are refusals, not misses:
+      // download_attachment must preserve forbidden rather than not_found.
       const elsewhere = await this.database.query(
         `SELECT 1 FROM messages message
-         JOIN rooms source ON source.id=message.room_id
-         JOIN rooms here ON here.id=$1 AND here.workspace_id=source.workspace_id
-         WHERE message.id=$2 AND message.deleted_at IS NULL AND message.presentation='message'`,
-        [input.roomId, input.messageId],
+         WHERE message.id=$1 AND message.deleted_at IS NULL
+           AND (message.presentation='message' OR message.card_type='agent-command')`,
+        [input.messageId],
       );
       if (elsewhere.rowCount) throw new Error('message access denied from this Room');
       throw new Error('message not found in this Room');
@@ -3596,16 +3640,18 @@ export class DaemonService {
    */
   private async mergeCorner(input: Input<'mergeCorner'>, agentId: string): Promise<Output<'mergeCorner'>> {
     const corner = (
-      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null }>(
+      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null; archived: boolean }>(
         `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-                fact.lifecycle->'pr'->>'headSha' head_sha
+                fact.lifecycle->'pr'->>'headSha' head_sha,
+                corner.archived_at IS NOT NULL archived
          FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL`,
+         WHERE fact.corner_id=$1`,
         [input.cornerId],
       )
     ).rows[0];
     await this.reach(input.cornerId, agentId);
     if (!corner) throw new Error('corner not found');
+    if (corner.archived) return { status: 'blocked', blocker: 'the corner is closed' };
     if (!corner.head_sha) return { status: 'blocked', blocker: 'the corner has no pull request' };
     if (!this.landCorner || !this.prChecksStatus)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
@@ -3658,6 +3704,14 @@ export class DaemonService {
    * corner lifecycle in the same transaction, which wakes the implementer to
    * merge.
    */
+  private async checkReviewerAuthors(db: SqlDatabase, cornerId: string, agentId: string) {
+    const pr = (await db.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1
+      AND lifecycle->'pr'->>'number' IS NOT NULL`, [cornerId])).rowCount;
+    if (!pr) return;
+    if (!this.github) throw new CommandRefusalError('GitHub is required to verify reviewer independence on this PR', 409);
+    await this.github.assertCornerReviewerNotAuthor(cornerId, agentId, db);
+  }
+
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
@@ -3679,7 +3733,7 @@ export class DaemonService {
         !(await isZeroCheckCommander(db, input.cornerId, agentId))))
         throw new CornerVerdictRejectedError(
           'NOT_CONFIGURED_REVIEWER',
-          "only this corner's configured reviewer or its zero-check commander can record PASS",
+          "only this corner's configured reviewer (or the Room reviewer when unset), or its zero-check commander, can record PASS; set reviewer with revise_corner",
         );
       if (!target.pull_request_number || !target.head_sha)
         throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');
@@ -3688,6 +3742,8 @@ export class DaemonService {
           'STALE_HEAD',
           `pull request head is ${target.head_sha}; review the current head before approving`,
         );
+      await assertIndependentCornerReviewer(db, input.cornerId, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       await recordCornerMergeApproval(db, {
         cornerId: input.cornerId,
         approvedBy: agentId,
@@ -3773,8 +3829,8 @@ export class DaemonService {
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NULL THEN NULL
                      -- A fallback reviewer is told it holds the post itself.
-                     WHEN parent.reviewer_agent_id IS NOT NULL
-                          AND a.agent_id=ANY(parent.reviewer_fallback_ids)
+                     WHEN ${cornerReviewerSql('room')} IS NOT NULL
+                          AND a.agent_id=ANY(${cornerReviewerFallbacksSql('room')})
                           AND a.agent_id<>COALESCE(fact.owner_agent_id,room.created_by)
                      THEN self.handle
                      WHEN reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
@@ -3786,7 +3842,7 @@ export class DaemonService {
          LEFT JOIN rooms parent ON parent.id=room.parent_id
          LEFT JOIN corner_facts fact ON fact.corner_id=room.id
          LEFT JOIN identities reviewer
-           ON reviewer.id=parent.reviewer_agent_id AND reviewer.kind='agent'
+           ON reviewer.id=${cornerReviewerSql('room')} AND reviewer.kind='agent'
          WHERE a.agent_id=$1`,
         [agentId, roomId],
       )
@@ -3952,8 +4008,8 @@ export class DaemonService {
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     let steps = replySteps(input.steps);
     // Explicit same-address posts can already have
-    // committed this answer. Keep the terminal row for receipts, replay and
-    // tool activity, but remove repeated prose from the conversation surface.
+    // committed a message. Keep the closing text in turn activity regardless
+    // of wording, rather than publishing a second conversation message.
     const earlier = input.requestId && input.presentation !== 'card'
       ? (await this.database.query<{ id: string; text: string }>(
           `SELECT id,text FROM messages
@@ -3964,19 +4020,15 @@ export class DaemonService {
           [input.roomId, agentId, input.requestId, input.generationId],
         )).rows
       : [];
-    const supersedesPosts = Boolean(this.commandTransaction && earlier.length &&
-      (await this.database.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND removed_at IS NULL`, [agentId])).rowCount);
-    const matches = earlier.map(row => turnMessageRepetition(input.text, row.text));
-    const same = !supersedesPosts && matches.includes('same');
-    const similar = !supersedesPosts && matches.includes('similar') && (input.steps?.length ?? 0) < MAX_REPLY_STEPS;
-    const repeated = same || similar;
-    if (!same && similar) steps = replySteps([
-      ...(input.steps ?? []), { kind: 'note', title: 'Turn summary', text: input.text },
-    ]);
-    if (supersedesPosts) steps = replySteps([
-      ...(input.steps ?? []),
-      ...[...earlier].reverse().map(row => ({kind: 'note' as const,title: 'Earlier update',text: row.text})),
-    ].slice(0, MAX_REPLY_STEPS));
+    const repeated = Boolean(this.commandTransaction && earlier.length);
+    if (repeated) {
+      const notes = Array.from({ length: Math.ceil(input.text.length / MAX_REPLY_NOTE_LENGTH) }, (_, index) => ({
+        kind: 'note' as const, title: 'Turn summary',
+        text: input.text.slice(index * MAX_REPLY_NOTE_LENGTH, (index + 1) * MAX_REPLY_NOTE_LENGTH),
+        ...(index ? { continues: true as const } : {}),
+      }));
+      steps = replySteps([...(input.steps ?? []), ...notes], notes.length);
+    }
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -4321,20 +4373,16 @@ export class DaemonService {
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);
     }
-    if (supersedesPosts && saved.presentation === 'message') {
-      // Free agents sometimes post an answer explicitly and then paraphrase it
-      // at settle. Keep the final answer visible, retaining the earlier prose
-      // in activity instead of trying to infer semantic equality.
-      const demoted = await this.database.query<{id:string}>(
-        `UPDATE messages SET presentation='activity' WHERE id=ANY($1::text[])
-         AND room_id=$2 AND author_id=$3 AND request_id=$4
-         AND legacy_event->>'turnGenerationId'=$5 AND presentation='message' AND deleted_at IS NULL
-         RETURNING id`,
-        [earlier.map(row=>row.id),input.roomId,agentId,input.requestId,input.generationId]);
-      for (const row of demoted.rows) this.live.publish({type:'invalidate',roomId:input.roomId,
-        reason:'message',agentId,messageId:row.id});
-    }
-    if (repeated && this.commandTransaction && saved.presentation === 'message' && !saved.attachments.length) {
+    if (repeated && this.commandTransaction && saved.presentation === 'message') {
+      // Deliver queued artifacts on the existing public post, so suppressing
+      // closing prose never hides the turn's deliverable.
+      if (saved.attachments.length) {
+        await this.database.query(`UPDATE messages SET attachments=attachments || $2::jsonb WHERE id=$1`,
+          [earlier[0]!.id, JSON.stringify(saved.attachments)]);
+        await this.database.query(`UPDATE messages SET attachments='[]'::jsonb WHERE id=$1`, [saved.id]);
+        saved = { ...saved, attachments: [] };
+        this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId, messageId: earlier[0]!.id });
+      }
       // This is still inside the authorized command transaction. System/card
       // producers keep their existing insert path and are never demoted here.
       const demoted = (await this.database.query<{ presentation: 'activity'; version: number }>(
@@ -4425,8 +4473,14 @@ export class DaemonService {
        WHERE room_id=$1 AND agent_id=$2`,
       [input.roomId, agentId],
     );
-    if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
-      throw new CommandRefusalError('queued attachments exceed the size cap', 400);
+    const usedBytes = Number(queued.rows[0]!.total);
+    if (usedBytes + attachment.size > this.mediaMaximumBytes)
+      throw new CommandRefusalError(
+        `Queued attachments exceed the ${this.mediaMaximumBytes}-byte total limit per reply: ` +
+          `${usedBytes} bytes already queued; artifact size: ${attachment.size} bytes. ` +
+          'Use smaller files, or deliver the queued attachments with your next reply or report before posting more.',
+        400,
+      );
     await this.database.query(
       `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -4789,6 +4843,10 @@ export class DaemonService {
   }
 
   private async squireApproval(input: Input<'postSquireApproval'>, agentId: string, database = this.database) {
+    for (const key of ['action', 'reason', 'reference'] as const) {
+      if (input[key] !== undefined && (typeof input[key] !== 'string' || input[key]!.length > 1000)) throw new Error(`Squire ${key} is invalid`);
+    }
+    if (input.facts !== undefined && (!Array.isArray(input.facts) || input.facts.length > 3 || input.facts.some(fact => !fact || typeof fact.label !== 'string' || fact.label.length > 40 || typeof fact.value !== 'string' || fact.value.length > 500))) throw new Error('Squire facts are invalid');
     if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
     if (!input.title.trim() || input.title.length > 120)
       throw new Error('Squire approval title is invalid');
@@ -4875,6 +4933,10 @@ export class DaemonService {
         tool: input.tool.trim(),
         title: input.title.trim(),
         detail: input.detail.trim(),
+        ...(input.reason ? { reason: input.reason.trim().slice(0, 1000) } : {}),
+        ...(input.action ? { action: input.action.trim().slice(0, 240) } : {}),
+        ...(input.reference ? { reference: input.reference.trim().slice(0, 1000) } : {}),
+        ...(input.facts ? { facts: input.facts.slice(0, 3).map(fact => ({ label: fact.label.slice(0, 40), value: fact.value.slice(0, 500) })) } : {}),
         approvalUrl: approvalUrl.toString(),
         ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),
         expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60_000,
@@ -4931,14 +4993,21 @@ export class DaemonService {
     const id = createHash('sha256')
       .update(`squire-approval-decided:v1:${input.roomId}:${agentId}:${approvalId}`)
       .digest('hex');
-    const line = await systemLine(this.database, {
+    const settledRooms: string[] = [];
+    const line = await this.database.transaction(async database => {
+    const original = (await database.query<{ action: string | null }>(
+      `SELECT card->>'action' AS action FROM messages WHERE card_type='squire-approval'
+       AND card->'agent'->>'pubkey'=$1 AND card->>'approvalId'=$2
+       AND room_id IN (SELECT id FROM rooms WHERE workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3)) LIMIT 1`,
+      [agentId, approvalId, input.roomId],
+    )).rows[0];
+    const action = original?.action || squireApprovalAction(tool, detail);
+    const decision = await systemLine(database, {
       id,
       roomId: input.roomId,
       authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: connectorDisplayName('trusty-squire') },
-      verb: input.status === 'expired' ? 'saw no answer to' : input.status,
-      object: title,
-      ...(detail ? { consequence: detail } : {}),
+      subject: { kind: 'system', name: `The request to ${action}` },
+      verb: input.status === 'expired' ? 'expired' : input.status === 'approved' ? 'was allowed' : 'was denied',
       // A resume kind: it answers the turn that asked for this approval, and
       // must never start a second one (`RESUME_KINDS`).
       kind: 'squire-approval-decided',
@@ -4948,6 +5017,20 @@ export class DaemonService {
       cardType: 'squire-approval-decision',
       card: { approvalId, tool, title, detail, status: input.status, agentId, agentName: agent.name },
     });
+    // Squire's authenticated notification provides a decision, but no human identity.
+    // Never substitute the requesting agent's owner for the actual decision-maker.
+    const changed = await database.query<{ room_id: string }>(
+      `UPDATE messages approval SET card=approval.card || $4::jsonb
+       WHERE approval.card_type='squire-approval' AND approval.card->'agent'->>'pubkey'=$1
+         AND approval.card->>'approvalId'=$2 AND approval.card->>'status' IS NULL
+         AND approval.room_id IN (SELECT id FROM rooms WHERE workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3))
+       RETURNING approval.room_id`,
+      [agentId, approvalId, input.roomId, JSON.stringify({ status: input.status, decidedAt: Math.floor(Date.now()/1000) })],
+    );
+    settledRooms.push(...changed.rows.map(row => row.room_id));
+    return decision;
+    });
+    for (const roomId of new Set(settledRooms)) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     if (line.inserted)
       this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
@@ -5070,6 +5153,8 @@ export class DaemonService {
 
   private async permissionRequest(input: Input<'postPermissionRequest'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.purpose !== undefined && (typeof input.purpose !== 'string' || !input.purpose.trim() || input.purpose.trim().length > 240))
+      throw new Error('permission purpose must be 1–240 characters');
     const scope = input.scope;
     const repository =
       scope.type === 'room.create'
@@ -5147,6 +5232,7 @@ export class DaemonService {
         requestId: input.requestId,
         cardType: 'permission',
         card: {
+          ...(input.purpose ? { reason: input.purpose.trim().slice(0, 240) } : {}),
           permissionId: input.permissionId,
           requestId: input.requestId,
           agent,
@@ -6054,9 +6140,9 @@ export class DaemonService {
   }
   /** Retitles the corner this agent is working in, through the same write a person's rename uses. */
   private async renameCorner(input: Input<'renameCorner'>, agentId: string) {
-    const refusal = cornerTextRefusal('name', input.name);
+    const refusal = input.name === undefined && input.reviewer !== undefined ? null : cornerTextRefusal('name', input.name);
     if (refusal) throw new Error(refusal);
-    const name = input.name;
+    let name = input.name;
     const objective = input.objective === undefined ? undefined : normalizeCornerText(input.objective);
     if (input.objective !== undefined) {
       const objectiveRefusal = cornerTextRefusal('objective', input.objective);
@@ -6065,9 +6151,10 @@ export class DaemonService {
     if (input.brief) validateCornerBrief(input.brief);
     await this.reach(input.cornerId, agentId);
     await this.database.transaction(async (db) => {
+      await lockCornerLifecycle(db, input.cornerId);
       const corner = (
-        await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string }>(
-          `SELECT room.parent_id,room.archived_at,fact.kind,fact.objective
+        await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string; name: string }>(
+          `SELECT room.name,room.parent_id,room.archived_at,fact.kind,fact.objective
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 FOR UPDATE OF room`,
           [input.cornerId],
@@ -6075,6 +6162,9 @@ export class DaemonService {
       ).rows[0];
       if (!corner?.parent_id) throw new Error('corner not found');
       if (corner.archived_at) throw new Error('corner is archived');
+      name ??= corner.name;
+      if (input.reviewer !== undefined) await setCornerReviewer(db, input.cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       const current = corner.kind === 'human'
         ? await currentCornerBrief(db, input.cornerId)
         : null;
@@ -6132,12 +6222,14 @@ export class DaemonService {
           );
         }
       }
-      await writeCornerTitle(db, input.cornerId, name);
+      if (input.name !== undefined) await writeCornerTitle(db, input.cornerId, input.name);
     });
-    return { cornerId: input.cornerId, name };
+    return { cornerId: input.cornerId, name: name! };
   }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
     await this.access(input.roomId, agentId);
+    if (input.purpose !== undefined && (typeof input.purpose !== 'string' || !input.purpose.trim() || input.purpose.trim().length > 240))
+      throw new Error('target branch purpose must be 1–240 characters');
     const messageId = id();
     const agent = await this.identity(agentId);
     await systemLine(this.database, {
@@ -6151,6 +6243,7 @@ export class DaemonService {
       requestId: input.requestId,
       cardType: 'target-branch',
       card: {
+        ...(input.purpose ? { purpose: input.purpose.trim().slice(0, 240) } : {}),
         proposalId: messageId,
         from: input.from,
         to: input.to,
@@ -7874,6 +7967,7 @@ export class DaemonService {
           name: string;
           objective: string;
           owner_agent_id: string;
+          reviewer_handle: string | null;
           created_by: string;
           request_id: string;
           repository_key: string | null;
@@ -7885,6 +7979,7 @@ export class DaemonService {
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,child.created_by,
                   fact.request_id,child.repository_key,child.repository_target_branch,
+                  (SELECT handle FROM identities WHERE id=fact.reviewer_agent_id) reviewer_handle,
                   initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
@@ -7927,6 +8022,7 @@ export class DaemonService {
         if (
           existing.owner_agent_id !== implementerAgentId ||
           existing.created_by !== agentId ||
+          existing.reviewer_handle !== (input.reviewer ?? null) ||
           existing.request_id !== input.requestId ||
           existing.name !== name ||
           existing.objective !== objective ||
@@ -8005,6 +8101,8 @@ export class DaemonService {
           host?.parent_id ? commandRoomId : null,
         ],
       );
+      if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       if (input.hold === true) {
         if (!commissionedBy) throw new Error('hold requires a human requester');
         await setCornerHold(db, { cornerId }, commissionedBy);
@@ -8198,6 +8296,8 @@ export class DaemonService {
         command.private_payload ? command.id : command.root_source_message_id,
         { cornerId: input.cornerId, agentId },
       );
+      if (input.reviewer !== undefined) await setCornerReviewer(db, input.cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       const revision = input.expectedRevision + 1;
       await db.query(
         `INSERT INTO corner_brief_revisions(
@@ -8352,8 +8452,8 @@ export class DaemonService {
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          WHERE corner.id=$1 AND (
-           parent.reviewer_agent_id=$2 OR (
-             parent.reviewer_agent_id IS NOT NULL AND $2=ANY(parent.reviewer_fallback_ids)
+           ${cornerReviewerSql('corner')}=$2 OR (
+             ${cornerReviewerSql('corner')} IS NOT NULL AND $2=ANY(${cornerReviewerFallbacksSql('corner')})
              AND EXISTS(SELECT 1 FROM memberships parent_member
                         WHERE parent_member.room_id=parent.id AND parent_member.identity_id=$2
                           AND parent_member.removed_at IS NULL)))
@@ -8693,6 +8793,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentThought: true,
   retractAgentLiveOutput: true,
   postAgentTurnReceipt: true,
+  markAgentTurnSilent: true,
   postAgentActivity: true,
   postBackgroundToolCompletion: true,
   postSquireApproval: true,

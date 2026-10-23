@@ -100,6 +100,7 @@
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
+        "scripts/operation-deadline-native-proof.tsx",
         "scripts/unread-dot-clear-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/reply-recovery-proof.mjs",
@@ -113,6 +114,8 @@
         "scripts/render-squire-wallet-freshness-proof.mjs",
         "scripts/squire-wallet-freshness-proof.tsx",
         "scripts/squire-wallet-freshness-fixtures.ts",
+        // Selected as the temporary native entry for the Android approval card proof.
+        "scripts/squire-approval-native-proof.tsx",
         "scripts/identity-picture-seat-proof.tsx",
         "scripts/identity-picture-seat-frames.tsx",
         "scripts/render-identity-picture-seat-frames.mjs",
@@ -131,9 +134,13 @@
         "scripts/pr-accordion-proof.tsx",
         // Gradle bundles this native screenshot fixture through its entryFile override.
         "scripts/corner-pr-cards-native-proof.tsx",
+        // Screenshot capture bundles these entries by path through esbuild and Gradle.
+        "scripts/capture-corner-line-web.mjs",
+        "scripts/corner-line-{native,web}-proof.tsx",
         "scripts/transcript-events-native-proof.tsx",
         // Browser bundling and the temporary Metro main select these proof entries by path.
         "scripts/disclosure-rows-{browser,native}-proof.tsx",
+        "scripts/transcript-dividers-{browser,native}-proof.tsx",
         "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",

@@ -1,3 +1,4 @@
+import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { CORNER_CHECKS_BLOCKED_AFTER, cornerReportWaiting } from './corner-state.js';
@@ -261,7 +262,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
         OR command.review_context->'pullRequest' IS DISTINCT FROM fact.lifecycle->'pr'->'number'
         OR (command.review_context->>'briefRevision')::int IS DISTINCT FROM
           COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id),0)))
-      OR (command.reason IN ('corner_merge_conflict','corner_review_dispatch','subscribed_event')
+      OR (command.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
         AND source.system_event->'object'->>'headSha' IS NOT NULL
         AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
       OR (EXISTS (SELECT 1 FROM corner_brief_revisions brief
@@ -354,7 +355,7 @@ function reviewerQuietSql(command: string): string {
     SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
     LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
     WHERE corner.id=${command}.room_id
-      AND (parent.reviewer_agent_id=${command}.agent_id OR ${command}.agent_id=ANY(parent.reviewer_fallback_ids))
+      AND (${cornerReviewerSql()}=${command}.agent_id OR ${command}.agent_id=ANY(${cornerReviewerFallbacksSql()}))
       AND EXISTS (
         SELECT 1 FROM agent_commands wake LEFT JOIN messages source ON source.id=wake.source_message_id
         WHERE wake.room_id=${command}.room_id AND wake.agent_id=${command}.agent_id
@@ -976,8 +977,8 @@ async function setCornerImplementer(
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      WHERE fact.corner_id=corner.id AND corner.id=$1
-       AND $2<>COALESCE(parent.reviewer_agent_id,'')
-       AND NOT ($2=ANY(parent.reviewer_fallback_ids))
+       AND $2<>COALESCE(${cornerReviewerSql()},'')
+       AND NOT ($2=ANY(${cornerReviewerFallbacksSql()}))
        AND (fact.worker_agent_id IS DISTINCT FROM $2
             OR (fact.kind='human' AND fact.owner_agent_id IS NULL))`,
     [cornerId, agentId],
@@ -1991,7 +1992,7 @@ export async function reconcileConfiguredCornerReviewers(
      JOIN rooms parent ON parent.id=corner.parent_id
      JOIN corner_facts fact ON fact.corner_id=corner.id
      JOIN memberships reviewer ON reviewer.room_id=parent.id
-       AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
+       AND reviewer.identity_id=${cornerReviewerSql()} AND reviewer.removed_at IS NULL
      WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
@@ -2006,7 +2007,7 @@ export async function reconcileConfiguredCornerReviewers(
        AND NOT EXISTS (
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
-           AND approval.approved_by=parent.reviewer_agent_id
+           AND approval.approved_by=${cornerReviewerSql()}
            AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
            AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
        )
@@ -2034,7 +2035,7 @@ export async function reconcileConfiguredCornerReviewers(
       });
       const routed = await db.query(
         `SELECT 1 FROM agent_commands WHERE room_id=$1 AND source_message_id=$2
-           AND agent_id=(SELECT reviewer_agent_id FROM rooms WHERE id=(SELECT parent_id FROM rooms WHERE id=$1))`,
+           AND agent_id=(SELECT ${cornerReviewerSql()} FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id WHERE corner.id=$1)`,
         [missing.corner_id, source.id],
       );
       if (source.inserted && routed.rowCount) commands += 1;
@@ -2046,7 +2047,7 @@ export async function reconcileConfiguredCornerReviewers(
     source_message_id: string;
     head_sha: string | null;
   }>(
-    `SELECT corner.id corner_id,parent.reviewer_agent_id,source.id source_message_id,
+    `SELECT corner.id corner_id,${cornerReviewerSql()} reviewer_agent_id,source.id source_message_id,
             fact.lifecycle->'pr'->>'headSha' head_sha
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
@@ -2075,7 +2076,7 @@ export async function reconcileConfiguredCornerReviewers(
        AND NOT EXISTS (
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
-           AND approval.approved_by=parent.reviewer_agent_id
+           AND approval.approved_by=${cornerReviewerSql()}
            AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
            AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
        )
@@ -2083,8 +2084,8 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM agent_commands command
          JOIN messages dispatch ON dispatch.id=command.source_message_id
          WHERE command.room_id=corner.id
-           AND (command.agent_id=parent.reviewer_agent_id
-             OR command.agent_id=ANY(parent.reviewer_fallback_ids))
+           AND (command.agent_id=${cornerReviewerSql()}
+             OR command.agent_id=ANY(${cornerReviewerFallbacksSql()}))
            AND command.state IN ('pending','claimed') AND command.action='input'
            AND (command.reason='corner_review_dispatch'
              OR (command.reason='subscribed_event' AND

@@ -1,0 +1,66 @@
+✖ server and authentication outside calls carry deadlines (941.811982ms)
+✔ guard catches raw, multiline, member, and HTTP client calls (0.851456ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 1
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1336.088653
+
+✖ failing tests:
+
+test at scripts/external-request-deadlines.test.mjs:29:1
+✖ server and authentication outside calls carry deadlines (941.811982ms)
+  AssertionError [ERR_ASSERTION]: Use externalFetch or provide an explicit deadline signal
+  + actual - expected
+
+  + [
+  +   'apps/auth/src/github-manifest.ts:115: fetch',
+  +   'apps/auth/src/github.ts:207: fetch',
+  +   'apps/auth/src/github.ts:227: fetch',
+  +   'apps/auth/src/github.ts:253: fetch',
+  +   'apps/auth/src/github.ts:420: fetch',
+  +   'apps/auth/src/github.ts:455: fetch',
+  +   'apps/auth/src/github.ts:504: fetch',
+  +   'apps/auth/src/github.ts:542: fetch',
+  +   'apps/auth/src/github.ts:563: fetch',
+  +   'apps/auth/src/github.ts:619: fetch',
+  +   'apps/auth/src/github.ts:650: fetch',
+  +   'apps/auth/src/github.ts:664: fetch',
+  +   'apps/auth/src/github.ts:1180: fetch',
+  +   'apps/auth/src/github.ts:1202: fetch',
+  +   'apps/auth/src/github.ts:1230: fetch',
+  +   'apps/auth/src/github.ts:1283: fetch',
+  +   'apps/auth/src/github.ts:1345: fetch',
+  +   'apps/auth/src/github.ts:1367: fetch',
+  +   'apps/auth/src/github.ts:1397: fetch',
+  +   'apps/auth/src/github.ts:1428: fetch',
+  +   'apps/auth/src/github.ts:1446: fetch',
+  +   'apps/auth/src/github.ts:1463: fetch',
+  +   'apps/server/src/auth.ts:587: fetch',
+  +   'apps/server/src/cdp-client.ts:296: fetch',
+  +   'apps/server/src/cdp-client.ts:324: fetch',
+  +   'apps/server/src/evm-chain.ts:148: fetch',
+  +   'apps/server/src/evm-chain.ts:295: fetch',
+  +   'apps/server/src/object-storage.ts:90: this.#client.fetch',
+  +   'apps/server/src/object-storage.ts:162: this.#client.fetch',
+  +   'apps/server/src/object-storage.ts:174: this.#client.fetch',
+  +   'apps/server/src/object-storage.ts:182: this.#client.fetch',
+  +   'apps/server/src/store-download-reports.ts:98: fetch'
+  + ]
+  - []
+
+      at TestContext.<anonymous> (file:///home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/scripts/external-request-deadlines.test.mjs:35:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1306:25)
+      at Test.start (node:internal/test_runner/test:1177:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'apps/auth/src/github-manifest.ts:115: fetch', 'apps/auth/src/github.ts:207: fetch', 'apps/auth/src/github.ts:227: fetch', 'apps/auth/src/github.ts:253: fetch', 'apps/auth/src/github.ts:420: fetch', 'apps/auth/src/github.ts:455: fetch', 'apps/auth/src/github.ts:504: fetch', 'apps/auth/src/github.ts:542: fetch', 'apps/auth/src/github.ts:563: fetch', 'apps/auth/src/github.ts:619: fetch', 'apps/auth/src/github.ts:650: fetch', 'apps/auth/src/github.ts:664: fetch', 'apps/auth/src/github.ts:1180: fetch', 'apps/auth/src/github.ts:1202: fetch', 'apps/auth/src/github.ts:1230: fetch', 'apps/auth/src/github.ts:1283: fetch', 'apps/auth/src/github.ts:1345: fetch', 'apps/auth/src/github.ts:1367: fetch', 'apps/auth/src/github.ts:1397: fetch', 'apps/auth/src/github.ts:1428: fetch', 'apps/auth/src/github.ts:1446: fetch', 'apps/auth/src/github.ts:1463: fetch', 'apps/server/src/auth.ts:587: fetch', 'apps/server/src/cdp-client.ts:296: fetch', 'apps/server/src/cdp-client.ts:324: fetch', 'apps/server/src/evm-chain.ts:148: fetch', 'apps/server/src/evm-chain.ts:295: fetch', 'apps/server/src/object-storage.ts:90: this.#client.fetch', 'apps/server/src/object-storage.ts:162: this.#client.fetch', 'apps/server/src/object-storage.ts:174: this.#client.fetch', 'apps/server/src/object-storage.ts:182: this.#client.fetch', 'apps/server/src/store-download-reports.ts:98: fetch' ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

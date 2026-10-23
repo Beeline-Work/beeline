@@ -75,8 +75,8 @@ describe('mock A lifecycle rows', () => {
     expect(get('notification-run-cell-pr')).toBeDefined();
     act(() => get('notification-run-expand-run').props.onPress());
     expect(get('notification-run-cell-pr')).toBeUndefined();
-    // A standalone repository record keeps its own section rule.
-    expect(render().get('notification-run-run').props.style.borderTopWidth).toBe(1);
+    // Standalone corner and PR records share the borderless disclosure rhythm.
+    expect(render().get('notification-run-run').props.style?.borderTopWidth ?? 0).toBe(0);
   });
 
   it('keeps the shared check-event disclosure borderless and at least 44 high', () => {
@@ -106,7 +106,7 @@ describe('mock A lifecycle rows', () => {
       });
     const title = tree.root
       .findAllByType('Text')
-      .find((node: any) => node.props.numberOfLines === 2);
+      .find((node: any) => node.props.ellipsizeMode === 'tail');
     expect(title.props.style.fontFamily).toBe(theme.buzz.type.body.fontFamily);
     expect(title.props.style.color).toBe(theme.buzz.textSecondary);
     expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
@@ -158,8 +158,8 @@ describe('mock A lifecycle rows', () => {
     };
     const rows = foldPrLifecycleRuns(anchorCornerMarkers([fact]));
     const { tree, get } = render(rows[0].notificationLifecycleRun!.items as any);
-    expect(text(get('notification-run-cell-open'))).toBe('Opened corner #dm-unread-clear');
-    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
+    expect(text(get('notification-run-cell-open'))).toBe('Opened dm-unread-clear');
+    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
     const source: ChatDisplayMessage = {
       id: 'dm-source',
       text: 'Do it',
@@ -210,9 +210,9 @@ it('shares Space Grotesk across grouped rows, standalone adapters and source mar
   const families = texts.map((node: any) => flatten(node.props.style).fontFamily).filter(Boolean);
   expect(families.length).toBeGreaterThan(5);
   for (const family of families) expect(family).toMatch(/^SpaceGrotesk-/);
-  const titles = texts.filter((node: any) => node.props.numberOfLines === 2);
+  const titles = texts.filter((node: any) => node.props.ellipsizeMode === 'tail');
   expect(titles).toHaveLength(4);
-  const marker = texts.find((node: any) => text(node).startsWith('Opened corner'));
+  const marker = texts.find((node: any) => text(node).startsWith('Opened '));
   expect(flatten(marker.props.style).fontFamily).toMatch(/^SpaceGrotesk-/);
   for (const title of titles)
     expect(flatten(title.props.style).fontFamily).toBe(flatten(marker.props.style).fontFamily);
@@ -244,7 +244,7 @@ it('draws the call-site corner line as the Room row with the branch mark in fron
   // Words, then font family, size, weight and colour of every run of text.
   const format = (tree: any) => {
     const [line] = tree.root.findAll(
-      (node: any) => node.type === 'Text' && node.props.numberOfLines === 2,
+      (node: any) => node.type === 'Text' && node.props.ellipsizeMode === 'tail',
     );
     return {
       words: text(line),
@@ -262,9 +262,9 @@ it('draws the call-site corner line as the Room row with the branch mark in fron
         }),
     };
   };
-  expect(format(room.tree).words).toBe('Opened corner #font-check-android');
+  expect(format(room.tree).words).toBe('Opened font-check-android');
   expect(format(callSite)).toEqual(format(room.tree));
-  expect(room.tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
+  expect(room.tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
   expect(callSite.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
 });
 
@@ -294,7 +294,7 @@ it('opens the corner when the text of a corner row or call-site line is pressed 
   const room = render(
     foldPrLifecycleRuns(anchorCornerMarkers([fact]))[0].notificationLifecycleRun!.items as any,
   );
-  pressText(room.tree, 'Opened corner #font-check-android');
+  pressText(room.tree, 'Opened font-check-android');
   expect(room.onOpenCorner).toHaveBeenCalledWith('corner-font-check');
   expect(room.onOpenUrl).not.toHaveBeenCalled();
 
@@ -303,7 +303,7 @@ it('opens the corner when the text of a corner row or call-site line is pressed 
   act(() => {
     callSite = create(<CornerOpenedMarker title="font-check-android" onOpen={onOpen} />);
   });
-  pressText(callSite, 'Opened corner #font-check-android');
+  pressText(callSite, 'Opened font-check-android');
   expect(onOpen).toHaveBeenCalledTimes(1);
 
   // A PR row keeps its two targets: the title opens GitHub, the chevron the corner.
@@ -327,15 +327,15 @@ it('keeps each surface’s closed wording in the shared format', () => {
       title: 'quiet',
     },
   ] as any);
-  expect(text(closed.get('notification-run-cell-closed'))).toBe('Closed corner #quiet');
+  expect(text(closed.get('notification-run-cell-closed'))).toBe('Closed quiet');
   let callSite: any;
   act(() => {
     callSite = create(<CornerOpenedMarker title="quiet" closed onOpen={() => undefined} />);
   });
   const lines = (tree: any) =>
-    tree.root.findAll((node: any) => node.type === 'Text' && node.props.numberOfLines === 2);
+    tree.root.findAll((node: any) => node.type === 'Text' && node.props.ellipsizeMode === 'tail');
   const [line] = lines(callSite);
-  expect(text(line)).toBe('Corner closed · #quiet');
+  expect(text(line)).toBe('Closed quiet');
   const flatten = (style: any): any =>
     Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
   const runs = (node: any) =>

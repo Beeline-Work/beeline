@@ -1,3 +1,4 @@
+import { externalFetch } from '@beeline/auth/external-fetch';
 /**
  * Per-chain facts and the small amount of raw EVM plumbing the CDP client
  * needs: public JSON-RPC reads, EIP-1559 RLP serialization, ERC-20 calldata
@@ -145,7 +146,7 @@ type RpcCall = { method: string; params: unknown[] };
 
 /** One batched JSON-RPC request; any per-call error rejects the batch. */
 export async function rpcBatch(chain: WalletChainId, calls: RpcCall[], signal?: AbortSignal): Promise<unknown[]> {
-  const response = await fetch(EVM_CHAINS[chain].rpcUrl, {
+  const response = await externalFetch(EVM_CHAINS[chain].rpcUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(calls.map((call, id) => ({ jsonrpc: '2.0', id, ...call }))),
@@ -292,7 +293,7 @@ export async function usdPrice(symbol: string): Promise<number> {
   if (cached && Date.now() - cached.at < 60_000) return cached.usd;
   const pair = key === 'weth' ? 'ETH' : key === 'cbbtc' ? 'BTC' : key.toUpperCase();
   try {
-    const response = await fetch(`https://api.coinbase.com/v2/prices/${pair}-USD/spot`);
+    const response = await externalFetch(`https://api.coinbase.com/v2/prices/${pair}-USD/spot`);
     if (!response.ok) throw new Error(`status ${response.status}`);
     const usd = Number(((await response.json()) as { data?: { amount?: string } }).data?.amount);
     if (!Number.isFinite(usd)) throw new Error('no amount');

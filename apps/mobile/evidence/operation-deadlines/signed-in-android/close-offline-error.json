@@ -1,0 +1,12 @@
+{
+  "reproduction": "R1",
+  "surface": "close",
+  "mode": "offline-error",
+  "app": "normal index.ts; real signed-in app; no transport mocks",
+  "airplaneMode": true,
+  "errorVisibleBySeconds": 3.06,
+  "errors": [
+    "Network request failed"
+  ],
+  "retryEnabled": true
+}

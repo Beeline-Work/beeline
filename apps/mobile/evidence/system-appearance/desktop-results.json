@@ -1,0 +1,23 @@
+[
+  {
+    "choice": "system",
+    "system": "light",
+    "theme": "bone",
+    "background": "rgb(243, 238, 228)",
+    "darkMedia": false
+  },
+  {
+    "choice": "system",
+    "system": "dark",
+    "theme": "obsidian",
+    "background": "rgb(20, 9, 26)",
+    "darkMedia": true
+  },
+  {
+    "choice": "system",
+    "system": "light",
+    "theme": "bone",
+    "background": "rgb(243, 238, 228)",
+    "darkMedia": false
+  }
+]

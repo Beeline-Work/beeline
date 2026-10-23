@@ -102,11 +102,26 @@ describe('Members page layout contract', () => {
       agentsStart,
       source.indexOf('</KeyboardAwareScrollView>', agentsStart),
     );
-    expect(agents).toContain('<ChevronGlyph');
-    expect(agents).toContain('direction="right"');
+    expect(agents).toContain('chevron="right"');
     expect(agents).toContain("pathname: '/beeline/agent-profile'");
     expect(agents).not.toContain("direction={open ? 'down' : 'right'}");
     expect(agents).not.toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
+  });
+
+  it('puts person and agent chevrons in the row chevron slot, not the trailing column', () => {
+    // A chevron in the 72 px trailing column leaves the model name ~83 px short of it.
+    const people = source.slice(
+      source.indexOf('const personRow ='),
+      source.indexOf('testID="members-people-section"'),
+    );
+    const agentsStart = source.indexOf('testID="members-agents-section"');
+    const agents = source.slice(agentsStart, source.indexOf('canLoadMoreAgents &&', agentsStart));
+    for (const rows of [people, agents]) {
+      expect(rows).toContain('<MemberRosterRow');
+      expect(rows).toContain('chevron="right"');
+      expect(rows).not.toContain('trailing=');
+      expect(rows).not.toContain('<ChevronGlyph');
+    }
   });
 
   it('shows the assigned animal and handle through the shared Settings identity', () => {

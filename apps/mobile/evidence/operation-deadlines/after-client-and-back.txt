@@ -1,0 +1,125 @@
+
+> @beeline/mobile@0.2.22 test
+> vitest --run sources/sync/transport/monolith-operation.test.ts sources/sync/transport/monolith-rig-transport.test.ts sources/components/buzz/CornerActionsSheet.test.tsx sources/app/(app)/beeline/human-profile.waiting.test.tsx
+
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/mobile
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > back dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > cancel dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+ ✓ sources/components/buzz/CornerActionsSheet.test.tsx (4 tests) 35ms
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+ ✓ sources/app/(app)/beeline/human-profile.waiting.test.tsx (2 tests) 23ms
+ ✓ sources/sync/transport/monolith-operation.test.ts (133 tests) 73ms
+ ✓ sources/sync/transport/monolith-rig-transport.test.ts (26 tests) 95ms
+
+ Test Files  4 passed (4)
+      Tests  165 passed (165)
+   Start at  11:38:09
+   Duration  1.21s (transform 685ms, setup 318ms, collect 2.35s, tests 225ms, environment 1ms, prepare 378ms)

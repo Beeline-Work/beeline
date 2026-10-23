@@ -45,7 +45,7 @@ describe('Android launch appearance pin', () => {
 
     applyEffectiveAndroidLaunchAppearance();
 
-    expect(setAndroidNightMode).not.toHaveBeenCalled();
+    expect(setAndroidNightMode).toHaveBeenCalledWith('system');
   });
 
   it('records an explicit choice before pinning it', async () => {

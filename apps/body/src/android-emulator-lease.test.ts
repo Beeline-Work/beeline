@@ -12,6 +12,38 @@ afterEach(async () => {
 });
 
 describe('Android emulator instance leases', () => {
+  it.each(['-help', '--help', '-help-all', '-list-avds', '-version'])(
+    'passes %s and its exit status through without creating lease state', async (flag) => {
+      const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-info-'));
+      roots.push(root);
+      const fake = join(root, 'emulator');
+      await writeFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > "${root}/argv"\nprintf '%s\\n' "$ANDROID_AVD_HOME" > "${root}/avd-home"\nexit 7\n`);
+      await chmod(fake, 0o755);
+      const env = {
+        BEELINE_ANDROID_EMULATOR_BINARY: fake,
+        BEELINE_ANDROID_LEASE_ROOT: join(root, 'leases'),
+        BEELINE_ANDROID_INSTANCE_ROOT: join(root, 'instances'),
+        ANDROID_AVD_HOME: join(root, 'base-avds'),
+      };
+      expect(await runLeasedEmulator(['-verbose', flag], env)).toBe(7);
+      expect(await readFile(join(root, 'argv'), 'utf8')).toBe(`-verbose\n${flag}\n`);
+      expect(await readFile(join(root, 'avd-home'), 'utf8')).toBe(`${env.ANDROID_AVD_HOME}\n`);
+      expect(existsSync(env.BEELINE_ANDROID_LEASE_ROOT)).toBe(false);
+      expect(existsSync(env.BEELINE_ANDROID_INSTANCE_ROOT)).toBe(false);
+    },
+  );
+
+  it.each([[], ['-helpful'], ['-help', '-avd'], ['-help', '-avd', '../invalid']])(
+    'still validates launch arguments %j', async (...args) => {
+      await expect(runLeasedEmulator(args, {
+        BEELINE_ANDROID_EMULATOR_BINARY: '/unused',
+        BEELINE_ANDROID_LEASE_ROOT: '/unused',
+        BEELINE_ANDROID_INSTANCE_ROOT: '/unused',
+        BEELINE_ANDROID_BASE_AVD_HOME: '/unused',
+      })).rejects.toThrow('emulator requires -avd <name>');
+    },
+  );
+
   it('skips an occupied console port pair', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-emulator-port-'));
     roots.push(root);

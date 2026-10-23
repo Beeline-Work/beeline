@@ -1,3 +1,6 @@
+vi.mock('@/buzz/room-transition-work', () => ({
+  deferRoomWrite: (_key: string, work: () => Promise<void>) => work(),
+}));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isAgentDetailView,

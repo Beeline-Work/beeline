@@ -1,3 +1,5 @@
+import { CommandRefusalError } from './command-refusal.js';
+import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
 import { enqueueCornerBranchDeletion, retryCornerBranchDeletions } from './corner-branch-cleanup.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -242,7 +244,7 @@ export function reviewerWakeFromFacts(input: {
   if (!input.configuredReviewerId) {
     return {
       status: 'unconfigured',
-      detail: 'This Room has no configured reviewer, so no agent is woken for review.',
+      detail: 'No reviewer is configured for this corner, so no agent is woken for review.',
     };
   }
   if (!input.parentMember) {
@@ -739,9 +741,9 @@ export class GitHubOperations {
    * deliberately does not filter archived Rooms: a code-anchor check runs long
    * after the corner that produced the procedure has been archived away.
    */
-  async roomAnchorTarget(roomId: string) {
+  async roomAnchorTarget(roomId: string, database: SqlDatabase = this.database) {
     const parentId = (
-      await this.database.query<{ id: string }>(
+      await database.query<{ id: string }>(
         `SELECT COALESCE(parent.id,own.id) id FROM rooms own
          LEFT JOIN rooms parent ON parent.id=own.parent_id
          WHERE own.id=$1`,
@@ -749,12 +751,12 @@ export class GitHubOperations {
       )
     ).rows[0]?.id;
     if (!parentId) throw new Error('GitHub repository installation not found');
-    return this.roomWorkflowTarget(parentId);
+    return this.roomWorkflowTarget(parentId, database);
   }
 
-  private async roomWorkflowTarget(roomId: string) {
+  private async roomWorkflowTarget(roomId: string, database: SqlDatabase = this.database) {
     const row = (
-      await this.database.query<{
+      await database.query<{
         github_installation_id: string;
         repository_id: string;
         full_name: string;
@@ -780,6 +782,50 @@ export class GitHubOperations {
       repository: row.full_name,
       defaultBranch: row.default_branch,
     };
+  }
+
+  /** Read every PR commit, including coauthors, using the repository installation. */
+  async assertCornerReviewerNotAuthor(cornerId: string, agentId: string, database: SqlDatabase = this.database): Promise<void> {
+    const pr = (await database.query<{ number: number | null; head_sha: string | null }>(
+      `SELECT lifecycle->'pr'->>'headSha' head_sha,(lifecycle->'pr'->>'number')::int number FROM corner_facts WHERE corner_id=$1`, [cornerId],
+    )).rows[0];
+    if (!pr?.number) return;
+    const target = await this.roomAnchorTarget(cornerId, database);
+    const verifyHead = async () => {
+      const live = record(await this.app.issuesRequest(target.token, target.repository, 'GET', `pulls/${pr.number}`));
+      const count = integer(live?.commits);
+      if (!pr.head_sha || record(live?.head)?.sha !== pr.head_sha)
+        throw new CommandRefusalError('PR head changed; refresh checks before selecting or approving a reviewer', 409);
+      // GitHub's PR commits endpoint exposes at most 250 commits.
+      if (!count || count > 250)
+        throw new CommandRefusalError('could not verify every PR author; split the PR to at most 250 commits', 409);
+      return count;
+    };
+    const count = await verifyHead();
+    let seen = 0;
+    const email = `${agentId.slice(0, 16)}@users.noreply.github.com`;
+    for (let page = 1; page <= 3; page++) {
+      const response = await this.app.issuesRequest(target.token, target.repository, 'GET',
+        `pulls/${pr.number}/commits?per_page=100&page=${page}`);
+      if (!Array.isArray(response)) throw new Error('could not verify PR commit authors');
+      seen += response.length;
+      for (const value of response) {
+        const commit = record(record(value)?.commit);
+        const author = record(commit?.author);
+        const committer = record(commit?.committer);
+        if (typeof author?.email !== 'string' || !author.email || typeof committer?.email !== 'string' || !committer.email
+          || typeof commit?.message !== 'string') throw new Error('could not verify PR commit authors');
+        if ([author.email, committer.email].some(value => typeof value === 'string' && value.toLowerCase() === email)
+          || (typeof commit?.message === 'string' && commit.message.split(/\r?\n/).some(line =>
+            /^co-authored-by:\s/i.test(line) && line.trim().toLowerCase().endsWith(`<${email}>`))))
+          throw new CommandRefusalError('reviewer must be independent: a PR commit author cannot review its own work', 409);
+      }
+      if (response.length < 100) {
+        if (seen !== count || await verifyHead() !== count) throw new Error('PR commit list changed or is incomplete');
+        return;
+      }
+    }
+    throw new Error('could not verify all PR commit authors; select a reviewer after reducing the PR');
   }
 
   async listRoomWorkflows(roomId: string) {
@@ -846,8 +892,8 @@ export class GitHubOperations {
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
                 r.archived_at IS NOT NULL archived,
                 (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
-                parent.reviewer_agent_id configured_reviewer_id,
-                parent.reviewer_fallback_ids,
+                ${cornerReviewerSql('r')} configured_reviewer_id,
+                ${cornerReviewerFallbacksSql('r')} reviewer_fallback_ids,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
                 corner_member.identity_id corner_reviewer_id,
@@ -855,12 +901,12 @@ export class GitHubOperations {
          FROM rooms r
          JOIN corner_facts f ON f.corner_id=r.id
          JOIN rooms parent ON parent.id=r.parent_id
-         LEFT JOIN identities reviewer_identity ON reviewer_identity.id=parent.reviewer_agent_id
+         LEFT JOIN identities reviewer_identity ON reviewer_identity.id=${cornerReviewerSql('r')}
            AND reviewer_identity.kind='agent'
          LEFT JOIN effective_memberships parent_member ON parent_member.room_id=parent.id
-           AND parent_member.identity_id=parent.reviewer_agent_id AND parent_member.removed_at IS NULL
+           AND parent_member.identity_id=${cornerReviewerSql('r')} AND parent_member.removed_at IS NULL
          LEFT JOIN effective_memberships corner_member ON corner_member.room_id=r.id
-           AND corner_member.identity_id=parent.reviewer_agent_id AND corner_member.removed_at IS NULL
+           AND corner_member.identity_id=${cornerReviewerSql('r')} AND corner_member.removed_at IS NULL
          WHERE r.id=$1`,
         [input.cornerId],
       )
@@ -892,12 +938,13 @@ export class GitHubOperations {
       // registered status context can inherit the earlier empty rollup.
       const latestPr = await this.app.readPullRequest(target.token, target.repository, number);
       rollup = await this.app.readCommitCheckRollup(target.token, target.repository, pr.headSha);
-      zeroChecksConfirmed = absent && latestPr.headSha === pr.headSha && rollup.total === 0;
+      zeroChecksConfirmed = absent && !rollup.pendingRegistrations && latestPr.headSha === pr.headSha && rollup.total === 0;
     }
     // A completed worker handoff can establish that this head genuinely has no
     // checks. Before that point a null rollup is only the ordinary race between
     // opening a PR and GitHub registering its workflows, so it remains pending.
     const completedWithoutChecks =
+      !rollup.pendingRegistrations &&
       rollup.total === 0 &&
       corner.lifecycle.checks === 'passing' &&
       corner.lifecycle.checksSummary?.total === 0 &&
@@ -952,7 +999,7 @@ export class GitHubOperations {
           checks,
           reviewWoken: corner.review_woken,
         });
-    const mergeAllowed = checks === 'passed' && gate.open;
+    const mergeAllowed = !corner.archived && checks === 'passed' && gate.open;
     // Where the corner stands, from the live facts above: building ->
     // checking -> waiting for a yes -> merged (or closed).
     const stage = pr.merged
@@ -2725,9 +2772,23 @@ export class GitHubOperations {
           ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
         },
       });
+      // Updating the existing cards also invalidates off-Room transcripts.
+      await database.query(
+        `UPDATE messages SET card=card||$2::jsonb
+         WHERE card_type='daemon-fact' AND card->>'cornerId'=$1 AND card->>'type'='corner-open'
+           AND card->>'sourceMessageId' IS NOT NULL`,
+        [target.corner_id, JSON.stringify({ type: 'corner-complete', outcome: 'landed',
+          pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } })],
+      );
       const summary = target.summary.trim() || pullRequest.title;
-      // Completion cards belong only to corners that actually close.
-      if (!locked) await systemLine(database, {
+      // A Room call site already displays this merge in place. Off-Room
+      // requests get their only Room card here, at the end of the transcript.
+      const roomCallSite = await database.query(
+        `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact'
+           AND card->>'cornerId'=$2 AND card->>'sourceMessageId' IS NOT NULL LIMIT 1`,
+        [target.parent_id, target.corner_id],
+      );
+      if (!locked && !roomCallSite.rowCount) await systemLine(database, {
         id: hash(`beeline:${target.parent_id}:${mergeKey}`),
         roomId: target.parent_id,
         authorId: target.author_id,

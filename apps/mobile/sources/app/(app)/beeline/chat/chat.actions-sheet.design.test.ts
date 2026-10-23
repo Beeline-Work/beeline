@@ -22,7 +22,13 @@ function sheet(marker: string, label: string): string {
 }
 
 const roomSheet = sheet('testID="room-actions-sheet"', 'Room actions sheet');
-const cornerSheet = sheet('testID="corner-actions-sheet"', 'corner actions sheet');
+const cornerSheet = readFileSync(
+  new URL('../../../../components/buzz/CornerActionsSheet.tsx', import.meta.url),
+  'utf8',
+);
+const cornerMountStart = chat.indexOf('<CornerActionsSheet');
+expect(cornerMountStart, 'missing corner actions mount').toBeGreaterThanOrEqual(0);
+const cornerMount = chat.slice(cornerMountStart, chat.indexOf('<HullDialog', cornerMountStart));
 const messageSheet = sheet('testID="message-actions-sheet"', 'message actions sheet');
 const dmSheet = sheet('testID="dm-actions-sheet"', 'DM actions sheet');
 
@@ -51,7 +57,8 @@ describe('Room and corner actions sheets', () => {
     expect(chat).not.toContain('roomActionsModalEyebrow');
     expect(chat).toContain('<HullActionSheetModal');
     expect(chat).toContain(`<HullActionSheetCancel`);
-    expect(chat).toContain('testID="corner-actions-close"');
+    expect(cornerSheet).toContain('testID="corner-actions-close"');
+    expect(cornerSheet).toContain('<HullActionSheetModal');
     // The Room sheet's footer is Cancel + Save, only while the Repository
     // choice is open; otherwise the sheet has no footer.
     expect(roomChoice).toMatch(/testID:\s*["']room-actions-close["']/);
@@ -234,7 +241,9 @@ describe('Room and corner actions sheets', () => {
     );
     expect(row(roomSheet, 'delete-room-action')).toContain("handleRoomLifecycle('delete')");
     expect(row(roomSheet, 'leave-room-action')).toContain("handleRoomLifecycle('leave')");
-    expect(row(cornerSheet, 'close-corner-action')).toContain('void handleCloseCorner()');
+    expect(row(cornerSheet, 'close-corner-action')).toContain('void close()');
+    expect(cornerSheet).toContain('await closeCorner()');
+    expect(cornerMount).toContain('await transport.closeCorner(decodedId)');
     // A rename in flight still holds the sheet open against the scrim.
     expect(chat).toContain('dismissOnBackdrop={!renameBusy}');
     expect(chat).toContain('const closeRoomActions = useCallback(() => {');
@@ -350,6 +359,8 @@ describe('Room and corner actions sheets', () => {
 
 it('mounts the server-backed Lock corner toggle in the corner actions menu', () => {
   expect(cornerSheet).toContain('<CornerLockAction');
-  expect(cornerSheet).toContain('locked={roomSurface?.cornerLocked === true}');
-  expect(cornerSheet).toContain('transport.setCornerLocked(decodedId, locked)');
+  expect(cornerMount).toContain('locked={roomSurface?.cornerLocked === true}');
+  expect(cornerSheet).toContain('locked={locked}');
+  expect(cornerSheet).toContain('await setLocked(value)');
+  expect(cornerMount).toContain('transport.setCornerLocked(decodedId, locked)');
 });

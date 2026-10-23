@@ -4352,6 +4352,8 @@ export class PhoneService {
       case 'requestCornerClose':
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
         return undefined as Output<Name>;
+      case 'decideApprovalCard':
+        return await this.decideApprovalCard(input as Input<'decideApprovalCard'>, viewerId) as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
           input as Input<'decideWritePermission'>,
@@ -6202,6 +6204,47 @@ export class PhoneService {
       }
     });
   }
+  /** Decline a connector or settle a target-branch proposal under its existing authority. */
+  private async decideApprovalCard(input: Input<'decideApprovalCard'>, viewerId: string) {
+    if (!['allow', 'deny'].includes(input.decision)) throw new Error('approval decision is invalid');
+    const decider = await this.requireIdentity(viewerId);
+    if (decider.kind !== 'human') throw new Error('a person must decide');
+    await this.database.transaction(async database => {
+      const row = (await database.query<{ card_type: string; card: Record<string, any> }>(
+        `SELECT card_type,card FROM messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL FOR UPDATE`, [input.messageId, input.roomId],
+      )).rows[0];
+      if (!row) throw new Error('approval not found');
+      const card = row.card;
+      const status = input.decision === 'deny' ? 'denied' : 'allowed';
+      if (row.card_type === 'target-branch') {
+        await this.requireRoomWorkspaceManager(input.roomId, viewerId, database);
+        if (card.status) throw new Error('approval already decided');
+        if (input.decision === 'allow') {
+          const room = (await database.query<{ repository_target_branch: string }>(`SELECT repository_target_branch FROM rooms WHERE id=$1`, [input.roomId])).rows[0];
+          if (room?.repository_target_branch !== card.to) throw new Error('confirm the target branch before settling its card');
+        }
+      } else if (row.card_type === 'connector-offer' && input.decision === 'deny') {
+        const offer = (await database.query<{ addressee_id: string; connector_type: string; workspace_id: string; agent_id: string; command_id: string | null }>(
+          `SELECT addressee_id,connector_type,workspace_id,agent_id,command_id FROM connector_offers WHERE id::text=$1 AND room_id=$2 AND status='pending' FOR UPDATE`, [card.offerId, input.roomId],
+        )).rows[0];
+        if (!offer) throw new Error('connector offer not pending');
+        await this.requireWorkspaceMember(offer.workspace_id, viewerId, database);
+        if (offer.addressee_id !== viewerId) {
+          if (offer.connector_type === 'wallet') throw new Error('only the wallet owner can decide');
+          await this.requireRoomWorkspaceManager(input.roomId, viewerId, database);
+        }
+        await database.query(`UPDATE connector_offers SET status='denied',accepted_by=$2,accepted_at=now() WHERE id::text=$1`, [card.offerId, viewerId]);
+        await systemLine(database, { roomId: input.roomId, subject: identitySubject({ id: viewerId, kind: 'human', name: decider.name }),
+          verb: 'declined', object: card.connectorName, kind: 'connector-offer-decided', wakes: [offer.agent_id],
+          ...(offer.command_id ? { commandId: offer.command_id } : {}), cardType: 'connector-offer-decision', card: { offerId: card.offerId, status: 'denied' } });
+      } else throw new Error('approval kind cannot be decided here');
+      await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [input.messageId,
+        JSON.stringify({ status, decidedBy: decider, decidedAt: Math.floor(Date.now()/1000),
+          ...(row.card_type === 'connector-offer' ? { acceptedBy: decider, acceptedAt: Math.floor(Date.now()/1000) } : {}) })]);
+    });
+    return { messageId: input.messageId };
+  }
+
   private async decidePermission(input: Input<'decideWritePermission'>, viewerId: string) {
     const pending = (
       await this.database.query<{
@@ -6283,6 +6326,8 @@ export class PhoneService {
           agent,
           requester,
           decider,
+          decidedAt: Math.floor(Date.now()/1000),
+          ...(typeof card?.reason === 'string' ? { reason: card.reason } : {}),
           tool,
           repository: input.repository,
           ...(card?.purpose === 'squire-spending' ? { purpose: 'squire-spending' } : {}),
@@ -7770,6 +7815,7 @@ export class PhoneService {
       )
     ).rows[0];
     if (!offer) throw new Error('connector offer not found');
+    if (offer.status === 'denied') throw new Error('connector offer conflict: already denied');
     if (offer.status === 'accepted') throw new Error('connector offer conflict: already accepted');
     if (!isOfferableConnectorKind(offer.connector_type))
       throw new Error(`connector offer is invalid: ${offer.connector_type} cannot be added`);
@@ -8583,11 +8629,16 @@ export class PhoneService {
   }
   private async setTargetBranch(input: Input<'setRoomTargetBranch'>, viewerId: string) {
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
-    const updated = await this.database.query(
-      `UPDATE rooms SET repository_target_branch=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
-      [input.roomId, input.targetBranch],
-    );
-    if (!updated.rowCount) throw new Error('room repository not configured');
+    const decider = await this.requireIdentity(viewerId);
+    await this.database.transaction(async database => {
+      const updated = await database.query(
+        `UPDATE rooms SET repository_target_branch=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
+        [input.roomId, input.targetBranch],
+      );
+      if (!updated.rowCount) throw new Error('room repository not configured');
+      await database.query(`UPDATE messages SET card=card || $3::jsonb WHERE room_id=$1 AND card_type='target-branch' AND card->>'to'=$2 AND card->>'status' IS NULL`,
+        [input.roomId, input.targetBranch, JSON.stringify({ status: 'allowed', decidedBy: decider, decidedAt: Math.floor(Date.now()/1000) })]);
+    });
     return this.roomRepository(input.roomId);
   }
   private async managedIdentity(viewerId: string) {
@@ -8814,8 +8865,8 @@ export class PhoneService {
     )
       throw new Error('agent removal access denied');
   }
-  private async requireWorkspaceMember(workspaceId: string, identityId: string) {
-    const row = await this.database.query(
+  private async requireWorkspaceMember(workspaceId: string, identityId: string, database = this.database) {
+    const row = await database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
        AND identity_id=$2 AND removed_at IS NULL`,
       [workspaceId, identityId],
@@ -8989,21 +9040,35 @@ export class PhoneService {
   private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
     messages = await this.decorateApprovalSources(messages);
     messages = await this.decorateVoiceCallReasons(roomId, messages);
+    // Source-free opening records carry lifecycle subscriptions, not a Room row.
+    // An off-Room request becomes visible here only through its merge completion.
+    messages = messages.filter(message => !((message.daemonFact?.type === 'corner-open' ||
+      message.systemEvent?.kind === 'corner-opened') && !message.daemonFact?.sourceMessageId));
     const cornerIds = [...new Set(messages.flatMap((message) => {
       const card = message.daemonFact;
-      return card?.type === 'corner-open' && UUID_PATTERN.test(card.cornerId) ? [card.cornerId] : [];
+      return card && ['corner-open', 'corner-complete'].includes(card.type) && UUID_PATTERN.test(card.cornerId)
+        ? [card.cornerId] : [];
     }))];
     if (!cornerIds.length) return messages;
-    const rows = await this.database.query<{ id: string; name: string; objective: string }>(
-      `SELECT corner.id,corner.name,fact.objective
+    const rows = await this.database.query<{
+      id: string; name: string; objective: string; archived_at: Date | null; lifecycle: CornerLifecycleView;
+    }>(
+      `SELECT corner.id,corner.name,fact.objective,corner.archived_at,fact.lifecycle
        FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
        WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2`, [cornerIds, roomId],
     );
     const current = new Map(rows.rows.map((row) => [row.id, row]));
     return messages.map((message) => {
       const card = message.daemonFact;
-      const corner = card?.type === 'corner-open' ? current.get(card.cornerId) : undefined;
-      return corner ? { ...message, daemonFact: { ...card!, name: corner.name, objective: corner.objective } } : message;
+      const corner = card ? current.get(card.cornerId) : undefined;
+      if (!corner || !card) return message;
+      const landed = corner.lifecycle.outcome === 'landed';
+      return { ...message, daemonFact: {
+        ...card, name: corner.name, objective: corner.objective,
+        ...(landed ? { type: 'corner-complete' as const, outcome: 'landed' as const,
+          ...(corner.lifecycle.pr ? { pullRequest: corner.lifecycle.pr } : {}) }
+          : corner.archived_at ? { type: 'corner-complete' as const, outcome: 'abandoned' as const } : {}),
+      } };
     });
   }
 
@@ -10002,8 +10067,8 @@ export class PhoneService {
       );
     }
   }
-  private async requireRoomWorkspaceManager(roomId: string, identityId: string) {
-    const row = await this.database.query(
+  private async requireRoomWorkspaceManager(roomId: string, identityId: string, database = this.database) {
+    const row = await database.query(
       `SELECT 1 FROM rooms room
        JOIN memberships membership ON membership.workspace_id=room.workspace_id
          AND membership.room_id IS NULL AND membership.identity_id=$2
@@ -10611,6 +10676,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'requestCornerClose',
   'setCornerLocked',
   'setCornerHold',
+  'decideApprovalCard',
   'decideWritePermission',
   'decideAgentGrant',
   'listRoomSubscriptions',

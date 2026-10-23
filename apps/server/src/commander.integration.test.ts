@@ -224,6 +224,9 @@ it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', a
   expect(mergeWakes[0]!.private).toBe(true);
 });
 it('a configured reviewer can record PASS from its DM without changing the reviewer gate', async () => {
+  const github = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 'secret');
+  vi.spyOn(github, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
+  Object.assign(daemon, { github });
   const opened = await open(), headSha = '9'.repeat(40);
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
@@ -895,6 +898,9 @@ it('makes an owner-approved systemctl user-bus command available in a subsequent
 
 it('does not resolve an opening card against a corner belonging to another parent Room', async () => {
   const opened = await open();
+  // Exercise a visible call-site marker; source-free subscription records stay hidden.
+  await db.query(`UPDATE messages SET card=card||'{"sourceMessageId":"source"}'::jsonb
+    WHERE room_id=$1 AND card->>'cornerId'=$2`, [ROOM, opened.cornerId]);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, DM]);
   await db.query(`UPDATE corner_facts SET objective='Private goal in another Room' WHERE corner_id=$1`, [opened.cornerId]);
   const view = await phone.readRoom(ROOM, HUMAN);
@@ -1366,16 +1372,16 @@ it.each([false, true])('Reproduction 572a0de1: same-address post then matching f
   console.info(`Demonstrated Reproduction ${duplicateReproduction}: post + final -> one visible message`);
 });
 
-it('dedupe preserves a final with an additional sentence', async () => {
+it('Reproduction R1: a same-place closing summary stays in activity even with an additional sentence', async () => {
   const text = 'Google sign-in (#2676) is merged. The checks passed.';
   await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
   const final = `${text} You still need to approve the release.`;
   await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
   expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.text))
-    .toEqual([text, final]);
+    .toEqual([text]);
 });
 
-it('R-onb-15: a free agent post and paraphrased final leave one visible answer', async () => {
+it('R-onb-15: a free agent post stays visible and the paraphrased final becomes activity', async () => {
   await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'fixture')`,
     [RUBY,WS,HUMAN]);
   const earlier = 'The card is up. Sign in to Link, then name the repository and I will start.';
@@ -1383,9 +1389,9 @@ it('R-onb-15: a free agent post and paraphrased final leave one visible answer',
   await daemon.execute('postCornerMessage', {...authority(order),cornerId:DM,text:earlier}, RUBY);
   await daemon.execute('postRoomMessage', {...authority(order),text:final}, RUBY);
   const messages = (await phone.readRoom(DM,HUMAN))!.messages.filter(message=>message.author.pubkey===RUBY);
-  expect(messages.filter(message=>message.presentation==='message').map(message=>message.text)).toEqual([final]);
+  expect(messages.filter(message=>message.presentation==='message').map(message=>message.text)).toEqual([earlier]);
   expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND author_id=$2 AND presentation='activity'`,[DM,RUBY])).rows)
-    .toContainEqual({text:earlier});
+    .toContainEqual({text:final});
 });
 
 it.each(['other-address', 'other-generation', 'other-request', 'deleted'] as const)('dedupe does not suppress a final after a post in %s', async scope => {
@@ -1406,7 +1412,7 @@ it('dedupe retains activity and accepts an identical final retry', async () => {
   const replay = await daemon.execute('postRoomMessage', { ...authority(order), text, steps }, RUBY);
   expect(replay.id).toBe(final.id);
   expect((await db.query(`SELECT presentation,activity FROM messages WHERE id=$1`, [final.id])).rows[0])
-    .toMatchObject({ presentation: 'activity', activity: steps });
+    .toMatchObject({ presentation: 'activity', activity: [...steps, { kind: 'note', title: 'Turn summary', text }] });
 });
 
 it('dedupe does not wake a tagged agent again for the collapsed final', async () => {
@@ -1427,9 +1433,9 @@ it('dedupe keeps a lightly reworded summary in collapsed activity', async () => 
     .toMatchObject({ presentation: 'activity', activity: [{ kind: 'note', title: 'Turn summary', text: final }] });
 });
 
-it.each([false, true])('dedupe keeps a final carrying a new attachment (tagged=%s)', async tagged => {
+it.each([false, true])('same-place closing keeps a new attachment on the visible post (tagged=%s)', async tagged => {
   const text = `${tagged ? '@captain ' : ''}Google sign-in is merged.`;
-  await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text }, RUBY);
   const objectId = randomUUID();
   await db.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
     VALUES($1,$2,'artifact',$3,'text/plain','proof',10,$4,'ready',now()+interval '24 hours')`,
@@ -1438,7 +1444,10 @@ it.each([false, true])('dedupe keeps a final carrying a new attachment (tagged=%
     url: `http://test/v1/media/${objectId}`, name: 'proof.txt', mimeType: 'text/plain', size: 10,
   } }, RUBY);
   const final = await daemon.execute('postRoomMessage', { ...authority(order), text }, RUBY);
-  const message = (await phone.readRoom(DM, HUMAN))!.messages.find(m => m.id === final.id)!;
+  const messages = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message');
+  expect(messages.map(m => m.id)).toEqual([posted.id]);
+  const message = messages[0]!;
+  expect((await db.query(`SELECT presentation FROM messages WHERE id=$1`, [final.id])).rows[0]?.presentation).toBe('activity');
   expect(message.presentation).toBe('message');
   expect(message.attachments).toHaveLength(1);
 });
@@ -1448,12 +1457,12 @@ it.each([
   ['Open https://example.com/a-b. The checks passed.', 'Open https://example.com/a/b.', true],
   ['The balance is -5. The checks passed.', 'The balance is -5.', false],
   ['Open https://example.com/a-b. The checks passed.', 'Open https://example.com/a-b.', false],
-])('dedupe preserves literal corrections in contained summaries: %s -> %s', async (post, final, corrected) => {
+])('same-place summaries retain literal corrections in activity: %s -> %s', async (post, final) => {
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
   const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
   const messages = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message');
-  expect(messages.map(m => m.id)).toEqual(corrected ? [posted.id, result.id] : [posted.id]);
-  if (corrected) expect(messages[1]?.text).toBe(final);
+  expect(messages.map(m => m.id)).toEqual([posted.id]);
+  expect((await db.query(`SELECT activity FROM messages WHERE id=$1`, [result.id])).rows[0]?.activity).toContainEqual({ kind: 'note', title: 'Turn summary', text: final });
 });
 
 it.each([
@@ -1463,11 +1472,11 @@ it.each([
   ['Run `send(a-b)`.', 'Run `send(a/b)`.'],
   ['Run `READY`.', 'Run `ready`.'],
   ['Run `a  b`.', 'Run `a b`.'],
-])('dedupe keeps a corrected path, identifier or code span visible: %s -> %s', async (post, final) => {
+])('same-place summaries retain corrected paths, identifiers and code in activity: %s -> %s', async (post, final) => {
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
   const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
   expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
-    .toEqual([posted.id, result.id]);
+    .toEqual([posted.id]);
 });
 
 it.each([
@@ -1476,11 +1485,11 @@ it.each([
   ['Deploy the release only after checks pass.', 'Deploy the release', true],
   ['Deploy the release. Only after checks pass.', 'Deploy the release.', true],
   ['Do not deploy the release. The checks passed.', 'Do not deploy the release.', false],
-])('dedupe preserves polarity and qualifying context: %s -> %s', async (post, final, changed) => {
+])('same-place summaries retain polarity and qualifying context in activity: %s -> %s', async (post, final) => {
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
   const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
   expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.id))
-    .toEqual(changed ? [posted.id, result.id] : [posted.id]);
+    .toEqual([posted.id]);
 });
 
 
@@ -1526,4 +1535,66 @@ it.each(['dm', 'room', 'corner', 'parent-room'] as const)('post receipt identifi
   const posted = await daemon.execute('postCornerMessage', { ...authority(command), cornerId: target, text: 'Receipt path proof' }, agent);
   expect(posted.receipt).toBe('Message stored and visible.' + (place === 'parent-room' ? '' : '\n' + currentPlaceReminder));
   expect((await phone.readRoom(target, HUMAN))?.messages.some(message => message.id === posted.id && message.text === 'Receipt path proof')).toBe(true);
+});
+
+
+it('opens with an independent reviewer and lets another member change it through metadata', async () => {
+  const input = { ...authority(order), requestId: order.turnRequestId, targetRoomId: ROOM,
+    name: 'Reviewer', objective: 'Prove corner reviewer assignment', implementer: 'worker', reviewer: 'ruby',
+    brief: { spec: 'Prove reviewer assignment', repositoryWork: false } };
+  const opened = await daemon.execute('createCorner', input, RUBY);
+  expect((await db.query(`SELECT reviewer_agent_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
+    .toEqual({ reviewer_agent_id: RUBY });
+  // Tool retries retain the original corner rather than opening duplicate work.
+  expect((await daemon.execute('createCorner', input, RUBY)).cornerId).toBe(opened.cornerId);
+  const turn = await worker(opened.cornerId);
+  await expect(daemon.execute('renameCorner', { ...authority(turn), cornerId: opened.cornerId, reviewer: 'worker' }, WORKER))
+    .rejects.toThrow('implementer cannot review');
+  await daemon.execute('renameCorner', { ...authority(turn), cornerId: opened.cornerId, reviewer: 'ruby' }, WORKER);
+  const lines = await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set the corner reviewer%'`, [opened.cornerId]);
+  expect(lines.rowCount).toBe(1);
+  console.info('Demonstrated corner-reviewer: open assigns an independent reviewer; another member can set it without editing the brief; self review is refused.');
+});
+
+it('refuses opening with the implementer as reviewer atomically', async () => {
+  await expect(daemon.execute('createCorner', { ...authority(order), requestId: order.turnRequestId,
+    targetRoomId: ROOM, name: 'Reviewer', objective: 'Prove reviewer independence',
+    implementer: 'worker', reviewer: 'worker', brief: { spec: 'Prove reviewer independence', repositoryWork: false } }, RUBY))
+    .rejects.toThrow('implementer cannot review');
+  expect((await db.query(`SELECT 1 FROM rooms WHERE parent_id=$1`, [ROOM])).rowCount).toBe(0);
+});
+
+it.each(['room', 'corner'] as const)('Reproduction R1: silent %s rejects late final text before the terminal receipt', async scope => {
+  const turn = scope === 'corner' ? await worker((await open()).cornerId) : order;
+  if (scope === 'room') await db.query(`UPDATE agent_commands SET reason='report' WHERE id=$1`, [turn.id]);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), status: 'working' }, turn.agentId);
+  await daemon.execute('markAgentTurnSilent', authority(turn), turn.agentId);
+  await daemon.execute('postRoomMessage', { ...authority(turn), text: 'This must never be a message.' }, turn.agentId);
+  expect((await db.query(`SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 AND request_id=$3`,
+    [turn.roomId, turn.agentId, turn.turnRequestId])).rows).toEqual([]);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), status: 'complete' }, turn.agentId);
+  expect((await db.query(`SELECT completion_kind FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+    [turn.roomId, turn.agentId, turn.turnRequestId])).rows[0]?.completion_kind).toBe('no-reply');
+});
+
+it('Reproduction R1: the server refuses silence on human input', async () => {
+  await expect(daemon.execute('markAgentTurnSilent', authority(order), RUBY)).rejects.toThrow('requires a nonhuman wake');
+});
+
+
+it.each(['room', 'corner'] as const)('Reproduction R1: post then a differently worded summary leaves one visible %s message', async scope => {
+  let turn: AgentCommand;
+  if (scope === 'corner') turn = await worker((await open()).cornerId);
+  else {
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@ruby Check the widget' }, HUMAN);
+    turn = (await daemon.execute('getAgentCommands', { roomId: ROOM }, RUBY)).commands[0]!;
+    await claim(turn);
+  }
+  const posted = await daemon.execute('postCornerMessage', { ...authority(turn), cornerId: turn.roomId, text: 'The widget is ready.' }, turn.agentId);
+  const summary = 'Finished checking it; the widget can be used now.';
+  const final = await daemon.execute('postRoomMessage', { ...authority(turn), text: summary }, turn.agentId);
+  const messages = (await phone.readRoom(turn.roomId, HUMAN))!.messages.filter(message => message.author.pubkey === turn.agentId && message.presentation === 'message');
+  expect(messages.map(message => message.id)).toEqual([posted.id]);
+  expect((await db.query(`SELECT presentation,activity FROM messages WHERE id=$1`, [final.id])).rows[0])
+    .toMatchObject({ presentation: 'activity', activity: [{ kind: 'note', title: 'Turn summary', text: summary }] });
 });

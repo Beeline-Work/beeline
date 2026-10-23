@@ -1,0 +1,12 @@
+{
+  "reproduction": "R1",
+  "surface": "profile",
+  "mode": "offline-error",
+  "app": "normal index.ts; real signed-in app; no transport mocks",
+  "airplaneMode": true,
+  "errorVisibleBySeconds": 22.25,
+  "errors": [
+    "MonolithRequestTimeoutError: The server did not answer in time. The result is unknown. Refresh to check before trying again."
+  ],
+  "retryEnabled": true
+}

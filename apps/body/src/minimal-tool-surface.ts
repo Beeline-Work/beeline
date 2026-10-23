@@ -719,7 +719,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "open_corner",
-    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically. Keep the Room's designated reviewer out of implementation unless necessary, then name a different corner reviewer.",
+    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically. Keep the Room's designated reviewer out of implementation unless necessary, then set reviewer to an independent agent handle. A reviewer cannot be the implementer or a commit author.",
     "inputSchema": {
       "type": "object",
       "required": ["room", "brief", "implementer"],
@@ -784,6 +784,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "minLength": 1,
           "description": "Required worker handle without @. Opening creates its first assignment; do not send a redundant order."
         },
+        "reviewer": {"type": "string", "minLength": 1, "description": "Independent reviewer handle without @; defaults to the Room reviewer."},
         "hold": {
           "type": "boolean",
           "description": "Create a merge hold atomically, for the human who ordered this work."
@@ -794,12 +795,13 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "revise_corner",
-    "description": "Use metadata to rename; install_brief explicitly installs the first nested brief with a name; brief replaces a complete nested brief with expectedRevision and change. Supply address. Parent and ancestor restrictions remain enforced.",
+    "description": "Use metadata to rename or set reviewer; install_brief explicitly installs the first nested brief with a name; brief replaces a complete nested brief with expectedRevision and change. Supply address. Parent and ancestor restrictions remain enforced.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "action": {"type": "string", "enum": ["metadata", "brief", "install_brief"]},
         "address": {"type": "string"},
+        "reviewer": {"type": "string", "minLength": 1, "description": "Set the corner reviewer to an independent agent member handle without @."},
         "name": {"type": "string", "description": "The corner title, words joined by hyphens with no whitespace."},
         "objective": {
           "type": "string",
@@ -1056,7 +1058,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "post_artifact",
-    "description": "Upload a validated deliverable from a session path. Queues it for the final reply; uploading alone does not deliver a report. HTML must be self-contained with inline styles/images.",
+    "description": "Upload a validated deliverable from a session path. Queues it for the final reply; uploading alone does not deliver a report. Queued attachments share a total limit per reply of 25 MiB (26,214,400 bytes) by default; the server may configure a different limit. Use smaller files or deliver the queued batch before posting more. HTML must be self-contained with inline styles/images.",
     "inputSchema": {
       "type": "object",
       "required": ["path"],

@@ -1,3 +1,4 @@
+import { ExternalServiceTimeoutError, githubFetch } from './external-fetch.js';
 import { importPKCS8, SignJWT } from 'jose';
 
 const GITHUB_ISSUER = 'https://github.com';
@@ -111,7 +112,8 @@ async function jsonResponseObject(
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    if (error instanceof ExternalServiceTimeoutError) throw error;
     if (!response.ok) throw new GitHubHttpError(label, response.status, responseRetryAfter(response));
     throw new Error(`${label} returned invalid JSON`);
   }
@@ -134,7 +136,8 @@ async function jsonArray(response: Response, label: string): Promise<Record<stri
   let body: unknown;
   try {
     body = await response.json();
-  } catch {
+  } catch (error) {
+    if (error instanceof ExternalServiceTimeoutError) throw error;
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!Array.isArray(body)) {
@@ -204,7 +207,7 @@ export class GitHubOAuthClient {
     redirectUri: string,
     codeVerifier?: string,
   ): Promise<GitHubIdentity> {
-    const tokenResponse = await fetch(this.config.tokenEndpoint, {
+    const tokenResponse = await githubFetch(this.config.tokenEndpoint, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -224,7 +227,7 @@ export class GitHubOAuthClient {
         ? tokenBody.expires_in
         : undefined;
     const userBody = await jsonObject(
-      await fetch(`${this.config.apiBaseUrl}/user`, {
+      await githubFetch(`${this.config.apiBaseUrl}/user`, {
         headers: githubHeaders(accessToken),
       }),
       'GitHub user lookup',
@@ -250,7 +253,7 @@ export class GitHubOAuthClient {
   async refreshUserToken(
     refreshToken: string,
   ): Promise<{ accessToken: string; refreshToken?: string; tokenExpiresIn?: number }> {
-    const tokenResponse = await fetch(this.config.tokenEndpoint, {
+    const tokenResponse = await githubFetch(this.config.tokenEndpoint, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -320,6 +323,8 @@ export interface GitHubDispatchableWorkflow {
 export interface GitHubCheckRollup {
   readonly state: 'passed' | 'failed' | 'pending';
   readonly total: number;
+  /** Registered workflows or suites still running, even without contexts. */
+  readonly pendingRegistrations?: boolean;
   readonly failing: readonly string[];
   readonly checks: readonly {
     readonly name: string;
@@ -417,7 +422,7 @@ export class GitHubAppClient {
    */
   async fetchApp(): Promise<{ slug: string; events?: unknown; permissions?: unknown }> {
     const body = await jsonObject(
-      await fetch(`${this.#config.apiBaseUrl}/app`, {
+      await githubFetch(`${this.#config.apiBaseUrl}/app`, {
         headers: githubHeaders(await this.appJwt()),
       }),
       'GitHub app lookup',
@@ -452,7 +457,7 @@ export class GitHubAppClient {
       throw new Error('invalid GitHub installation id');
     }
     const hasBody = Boolean(options.repositoryIds?.length) || Boolean(options.permissions);
-    const response = await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
+    const response = await githubFetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
       method: 'POST',
       headers: {
         ...githubHeaders(await this.appJwt()),
@@ -501,7 +506,7 @@ export class GitHubAppClient {
     const candidates: { id: number; name: string; path: string; state: string }[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
-        await fetch(
+        await githubFetch(
           `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows?per_page=100&page=${page}`,
           { headers: githubHeaders(accessToken) },
         ),
@@ -539,7 +544,7 @@ export class GitHubAppClient {
         let content: Record<string, unknown>;
         try {
           content = await jsonObject(
-            await fetch(
+            await githubFetch(
               `${this.#config.apiBaseUrl}/repos/${path}/contents/${workflow.path
                 .split('/')
                 .map((part) => encodeURIComponent(part))
@@ -560,7 +565,7 @@ export class GitHubAppClient {
         let runs: Record<string, unknown>;
         try {
           runs = await jsonObject(
-            await fetch(
+            await githubFetch(
               `${this.#config.apiBaseUrl}/repos/${path}/actions/workflows/${workflow.id}/runs?per_page=1`,
               { headers: githubHeaders(accessToken) },
             ),
@@ -616,13 +621,14 @@ export class GitHubAppClient {
         .join('/')}`,
     );
     url.searchParams.set('ref', input.ref);
-    const response = await fetch(url, { headers: githubHeaders(input.accessToken) });
+    const response = await githubFetch(url, { headers: githubHeaders(input.accessToken) });
     if (response.status === 404) return undefined;
     if (!response.ok) throw new GitHubHttpError('GitHub file lookup', response.status);
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalServiceTimeoutError) throw error;
       throw new Error('GitHub file lookup returned invalid JSON');
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
@@ -647,7 +653,7 @@ export class GitHubAppClient {
         throw new Error(`Production release ${run.id} is already ${status}. Wait for it to finish or cancel it in GitHub Actions.`);
       }
     }
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/workflows/unified-release.yml/dispatches`,
       { method: 'POST', headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
         body: JSON.stringify({ ref: 'main', inputs }) },
@@ -661,7 +667,7 @@ export class GitHubAppClient {
     workflowId: number,
     defaultBranch: string,
   ): Promise<void> {
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/workflows/${workflowId}/dispatches`,
       {
         method: 'POST',
@@ -706,7 +712,7 @@ export class GitHubAppClient {
   /** A PR's changed files, reviews, inline review comments and conversation comments. */
   async readPullRequestDiscussion(accessToken: string, fullName: string, number: number) {
     const list = async (path: string) => {
-      const response = await fetch(
+      const response = await githubFetch(
         `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}?per_page=100`,
         { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
       );
@@ -770,7 +776,7 @@ export class GitHubAppClient {
     url.searchParams.set('state', 'open');
     url.searchParams.set('head', `${owner}:${branch}`);
     url.searchParams.set('per_page', '100');
-    const response = await fetch(url, {
+    const response = await githubFetch(url, {
       headers: githubHeaders(accessToken),
       signal: AbortSignal.timeout(15_000),
     });
@@ -805,7 +811,7 @@ export class GitHubAppClient {
     if (!owner || !name || !/^[a-f0-9]{40,64}$/i.test(headSha)) {
       throw new Error('invalid GitHub commit check target');
     }
-    const response = await fetch(`${this.#config.apiBaseUrl}/graphql`, {
+    const response = await githubFetch(`${this.#config.apiBaseUrl}/graphql`, {
       method: 'POST',
       headers: { ...githubHeaders(accessToken), 'content-type': 'application/json' },
       signal: AbortSignal.timeout(15_000),
@@ -831,7 +837,10 @@ export class GitHubAppClient {
       Record<string, unknown> | undefined;
     if (object?.oid !== headSha) throw new Error('GitHub commit check rollup head mismatch');
     const rollup = object.statusCheckRollup as Record<string, unknown> | null | undefined;
-    if (!rollup) return { state: 'pending', total: 0, failing: [], checks: [] };
+    if (!rollup) return {
+      state: 'pending', total: 0, failing: [], checks: [],
+      pendingRegistrations: await this.hasUnfinishedChecks(accessToken, fullName, headSha),
+    };
     const state =
       rollup.state === 'SUCCESS'
         ? ('passed' as const)
@@ -875,12 +884,38 @@ export class GitHubAppClient {
         } as const,
       ];
     });
+    // A workflow or suite can be registered before it creates a check run.
+    // The rollup only covers existing contexts, so SUCCESS alone is insufficient.
+    const pending = await this.hasUnfinishedChecks(accessToken, fullName, headSha);
     return {
-      state,
+      state: pending ? 'pending' : state,
+      pendingRegistrations: pending,
       total: contexts.totalCount,
       failing: checks.filter((check) => check.status === 'failed').map((check) => check.name),
       checks,
     };
+  }
+
+  private async hasUnfinishedChecks(accessToken: string, fullName: string, headSha: string): Promise<boolean> {
+    const unfinished = async (path: string, key: string): Promise<boolean> => {
+      for (let page = 1; ; page++) {
+        const separator = path.includes('?') ? '&' : '?';
+        const body = await this.readRepositoryJson(
+          accessToken, fullName, `${path}${separator}per_page=100&page=${page}`,
+        );
+        const items = body[key];
+        if (!Array.isArray(items) || typeof body.total_count !== 'number' || !Number.isSafeInteger(body.total_count) || body.total_count < 0)
+          throw new Error('GitHub head check registration is invalid');
+        if (items.some(item => !item || typeof item.status !== 'string' || item.status !== 'completed')) return true;
+        if (page * 100 >= body.total_count) return false;
+        if (!items.length) throw new Error('GitHub head check registration is incomplete');
+      }
+    };
+    const [suites, workflows] = await Promise.all([
+      unfinished(`commits/${headSha}/check-suites`, 'check_suites'),
+      unfinished(`actions/runs?head_sha=${headSha}`, 'workflow_runs'),
+    ]);
+    return suites || workflows;
   }
 
   /** Empty rollups can precede registration; establish absence independently. */
@@ -902,7 +937,7 @@ export class GitHubAppClient {
   /** A completed Actions job's log is available before its workflow run finishes. */
   async readJobLog(accessToken: string, fullName: string, jobId: number): Promise<string> {
     if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('invalid GitHub job id');
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/actions/jobs/${jobId}/logs`,
       { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
     );
@@ -915,7 +950,7 @@ export class GitHubAppClient {
     fullName: string,
     path: string,
   ): Promise<Record<string, unknown>> {
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
       {
         headers: githubHeaders(accessToken),
@@ -928,7 +963,7 @@ export class GitHubAppClient {
 
   /** Read live repository and branch protection before destructive cleanup. */
   async branchDeletionSafety(accessToken: string, fullName: string, branch: string) {
-    const response = await fetch(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}`, {
+    const response = await githubFetch(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}`, {
       headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new GitHubHttpError('GitHub repository', response.status, responseRetryAfter(response));
@@ -968,7 +1003,7 @@ export class GitHubAppClient {
       .split('/')
       .map((part) => encodeURIComponent(part))
       .join('/');
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath}/git/refs/heads/${branchPath}`,
       { method: 'DELETE', headers: githubHeaders(token.token), signal: AbortSignal.timeout(15_000) },
     );
@@ -996,7 +1031,7 @@ export class GitHubAppClient {
   }
 
   private async queueGraphql(token: string, query: string, variables: Record<string, unknown>) {
-    const response = await fetch(`${this.#config.apiBaseUrl}/graphql`, {
+    const response = await githubFetch(`${this.#config.apiBaseUrl}/graphql`, {
       method: 'POST', headers: { ...githubHeaders(token), 'content-type': 'application/json' },
       signal: AbortSignal.timeout(15_000), body: JSON.stringify({ query, variables }),
     });
@@ -1052,7 +1087,7 @@ export class GitHubAppClient {
       .split('/')
       .map((part) => encodeURIComponent(part))
       .join('/');
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${encodedRepositoryPath}/pulls/${pullRequestNumber}/merge`,
       {
         method: 'PUT',
@@ -1084,7 +1119,7 @@ export class GitHubAppClient {
       repositoryIds: [repositoryId],
       permissions: { pull_requests: 'write' },
     });
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${pullRequestNumber}`,
       {
         method: 'PATCH',
@@ -1116,7 +1151,7 @@ export class GitHubAppClient {
     path: string,
     body?: Record<string, unknown>,
   ): Promise<unknown> {
-    const response = await fetch(
+    const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/${path}`,
       {
         method,
@@ -1177,7 +1212,7 @@ export class GitHubAppClient {
 
   async installationAccount(installationId: number): Promise<GitHubInstallationAccount> {
     const body = await jsonObject(
-      await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
+      await githubFetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}`, {
         headers: githubHeaders(await this.appJwt()),
       }),
       'GitHub installation lookup',
@@ -1199,7 +1234,7 @@ export class GitHubAppClient {
       // GitHub answers this endpoint with a BARE array of installations —
       // unlike GET /user/installations' {total_count, installations} envelope.
       const entries = await jsonArray(
-        await fetch(`${this.#config.apiBaseUrl}/app/installations?per_page=100&page=${page}`, {
+        await githubFetch(`${this.#config.apiBaseUrl}/app/installations?per_page=100&page=${page}`, {
           headers: githubHeaders(await this.appJwt()),
         }),
         'GitHub app installation list',
@@ -1227,7 +1262,7 @@ export class GitHubAppClient {
     const repositories: GitHubInstallationRepository[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
-        await fetch(
+        await githubFetch(
           `${this.#config.apiBaseUrl}/installation/repositories?per_page=100&page=${page}`,
           { headers: githubHeaders(installation.token) },
         ),
@@ -1279,17 +1314,26 @@ export class GitHubAppClient {
       account.type === 'Organization'
         ? `/orgs/${encodeURIComponent(account.login)}/repos`
         : '/user/repos';
-    const body = await jsonObject(
-      await fetch(`${this.#config.apiBaseUrl}${path}`, {
-        method: 'POST',
-        headers: { ...githubHeaders(token), 'content-type': 'application/json' },
-        // GitHub creates README.md and the default-branch first commit in the
-        // same repository creation request. The Room can then fetch main on
-        // its first start, including for a selected installation account.
-        body: JSON.stringify({ ...input, auto_init: true }),
-      }),
-      'GitHub repository creation',
-    );
+    let body: Record<string, unknown>;
+    try {
+      body = await jsonObject(
+        await githubFetch(`${this.#config.apiBaseUrl}${path}`, {
+          method: 'POST',
+          headers: { ...githubHeaders(token), 'content-type': 'application/json' },
+          // GitHub creates README.md and the default-branch first commit in the
+          // same repository creation request. The Room can then fetch main on
+          // its first start, including for a selected installation account.
+          body: JSON.stringify({ ...input, auto_init: true }),
+        }),
+        'GitHub repository creation',
+      );
+    } catch (error) {
+      if (error instanceof ExternalServiceTimeoutError)
+        throw new ExternalServiceTimeoutError(
+          'GitHub did not finish responding. The repository may have been created. The result is unknown; refresh to check before retrying.',
+        );
+      throw error;
+    }
     const id = body.id;
     const name = body.name;
     const fullName = body.full_name;
@@ -1342,7 +1386,7 @@ export class GitHubAppClient {
     if (!owner || !repository) return undefined;
     try {
       const body = await jsonObject(
-        await fetch(
+        await githubFetch(
           `${this.#config.apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository.replace(/\.git$/i, ''))}`,
           { headers: githubHeaders(await this.appJwt()), redirect: 'follow' },
         ),
@@ -1364,7 +1408,7 @@ export class GitHubAppClient {
 
   /** A linked installation may change owners only with an explicit admin grant. */
   async organizationAdmin(accessToken: string, organization: string): Promise<boolean> {
-    const response = await fetch(`${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
+    const response = await githubFetch(`${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
       { headers: githubHeaders(accessToken) });
     if (!response.ok) return false;
     const body = await response.json() as Record<string, unknown>;
@@ -1394,7 +1438,7 @@ export class GitHubAppClient {
   ): Promise<GitHubOrganizationMembership> {
     let response: Response;
     try {
-      response = await fetch(
+      response = await githubFetch(
         `${this.#config.apiBaseUrl}/user/memberships/orgs/${encodeURIComponent(organization)}`,
         { headers: githubHeaders(accessToken) },
       );
@@ -1406,7 +1450,8 @@ export class GitHubAppClient {
     let body: unknown;
     try {
       body = await response.json();
-    } catch {
+    } catch (error) {
+      if (error instanceof ExternalServiceTimeoutError) throw error;
       return 'unknown';
     }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return 'unknown';
@@ -1425,7 +1470,7 @@ export class GitHubAppClient {
   async repositoryStarred(accessToken: string, fullName: string): Promise<boolean | 'unknown'> {
     let response: Response;
     try {
-      response = await fetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+      response = await githubFetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
         headers: githubHeaders(accessToken),
       });
     } catch {
@@ -1443,7 +1488,7 @@ export class GitHubAppClient {
    */
   async starRepository(accessToken: string, fullName: string): Promise<boolean> {
     try {
-      const response = await fetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
+      const response = await githubFetch(`${this.#config.apiBaseUrl}/user/starred/${fullName}`, {
         method: 'PUT',
         headers: { ...githubHeaders(accessToken), 'content-length': '0' },
       });
@@ -1460,7 +1505,7 @@ export class GitHubAppClient {
     const installationIds: number[] = [];
     for (let page = 1; ; page++) {
       const body = await jsonObject(
-        await fetch(`${this.#config.apiBaseUrl}/user/installations?per_page=100&page=${page}`, {
+        await githubFetch(`${this.#config.apiBaseUrl}/user/installations?per_page=100&page=${page}`, {
           headers: githubHeaders(accessToken),
         }),
         'GitHub user installations',

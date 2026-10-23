@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { systemLine } from './system-line.js';
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
@@ -59,5 +61,35 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
       [input.cornerId, actorId, actor.role],
     )
   ).rows[0]!;
+  await writeHoldMessage(db, input.cornerId, row.id, actorId);
   return { holdId: row.id, roomId: input.cornerId };
+}
+
+async function writeHoldMessage(
+  db: SqlDatabase,
+  cornerId: string,
+  holdId: string,
+  actorId: string,
+) {
+  const actor = (
+    await db.query<{ name: string }>('SELECT name FROM identities WHERE id=$1', [actorId])
+  ).rows[0];
+  await systemLine(db, {
+    id: createHash('sha256').update(`corner-hold:${holdId}`).digest('hex'),
+    roomId: cornerId,
+    authorId: actorId,
+    subject: { kind: 'person', id: actorId, name: actor?.name ?? actorId },
+    verb: 'set a merge hold',
+  });
+}
+
+/** Existing active holds need the same source target as newly set holds. */
+export async function backfillCornerHoldMessages(db: SqlDatabase): Promise<void> {
+  const rows = (
+    await db.query<{ corner_id: string; id: string; actor_id: string }>(
+      `SELECT hold.corner_id,hold.id,hold.actor_id FROM corner_merge_holds hold
+     JOIN rooms room ON room.id=hold.corner_id WHERE hold.released_at IS NULL AND room.archived_at IS NULL`,
+    )
+  ).rows;
+  for (const row of rows) await writeHoldMessage(db, row.corner_id, row.id, row.actor_id);
 }

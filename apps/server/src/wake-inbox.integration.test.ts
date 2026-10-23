@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { migrate, type SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
@@ -7,7 +7,7 @@ import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { createAgentCommand, readAgentCommands, type CommandRow } from './agent-command.js';
-import { flushDueCommanderWakes } from './commander-wakes.js';
+import { flushDueCommanderWakes, CommanderWakeDeadlines } from './commander-wakes.js';
 import { systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
@@ -370,4 +370,18 @@ it.each(['head', 'absorbed'] as const)('Stop removes only its sender’s queued 
   expect((await inbox(db, OTHER, WORKER)).filter(command => command.reason === 'report')).toHaveLength(1);
   expect((await inbox(db, OTHER, secondAgent)).filter(command => command.reason === 'report')).toHaveLength(0);
   console.info(`Demonstrated inbox-stop: stopping sender A removes its ${position} queued order, preserves sender B's work and reports the drop only to A`);
+});
+
+it('re-arms durable commander windows at startup and flushes through one timeout',async()=>{
+  await delivery('batch:1');const delayed=await wake('deadline-proof');
+  const live=new LiveHub();const errors:unknown[]=[];
+  vi.useFakeTimers();const deadlines=new CommanderWakeDeadlines(db,live,error=>errors.push(error));
+  try {
+    await deadlines.start();expect(vi.getTimerCount()).toBe(1);
+    // The database owns maturity; move that persisted deadline before firing the recovered timer.
+    await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[delayed!.id]);
+    await vi.advanceTimersByTimeAsync(61000);await db.query('SELECT 1');
+    expect((await inbox()).some(command=>command.id===delayed!.id)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);expect(errors).toEqual([]);
+  }finally{deadlines.stop();vi.useRealTimers();}
 });

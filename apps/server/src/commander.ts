@@ -343,9 +343,9 @@ export async function reportToCommander(
       await db.query(
       `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,commander_id,message_id)
        SELECT $1,person.id,$2,$3,$6,$7 FROM identities person
-       JOIN effective_memberships member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
+       LEFT JOIN effective_memberships member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
        CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
-       WHERE (person.id=$6 OR (person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
+       WHERE (person.id=$6 OR (member.identity_id IS NOT NULL AND person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
        AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
          AND COALESCE(fact.worker_agent_id,fact.owner_agent_id)=$5)
        ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,

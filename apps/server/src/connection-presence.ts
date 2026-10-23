@@ -1,5 +1,5 @@
-import { flushDueCommanderWakes } from './commander-wakes.js';
-import { runCornerAttention } from './corner-attention.js';
+import { CommanderWakeDeadlines } from './commander-wakes.js';
+import { CornerAttentionDeadlines } from './corner-attention.js';
 import { isServerEventKind } from '@beeline/api-contract/phone';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
@@ -92,7 +92,8 @@ export class ConnectionPresence {
   readonly #release: () => void;
   readonly #releaseResync: () => void;
   #leaseTimer: ReturnType<typeof setInterval> | undefined;
-  #renudgeTimer: ReturnType<typeof setInterval> | undefined;
+  #attention: CornerAttentionDeadlines;
+  #commanderWakes: CommanderWakeDeadlines;
   #stopped = false;
   /** This server process; it holds the connections it accepted. */
   readonly instanceId: string;
@@ -109,6 +110,8 @@ export class ConnectionPresence {
     ),
     lease: { instanceId?: string; renewMs?: number; expiryMs?: number } = {},
   ) {
+    this.#attention = new CornerAttentionDeadlines(database,live,this.report);
+    this.#commanderWakes = new CommanderWakeDeadlines(database,live,this.report);
     this.#evidencePersistedAt = new RecentIdentityTimes(20_000, this.evidenceMinimumIntervalMs);
     this.#authenticatedAt = new RecentIdentityTimes(20_000, this.pickupWindowMs);
     this.instanceId = lease.instanceId ?? randomUUID();
@@ -148,18 +151,8 @@ export class ConnectionPresence {
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
     this.startLease();
-    let attentionRunning = false;
-    const attention = async () => {
-      if (attentionRunning) return;
-      attentionRunning = true;
-      try { await runCornerAttention(this.database); }
-      finally { attentionRunning = false; }
-    };
-    const renudge = () => void Promise.all([renudgeStrandedPendingCommands(this.database), flushDueCommanderWakes(this.database), attention()]).catch(this.report);
-    this.#renudgeTimer = setInterval(renudge, 5_000);
-    this.#renudgeTimer.unref?.();
-    await flushDueCommanderWakes(this.database);
-    await attention();
+    await this.#commanderWakes.start();
+    await this.#attention.start();
     await this.recoverWorkingStalls();
     await this.observe();
   }
@@ -287,7 +280,8 @@ export class ConnectionPresence {
   async stop(): Promise<void> {
     this.#stopped = true;
     clearInterval(this.#leaseTimer);
-    clearInterval(this.#renudgeTimer);
+    this.#attention.stop();
+    this.#commanderWakes.stop();
     this.#leaseTimer = undefined;
     this.#release();
     this.#releaseResync();
@@ -660,6 +654,7 @@ export async function claimAgentConnection(
     JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch }),
   ]);
   live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
+  await renudgeStrandedPendingCommands(database,agentId);
   await broadcastAgentPresence(database, live, agentId);
   return epoch;
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { cornerBlockerSql, cornerRowState, chatCornerCounts } from './chat-corner-counts.js';
@@ -10,7 +11,7 @@ beforeAll(async () => {
     CREATE TABLE effective_memberships(room_id text,identity_id text,removed_at timestamp);
     CREATE TABLE identities(id text,kind text,name text);
     CREATE TABLE corner_owed(corner_id text,message_id text,person_id text,created_at timestamp,blocking boolean,expires_at timestamp);
-    CREATE TABLE corner_report_blockers(corner_id text,message_id text,report_id text,person_id text,created_at timestamp,commander_id text);
+    CREATE TABLE corner_report_blockers(corner_id text,message_id text,report_id text,person_id text,created_at timestamp,commander_id text,return_room_id text);
     CREATE TABLE corner_merge_holds(corner_id text,id text,actor_id text,set_at timestamp,released_at timestamp);
     INSERT INTO rooms VALUES('corner','room');
     INSERT INTO memberships VALUES('room','person',NULL);`);
@@ -53,12 +54,12 @@ it.each(['done:', 'failed:', 'unreachable', 'addressed message'])(
 );
 
 
-it('R1: holds and messageless reports keep selection IDs but never expose them as message targets', async () => {
+it('R1: holds and messageless reports resolve selection IDs to real source message targets', async () => {
   await db.exec(`DELETE FROM corner_owed; DELETE FROM messages;
     INSERT INTO identities VALUES('person','human','Lunchbox');
     INSERT INTO effective_memberships VALUES('corner','person',NULL);
     INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);
-    INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','person','2026-01-02','person');`);
+    INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','person','2026-01-02','person','other');`);
   const query = async (newest = false) => (await db.query<{
     item_id: string; kind: 'message' | 'merge-hold' | 'report'; person_name: string;
     person_id: string; reason: 'approve' | 'question';
@@ -72,11 +73,11 @@ it('R1: holds and messageless reports keep selection IDs but never expose them a
   const oldest = await query();
   expect(oldest.item_id).toBe('hold');
   expect(project(oldest)).toEqual({ state: 'waiting', reason: 'approve',
-    blocker: { kind: 'merge-hold', personId: 'person', personName: 'Lunchbox' } });
+    itemId: createHash('sha256').update('corner-hold:hold').digest('hex'), blocker: { kind: 'merge-hold', personId: 'person', personName: 'Lunchbox' } });
   const newest = await query(true);
   expect(newest.item_id).toBe('report');
   expect(project(newest)).toEqual({ state: 'waiting', reason: 'question',
-    blocker: { kind: 'report', personId: 'person', personName: 'Lunchbox' } });
-  await db.exec("UPDATE corner_report_blockers SET message_id='real-message'");
+    itemId: createHash('sha256').update('agent-command-card:report').digest('hex'), blocker: { kind: 'report', personId: 'person', personName: 'Lunchbox' } });
+  await db.exec("UPDATE corner_report_blockers SET message_id='real-message',return_room_id='corner'");
   expect(project(await query(true))).toMatchObject({ itemId: 'real-message', blocker: { kind: 'message' } });
 });

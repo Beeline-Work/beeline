@@ -42,12 +42,13 @@ export function cornerSuperState(status: CornerState): Exclude<CornerSuperState,
 const CORNER_GLYPH_FILLED = '●';
 const CORNER_GLYPH_HOLLOW = '○';
 
-export type CornerVisualState = 'idle' | 'working' | 'needs-you';
+export type CornerVisualState = 'idle' | 'working' | 'needs-you' | 'waiting';
 
 const CORNER_VISUAL_STATE_RANK: Readonly<Record<CornerVisualState, number>> = {
   idle: 0,
-  working: 1,
-  'needs-you': 2,
+  waiting: 1,
+  working: 2,
+  'needs-you': 3,
 };
 
 /** The one presentation vocabulary rendered by both corners and Rooms. */
@@ -58,13 +59,8 @@ export function cornerVisualState(
   // `agentOffline` remains in the compatibility shape, but presence is not a
   // lifecycle input. It may render beside this state, never rewrite it.
   if (status === 'working') return 'working';
-  if (
-    opts?.awaitingReply ||
-    opts?.reason === 'question' ||
-    status === 'review'
-  ) {
-    return 'needs-you';
-  }
+  if (status === 'review') return 'needs-you';
+  if (status === 'waiting') return 'waiting';
   return 'idle';
 }
 
@@ -77,10 +73,9 @@ export function roomState(
   >[],
 ): CornerVisualState {
   return corners.reduce<CornerVisualState>((current, corner) => {
-    const next = cornerVisualState(corner.state, {
-      awaitingReply: corner.awaitingReply,
-      reason: corner.reason,
-    });
+    // Room attention is separate from the corner's unchanged server state.
+    const next = corner.state === 'waiting' && (corner.awaitingReply || corner.reason === 'question')
+      ? 'needs-you' : cornerVisualState(corner.state);
     return CORNER_VISUAL_STATE_RANK[next] > CORNER_VISUAL_STATE_RANK[current] ? next : current;
   }, 'idle');
 }
@@ -116,6 +111,8 @@ export function cornerStatusPresentation(
   switch (cornerVisualState(status, opts)) {
     case 'working':
       return { glyph: '◌', label: 'working' };
+    case 'waiting':
+      return { glyph: 'Ⅱ', label: 'waiting' };
     case 'needs-you':
       return { glyph: CORNER_GLYPH_FILLED, label: 'review' };
     case 'idle':
@@ -152,6 +149,8 @@ export function roomListCorners(corners: readonly CornerSummary[]): CornerSummar
  */
 export function roomCornerSignal(corners: readonly CornerSummary[]): CornerState | null {
   switch (roomState(roomListCorners(corners))) {
+    case 'waiting':
+      return 'waiting';
     case 'needs-you':
       return 'review';
     case 'working':

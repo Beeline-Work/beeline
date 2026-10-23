@@ -1249,9 +1249,10 @@ function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> 
 
 function readCornerBlocker(value: unknown): import('./phone-types.js').CornerBlocker | undefined {
   const item = record(value);
-  const kind = oneOf(item?.kind, ['message', 'merge-hold', 'report']);
+  const kind = oneOf(item?.kind, ['message', 'merge-hold', 'report', 'ci']);
   if (!item || !kind) return undefined;
   return { kind,
+    ...field('url', typeof item.url === 'string' && item.url.startsWith('https://github.com/') ? item.url : undefined),
     ...field('personId', nonempty(item.personId) ? item.personId : undefined),
     ...field('personName', nonempty(item.personName) ? item.personName : undefined) };
 }
@@ -1267,7 +1268,7 @@ function readChatCorner(value: unknown): ChatListCorner | null {
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
     ...field('blocker', readCornerBlocker(item.blocker)),
-    ...field('itemId', (!item.blocker || record(item.blocker)?.kind === 'message') && nonempty(item.itemId) ? item.itemId : undefined),
+    ...field('itemId', nonempty(item.itemId) ? item.itemId : undefined),
     ...field('waitingSince', integer(item.waitingSince) ? item.waitingSince : undefined),
     ...field('attention', item.attention === true ? (true as const) : undefined),
   };
@@ -1460,7 +1461,7 @@ function readCorner(value: unknown): CornerListItem | null {
     ...field('closedAt', integer(item.closedAt) ? item.closedAt : undefined),
     ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
     ...field('blocker', readCornerBlocker(item.blocker)),
-    ...field('itemId', (!item.blocker || record(item.blocker)?.kind === 'message') && nonempty(item.itemId) ? item.itemId : undefined),
+    ...field('itemId', nonempty(item.itemId) ? item.itemId : undefined),
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),

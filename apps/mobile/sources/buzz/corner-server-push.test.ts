@@ -107,10 +107,10 @@ it.each([
     onReasonPress: header.itemId ? () => requestMessageJump(controller, header.itemId!, read) : undefined,
   })); });
   const texts = tree!.root.findAllByType('Text' as never);
-  expect(texts[0]!.props.children[0]).toBe(`JELLYBEAN · ${state}`);
+  expect(texts[0]!.props.children[0]).toBe('JELLYBEAN');
   const link = texts.find((node: any) => node.props.accessibilityRole === 'link');
   if (reason) {
-    expect(link?.props.children).toBe(reason);
+    expect(link?.props.children).toBe('waiting');
     act(() => link!.props.onPress());
     expect(toRow).toHaveBeenCalledWith(0, messageId, 'top');
     expect(read).toHaveBeenCalledWith(messageId);
@@ -119,7 +119,7 @@ it.each([
 }, 30_000);
 
 
-it('R1: a real hold reaches the header through server reads without becoming a message link', async () => {
+it('R1: a real hold reaches the header through server reads with its source message link', async () => {
   const corner = '33333333-3333-4333-8333-000000000099';
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
     VALUES($1,$2,$3,'Held corner',$4)`, [corner, workspace, room, human]);
@@ -129,14 +129,15 @@ it('R1: a real hold reaches the header through server reads without becoming a m
   const row = readChatListView(await phone.readChats(workspace, human))!.chats.find(item => item.room.id === room)!.openCorners!.find(item => item.id === corner)!;
   expect(page.blocker).toEqual({ kind: 'merge-hold', personId: human, personName: 'Owner' });
   expect(row.blocker).toEqual(page.blocker);
-  expect(page.itemId).toBeUndefined();
-  expect(row.itemId).toBeUndefined();
+  expect(page.itemId).toBeTruthy();
+  expect(row.itemId).toBe(page.itemId);
   let tree: ReturnType<typeof create>;
   const jump = vi.fn();
   act(() => { tree = create(React.createElement(CornerHeaderAgentText, { name: 'Ruby', state: page.state,
     waitingReason: page.reason, blocker: page.blocker, viewerId: human, onReasonPress: jump })); });
   const texts = tree!.root.findAllByType('Text' as never);
-  expect(texts[0]!.props.children[1]).toBe(' on your merge hold');
-  expect(texts.some((node: any) => node.props.onPress || node.props.accessibilityRole === 'link')).toBe(false);
-  expect(jump).not.toHaveBeenCalled();
+  expect(texts[0]!.props.children[0]).toBe('RUBY');
+  const link=texts.find((node:any)=>node.props.accessibilityRole==='link');
+  act(()=>link!.props.onPress());
+  expect(jump).toHaveBeenCalledOnce();
 });

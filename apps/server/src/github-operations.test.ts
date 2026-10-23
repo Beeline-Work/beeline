@@ -406,7 +406,7 @@ describe('GitHub phone operations', () => {
       .rejects.toThrow(/^STALE_HEAD:/);
   });
 
-  it('shows a pushed PR head as review until GitHub reports its checks', async () => {
+  it('shows a pushed PR head as Waiting until GitHub reports its checks', async () => {
     const { corners, app, payload } = await checksFixture();
     const corner = corners[0]!;
     const newHead = '2'.repeat(40);
@@ -423,7 +423,7 @@ describe('GitHub phone operations', () => {
       installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       ref: 'refs/heads/feature/checks-1', after: newHead, size: 1,
     });
-    expect(await rowState()).toBe('review');
+    expect(await rowState()).toBe('waiting');
 
     // A completed fetch that finds no checks keeps the corner idle.
     app.readPullRequest.mockResolvedValue({ number: 1, headSha: newHead,

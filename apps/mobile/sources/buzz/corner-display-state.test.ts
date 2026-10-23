@@ -28,7 +28,7 @@ function item(state: CornerState, reason?: CornerStateReason) {
 describe('server-owned corner display state', () => {
   it.each([
     ['working', 'quiet', '◌'],
-    ['waiting', 'brass', '○'],
+    ['waiting', 'brass', 'Ⅱ'],
     ['review', 'quiet', '●'],
     ['archived', 'ghost', '○'],
   ] as const)('renders %s without deriving a replacement state', (state, tone, glyph) => {
@@ -87,8 +87,8 @@ describe('server-owned corner display state', () => {
         activeTurnPubkeys: ['b'.repeat(64)],
       });
       expect(view.pubkey).toBe('a'.repeat(64));
-      expect(view.reviewerTurnRunning).toBe(true);
-      expect(view.stateWord).toBe('reviewing');
+      expect(view.reviewerTurnRunning).toBe(false);
+      expect(view.stateWord).toBe('working');
       expect(view.ownerWorking).toBe(false);
     });
 
@@ -110,7 +110,7 @@ describe('server-owned corner display state', () => {
         headerSuffix: 'checks failed',
         activeTurnPubkeys: ['b'.repeat(64)],
       });
-      expect(view.stateWord).toBe('reviewing · checks failed');
+      expect(view.stateWord).toBe('working · checks failed');
       expect(view.ownerWorking).toBe(false);
     });
 
@@ -180,3 +180,5 @@ describe('roomViewParentId', () => {
     expect(roomViewParentId({ room: {} })).toBeUndefined();
   });
 });
+
+it('draws four distinct active corner states',()=>{ expect(new Set(['working','review','waiting','idle'].map(state=>cornerDisplayState(item(state as CornerState)).visual)).size).toBe(4); });

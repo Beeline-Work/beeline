@@ -1207,9 +1207,7 @@ async function mergeRefused(
   transition: Transition,
   event: Extract<CornerEvent, { kind: 'merge-refused' }>,
 ): Promise<Applied> {
-  if (!transition.allows('merge_refused')) return no('not landing');
   if (corner.lifecycle.pr?.headSha !== event.headSha) return no('the head moved');
-  await transition.take('merge_refused', { headSha: event.headSha, reason: event.reason });
   if (event.confirmedUnmerged) {
     await db.query(
       `UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
@@ -1217,10 +1215,12 @@ async function mergeRefused(
       [cornerId, event.headSha],
     );
   }
+  if (!transition.allows('merge_refused')) return no('not landing');
+  await transition.take('merge_refused', { headSha: event.headSha, reason: event.reason });
   const pullRequest = corner.lifecycle.pr;
   const line = await systemLine(db, {
     // Confirmed refusals can recur on one head; each needs its own wake source.
-    // Keep the deterministic receipt for unresolved claims excluded from recovery.
+    // Deduplicate unresolved refusal notices while leaving the claim recoverable.
     id: event.confirmedUnmerged ? undefined : createHash('sha256')
       .update(`beeline:${cornerId}:github:merge-refused:${event.headSha}`)
       .digest('hex'),
@@ -1444,7 +1444,7 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
     `SELECT fact.corner_id,(fact.lifecycle->'pr'->>'number')::int number,
             fact.merge_attempt_head head_sha
      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-     WHERE fact.workflow_state IN ('review','ask_human') AND corner.archived_at IS NULL
+     WHERE fact.workflow_state IN ('implement','checks','review','ask_human') AND corner.archived_at IS NULL
        AND fact.merge_attempt_head=fact.lifecycle->'pr'->>'headSha'
        AND NOT (fact.lifecycle ? 'mergeQueue')
        AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'
@@ -1453,9 +1453,7 @@ export async function unfinishedCornerMergeClaims(db: SqlDatabase, cornerId?: st
          OR (fact.lifecycle ? 'mergeRecovery' AND EXISTS (SELECT 1 FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
            WHERE m.room_id=fact.corner_id AND m.presentation='message'
              AND m.created_at > to_timestamp((fact.lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision))))
-       AND ($2::uuid IS NULL OR fact.corner_id=$2)
-       AND NOT EXISTS (SELECT 1 FROM messages refusal WHERE refusal.id=
-         encode(sha256(convert_to('beeline:'||fact.corner_id::text||':github:merge-refused:'||fact.merge_attempt_head,'UTF8')),'hex'))`,
+       AND ($2::uuid IS NULL OR fact.corner_id=$2)`,
     [MERGE_CLAIM_GRACE_SECONDS, cornerId ?? null],
   )).rows;
 }

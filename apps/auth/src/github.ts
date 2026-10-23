@@ -1067,7 +1067,9 @@ export class GitHubAppClient {
         const body = (await response.json()) as { message?: unknown };
         if (typeof body.message === 'string') reason = `: ${body.message}`;
       } catch {}
-      throw new Error(`GitHub pull request merge failed: HTTP ${response.status}${reason}`);
+      const error = new GitHubHttpError('GitHub pull request merge', response.status);
+      error.message += reason;
+      throw Object.assign(error, { mergeAttempted: true });
     }
   }
 

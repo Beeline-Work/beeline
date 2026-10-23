@@ -406,6 +406,21 @@ describe('GitHub-only account and repository access', () => {
     ]);
   });
 
+  it.each([405, 409, 422])('MERGE-RETRY: preserves a definite REST refusal and its reason (HTTP %i)', async status => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'merge-token', expires_at: '2030-01-01T00:00:00Z' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ head: { sha: retryHead }, base: { ref: 'main' } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { repository: { mergeQueue: null } } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: 'Pull Request is still a draft' }), { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: await exportPKCS8(privateKey), slug: 'beeline' });
+    await expect(app.mergePullRequest(77, 9, 'acme/beeline', 42, retryHead)).rejects.toMatchObject({
+      status, mergeAttempted: true, message: `GitHub pull request merge failed: HTTP ${status}: Pull Request is still a draft`,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
   it('closes a pull request without merging, with only pull-request write', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);

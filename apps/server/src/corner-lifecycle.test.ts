@@ -2778,6 +2778,73 @@ describe('GitHub refusing the merge (AC-6)', () => {
 });
 
 describe('unfinished merge claim recovery (R6a–R6f)', () => {
+  it.each(['REST', 'queue'] as const)('Reproduction MERGE-RETRY: %s draft refusals allow merge_corner to retry the same head', async path => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
+    const reason = 'GitHub pull request merge failed: HTTP 405: Pull Request is still a draft';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      githubApp.mergePullRequest.mockImplementationOnce(async () => {
+        if (path === 'queue' && attempt === 0) {
+          // A concurrent same-head lifecycle event must not strand the claim.
+          await advanceCorner(db, cornerId, { kind: 'push', headSha: SHA, contents: { headSha: SHA } });
+          expect(await currentState(cornerId)).toBe('checks');
+        }
+        throw path === 'queue'
+          ? Object.assign(new Error(reason), { queueAttempted: true })
+          : Object.assign(new GitHubHttpError('GitHub pull request merge', 405), { mergeAttempted: true });
+      });
+      if (path === 'REST') githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
+      expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked' });
+      expect(await claimHead(cornerId)).toBeNull();
+    }
+    githubApp.mergePullRequest.mockImplementationOnce(async () => {
+      if (path === 'queue') {
+        githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: { id: 'MQ_7' } });
+        return 'queued';
+      }
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+    });
+    expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A))
+      .toEqual({ status: path === 'queue' ? 'queued' : 'merge-started', headSha: SHA });
+    if (path === 'queue') {
+      expect(await claimHead(cornerId)).toBe(SHA);
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+      await recover();
+    }
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(3);
+    expect(await currentState(cornerId)).toBe('landed');
+    console.info(`Reproduction MERGE-RETRY (${path}): draft refused twice; same-head merge_corner retry merged and archived.`);
+  });
+
+  it('Reproduction MERGE-RETRY: a 4xx before the REST merge does not release an uncertain claim', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    githubApp.mergePullRequest.mockRejectedValueOnce(new GitHubHttpError('GitHub queue configuration', 403));
+    githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
+    expect(await github.landCornerOutcome(cornerId)).toMatchObject({ status: 'refused' });
+    expect(await claimHead(cornerId)).toBe(SHA);
+    expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'not-attempted' });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('Reproduction MERGE-RETRY: an unresolved refusal receipt stays recoverable in implement', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    githubApp.mergePullRequest.mockRejectedValueOnce(new TypeError('response lost'));
+    githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
+    expect(await github.landCornerOutcome(cornerId)).toMatchObject({ status: 'refused' });
+    expect(await claimHead(cornerId)).toBe(SHA);
+    expect(await currentState(cornerId)).toBe('implement');
+    await backdate(cornerId);
+    await recover();
+    expect(await claimHead(cornerId)).toBeNull();
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'started' });
+  });
+
   async function recover() {
     await github.recoverUnfinishedMergeClaims();
   }

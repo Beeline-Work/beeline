@@ -1137,7 +1137,12 @@ export class GitHubOperations {
       }
     } catch (error) {
       let pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>> | undefined;
-      let confirmedUnqueued = false;
+      const queueAttempted = record(error)?.queueAttempted === true;
+      // A REST 4xx rejected the operation. Unlike a lost response, it cannot
+      // hide an accepted merge; still require the matching unmerged PR read.
+      const definiteRefusal = !queueAttempted && record(error)?.mergeAttempted === true && error instanceof GitHubHttpError
+        && error.status >= 400 && error.status < 500;
+      let confirmedUnqueued = definiteRefusal;
       try {
         const token = await this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
@@ -1163,7 +1168,7 @@ export class GitHubOperations {
         return { status: 'started' };
       }
       const reason = error instanceof Error ? error.message : String(error);
-      if (record(error)?.queueAttempted === true && !confirmedUnqueued) {
+      if (queueAttempted && !confirmedUnqueued) {
         // Leave the review-stage claim recoverable when enqueue acceptance
         // cannot yet be read, rather than inscribing a terminal refusal.
         return { status: 'refused', reason };

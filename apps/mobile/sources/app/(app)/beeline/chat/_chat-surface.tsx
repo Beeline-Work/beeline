@@ -6748,6 +6748,7 @@ export function BuzzChatSurface({
                         ) : null}
                         {composerAck ? (
                           <TurnProgressLine
+                            inset={false}
                             label={composerAck.label}
                             startedAt={composerAck.startedAt}
                             received={composerAck.received}

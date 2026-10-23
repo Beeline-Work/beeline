@@ -63,7 +63,10 @@ BEGIN
       AND COALESCE(OLD.generation_id,'') NOT LIKE 'pending:%' THEN
       UPDATE corner_attention_spans SET last_turn_ended_at=CASE
         WHEN EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=corner)
-          OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=corner AND released_at IS NULL) THEN NULL
+          OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=corner AND released_at IS NULL)
+          OR EXISTS(SELECT 1 FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
+            WHERE owed.corner_id=corner AND owed.blocking AND report.card->>'reportToId' IS NOT NULL
+              AND (owed.expires_at IS NULL OR owed.expires_at>now())) THEN NULL
         ELSE clock_timestamp() END WHERE corner_id=corner;
     END IF;
   ELSE

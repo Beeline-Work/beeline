@@ -41,7 +41,8 @@ export function approvalCaseElement(caseName: ApprovalCase, onAction: () => void
     const parsed = readRoomViewMessage({ id: 'c'.repeat(64), text: '', createdAt: timestamp,
       author: proofAgent, presentation: 'card', squireApproval: data.squireApproval,
       grantRequest: data.grantRequest, connectorOffer: data.connectorOffer,
-      ...(permission ? { permission: { ...permission, agent: proofAgent, requester: proofOwner } } : {}),
+      ...(permission ? { permission: { ...permission, agent: proofAgent, requester: proofOwner,
+        ...(permission.ownerPubkey ? { ownerId: permission.ownerPubkey } : {}) } } : {}),
       ...(target ? { targetBranch: { ...target, agent: proofAgent, requester: proofOwner } } : {}),
     });
     if (!parsed) throw new Error(`Invalid approval proof payload: ${name}`);

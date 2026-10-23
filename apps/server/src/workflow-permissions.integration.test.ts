@@ -170,18 +170,40 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
     const { name } = await savedWorkflow();
     const version = async () => (await db.query<{ current_version: number }>(
       `SELECT current_version FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.current_version;
+    const snapshot = async () => (await db.query(
+      `SELECT skill.current_version,skill.revision,skill.source_room_id,skill.state,
+         (SELECT jsonb_agg(jsonb_build_object('version',v.version,'sources',v.source_message_ids) ORDER BY v.version)
+          FROM workspace_skill_versions v WHERE v.skill_id=skill.id) versions
+       FROM workspace_skills skill WHERE skill.slug=$1`, [name])).rows[0];
+    const before = await snapshot();
     for (const actor of [REQUESTER, ROLE_OWNER, ROOM_ADMIN]) {
       const refused = await call(SAVER, 'saveWorkflow', { ...await turn(actor), contract: proofContract(name, `Edited by ${actor.slice(0, 4)}`) });
       expect(refused.status).toBe(403);
       expect(JSON.stringify(refused.body)).toContain('workspace admins only');
       expect(await version()).toBe(1);
     }
-    // Saving it unchanged is not an edit.
-    expect((await call(SAVER, 'saveWorkflow', { ...await turn(REQUESTER), contract: proofContract(name) })).status).toBe(200);
+    // Saving it unchanged, even from another Room, is a no-op: version,
+    // revision, source Room and provenance all stay as they were.
+    const unchanged = await call(DELEGATE, 'saveWorkflow', { ...await turn(OUTSIDER, DELEGATE, OTHER_ROOM), contract: proofContract(name) });
+    expect(unchanged.status, JSON.stringify(unchanged.body)).toBe(200);
+    expect(unchanged.body).toEqual({ slug: name, version: 1 });
+    expect(await snapshot()).toEqual(before);
     const edited = await call(SAVER, 'saveWorkflow', { ...await turn(WORKSPACE_ADMIN), contract: proofContract(name, 'Edited by an admin') });
     expect(edited.status, JSON.stringify(edited.body)).toBe(200);
     expect(edited.body).toMatchObject({ slug: name });
     expect(await version()).toBeGreaterThan(1);
+  });
+
+  it('lets concurrent saves of a new name create it once and refuses the non-admin change', async () => {
+    const name = `proof-${randomUUID()}`;
+    const [first, second] = await Promise.all([
+      call(SAVER, 'saveWorkflow', { ...await turn(REQUESTER), contract: proofContract(name, 'First') }),
+      call(SAVER, 'saveWorkflow', { ...await turn(OUTSIDER), contract: proofContract(name, 'Second') }),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses, JSON.stringify([first.body, second.body])).toEqual([200, 403]);
+    const row = (await db.query<{ current_version: number }>(`SELECT current_version FROM workspace_skills WHERE slug=$1`, [name])).rows[0];
+    expect(row?.current_version).toBe(1);
   });
 
   it('allows the owner of an unselected list member to reassign, just as cancel does', async () => {

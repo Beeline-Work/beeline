@@ -1811,11 +1811,16 @@ export async function saveWorkflow(
     );
     if (!member.rowCount)
       throw new Error('workflow saver must be a current agent member of this Room');
-    // Anyone may save a new workflow, or save an active one unchanged.
-    // Changing or reviving an existing saved workflow changes it for the whole
-    // Workspace, so only a human Workspace admin may.
-    const existing = (await db.query<{ unchanged: boolean }>(
-      `SELECT skill.state='active' AND version.markdown=$3 unchanged
+    // Anyone may save a new workflow. Saving an active one unchanged is a
+    // no-op that writes nothing. Changing or reviving an existing saved
+    // workflow changes it for the whole Workspace, so only a human Workspace
+    // admin may. The revision lock is taken first, so a concurrent creation
+    // cannot slip between this read and the write.
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `workspace-skill:${room.workspace_id}:${contract.name}`,
+    ]);
+    const existing = (await db.query<{ unchanged: boolean; current_version: number }>(
+      `SELECT skill.state='active' AND version.markdown=$3 unchanged,skill.current_version
        FROM workspace_skills skill
        LEFT JOIN workspace_skill_versions version ON version.skill_id=skill.id
          AND version.version=skill.current_version
@@ -1823,8 +1828,8 @@ export async function saveWorkflow(
        FOR UPDATE OF skill`,
       [room.workspace_id, contract.name, markdown],
     )).rows[0];
-    if (existing && !existing.unchanged
-      && !(await humanRoomAdmin(db, command.room_id, await workflowRequester(db, command))))
+    if (existing?.unchanged) return { slug: contract.name, version: existing.current_version };
+    if (existing && !(await humanRoomAdmin(db, command.room_id, await workflowRequester(db, command))))
       throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can change this saved workflow', 403);
     const { skillId, version } = await applySkillRevision(
       db,

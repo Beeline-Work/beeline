@@ -4,6 +4,7 @@ import React from 'react';
 import { registerRootComponent } from 'expo';
 import { LogBox, ScrollView, View, Text } from 'react-native';
 import { useFonts } from 'expo-font';
+import * as SplashScreen from 'expo-splash-screen';
 import { useUnistyles } from 'react-native-unistyles';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 require('../sources/unistyles');
@@ -21,6 +22,7 @@ function Proof() {
     'SpaceGrotesk-SemiBold': require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
     'IBMPlexMono-Regular': require('../sources/assets/fonts/IBMPlexMono-Regular.ttf'),
   });
+  React.useEffect(() => { if (fonts) void SplashScreen.hideAsync(); }, [fonts]);
   if (!fonts) return null;
   return <GestureHandlerRootView style={{flex:1}}><ScrollView style={{flex:1,backgroundColor:theme.buzz.bgBase}} contentContainerStyle={{paddingTop:64,paddingHorizontal:16,paddingBottom:32,gap:24}}>
     <Text accessibilityLabel={`Variant ${approvalCases[index]}`} style={{...theme.buzz.type.hero,color:theme.buzz.textPrimary}}>{approvalCases[index]}</Text>

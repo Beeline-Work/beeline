@@ -78,3 +78,13 @@ Targeted mobile, auth, design and server tests, root typecheck and shared UI
 policy validate this change. The production browser test was removed by brief
 revision 4 because production cannot run PR code; the posted browser share was
 closed. No release was dispatched.
+
+## Bounded mobile repair
+
+`approved-v2/mobile-repair-proof.txt` records both failures on head 161aac005
+and the passing targeted suites after repair. The Workspace label now names
+`theme.buzz.type.meta` explicitly, the same object previously aliased by hull.
+Local Expo web captures `workspace-font-before.png` and `workspace-font-after.png`
+have identical label pixels and identical content above the developer badge.
+The settings browser proof observes the approved conflict notice through
+`githubConnectionErrorMessage`, rather than an obsolete hardcoded sentence.

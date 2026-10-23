@@ -257,7 +257,7 @@ const styles = StyleSheet.create((theme) => {
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
     title: { ...hull.agentProfileTypography.name, ...Typography.default('semiBold'), color: hull.textPrimary },
-    fieldLabel: { ...hull.type.meta, color: hull.textSecondary, marginTop: hull.space.lg },
+    fieldLabel: { ...theme.buzz.type.meta, color: hull.textSecondary, marginTop: hull.space.lg },
     copy: {
       ...Typography.default(),
       ...hull.type.meta,

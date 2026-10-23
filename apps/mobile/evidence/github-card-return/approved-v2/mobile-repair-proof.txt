@@ -1,0 +1,192 @@
+Workspace font alias repair pixel proof
+Viewport: 412 x 915, same local Expo web fixture, loaded production fonts.
+WORKSPACE NAME bounds: x=24 y=381 width=364 height=19.
+Label pixels identical: true.
+All pixels above y=850 identical: true.
+Only whole-image difference: local developer badge at (8,865)-(50,907).
+Font: SpaceGrotesk-Regular; size: 13px.
+
+BEFORE
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/55e6a72d-fb20-45f6-bd1b-0c838c3207d4/apps/mobile
+
+ ❯ sources/components/buzz/Typography.test.ts (2 tests | 1 failed) 23ms
+   × Buzz typography > routes every Text and TextInput through the shared typography system 13ms
+     → ../../app/(app)/beeline/community.tsx styles.fieldLabel has no app font: expected '  fieldLabel: { ...hull.type.meta, co…' to match /Typography\.(?:default|mono|ledger|se…/
+   ✓ Buzz typography > reserves the mono family for commands and deliberate machine identifiers 9ms
+▲ [WARNING] Import "getInitialURL" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:16:40:
+      16 │   if (!isDesktopShell()) return Linking.getInitialURL();
+         ╵                                         ~~~~~~~~~~~~~
+
+▲ [WARNING] Import "addEventListener" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:53:19:
+      53 │     return Linking.addEventListener('url', ({ url }) => listener(u...
+         ╵                    ~~~~~~~~~~~~~~~~
+
+stdout | sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (false)
+{"began":1,"refreshed":true,"recoveryText":"NotificationsAttention (default)Push not workingNetwork error reaching the push gatewayRetry notifications","error":false,"conflict":false,"providers":[{"provider":"google","login":"qa@example.test","reconnect":false},{"provider":"github","login":"qa-github","reconnect":false}],"overflow":[]}
+
+▲ [WARNING] Import "getInitialURL" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:16:40:
+      16 │   if (!isDesktopShell()) return Linking.getInitialURL();
+         ╵                                         ~~~~~~~~~~~~~
+
+▲ [WARNING] Import "addEventListener" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:53:19:
+      53 │     return Linking.addEventListener('url', ({ url }) => listener(u...
+         ╵                    ~~~~~~~~~~~~~~~~
+
+stdout | sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (true)
+{"began":1,"refreshed":false,"recoveryText":"NotificationsAttention (default)Push not workingNetwork error reaching the push gatewayRetry notifications","error":false,"conflict":false,"providers":[{"provider":"google","login":"qa@example.test","reconnect":false}],"overflow":[]}
+
+ ❯ sources/test/onboarding-settings.browser.test.ts (2 tests | 1 failed) 1284ms
+   ✓ onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (false)  685ms
+   × onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (true) 597ms
+     → expected false to be true // Object.is equality
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (true)
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ sources/test/onboarding-settings.browser.test.ts:70:30
+     68|       expect(proof.refreshed).toBe(!conflict);
+     69|       expect(proof.error).toBe(false);
+     70|       expect(proof.conflict).toBe(conflict);
+       |                              ^
+     71|       expect(proof.overflow).toEqual([]);
+     72|       expect(proof.providers.map((p:any)=>p.provider)).toEqual(conflic…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  sources/components/buzz/Typography.test.ts > Buzz typography > routes every Text and TextInput through the shared typography system
+AssertionError: ../../app/(app)/beeline/community.tsx styles.fieldLabel has no app font: expected '  fieldLabel: { ...hull.type.meta, co…' to match /Typography\.(?:default|mono|ledger|se…/
+
+- Expected: 
+/Typography\.(?:default|mono|ledger|serif|logo)\(|fontFamily:\s*theme\.buzz\.(?:prose|mono)|\.\.\.theme\.buzz\.type\.[a-zA-Z]+/
+
++ Received: 
+"  fieldLabel: { ...hull.type.meta, color: hull.textSecondary, marginTop: hull.space.lg }"
+
+ ❯ sources/components/buzz/Typography.test.ts:233:86
+    231|         expect(primaryStyle, `${relativePath} has text without a named…
+    232|         const definition = styleDefinition(source, primaryStyle!);
+    233|         expect(definition, `${relativePath} styles.${primaryStyle} has…
+       |                                                                                      ^
+    234|           /Typography\.(?:default|mono|ledger|serif|logo)\(|fontFamily…
+    235|         );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 2 passed (4)
+   Start at  22:12:17
+   Duration  1.59s (transform 83ms, setup 121ms, collect 42ms, tests 1.31s, environment 0ms, prepare 143ms)
+
+
+AFTER
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/55e6a72d-fb20-45f6-bd1b-0c838c3207d4/apps/mobile
+
+ ✓ sources/components/buzz/Typography.test.ts (2 tests) 24ms
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > marks the current repo and sends the other repository id to the server
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > does not offer actions to another viewer or repeat a settled task
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > does not render a cached card when server eligibility is OFF
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > E4/E9: offers Connect GitHub to the Google owner and names that owner for a regular member
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > R-GITHUB-CARD: consumes the return only on its initiating card, once
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > R-GITHUB-CARD: consumes the return only on its initiating card, once
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > opens the repository picker for a covered user without opening GitHub
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > consumes native installation state after success
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/components/buzz/Button.test.tsx (19 tests) 33ms
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > consumes native installation state after foreground
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > consumes native installation state after browser_canceled
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > R-GITHUB-CARD: keeps an operation failure local and retries the failed action
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > collapses a linked repository using its existing name without inventing visibility
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx > dismisses a failed connect permanently while preserving the installation result
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/app/(app)/beeline/chat/RepositoryOnboardingCard.test.tsx (12 tests) 33ms
+▲ [WARNING] Import "getInitialURL" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:16:40:
+      16 │   if (!isDesktopShell()) return Linking.getInitialURL();
+         ╵                                         ~~~~~~~~~~~~~
+
+▲ [WARNING] Import "addEventListener" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:53:19:
+      53 │     return Linking.addEventListener('url', ({ url }) => listener(u...
+         ╵                    ~~~~~~~~~~~~~~~~
+
+stdout | sources/components/buzz/HullDialog.test.tsx > Hull dialog family > Reproduction IOS-ATTACH-1: opens photo only after native dismissal and stages the selection once
+IOS-ATTACH-1 photo: native dismissal completed; picker opened once; pending attachments: photo-one.jpg, photo-two.jpg
+
+stdout | sources/components/buzz/HullDialog.test.tsx > Hull dialog family > Reproduction IOS-ATTACH-1: opens document only after native dismissal and stages the selection once
+IOS-ATTACH-1 document: native dismissal completed; picker opened once; pending attachments: document.pdf
+
+ ✓ sources/components/buzz/HullDialog.test.tsx (19 tests) 62ms
+ ✓ sources/app/(app)/beeline/community.test.tsx (7 tests) 43ms
+stdout | sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (false)
+{"began":1,"refreshed":true,"recoveryText":"NotificationsAttention (default)Push not workingNetwork error reaching the push gatewayRetry notifications","error":false,"conflict":false,"providers":[{"provider":"google","login":"qa@example.test","reconnect":false},{"provider":"github","login":"qa-github","reconnect":false}],"overflow":[]}
+
+▲ [WARNING] Import "getInitialURL" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:16:40:
+      16 │   if (!isDesktopShell()) return Linking.getInitialURL();
+         ╵                                         ~~~~~~~~~~~~~
+
+▲ [WARNING] Import "addEventListener" will always be undefined because there is no matching export in "shim:expo-linking" [import-is-undefined]
+
+    sources/auth/desktop-auth-session.ts:53:19:
+      53 │     return Linking.addEventListener('url', ({ url }) => listener(u...
+         ╵                    ~~~~~~~~~~~~~~~~
+
+stdout | sources/test/onboarding-settings.browser.test.ts > onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (true)
+{"began":1,"refreshed":false,"recoveryText":"NotificationsAttention (default)Push not workingNetwork error reaching the push gatewayRetry notifications","error":false,"conflict":true,"providers":[{"provider":"google","login":"qa@example.test","reconnect":false}],"overflow":[]}
+
+ ✓ sources/test/onboarding-settings.browser.test.ts (2 tests) 1247ms
+   ✓ onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (false)  660ms
+   ✓ onboarding account settings > R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (true)  586ms
+
+ Test Files  6 passed (6)
+      Tests  61 passed (61)
+   Start at  22:13:54
+   Duration  1.66s (transform 674ms, setup 298ms, collect 1.11s, tests 1.44s, environment 1ms, prepare 444ms)
+
+

@@ -149,12 +149,14 @@ const styles = StyleSheet.create(({ buzz }) => ({
 
 export interface GitHubEventCardProps {
   message: ChatDisplayMessage;
+  onOpenCorner?(cornerId: string): void;
   onOpenUrl(url: string): void;
 }
 
 export const GitHubEventCard = React.memo(function GitHubEventCard({
   message,
   onOpenUrl,
+  onOpenCorner,
 }: GitHubEventCardProps) {
   const event = message.githubEvent!;
   // Only the kinds this build knows how to draw. A card from a newer server
@@ -173,11 +175,12 @@ export const GitHubEventCard = React.memo(function GitHubEventCard({
         kindLine: `${subject}${number ? ` #${number}` : ''}`,
         actor: event.actor,
         url: event.url,
+        ...(onOpenCorner && event.cornerId ? { cornerId: event.cornerId } : {}),
         updatedBy: message.id,
       }}
       timestamp={message.timestamp}
       testID={`github-event-card-${event.type}-${event.action}`}
-      onOpenCorner={() => undefined}
+      onOpenCorner={onOpenCorner ?? (() => undefined)}
       onOpenUrl={onOpenUrl}
     />
   );

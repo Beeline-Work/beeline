@@ -2977,7 +2977,7 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%merged%'`, [cornerId])).rowCount)
       .toBe(1);
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount)
-      .toBe(1);
+      .toBe(0);
     const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
     expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
   }

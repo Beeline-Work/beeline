@@ -721,7 +721,7 @@ describe('GitHub phone operations', () => {
     )).rows[0]!;
     expect(fact.feature_branch).toBe(branch);
     expect(fact.lifecycle).toMatchObject({ checks: 'passing', pr: { number: 4, headSha } });
-    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(1);
     await database.query(
       `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
       [corner],
@@ -923,7 +923,6 @@ describe('GitHub phone operations', () => {
        ORDER BY card_type`,
       [room, corner],
     )).rows).toEqual([
-      { card_type: 'daemon-fact', author_id: worker },
       { card_type: 'github-corner-note', author_id: worker },
     ]);
   });
@@ -1472,7 +1471,9 @@ describe('GitHub phone operations', () => {
           [room],
         )
       ).rowCount,
-    ).toBe(1);
+    ).toBe(0);
+    expect((await database.query(`SELECT card FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rows)
+      .toEqual([expect.objectContaining({ card: expect.objectContaining({ action: 'merged', cornerId: corner }) })]);
     expect(app.deleteBranch).toHaveBeenCalledTimes(1);
     // A merge no longer queues a hidden memory-review job.
     expect(

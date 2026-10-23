@@ -8283,7 +8283,8 @@ export class DaemonService {
           object: { text: name, id: cornerId },
           presentation: 'card',
           cardType: 'daemon-fact',
-          card: { type: 'corner-open', cornerId, name, objective,
+          card: { type: 'corner-open', cornerId, name,
+            objective: destination.roomId === roomId ? name : objective,
             ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },
           afterMessageId: destination.sourceMessageId,
         });

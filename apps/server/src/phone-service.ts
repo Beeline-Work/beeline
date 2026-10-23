@@ -191,11 +191,10 @@ import {
 export { directMessageRoomId } from './system-line.js';
 import {
   answerRoomChoice,
-  hiddenWakeCardSql,
   postRoomChoice,
   skipRoomChoice,
 } from './room-choice.js';
-import { unreadMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
+import { unreadMessageSql, visibleMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -1259,7 +1258,7 @@ export class PhoneService {
          ) latest ON true
          LEFT JOIN identities preview_author ON preview_author.id=latest.author_id
          WHERE room.id=$1 AND EXISTS(SELECT 1 FROM authorized)
-           AND ${hiddenWakeCardSql('message')}
+           AND ${visibleMessageSql('message')}
            AND (
              message.presentation<>'activity' OR message.durable_fact IS NOT NULL OR EXISTS(
                SELECT 1 FROM agent_turns turn
@@ -2487,13 +2486,13 @@ export class PhoneService {
          (SELECT m.id FROM messages m,target
           WHERE m.room_id=$1 AND (m.created_at,m.id)>=(target.created_at,target.id)
             AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-            AND ${hiddenWakeCardSql('m')}
+            AND ${visibleMessageSql('m')}
           ORDER BY m.created_at,m.id LIMIT 15)
          UNION ALL
          (SELECT m.id FROM messages m,target
           WHERE m.room_id=$1 AND (m.created_at,m.id)<(target.created_at,target.id)
             AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-            AND ${hiddenWakeCardSql('m')}
+            AND ${visibleMessageSql('m')}
           ORDER BY m.created_at DESC,m.id DESC LIMIT 15)
        ), page AS (
        SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -2539,7 +2538,7 @@ export class PhoneService {
          '{}'::text[] tagged_ids
        FROM messages m JOIN identities i ON i.id=m.author_id
        WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-         AND ${hiddenWakeCardSql('m')}
+         AND ${visibleMessageSql('m')}
          AND (m.created_at,m.id)>(
            SELECT cursor.created_at,cursor.id FROM messages cursor
            WHERE cursor.room_id=$1 AND cursor.id=$3
@@ -2586,7 +2585,7 @@ export class PhoneService {
         FROM messages m JOIN identities i ON i.id=m.author_id
         WHERE m.room_id=$1 AND EXISTS(SELECT 1 FROM authorized)
           AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-          AND ${hiddenWakeCardSql('m')}
+          AND ${visibleMessageSql('m')}
           AND ($3::text IS NULL OR NOT EXISTS(SELECT 1 FROM cursor)
             OR (m.created_at,m.id)<(SELECT created_at,id FROM cursor))
         ORDER BY m.created_at DESC,m.id DESC LIMIT 31
@@ -2628,7 +2627,7 @@ export class PhoneService {
     const newest = await this.database.query<{ id: string | null }>(
       `SELECT (SELECT m.id FROM messages m
          WHERE m.room_id=room.id AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-           AND ${hiddenWakeCardSql('m')}
+           AND ${visibleMessageSql('m')}
          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) id
        FROM rooms room JOIN memberships member ON member.room_id=room.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
@@ -2666,7 +2665,7 @@ export class PhoneService {
          FROM messages m JOIN identities i ON i.id=m.author_id
          CROSS JOIN LATERAL (SELECT (m.created_at AT TIME ZONE $2)::date AS day) local
          WHERE m.room_id=$1 AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-           AND ${hiddenWakeCardSql('m')}
+           AND ${visibleMessageSql('m')}
          ORDER BY local.day,m.created_at,m.id`,
         [roomId, timeZone],
       )
@@ -2907,7 +2906,7 @@ export class PhoneService {
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
            WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-             AND ${hiddenWakeCardSql('m')}
+             AND ${visibleMessageSql('m')}
              AND (NOT EXISTS(
                SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
              ) OR ${eligible})
@@ -6664,35 +6663,31 @@ export class PhoneService {
           [id, input.appInstallationId, randomUUID(), viewerId],
         );
       }
-      // A corner opened FROM a message (the phone's swipe-right forward) leaves
-      // one durable marker in the parent Room, the same `corner-open` card an
-      // agent's `open_corner` writes, carrying the source message so every
-      // reader anchors it beneath that message. No kind: a person opening a
-      // scratch corner wakes no subscriber. A source that is not a message in
-      // this Room (an unsent outbox row) opens the corner without a marker.
+      // Every new corner leaves a static opening in its Room. A resident
+      // requesting message anchors it; scratch openings stay at their open time.
+      // No kind: a person opening a scratch corner wakes no subscriber.
       const source = input.sourceMessageId
         ? await database.query(`SELECT 1 FROM messages WHERE id=$1 AND room_id=$2`, [
             input.sourceMessageId,
             input.roomId,
           ])
         : undefined;
-      if (source?.rowCount) {
-        await systemLine(database, {
-          roomId: input.roomId,
-          subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
-          verb: 'opened a corner',
-          object: { text: title, id },
-          presentation: 'card',
-          cardType: 'daemon-fact',
-          card: {
-            type: 'corner-open',
-            cornerId: id,
-            name: title,
-            objective: '',
-            sourceMessageId: input.sourceMessageId,
-          },
-        });
-      }
+      await systemLine(database, {
+        roomId: input.roomId,
+        subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
+        verb: 'opened a corner',
+        object: { text: title, id },
+        presentation: 'card',
+        cardType: 'daemon-fact',
+        card: {
+          type: 'corner-open',
+          cornerId: id,
+          name: title,
+          objective: title,
+          ...(source?.rowCount ? { sourceMessageId: input.sourceMessageId } : {}),
+        },
+      });
+
       return true;
     });
     return { id };
@@ -9061,14 +9056,10 @@ export class PhoneService {
     });
   }
 
-  /** Resolve navigation labels from current corner state without rewriting historical System cards. */
+  /** Project historical Room openings without private objectives or lifecycle outcomes. */
   private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
     messages = await this.decorateApprovalSources(messages);
     messages = await this.decorateVoiceCallReasons(roomId, messages);
-    // Source-free opening records carry lifecycle subscriptions, not a Room row.
-    // An off-Room request becomes visible here only through its merge completion.
-    messages = messages.filter(message => !((message.daemonFact?.type === 'corner-open' ||
-      message.systemEvent?.kind === 'corner-opened') && !message.daemonFact?.sourceMessageId));
     const cornerIds = [...new Set(messages.flatMap((message) => {
       const card = message.daemonFact;
       return card && ['corner-open', 'corner-complete'].includes(card.type) && UUID_PATTERN.test(card.cornerId)
@@ -9076,10 +9067,10 @@ export class PhoneService {
     }))];
     if (!cornerIds.length) return messages;
     const rows = await this.database.query<{
-      id: string; name: string; objective: string; archived_at: Date | null; lifecycle: CornerLifecycleView;
+      id: string; name: string;
     }>(
-      `SELECT corner.id,corner.name,fact.objective,corner.archived_at,fact.lifecycle
-       FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+      `SELECT corner.id,corner.name
+       FROM rooms corner
        WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2`, [cornerIds, roomId],
     );
     const current = new Map(rows.rows.map((row) => [row.id, row]));
@@ -9087,13 +9078,11 @@ export class PhoneService {
       const card = message.daemonFact;
       const corner = card ? current.get(card.cornerId) : undefined;
       if (!corner || !card) return message;
-      const landed = corner.lifecycle.outcome === 'landed';
-      return { ...message, daemonFact: {
-        ...card, name: corner.name, objective: corner.objective,
-        ...(landed ? { type: 'corner-complete' as const, outcome: 'landed' as const,
-          ...(corner.lifecycle.pr ? { pullRequest: corner.lifecycle.pr } : {}) }
-          : corner.archived_at ? { type: 'corner-complete' as const, outcome: 'abandoned' as const } : {}),
-      } };
+      // The Room's opening record is historical. Older servers settled it in
+      // storage; project its original opening state without rewriting the row.
+      if (card.type !== 'corner-open' && message.systemEvent?.kind !== 'corner-opened' && !card.sourceMessageId) return message;
+      const { outcome: _outcome, pullRequest: _pullRequest, ...opening } = card;
+      return { ...message, daemonFact: { ...opening, objective: opening.name ?? corner.name, type: 'corner-open' as const } };
     });
   }
 

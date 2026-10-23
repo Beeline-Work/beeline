@@ -5843,7 +5843,7 @@ export function BuzzChatSurface({
 
 
       if (item.githubEvent) {
-        return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
+        return <GitHubEventCard message={item} onOpenCorner={openCorner} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
       if (item.daemonFact) {

@@ -344,6 +344,7 @@ export type RoomViewMessage = {
    *  purpose: a client must tolerate a card kind a newer server posts and
    *  simply not draw it, rather than rejecting the whole Room. */
   readonly githubEvent?: {
+    readonly cornerId?: string;
     readonly type: string;
     readonly action: string;
     readonly actor: string;

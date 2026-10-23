@@ -1953,11 +1953,10 @@ export class GitHubOperations {
   /**
    * Room-level repository activity. Issues and pull requests post on
    * opened/closed. Raw pushes and CI do NOT post: commit churn and
-   * mainline check results are not Room conversation. Corner branches
-   * stay corner-owned (the corner exclusion below); corners still read
-   * CI through processCornerEvent.
+   * mainline check results are not Room conversation. Corner PRs use the
+   * same repository events; CI stays on processCornerEvent.
    */
-  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
+  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number, database: SqlDatabase = this.database) {
     if (event !== 'issues' && event !== 'pull_request') return;
     const repository = repositoryName(body);
     if (!repository) return;
@@ -1989,11 +1988,20 @@ export class GitHubOperations {
     };
     const dedupeKey = url;
 
-    // Pull-request cards exclude a matching corner branch. Pushes and CI
-    // never reach this query: they stay on the corner lifecycle path.
-    const rooms = await this.database.query<{ room_id: string; author_id: string }>(
-      `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id
+    // Resolve the destination within each linked Room, including archived corners.
+    const rooms = await database.query<{ room_id: string; author_id: string; corner_id: string | null }>(
+      `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id,
+         destination.corner_id
        FROM rooms room
+       LEFT JOIN LATERAL (
+         SELECT corner.id corner_id FROM rooms corner
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE corner.parent_id=room.id AND $3::text IS NOT NULL
+           AND (fact.lifecycle->'pr'->>'url'=$3 OR ($4::text IS NOT NULL AND
+             (fact.feature_branch=$4 OR ($5::text ~ '^feature/corner-[0-9a-f]{12}$'
+               AND left(replace(corner.id::text,'-',''),12)=right($5,12)))))
+         ORDER BY corner.created_at,corner.id LIMIT 1
+       ) destination ON true
        LEFT JOIN LATERAL(
          SELECT membership.identity_id FROM effective_memberships membership
          WHERE membership.room_id=room.id AND membership.removed_at IS NULL
@@ -2004,18 +2012,12 @@ export class GitHubOperations {
          AND COALESCE(room.created_by,author.identity_id) IS NOT NULL
          AND lower(regexp_replace(regexp_replace(
            COALESCE(room.repository_remote,room.repository_key,''),
-           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)
-         AND ($3::text IS NULL OR NOT EXISTS(
-           SELECT 1 FROM rooms corner
-           JOIN corner_facts fact ON fact.corner_id=corner.id
-           WHERE corner.parent_id=room.id
-             AND (fact.feature_branch=$3 OR ($4::text ~ '^feature/corner-[0-9a-f]{12}$'
-               AND left(replace(corner.id::text,'-',''),12)=right($4,12)))
-         ))`,
-      [installationId, repository, branch ?? null, fallbackBranch],
+           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))=lower($2)`,
+      [installationId, repository, event === 'pull_request' ? url : null,
+        fallbackBranch, fallbackBranch],
     );
     for (const room of rooms.rows) {
-      const note = await systemLine(this.database, {
+      const note = await systemLine(database, {
         id: hash(`beeline:${room.room_id}:github-event:${event}:${card.action}:${dedupeKey}`),
         roomId: room.room_id,
         authorId: room.author_id,
@@ -2024,7 +2026,7 @@ export class GitHubOperations {
         object: { text: card.title, url: card.url },
         presentation: 'card',
         cardType: 'github-event',
-        card,
+        card: { ...card, ...(room.corner_id ? { cornerId: room.corner_id } : {}) },
       });
       if (note.inserted) this.onRoomChanged?.(room.room_id);
     }
@@ -2821,50 +2823,27 @@ export class GitHubOperations {
           ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
         },
       });
-      // Updating the existing cards also invalidates off-Room transcripts.
+      // Settle private call sites only; the Room opening is a historical fact.
       await database.query(
         `UPDATE messages SET card=card||$2::jsonb
          WHERE card_type='daemon-fact' AND card->>'cornerId'=$1 AND card->>'type'='corner-open'
-           AND card->>'sourceMessageId' IS NOT NULL`,
+           AND room_id<>$3 AND card->>'sourceMessageId' IS NOT NULL`,
         [target.corner_id, JSON.stringify({ type: 'corner-complete', outcome: 'landed',
-          pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } })],
+          pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } }), target.parent_id],
       );
-      const summary = target.summary.trim() || pullRequest.title;
-      // A Room call site already displays this merge in place. Off-Room
-      // requests get their only Room card here, at the end of the transcript.
-      const roomCallSite = await database.query(
-        `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact'
-           AND card->>'cornerId'=$2 AND card->>'sourceMessageId' IS NOT NULL LIMIT 1`,
-        [target.parent_id, target.corner_id],
-      );
-      if (!locked && !roomCallSite.rowCount) await systemLine(database, {
-        id: hash(`beeline:${target.parent_id}:${mergeKey}`),
-        roomId: target.parent_id,
-        authorId: target.author_id,
-        ...merged,
-        presentation: 'card',
-        durableFact: 'merge',
-        cardType: 'daemon-fact',
-        card: {
-          type: 'corner-complete',
-          cornerId: target.corner_id,
-          name: target.corner_name,
-          objective: summary,
-          outcome: 'landed',
-          pullRequest: {
-            ...(pullRequest.number ? { number: pullRequest.number } : {}),
-            title: pullRequest.title,
-            url: pullRequest.url,
-            ...(pullRequest.targetBranch ? { targetBranch: pullRequest.targetBranch } : {}),
-            ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
-          },
-        },
-      });
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
       if (!locked) await advanceCorner(database, target.corner_id, {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
+      // Direct landings and missed-webhook recovery publish the same PR event.
+      // The repository event id deduplicates this against the normal webhook.
+      await this.processRepositoryEvent('pull_request', {
+        action: 'closed', repository: { full_name: pullRequest.repository },
+        ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
+        pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
+          head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
+      }, Number(target.installation_id), database);
     }), { attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50) });
     if (!updated) return;
     this.onRoomChanged?.(target.corner_id);

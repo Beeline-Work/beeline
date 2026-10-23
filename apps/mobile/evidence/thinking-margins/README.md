@@ -1,5 +1,41 @@
 # Thinking status transcript margins
 
+## Reviewer: exact working build and URL on squire
+
+Run these from this corner's checkout, on branch `feature/corner-a90ef5f840b9`. Run Expo from **apps/mobile**, not the repository root. The route tree is `apps/mobile/sources/app`; no route-generation or route-root override was used. The two baseline exports intentionally show old margins; serve the **review** directory below for this PR.
+
+```sh
+# Repository root; prepare the checked-out PR head.
+npm run corner:prepare
+# Export from the actual mobile project, with an explicit backend and fresh output.
+cd apps/mobile
+EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:18890 NODE_OPTIONS=--max-old-space-size=6144 npx expo export --platform web --output-dir /tmp/jellybean-thinking/web-review
+cd ../..
+# This is a disposable local database belonging to this proof.
+export LATENCY_RIG_DATABASE_URL=postgresql://postgres:thinking-local-only@127.0.0.1:5557/beeline_latency_rig
+# Our wrapper first creates the review identity/workspace, calls the existing
+# room-list-icon-centre/kit/seed-beeline.mjs, then adds the working Ruby turns.
+node apps/mobile/evidence/thinking-margins/kit/seed.mjs
+# The unchanged PR #2847 static server; leave this terminal running.
+node apps/mobile/evidence/room-list-icon-centre/kit/serve.mjs /tmp/jellybean-thinking/web-review 18892
+```
+
+The local monolith is already running on squire at `http://127.0.0.1:18890`, against this disposable database. Its allowed web origin is **http://127.0.0.1:18892**. Use that exact host and port; another origin fails review sign-in. The static server binds loopback, and Speedy runs on squire, so no SSH, public hosting or production account is involved.
+
+Open `http://127.0.0.1:18892/review/thinking-local-disposable-review` once in a fresh browser profile, then open:
+
+`http://127.0.0.1:18892/beeline/chat/b8494555-af0a-4fb0-8ee4-64eebf14398a?communityId=bee11e00-0000-4000-8000-000000000105`
+
+At phone width 360 the name box starts at x=16 and STOP ink ends at x=344; at desktop width 1280 the name starts at x=356 and STOP ink ends at x=1264. The spinner is **after** the elapsed counter. If it is before the name, the browser is showing a baseline build. The local fixture must have a fresh working turn: rerun `seed.mjs` before opening it. The implementer's review preview refreshes this disposable seed every thirty seconds to keep the thinking line available during review; it never contacts production.
+
+For an independent measured capture, from repository root in a second terminal:
+
+```sh
+LATENCY_RIG_DATABASE_URL=postgresql://postgres:thinking-local-only@127.0.0.1:5557/beeline_latency_rig CDP_PROFILE=/tmp/jellybean-thinking/reviewer-chrome node apps/mobile/evidence/thinking-margins/kit/capture.mjs reviewer
+```
+
+The capture script signs in locally, reseeds before each viewport, and captures phone width 360 and desktop width 1280 in both themes. It uses the unchanged CDP client from the PR #2847 kit.
+
 ## Requested main versus PR captures
 
 The additional `main-360/` and `pr-360/` evidence rebuilds the entire mobile app from detached main (`9054174165545880fb70a1fd40c472ae997fd13f`) and the PR source (`13a90715b488dea74d8834720e8dcd9fec55b196`), at phone width 360 and desktop width 1280, in both themes. Main is checked out separately under `.scratch/thinking-main`; installed dependencies and unchanged workspace dist outputs are reused. The app source is not substituted or mocked. The four `*-360-comparison.png` files show main on the left and PR on the right.

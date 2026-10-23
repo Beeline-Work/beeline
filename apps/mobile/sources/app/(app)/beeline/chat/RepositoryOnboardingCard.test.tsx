@@ -1,3 +1,4 @@
+vi.mock('expo-router', () => ({ useLocalSearchParams: () => ({}) }));
 vi.mock('@/components/buzz/ErrorBanner', () => ({ErrorBanner:(props:any)=>React.createElement('ErrorBanner',props)}));
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));
@@ -6,14 +7,14 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
-const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn(async () => ({})) }));
+const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})) }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('react-native', () => ({ AppState: {}, Platform: { OS: 'android' } }));
 vi.mock('@/components/buzz/TranscriptCard', () => ({ TranscriptCard: (props: any) => React.createElement('TranscriptCard', props) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: mocks.operation }));
 vi.mock('@/auth/auth-session', () => ({ authSessionOptions: () => ({}) }));
 vi.mock('@/auth/desktop-auth-session', () => ({ openAccountAuthSession: vi.fn(), subscribeToAuthUrls: vi.fn() }));
-vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: () => 'beeline://beeline/github-installation', runGitHubInstallationSession: vi.fn() }));
+vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: () => 'beeline://beeline/github-installation', runGitHubInstallationSession: vi.fn(), clearPendingGitHubInstallation: vi.fn(async () => undefined) }));
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 const H='a'.repeat(64);
 const card: Card = { id:'b'.repeat(64), roomId:'11111111-1111-4111-8111-111111111111', agentId:'c'.repeat(64), requesterId:H,
@@ -67,6 +68,38 @@ it('E7: a failed cold return explains the other account and keeps Connect GitHub
     card={{...card,installationId:undefined,githubLinked:false,state:'install_missing'}} viewerId={H}
     connectionError="github_account_already_linked" />); });
   const props=renderer.root.findByType('TranscriptCard').props;
-  expect(renderer.root.findByType(ErrorBanner).props.title).toContain('Sign out and continue with GitHub');
+  expect(renderer.root.findByType(ErrorBanner).props.title).toBe('GitHub account already connected');
+  expect(renderer.root.findByType(ErrorBanner).props.retryVariant).toBe('primary');
+  expect(renderer.root.findByType(ErrorBanner).props.description).toContain('sign out of Beeline');
   expect(props.actions.map((action:any) => action.label)).toEqual(['Connect GitHub']);
 });
+
+
+it('opens the repository picker for a covered user without opening GitHub', async () => {
+  const { runGitHubInstallationSession } = await import('@/auth/github-auth-session');
+  vi.mocked(runGitHubInstallationSession).mockClear();
+  mocks.operation.mockResolvedValueOnce({ openPicker: true });
+  let renderer: any;
+  await act(async () => { renderer = create(<RepositoryOnboardingCard
+    card={{...card, installationId: undefined, repository: undefined}} viewerId={H} />); });
+  await act(async () => renderer.root.findByType('TranscriptCard').props.actions
+    .find((action: any) => action.testID === 'repo-card-install').onPress());
+  expect(runGitHubInstallationSession).not.toHaveBeenCalled();
+  expect(renderer.root.findByType('TranscriptCard').props.choices.map((choice: any) => choice.label))
+    .toEqual(['test/current', 'test/other']);
+});
+
+for (const result of ['success', 'foreground', 'browser_canceled'] as const) {
+  it(`consumes native installation state after ${result}`, async () => {
+    const session = await import('@/auth/github-auth-session');
+    vi.mocked(session.clearPendingGitHubInstallation).mockClear();
+    if (result === 'browser_canceled') vi.mocked(session.runGitHubInstallationSession).mockRejectedValueOnce({ code: result });
+    else vi.mocked(session.runGitHubInstallationSession).mockResolvedValueOnce(result === 'success' ? 'beeline://beeline/github-installation?installed=1' : null);
+    mocks.operation.mockResolvedValueOnce({ url: 'https://github.com/apps/beeline/installations/select_target' });
+    let renderer: any;
+    await act(async () => { renderer = create(<RepositoryOnboardingCard card={{...card, installationId: undefined}} viewerId={H} />); });
+    await act(async () => renderer.root.findByType('TranscriptCard').props.actions.find((action: any) => action.testID === 'repo-card-install').onPress());
+    expect(session.clearPendingGitHubInstallation).toHaveBeenCalledOnce();
+    await act(async () => renderer.unmount());
+  });
+}

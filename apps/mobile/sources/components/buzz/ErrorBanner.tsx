@@ -2,7 +2,7 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { Button } from './Button';
+import { Button, type ButtonVariant } from './Button';
 
 /**
  * The one error banner: what failed, one short line on what it means, and its
@@ -13,6 +13,7 @@ export function ErrorBanner({
   onRetry,
   retryLabel = 'Try again',
   retrying = false,
+  retryVariant = 'secondary',
   testID,
   title,
 }: {
@@ -20,6 +21,7 @@ export function ErrorBanner({
   onRetry?: () => void;
   retryLabel?: string;
   retrying?: boolean;
+  retryVariant?: ButtonVariant;
   testID?: string;
   title: string;
 }) {
@@ -34,7 +36,7 @@ export function ErrorBanner({
           onPress={onRetry}
           style={styles.retry}
           testID={testID ? `${testID}-retry` : undefined}
-          variant="secondary"
+          variant={retryVariant}
         />
       ) : null}
     </View>

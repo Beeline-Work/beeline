@@ -668,7 +668,7 @@ describe('GitHub auth session redirects', () => {
     expect(error).toMatchObject({ code: 'ticket_expired' });
     expect(noticeForAuthError(error)).toMatchObject({
       status: 'token_expired',
-      title: 'SESSION EXPIRED · TICKET_EXPIRED',
+      title: 'Sign-in expired',
       retryable: false,
     });
     await expect(resumeInitialGitHubSignIn(async () => bindCallback())).rejects.toMatchObject({
@@ -700,7 +700,7 @@ describe('GitHub auth session redirects', () => {
     await expect(githubInstallationReturnPath()).resolves.toBeNull();
   });
 
-  it.each(['/beeline/channels', '/beeline/settings/identity', '/beeline/settings'])(
+  it.each(['/beeline/channels', '/beeline/settings/identity', '/beeline/settings', '/beeline/chat/room-1?repositoryPicker=card-1'])(
     'R-onb-11: connects GitHub and returns to %s', async (returnPath) => {
     const callbackUrl = 'beeline://beeline/github-installation?installed=1';
 
@@ -712,10 +712,10 @@ describe('GitHub auth session redirects', () => {
         subscribeToUrls: () => ({ remove: () => undefined }),
       }),
     ).resolves.toBe(callbackUrl);
-    await expect(githubInstallationReturnPath()).resolves.toBeNull();
+    await expect(githubInstallationReturnPath()).resolves.toBe(returnPath);
   });
 
-  it('clears installation resume state when the browser is canceled', async () => {
+  it('retains installation resume state when the browser is canceled', async () => {
     await expect(
       runGitHubInstallationSession({
         returnPath: '/beeline/channels',
@@ -725,7 +725,7 @@ describe('GitHub auth session redirects', () => {
         callbackGraceMs: 0,
       }),
     ).rejects.toMatchObject({ code: 'browser_canceled' });
-    await expect(githubInstallationReturnPath()).resolves.toBeNull();
+    await expect(githubInstallationReturnPath()).resolves.toBe('/beeline/channels');
   });
 
   it.each(['/beeline/settings/identity?next=elsewhere', '/beeline/settings/identity/extra',
@@ -751,7 +751,7 @@ describe('GitHub auth session redirects', () => {
       openAuthSession:async()=>({type:'success',url:'beeline://beeline/github-installation?installed=0&error=github_account_already_linked'}),
       subscribeToUrls:()=>({remove(){}}),
     })).rejects.toMatchObject({code:'github_account_already_linked',
-      message:'That GitHub account belongs to another Beeline account. Sign out and continue with GitHub to use it.'});
+      message:'That GitHub account belongs to another Beeline account. To use it, sign out of Beeline, then choose Continue with GitHub.'});
   });
 
   it.each(['cancel', 'dismiss'])('keeps the web Room path when the opener reports %s before its landing tab finishes', async (type) => {
@@ -805,11 +805,11 @@ describe('GitHub auth session redirects', () => {
     onAppState?.('background');
     onAppState?.('active');
     await vi.waitFor(() => expect(refreshRepositories).toHaveBeenCalledTimes(1));
-    finishBrowser?.({ type: 'dismiss' });
-
     await expect(session).resolves.toBeNull();
+    finishBrowser?.({ type: 'dismiss' });
     expect(phases).toContain('refreshed');
     expect(refreshRepositories).toHaveBeenCalledTimes(1);
+    expect(await githubInstallationReturnPath()).toBe('/beeline/channels');
   });
 
   it('does not report an awaiting or refreshing repository list as a configuration error', () => {

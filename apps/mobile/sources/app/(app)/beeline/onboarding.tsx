@@ -587,7 +587,7 @@ export default function BuzzOnboarding() {
             {normalized ? `@${normalized}` : "3–30 · a–z · 0–9 · dash"}
           </Text>
           {notice && (
-        <ErrorBanner title={`◇ ${notice.title}`} description={notice.message} />
+        <ErrorBanner title={notice.title} description={notice.message} />
       )}
           <Button
             disabled={!normalized || loading}
@@ -617,7 +617,7 @@ export default function BuzzOnboarding() {
       </View>
 
       {notice && (
-        <ErrorBanner title={`◇ ${notice.title}`} description={notice.message} />
+        <ErrorBanner title={notice.title} description={notice.message} />
       )}
 
       <View style={styles.actions}>
@@ -649,22 +649,22 @@ export default function BuzzOnboarding() {
               <Button
                 label={signInLabel}
                 labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
-                variant="provider"
+                variant="primary"
                 testID="onboarding-github-sign-in"
                 loading={loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'}
                 onPress={() => void handleSignIn()}
                 disabled={loading || status === 'checking_device' || status === 'binding'}
               />
-              <Text style={styles.recommended}>Recommended</Text>
+              {!notice && <Text style={styles.recommended}>Recommended</Text>}
             </View>
-            <Button
+            {!notice && <Button
               label="Continue with Google"
               variant="provider"
               testID="onboarding-google-sign-in"
               loading={loadingAction === 'google'}
               disabled={loading || status === 'checking_device' || status === 'binding'}
               onPress={() => void handleGoogleSignIn()}
-            />
+            />}
           </>
         ) : null}
       </View>

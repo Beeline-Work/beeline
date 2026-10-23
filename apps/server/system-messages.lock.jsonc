@@ -1,3 +1,4 @@
+// Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
 // Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
@@ -2425,10 +2426,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:6a32799b9e879dae",
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:04990e9148487946",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
-    "template": "postRepositoryOnboarding(this.database, this.github, {\n    roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,\n})",
+    "template": "postRepositoryOnboarding(database, this.github, {\n    roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,\n})",
     "literals": [
       "'human'",
       "'postRepositoryOnboarding'"
@@ -4291,6 +4292,56 @@
     "kind": "message-write",
     "template": "UPDATE messages card=jsonb_set ( card , '{status}' , '\"settled\"' )",
     "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:message-write:c3de97efbcc064e1",
+    "file": "apps/server/src/repository-onboarding.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=JSON.stringify(card) :: jsonb",
+    "literals": [
+      "''",
+      "', '",
+      "'/'",
+      "'Fix the red CI'",
+      "'GET'",
+      "'admin'",
+      "'branches?per_page=100'",
+      "'ci'",
+      "'hex'",
+      "'install_missing'",
+      "'issues?state=open&sort=created&direction=asc&per_page=50'",
+      "'no_repo_linked'",
+      "'number'",
+      "'object'",
+      "'open'",
+      "'owner'",
+      "'repo_linked'",
+      "'repository'",
+      "'starters'",
+      "'string'",
+      "'tests'",
+      "'wip'",
+      "`${row.github_installation_id}:${row.repository_id}`",
+      "`${stem}.spec.`",
+      "`${stem}.test.`",
+      "`/test_${stem}.py`",
+      "`Add tests for ${hot[0]}`",
+      "`Changed in ${hot[1]} sampled commits; no matching test filename found`",
+      "`Failing: ${signals.failingChecks.join(', ')}`",
+      "`Finish ${wip}`",
+      "`Fix issue #${bug.number}`",
+      "`Inspect ${hot[0]} and the existing test setup. Find coverage gaps and add useful tests; a filename search is not proof of missing coverage.`",
+      "`Inspect branch ${wip}, its commits and any open PR. Finish the smallest clearly intended unfinished change without overwriting existing work.`",
+      "`Open branch: ${wip}`",
+      "`Read issue #${bug.number}: ${bug.title}. Reproduce it and implement the smallest fix.`",
+      "`Reproduce and fix the failing checks: ${signals.failingChecks.join(', ')}. Keep the fix narrow.`",
+      "`commits/${encodeURIComponent(sha)}`",
+      "`commits?sha=${encodeURIComponent(room.repository_target_branch)}&per_page=30`",
+      "`git/trees/${encodeURIComponent(room.repository_target_branch)}?recursive=1`",
+      "`issue-${bug.number}`",
+      "`new-project-${id.slice(0, 6)}`"
+    ],
     "occurrences": 1
   },
   {

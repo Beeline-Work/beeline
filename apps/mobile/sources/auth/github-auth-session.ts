@@ -170,7 +170,9 @@ function createRepositoryReturnMonitor(
   subscribeToAppState: NonNullable<GitHubInstallationSessionInput['subscribeToAppState']>,
   refreshRepositories: NonNullable<GitHubInstallationSessionInput['refreshRepositories']>,
   onRefreshPhase: NonNullable<GitHubInstallationSessionInput['onRefreshPhase']>,
-): { refresh(): Promise<boolean>; remove(): void } {
+): { refresh(): Promise<boolean>; returned: Promise<boolean>; remove(): void } {
+  let resolveReturn: (success: boolean) => void = () => undefined;
+  const returned = new Promise<boolean>(resolve => { resolveReturn = resolve; });
   let leftApp = false;
   let refreshInFlight: Promise<boolean> | null = null;
   let refreshResult: boolean | null = null;
@@ -202,9 +204,9 @@ function createRepositoryReturnMonitor(
     }
     if (!leftApp) return;
     leftApp = false;
-    void refresh();
+    void refresh().then(resolveReturn);
   });
-  return { refresh, remove: () => subscription.remove() };
+  return { refresh, returned, remove: () => subscription.remove() };
 }
 
 export function githubSignInRedirectUri(): string {
@@ -251,7 +253,7 @@ function validInstallationReturnPath(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length <= 1_024 &&
-    /^\/(?:beeline|buzz)\/(?:onboarding|channels|settings(?:\/identity)?|chat\/[^/?#]+)$/.test(value)
+    /^\/(?:beeline|buzz)\/(?:onboarding|channels|settings(?:\/identity)?|chat\/[^/?#]+(?:\?repositoryPicker=[A-Za-z0-9_-]+)?)$/.test(value)
   );
 }
 
@@ -759,30 +761,34 @@ export async function runGitHubInstallationSession({
     subscribeToAppState && refreshRepositories
       ? createRepositoryReturnMonitor(subscribeToAppState, refreshRepositories, onRefreshPhase)
       : null;
+  const controller = new AbortController();
   try {
     const installationUrl = await startInstallation();
     onRefreshPhase('awaiting_return');
-    const callback = await waitForAuthCallbackResult({
+    const waiting = waitForAuthCallbackResult({
       redirectUri,
+      signal: controller.signal,
       openAuthSession: () => openAuthSession(installationUrl, redirectUri),
       subscribeToUrls,
       ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
     });
+    const callback = await (returnMonitor
+      ? Promise.race([waiting, returnMonitor.returned.then(() => null)])
+      : waiting);
+    if (!callback) return null;
     const callbackUrl = await completeGitHubInstallationCallback(callback.url, !webReturn);
     await returnMonitor?.refresh();
     // Both web tabs share storage. The landing tab may still need the Room
     // path even after the opener receives the callback or gives up waiting.
-    if (callback.source === 'browser' && !webReturn) await clearPendingGitHubInstallation();
     return callbackUrl;
   } catch (error) {
     if (returnMonitor && error instanceof OidcBindError && error.code === 'browser_canceled') {
       await returnMonitor.refresh();
-      if (!webReturn) await clearPendingGitHubInstallation();
       return null;
     }
-    if (!webReturn) await clearPendingGitHubInstallation();
     throw error;
   } finally {
+    controller.abort();
     returnMonitor?.remove();
   }
 }

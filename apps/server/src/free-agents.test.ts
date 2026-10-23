@@ -230,6 +230,13 @@ describe('free starter agents', () => {
     expect((await daemon.execute('getAgentConfiguration', ownerContext as never, agent.agent_id)).soul?.instructions).toContain('beeline:onboarding');
     expect(await daemon.execute('getRoomRepositoryState', ownerContext as never, agent.agent_id)).toHaveProperty('repositoryOnboarding', true);
     expect(await daemon.execute('postRepositoryOnboarding', { ...ownerContext, kind: 'repository' } as never, agent.agent_id)).toMatchObject({ requesterId: OWNER, canLink: true });
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"settled"')
+      WHERE room_id=$1 AND card_type='repository-onboarding' AND card->>'requesterId'=$2`, [roomId, OWNER]);
+    const repeated = await Promise.all(Array.from({ length: 3 }, () =>
+      new DaemonService(db, live).execute('postRepositoryOnboarding', { ...ownerContext, kind: 'repository' } as never, agent.agent_id)));
+    expect(new Set(repeated.map(card => card.id)).size).toBe(1);
+    expect((await phone.readRoom(roomId, OWNER))?.messages.filter(message =>
+      message.onboarding?.requesterId === OWNER && message.onboarding.status === 'open')).toHaveLength(1);
   });
 
   it('E1: Google onboarding posts a real handle and hello without a repository card', async () => {

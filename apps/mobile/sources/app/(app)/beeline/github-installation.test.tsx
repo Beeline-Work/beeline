@@ -4,13 +4,13 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   enabled:false, path:vi.fn(async ():Promise<string|null> => '/beeline/chat/room'),
-  complete:vi.fn(async () => undefined), operation:vi.fn(async () => ({})),
+  clear:vi.fn(async () => undefined), complete:vi.fn(async () => undefined), operation:vi.fn(async () => ({})),
   browserComplete:vi.fn(), params: { installed: '1', error: undefined as string | undefined },
 }));
 vi.mock('expo-web-browser',()=>({maybeCompleteAuthSession:mocks.browserComplete}));
 vi.mock('@/buzz/onboarding-rollout',()=>({useRepositoryOnboarding:()=>mocks.enabled}));
 vi.mock('@/buzz/latency-route-hook',()=>({useLatencyRouteFrame:()=>undefined}));
-vi.mock('@/auth/github-auth-session',()=>({githubInstallationReturnPath:mocks.path,completeGitHubInstallationRoute:mocks.complete}));
+vi.mock('@/auth/github-auth-session',()=>({clearPendingGitHubInstallation:mocks.clear,githubInstallationReturnPath:mocks.path,completeGitHubInstallationRoute:mocks.complete}));
 vi.mock('@/sync/transport/monolith-operation',()=>({monolithPhoneOperation:mocks.operation}));
 vi.mock('react-native',()=>({Platform:{OS:'web'},View:(props:any)=>React.createElement('View',props,props.children),Text:(props:any)=>React.createElement('Text',props,props.children)}));
 vi.mock('react-native-unistyles',()=>({StyleSheet:{create:()=>({page:{},copy:{}})}}));
@@ -45,19 +45,25 @@ it('returns to the saved Room after refreshing repositories',async()=>{
   const renderer=await render();
   expect(renderer.root.findByType('Redirect').props.href).toBe('/beeline/chat/room');
   expect(mocks.operation).toHaveBeenCalledTimes(1);
+  expect(mocks.clear).toHaveBeenCalledOnce();
 });
-it('GH-WEB-1: Retry repeats a failed refresh and completes without a pending path',async()=>{
+it('GH-WEB-1: failed refresh offers the primary Room recovery action',async()=>{
   mocks.enabled=true;mocks.path.mockResolvedValue(null);
   mocks.operation.mockRejectedValueOnce(new Error('Repository refresh failed'));
   const renderer=await render();
   expect(renderer.root.findByType('PageHeader').props.title).toBe('GitHub needs another try');
   expect(mocks.browserComplete).not.toHaveBeenCalled();
-  await act(async()=>{renderer.root.findByType('Button').props.onPress();});
-  expect(mocks.operation).toHaveBeenCalledTimes(2);
+  const button = renderer.root.findByType('Button');
+  expect(button.props.label).toBe('Back to Room');
+  expect(button.props.variant).toBe('primary');
+  expect(mocks.clear).not.toHaveBeenCalled();
+  await act(async()=>{button.props.onPress();});
+  expect(mocks.operation).toHaveBeenCalledTimes(1);
   expect(renderer.root.findByType('Redirect').props.href).toBe('/beeline/channels');
-  expect(mocks.browserComplete).toHaveBeenCalledTimes(1);
+  expect(mocks.browserComplete).not.toHaveBeenCalled();
+  expect(mocks.clear).toHaveBeenCalledOnce();
 });
-it('Retry takes a GitHub error back to the Room to start again',async()=>{
+it('Back to Room takes a GitHub error back to the Room to start again',async()=>{
   mocks.enabled=true;mocks.params={installed:'0',error:'access_denied'};
   mocks.complete.mockRejectedValueOnce(new Error('GitHub authorization was denied'));
   const renderer=await render();

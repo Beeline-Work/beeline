@@ -6,10 +6,15 @@ import { Platform, Text, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet } from 'react-native-unistyles';
 import { Redirect, type Href, useLocalSearchParams } from 'expo-router';
-import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
-import { completeGitHubInstallationRoute, githubInstallationReturnPath } from '@/auth/github-auth-session';
+import { clearPendingGitHubInstallation, completeGitHubInstallationRoute, githubInstallationReturnPath } from '@/auth/github-auth-session';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+
+/** Redirect first, then acknowledge consumption after the destination is handed off. */
+function InstallationReturn({ path }: { path: string }) {
+  useEffect(() => { void clearPendingGitHubInstallation().catch(() => undefined); }, [path]);
+  return <Redirect href={path as Href} />;
+}
 
 /** Keep progress and recoverable errors in Beeline after GitHub's consent page. */
 function EnhancedGitHubInstallation() {
@@ -17,7 +22,6 @@ function EnhancedGitHubInstallation() {
   const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
   const [returnPath, setReturnPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
   const [recoveryPath, setRecoveryPath] = useState('/beeline/channels');
   useEffect(() => {
     let alive = true;
@@ -41,17 +45,15 @@ function EnhancedGitHubInstallation() {
       }
     })();
     return () => { alive = false; };
-  }, [installed, connectionError, attempt]);
-  if (returnPath) return <Redirect href={returnPath as Href} />;
+  }, [installed, connectionError]);
+  if (returnPath) return <InstallationReturn path={returnPath} />;
   return <View style={styles.page} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
-    {error ? <ErrorBanner title={error} /> : <Text style={styles.copy}>
+    {error ? <ErrorBanner title="Continue connecting GitHub"
+      description="Return to your Room to refresh repositories and finish setup."
+      retryLabel="Back to Room" retryVariant="primary" onRetry={() => setReturnPath(recoveryPath)} /> : <Text style={styles.copy}>
       Checking your installation and loading the repositories Beeline can work in.
     </Text>}
-    {error ? <Button label="Retry" variant="secondary" onPress={() => {
-      if (installed !== '1' || connectionError) setReturnPath(recoveryPath);
-      else setAttempt(value => value + 1);
-    }} /> : null}
   </View>;
 }
 const styles = StyleSheet.create(theme => ({
@@ -76,7 +78,7 @@ function LegacyGitHubInstallation() {
     };
   }, [installed, connectionError]);
 
-  return returnPath ? <Redirect href={returnPath as Href} /> : null;
+  return returnPath ? <InstallationReturn path={returnPath} /> : null;
 }
 
 export default function GitHubInstallationFallback() {

@@ -393,8 +393,8 @@ export class GitHubAppClient {
     this.#config = { ...config, apiBaseUrl: config.apiBaseUrl ?? DEFAULT_API };
   }
 
-  installationUrl(state: string): string {
-    const url = new URL(`https://github.com/apps/${this.#config.slug}/installations/new`);
+  installationUrl(state: string, selectTarget = false): string {
+    const url = new URL(`https://github.com/apps/${this.#config.slug}/installations/${selectTarget ? 'select_target' : 'new'}`);
     url.searchParams.set('state', state);
     return url.toString();
   }

@@ -2,20 +2,20 @@ import { onboardingCookie } from './onboarding-rollout.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { alphaTenant, app, startCookie, state as fixture, useAuthServerFixture } from './server-test-fixture.js';
 
-describe('install-first native GitHub onboarding', () => {
+describe('installation-aware native GitHub onboarding', () => {
   useAuthServerFixture();
   afterEach(() => vi.unstubAllEnvs());
   const cookie = () => `beeline_onboarding=${onboardingCookie('123', 'github-secret', Date.now())}`;
-  it('starts installation, accepts its OAuth callback with browser binding, and issues the native ticket', async () => {
+  it('skips installation for an existing personal installation and issues the native ticket', async () => {
     fixture.githubUserInstallations = [77];
     const start = await app.inject({ method:'GET', headers:{ host:alphaTenant.host, cookie:cookie() },
       url:`/auth/github/start?onboarding=1&app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'a'.repeat(43)}` });
     const installation = new URL(start.headers.location!);
-    expect(installation.pathname).toBe('/apps/beeline/installations/new');
+    expect(installation.pathname).toBe('/authorize');
     const state = installation.searchParams.get('state');
-    expect(state).toMatch(/^onboarding_/);
+    expect(state).not.toMatch(/^onboarding_/);
     const callback = await app.inject({ method:'GET', headers:{ host:alphaTenant.host, cookie:startCookie(start.headers['set-cookie']) },
-      url:`/auth/github/callback?state=${state}&code=github-code&installation_id=77&setup_action=install` });
+      url:`/auth/github/callback?state=${state}&code=github-code` });
     expect(callback.statusCode).toBe(302);
     expect(callback.headers.location).toContain('beeline://beeline/github-callback');
     expect(callback.headers.location).toContain('ticket=');
@@ -27,8 +27,8 @@ describe('install-first native GitHub onboarding', () => {
     const state=new URL(start.headers.location!).searchParams.get('state');
     const callback=await app.inject({method:'GET',headers:{host:alphaTenant.host,cookie:startCookie(start.headers['set-cookie'])},
       url:`/auth/github/callback?state=${state}&code=github-code&installation_id=77&setup_action=install`});
-    expect(callback.headers.location).toContain('error=github_installation_required');
-    expect(callback.headers.location).not.toContain('ticket=');
+    expect(callback.statusCode).toBe(400);
+    expect(callback.headers.location).toBeUndefined();
   });
   it('uses OAuth for a returning browser but still verifies personal installation access', async () => {
     const start=await app.inject({method:'GET',headers:{host:alphaTenant.host,cookie:`beeline_github_installed=1; ${cookie()}`},
@@ -37,8 +37,8 @@ describe('install-first native GitHub onboarding', () => {
     const state=new URL(start.headers.location!).searchParams.get('state');
     const callback=await app.inject({method:'GET',headers:{host:alphaTenant.host,cookie:startCookie(start.headers['set-cookie'])},
       url:`/auth/github/callback?state=${state}&code=github-code`});
-    expect(callback.headers.location).toContain('error=github_installation_required');
-    expect(String(callback.headers['set-cookie'])).toContain('beeline_github_installed=;');
+    expect(callback.statusCode).toBe(200);
+    expect(callback.body).toContain('Connect your GitHub repositories');
   });
   it('returns GitHub verification errors to Beeline instead of a raw browser error page', async () => {
     fixture.githubUserInstallations = new Error('GitHub temporarily unavailable');
@@ -80,4 +80,18 @@ describe('install-first native GitHub onboarding', () => {
     const start = await app.inject({ method:'GET', headers:{ host:alphaTenant.host, cookie:cookie() }, url:'/auth/github/start' });
     expect(new URL(start.headers.location!).pathname).toBe('/authorize');
   });
+
+  it('skips installation setup when an administered organization already covers the user', async () => {
+    fixture.githubUserInstallations = [88];
+    fixture.githubOrganizationAdmins = ['acme'];
+    const start = await app.inject({ method: 'GET', headers: { host: alphaTenant.host, cookie: cookie() },
+      url: `/auth/github/start?onboarding=1&app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'f'.repeat(43)}` });
+    expect(new URL(start.headers.location!).pathname).toBe('/authorize');
+    const state = new URL(start.headers.location!).searchParams.get('state');
+    const callback = await app.inject({ method: 'GET', headers: { host: alphaTenant.host, cookie: startCookie(start.headers['set-cookie']) },
+      url: `/auth/github/callback?state=${state}&code=github-code` });
+    expect(callback.statusCode).toBe(302);
+    expect(callback.headers.location).toContain('ticket=');
+  });
+
 });

@@ -65,14 +65,22 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
   const installation = (await database.query<{ installation_id: string }>(
     `SELECT installation_id FROM github_installations WHERE owner_id=$1 AND status='active'
      AND account_type='User' AND repository_selection='all' ORDER BY installation_id LIMIT 1`, [input.requesterId])).rows[0];
-  const id = randomBytes(32).toString('hex');
   const kind = input.kind === 'starters' && room.repository_name ? 'starters' : 'repository';
   if (kind === 'starters' && !github) throw new Error('GitHub is not configured');
+  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
+    [`repository-card:${input.roomId}:${input.requesterId}:${kind}`]);
+  const previous = (await database.query<{ id: string; card: { defaultName: string } }>(
+    `SELECT id,card FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type='repository-onboarding'
+     AND card->>'kind'=$3 AND card->>'status'='open' AND card->>'requesterId'=$4
+     ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`,
+    [input.roomId, input.agentId, kind, input.requesterId],
+  )).rows[0];
+  const id = previous?.id ?? randomBytes(32).toString('hex');
   const card: RepositoryOnboardingCard = {
     id, ...input, ...(room.owner_handle ? { ownerHandle: room.owner_handle } : {}), githubLinked: room.github_linked, kind, status: 'open', canLink: room.can_link,
     state: room.repository_name ? 'repo_linked' : installation ? 'no_repo_linked' : 'install_missing',
     ...(room.repository_name ? { repository: room.repository_name } : {}),
-    defaultName: `new-project-${id.slice(0, 6)}`,
+    defaultName: previous?.card.defaultName ?? `new-project-${id.slice(0, 6)}`,
     ...(installation ? { installationId: Number(installation.installation_id) } : {}),
     repositories: repositories.map(r => ({ id: Number(r.repository_id), fullName: r.full_name,
       installationId: Number(r.installation_id), defaultBranch: r.default_branch, current: r.full_name === room.repository_name })),
@@ -80,8 +88,12 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
   };
   // Repeated agent calls replace an unanswered card rather than leaving stale actions live.
   await database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"settled"')
-    WHERE room_id=$1 AND author_id=$2 AND card_type='repository-onboarding' AND card->>'kind'=$3 AND card->>'status'='open' AND card->>'requesterId'=$4`,
-    [input.roomId, input.agentId, kind, input.requesterId]);
+    WHERE room_id=$1 AND id<>$2 AND card_type='repository-onboarding' AND card->>'kind'=$3 AND card->>'status'='open' AND card->>'requesterId'=$4`,
+    [input.roomId, id, kind, input.requesterId]);
+  if (previous) {
+    await database.query(`UPDATE messages SET card=$2::jsonb,version=version+1 WHERE id=$1`, [id, JSON.stringify(card)]);
+    return card;
+  }
   await systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,
     subject: { id: input.agentId, kind: 'agent', name: room.name },
     verb: kind === 'starters' ? 'suggested work' : 'offered a repository',

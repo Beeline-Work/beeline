@@ -205,7 +205,8 @@ export function RepositoryLifecycleRow({
           </Text>
           {state === 'Merged' && number && item.url ? (
             <Text
-              style={styles.number}
+              style={[styles.number, styles.cornerNumber]}
+              numberOfLines={1}
               accessibilityRole="link"
               accessibilityLabel={`Open PR ${number}`}
               testID={`notification-run-cell-url-${item.id}`}
@@ -260,6 +261,7 @@ const styles = StyleSheet.create(({ buzz }) => ({
   summary: { ...buzz.type.meta, color: buzz.textSecondary, flex: 1 },
   cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
   cornerName: { flexShrink: 1, minWidth: 0 },
+  cornerNumber: { flexShrink: 0 },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
   number: {

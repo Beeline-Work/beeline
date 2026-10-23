@@ -1,3 +1,4 @@
+import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { cleanVoiceReply } from './voice-reply.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
@@ -4941,14 +4942,19 @@ export class DaemonService {
       .digest('hex');
     const settledRooms: string[] = [];
     const line = await this.database.transaction(async database => {
+    const original = (await database.query<{ action: string | null }>(
+      `SELECT card->>'action' AS action FROM messages WHERE card_type='squire-approval'
+       AND card->'agent'->>'pubkey'=$1 AND card->>'approvalId'=$2
+       AND room_id IN (SELECT id FROM rooms WHERE workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3)) LIMIT 1`,
+      [agentId, approvalId, input.roomId],
+    )).rows[0];
+    const action = original?.action || squireApprovalAction(tool, detail);
     const decision = await systemLine(database, {
       id,
       roomId: input.roomId,
       authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: connectorDisplayName('trusty-squire') },
-      verb: input.status === 'expired' ? 'saw no answer to' : input.status,
-      object: title,
-      ...(detail ? { consequence: detail } : {}),
+      subject: { kind: 'system', name: `The request to ${action}` },
+      verb: input.status === 'expired' ? 'expired' : input.status === 'approved' ? 'was allowed' : 'was denied',
       // A resume kind: it answers the turn that asked for this approval, and
       // must never start a second one (`RESUME_KINDS`).
       kind: 'squire-approval-decided',
@@ -4958,17 +4964,15 @@ export class DaemonService {
       cardType: 'squire-approval-decision',
       card: { approvalId, tool, title, detail, status: input.status, agentId, agentName: agent.name },
     });
-    const owner = (await database.query<{ id: string; name: string; handle: string | null }>(
-      `SELECT identity.id,identity.name,identity.handle FROM agents agent JOIN identities identity ON identity.id=agent.owner_id WHERE agent.agent_id=$1`, [agentId],
-    )).rows[0];
+    // Squire's authenticated notification provides a decision, but no human identity.
+    // Never substitute the requesting agent's owner for the actual decision-maker.
     const changed = await database.query<{ room_id: string }>(
       `UPDATE messages approval SET card=approval.card || $4::jsonb
        WHERE approval.card_type='squire-approval' AND approval.card->'agent'->>'pubkey'=$1
          AND approval.card->>'approvalId'=$2 AND approval.card->>'status' IS NULL
          AND approval.room_id IN (SELECT id FROM rooms WHERE workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3))
        RETURNING approval.room_id`,
-      [agentId, approvalId, input.roomId, JSON.stringify({ status: input.status, decidedAt: Math.floor(Date.now()/1000),
-        ...(owner && input.status !== 'expired' ? { decidedBy: { pubkey: owner.id, kind: 'human', name: owner.name, ...(owner.handle ? { handle: owner.handle } : {}) } } : {}) })],
+      [agentId, approvalId, input.roomId, JSON.stringify({ status: input.status, decidedAt: Math.floor(Date.now()/1000) })],
     );
     settledRooms.push(...changed.rows.map(row => row.room_id));
     return decision;

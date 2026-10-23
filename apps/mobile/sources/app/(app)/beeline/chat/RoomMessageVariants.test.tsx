@@ -304,7 +304,7 @@ describe('Workbench identities', () => {
 
 describe('Room message variant components', () => {
   it('renders the System author through the small line instead of a member byline', () => {
-    const text = 'Trusty Squire saw no answer to Credential access approval · Reveal a saved credential';
+    const text = 'The request to reveal a key expired';
     const renderer = render(<OrdinaryLedgerMessage
       message={message({ id: 'notice-style-1', text, pubkey: SYSTEM_IDENTITY_PUBKEY,
         authorIdentity: { pubkey: SYSTEM_IDENTITY_PUBKEY, kind: 'human', name: 'System' } })}

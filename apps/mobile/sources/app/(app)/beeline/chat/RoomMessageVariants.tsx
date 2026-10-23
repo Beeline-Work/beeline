@@ -224,7 +224,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
     subline={`${approval.tool === 'Link' ? 'Link' : 'Trusty Squire'} · ${approvalAudience(approval.owner, viewerPubkey)}`}
     sublineTestID="squire-approval-detail" stamp={ledgerStamp(message.timestamp)}
     body={approval.reason} facts={facts} foldCode codeLabel="vault reference" code={reference} codePath={reference ? 'vault reference' : undefined}
-    footerNote={approval.status ? approvalDecisionNote(approval.status, approval.decidedBy, approval.decidedAt ?? message.timestamp, viewerPubkey) : undefined}
+    footerNote={approval.status ? approvalDecisionNote(approval.status, approval.decidedBy, approval.decidedAt ?? message.timestamp, viewerPubkey, approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)) : undefined}
     decisionNote={settled} actions={actions} />;
 });
 

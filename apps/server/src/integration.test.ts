@@ -12861,7 +12861,7 @@ describe('monolith integration', () => {
     const row = rows.rows[0]!;
     expect(row.room_id).toBe(ROOM);
     expect(row.author_id).toBe(SYSTEM_IDENTITY_ID);
-    expect(row.text).toBe('Trusty Squire approved Purchase approval · Noise-cancelling headphones · at Acme');
+    expect(row.text).toBe('The request to buy Noise-cancelling headphones was allowed');
     expect(row.system_event.kind).toBe('squire-approval-decided');
     expect(row.card).toMatchObject({
       approvalId: 'purchase-decided-1',
@@ -12896,7 +12896,7 @@ describe('monolith integration', () => {
         `SELECT text,card FROM messages WHERE card_type='squire-approval-decision' AND card->>'approvalId'='purchase-decided-2'`,
       )
     ).rows[0]!;
-    expect(deniedRow.text).toBe('Trusty Squire denied Purchase approval · A different item');
+    expect(deniedRow.text).toBe('The request to buy A different item was denied');
     expect(deniedRow.card).toMatchObject({ status: 'denied' });
     const resumeDenied = await database.query<{ action: string }>(
       `SELECT action FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
@@ -12923,7 +12923,7 @@ describe('monolith integration', () => {
         `SELECT text,card FROM messages WHERE card_type='squire-approval-decision' AND card->>'approvalId'='fetch-expired-1'`,
       )
     ).rows[0]!;
-    expect(expiredRow.text).toBe('Trusty Squire saw no answer to Credential access approval · Reveal groq');
+    expect(expiredRow.text).toBe('The request to reveal a key expired');
     expect(expiredRow.card).toMatchObject({ status: 'expired', tool: 'fetch_credential' });
     const resumeExpired = await database.query<{ action: string }>(
       `SELECT action FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action='resume'`,
@@ -12944,7 +12944,7 @@ describe('monolith integration', () => {
     const { id } = await response.json() as { id: string };
     const card = (await phone.readRoom(posted.room_id, HUMAN))?.messages.find(message => message.id === posted.id)?.squireApproval;
     expect(card).toMatchObject({ status, decidedAt: expect.any(Number) });
-    if (status !== 'expired') expect(card?.decidedBy?.pubkey).toBe(HUMAN);
+    expect(card?.decidedBy).toBeUndefined();
     expect((await phone.readRoom(ROOM, HUMAN))?.messages.find(message => message.id === id)?.presentation).toBe('card');
     expect((await database.query(`SELECT action FROM agent_commands WHERE source_message_id=$1 AND turn_request_id=$2`, [id, asked.messageId])).rows).toEqual([{ action: 'resume' }]);
   });

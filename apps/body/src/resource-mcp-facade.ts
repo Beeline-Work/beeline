@@ -244,8 +244,7 @@ function credentialLabel(args: Record<string, unknown>): string | undefined {
   return (
     stringArg(args, 'name') ??
     stringArg(args, 'label') ??
-    stringArg(args, 'service') ??
-    stringArg(args, 'reference')
+    stringArg(args, 'service')
   );
 }
 

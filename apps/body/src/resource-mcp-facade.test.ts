@@ -238,6 +238,11 @@ describe('resource MCP transport authorization', () => {
     });
   });
 
+  it('keeps raw credential references out of human approval copy', () => {
+    expect(squireApprovalCopy('edit_credential', { reference: 'vault://opaque/id' }))
+      .toEqual({ title: 'Credential edit approval', detail: 'Edit a saved credential' });
+  });
+
   it('names a google_session wall from its structured needs_user field, never prose', () => {
     const request = {
       id: 9,

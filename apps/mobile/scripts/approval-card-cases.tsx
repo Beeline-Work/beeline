@@ -10,7 +10,7 @@ const timestamp = 1792760000;
 export const approvalCases = [
   'grant-legacy', 'grant-purpose', 'squire-key', 'squire-purchase', 'squire-login', 'squire-edit-key', 'squire-delete-key', 'squire-edit-card', 'squire-vouch', 'squire-passkey',
   'spending', 'edit-corner', 'target-branch', 'connector-add', 'connector-switch', 'connector-reconnect',
-  'grant-allowed', 'grant-denied', 'squire-allowed', 'squire-denied', 'permission-allowed', 'target-denied', 'connector-allowed', 'connector-denied', 'tray',
+  'grant-allowed', 'grant-denied', 'squire-allowed', 'squire-denied', 'squire-expired', 'permission-allowed', 'target-denied', 'connector-allowed', 'connector-denied', 'tray',
 ] as const;
 export type ApprovalCase = typeof approvalCases[number];
 export function approvalCaseElement(name: ApprovalCase, onAction: () => void = noop) {
@@ -35,7 +35,7 @@ export function approvalCaseElement(name: ApprovalCase, onAction: () => void = n
       ...(tool === 'fetch_credential' ? { reference: 'vault://proof-owner/proof-service/proof-key' } : {}),
       approvalUrl: 'https://approve.example.test/proof', approvalId: name,
       linkKind: name === 'squire-passkey' || name === 'squire-purchase' ? 'passkey' : name === 'squire-vouch' ? 'vouch' : 'approval', sourceRoomId: 'proof-room', sourceMessageId: 'proof-request',
-      ...(name === 'squire-allowed' || name === 'squire-denied' ? { status: name === 'squire-allowed' ? 'approved' : 'denied', decidedBy: proofOwner, decidedAt: timestamp + 240 } : {}),
+      ...(name === 'squire-allowed' || name === 'squire-denied' || name === 'squire-expired' ? { status: name === 'squire-allowed' ? 'approved' : name === 'squire-expired' ? 'expired' : 'denied', decidedAt: timestamp + 240 } : {}),
     } })} />;
   }
   if (name === 'spending' || name === 'edit-corner' || name === 'permission-allowed') return <WritePermissionCard agent={agent} roomName="beeline" viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerRole="owner" actionId={null} targetBranch="main" onDecision={onAction} onOpenCorner={onAction}

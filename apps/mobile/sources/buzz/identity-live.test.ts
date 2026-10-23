@@ -1,3 +1,6 @@
+vi.mock('@/buzz/room-transition-work', () => ({
+  deferRoomWrite: (_key: string, work: () => Promise<void>) => work(),
+}));
 vi.mock('expo-router', () => ({ useFocusEffect: () => undefined }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {

@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
+import { SurfaceRegistry } from '@/buzz/surface-registry';
+import { roomTransitionWork } from '@/buzz/room-transition-work';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
-import { visibleLiveOverlays } from '@beeline/buzz-client';
+import { SurfaceResponseCache, visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
@@ -12,6 +15,11 @@ import { loadBuzzIdentity, loadBuzzViewerPubkey } from '@/auth/buzz-identity-sto
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
 const controls = vi.hoisted(() => ({
+  focused: true,
+  navigationListeners: new Map<string, Set<() => void>>(),
+  interactionTasks: new Set<() => void>(),
+  focusListeners: new Set<() => void>(),
+  surfaceRenders: 0,
   cached: null as RoomView | null,
   hotViewer: false,
   cacheListeners: new Set<() => void>(),
@@ -38,6 +46,7 @@ const controls = vi.hoisted(() => ({
   transportCount: 0,
   reconnects: 0,
   appState: 'active' as string,
+  appStateListeners: new Set<(state: string) => void>(),
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   ensureClientPromise: null as Promise<void> | null,
@@ -59,7 +68,10 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 vi.mock('react-native', () => ({
   AppState: {
-    addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+    addEventListener: vi.fn((_event: string, listener: (state: string) => void) => {
+      controls.appStateListeners.add(listener);
+      return { remove: () => controls.appStateListeners.delete(listener) };
+    }),
     get currentState() {
       return controls.appState;
     },
@@ -94,7 +106,40 @@ vi.mock('react-native-reanimated', () => ({
   FadeInDown: { duration: () => ({}) },
 }));
 
-vi.mock('expo-router', () => ({ router: { replace: vi.fn() } }));
+vi.mock('expo-router', () => ({
+  router: { replace: vi.fn() },
+  useLocalSearchParams: () => ({ channelId: 'room-a' }),
+}));
+const navigation = {
+  isFocused: () => controls.focused,
+  addListener: (name: string, listener: () => void) => {
+    const listeners = controls.navigationListeners.get(name) ?? new Set<() => void>();
+    listeners.add(listener);
+    controls.navigationListeners.set(name, listeners);
+    return () => { listeners.delete(listener); };
+  },
+};
+vi.mock('@/buzz/room-transition-work', async () => {
+  const { TransitionWork } = await import('@/buzz/transition-work');
+  return { roomTransitionWork: new TransitionWork((work) => {
+    controls.interactionTasks.add(work);
+    return () => { controls.interactionTasks.delete(work); };
+  }) };
+});
+vi.mock('@react-navigation/native', () => ({
+  useNavigation: () => navigation,
+  useIsFocused: () => React.useSyncExternalStore(
+    (listener) => { controls.focusListeners.add(listener); return () => { controls.focusListeners.delete(listener); }; },
+    () => controls.focused,
+  ),
+}));
+vi.mock('@/components/buzz/RoomOpenTraceOverlay', () => ({ RoomOpenTraceOverlay: () => null }));
+vi.mock('./_chat-surface', () => ({
+  BuzzChatSurface: () => {
+    controls.surfaceRenders++;
+    return React.createElement('room-root');
+  },
+}));
 
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(
@@ -270,6 +315,8 @@ import {
   type UseRoomSurfaceSessionResult,
 } from './useRoomSurfaceSession';
 
+import BuzzChat from './[channelId]';
+
 const originalConsoleError = console.error;
 
 function roomView(id: string, filters: RoomView['watchFilters'] = [{ '#h': [id] }]): RoomView {
@@ -380,6 +427,11 @@ afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  controls.focused = true;
+  controls.focusListeners.clear();
+  controls.navigationListeners.clear();
+  controls.interactionTasks.clear();
+  controls.surfaceRenders = 0;
   controls.cached = null;
   controls.hotViewer = false;
   controls.cacheListeners.clear();
@@ -451,6 +503,141 @@ describe('reopening a dismissed Room', () => {
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('keeps the heavy Room surface free of its own render-triggering focus subscription', () => {
+    const source = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\buseIsFocused\s*\(/);
+  });
+
+  it('releases Room conversion and saves only after the actual route transition ends', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
+    await flushEffects();
+    const normalize = vi.fn((value: unknown) => value);
+    const set = vi.fn(async () => {});
+    const guard = vi.fn((value: unknown): value is { count: number } =>
+      typeof value === 'object' && value !== null && 'count' in value);
+    const registry = new SurfaceRegistry(new SurfaceResponseCache({
+      get: async () => null, set, remove: async () => {},
+    }), normalize, undefined, (key, work) => roomTransitionWork.enqueue(key, work));
+    const emit = (name: string) => controls.navigationListeners.get(name)?.forEach(listener => listener());
+    emit('transitionStart');
+    const saved = registry.write({ relayOrigin: 'https://relay.test', viewerPubkey: 'viewer', endpoint: '/room/busy' }, { count: 1 }, guard);
+    controls.interactionTasks.forEach(work => work());
+    expect(normalize).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+    emit('transitionEnd');
+    expect(set).not.toHaveBeenCalled();
+    const work = [...controls.interactionTasks];
+    controls.interactionTasks.clear();
+    work.forEach(run => run());
+    await saved;
+    expect(normalize).toHaveBeenCalledTimes(1);
+    expect(set).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+  });
+
+  it('does not render the Room surface boundary when pushing and popping a corner', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
+    await flushEffects();
+    const before = controls.surfaceRenders;
+    await act(async () => {
+      controls.focused = false;
+      controls.focusListeners.forEach(listener => listener());
+    });
+    await act(async () => {
+      controls.focused = true;
+      controls.focusListeners.forEach(listener => listener());
+    });
+    await flushEffects();
+    expect(controls.surfaceRenders - before).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('reuses the Room state and transcript when a corner is pushed and popped', async () => {
+    controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
+    const reset = vi.fn();
+    const render = (isFocused: boolean) => React.createElement(Harness, {
+      channelId: 'room-a', isFocused, onResetTranscript: reset,
+      capture: (result: UseRoomSurfaceSessionResult) => { current = result; },
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(render(true)); });
+    await flushEffects();
+    const before = current.roomSurface;
+    const resets = reset.mock.calls.length;
+    const transports = controls.transportCount;
+    await act(async () => renderer.update(render(false)));
+    await act(async () => renderer.update(render(true)));
+    await flushEffects();
+    expect(current.roomSurface).toBe(before);
+    expect(reset).toHaveBeenCalledTimes(resets);
+    expect(controls.transportCount).toBe(transports);
+    await act(async () => renderer.unmount());
+  });
+
+  it.each(['background', 'inactive'])('flushes a pending delta save on %s during a corner transition without advancing timers', async (state) => {
+    vi.useFakeTimers();
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
+    await flushEffects();
+    vi.mocked(mobileSurfaceCache.write).mockClear();
+    await act(async () => controls.subscriptions.at(-1)!.emit({ monolithLive: {
+      type: 'message-delta', roomId: 'room-a', message: {
+        id: 'before-background', roomId: 'room-a', text: 'latest committed arrival',
+        createdAt: 100, author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+        tags: [], attachments: [], reactions: [],
+      },
+    } } as MonolithSurfaceEvent));
+    await act(async () => {
+      controls.navigationListeners.get('transitionStart')?.forEach(listener => listener());
+      controls.focused = false;
+      controls.focusListeners.forEach(listener => listener());
+    });
+    expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
+    await act(async () => {
+      controls.appState = state;
+      controls.appStateListeners.forEach(listener => listener(state));
+    });
+    expect(mobileSurfaceCache.write).toHaveBeenCalledTimes(1);
+    const saved = vi.mocked(mobileSurfaceCache.write).mock.calls[0]![1] as RoomView;
+    expect(saved.messages.at(-1)?.id).toBe('before-background');
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(mobileSurfaceCache.write).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+    expect(controls.appStateListeners.size).toBe(0);
+  });
+
+  it('does not save the Room during a corner push or pop', async () => {
+    controls.cached = roomView('room-a');
+    const render = (isFocused: boolean) => React.createElement(Harness, {
+      channelId: 'room-a', isFocused, capture: () => undefined,
+    });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(render(true)); });
+    await flushEffects();
+    vi.mocked(mobileSurfaceCache.write).mockClear();
+    // A canonical message arrival queues a Room save; navigation must not flush it.
+    const subscription = controls.subscriptions.at(-1)!;
+    await act(async () => subscription.emit({ monolithLive: {
+      type: 'message-delta', roomId: 'room-a', message: {
+        id: 'during-transition', roomId: 'room-a', text: 'new arrival',
+        createdAt: 100, author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+        tags: [], attachments: [], reactions: [],
+      },
+    } } as MonolithSurfaceEvent));
+    await act(async () => renderer.update(render(false)));
+    expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
+    await act(async () => renderer.update(render(true)));
+    expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+
   it('re-arms viewport advancement on a fresh visit to the same Room', async () => {
     // mark-unread suspends the advancer so the viewport cannot immediately
     // read back what the reader just declared unread. Re-arming keyed on
@@ -1009,7 +1196,7 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.roomReads).toBe(0);
     await act(async () => renderer.update(React.createElement(Harness, { ...props, isFocused: false })));
     await act(async () => renderer.update(React.createElement(Harness, props)));
-    expect(reset).toHaveBeenCalledOnce();
+    expect(reset).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
   });
 

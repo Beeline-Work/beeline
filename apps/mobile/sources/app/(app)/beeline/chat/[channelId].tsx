@@ -1,6 +1,9 @@
 /** Room route: header, transcript, and composer are the open, not a last-message pixel. */
-import React, { useLayoutEffect, useRef } from 'react';
-import { useIsFocused } from '@react-navigation/native';
+import React, { memo, useEffect, useLayoutEffect, useRef } from 'react';
+import { useIsFocused, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { ParamListBase } from '@react-navigation/native';
+import { roomTransitionWork } from '@/buzz/room-transition-work';
 import { useLocalSearchParams } from 'expo-router';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { RoomOpenTraceOverlay } from '@/components/buzz/RoomOpenTraceOverlay';
@@ -10,6 +13,12 @@ import {
   type RoomSurfaceSessionBindings,
 } from './useRoomSurfaceSession';
 
+const RoomSurface = memo(BuzzChatSurface, (previous, next) =>
+  previous.bindingsRef === next.bindingsRef &&
+  (Object.keys(previous.session) as Array<keyof typeof previous.session>).every(
+    (key) => Object.is(previous.session[key], next.session[key]),
+  ));
+
 export default function BuzzChat() {
   const { channelId, notificationResponseId } = useLocalSearchParams<{
     channelId: string;
@@ -17,6 +26,15 @@ export default function BuzzChat() {
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
   const isFocused = useIsFocused();
+  const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
+  useEffect(() => {
+    let finish: (() => void) | undefined;
+    const start = navigation.addListener('transitionStart', () => {
+      finish ??= roomTransitionWork.begin();
+    });
+    const end = navigation.addListener('transitionEnd', () => { finish?.(); finish = undefined; });
+    return () => { start(); end(); finish?.(); };
+  }, [navigation]);
   const bindingsRef = useRef<RoomSurfaceSessionBindings>({
     resetTranscript: () => undefined,
     restoreOutboxMessages: () => undefined,
@@ -37,7 +55,7 @@ export default function BuzzChat() {
 
   return (
     <>
-      <BuzzChatSurface session={session} bindingsRef={bindingsRef} />
+      <RoomSurface session={session} bindingsRef={bindingsRef} />
       <RoomOpenTraceOverlay />
     </>
   );

@@ -1,3 +1,6 @@
+vi.mock('@/buzz/room-transition-work', () => ({
+  deferRoomWrite: (_key: string, work: () => Promise<void>) => work(),
+}));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

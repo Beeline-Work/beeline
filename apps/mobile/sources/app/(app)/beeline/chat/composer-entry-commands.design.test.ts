@@ -28,7 +28,7 @@ describe('permission-aware composer entry commands', () => {
   });
 
   it('redirects every bound app to its app-owned corner surface', () => {
-    expect(chat).toContain('if (!isFocused || !isCorner || !humanUi) return;');
+    expect(chat).toContain('if (!isFocused() || !isCorner || !humanUi) return;');
     expect(chat).not.toContain('humanUi.embedsChat');
     expect(chat).toContain("pathname: '/beeline/corner-app/[slug]'");
   });

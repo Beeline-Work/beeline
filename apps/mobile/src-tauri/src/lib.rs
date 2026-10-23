@@ -12,27 +12,41 @@ fn credential(app: &tauri::AppHandle, key: &str) -> Result<keyring::Entry, Strin
 }
 
 #[tauri::command]
-fn desktop_secure_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
-    match credential(&app, &key)?.get_password() {
+async fn desktop_secure_get(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || match credential(&app, &key)?.get_password() {
         Ok(value) => Ok(Some(value)),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(error.to_string()),
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn desktop_secure_set(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
-    credential(&app, &key)?
-        .set_password(&value)
-        .map_err(|error| error.to_string())
+async fn desktop_secure_set(
+    app: tauri::AppHandle,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        credential(&app, &key)?
+            .set_password(&value)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-fn desktop_secure_remove(app: tauri::AppHandle, key: String) -> Result<(), String> {
-    match credential(&app, &key)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(error.to_string()),
-    }
+async fn desktop_secure_remove(app: tauri::AppHandle, key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        match credential(&app, &key)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(target_os = "linux")]

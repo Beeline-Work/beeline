@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { SurfaceResponseCache, surfaceCacheKey, type SurfaceCacheAddress } from '@beeline/buzz-client';
 import { SurfaceRegistry } from './surface-registry';
 
@@ -23,6 +23,58 @@ function registry() {
 }
 
 describe('shared mobile surface registry', () => {
+  it.each(['write', 'persist'] as const)('does not resurrect a removed Room through deferred %s', async (method) => {
+    const writes = vi.fn(async () => {});
+    let release!: () => Promise<void>;
+    const cache = new SurfaceRegistry(new SurfaceResponseCache({
+      get: async () => null, set: writes, remove: async () => {},
+    }), undefined, undefined, (_key, work) => new Promise<void>((resolve, reject) => {
+      release = () => work().then(resolve, reject);
+    }));
+    const saved = cache[method](address, { count: 1 }, isCount);
+    await cache.remove(address);
+    await release();
+    await saved;
+    expect(writes).not.toHaveBeenCalled();
+    expect(cache.peek(address, isCount)).toBeNull();
+  });
+
+  it('defers Room validation, conversion and serialization until navigation completes', async () => {
+    const normalize = vi.fn((value: unknown) => value);
+    const guard = vi.fn(isCount);
+    const storage = { get: async () => null, set: vi.fn(async () => {}), remove: async () => {} };
+    const pending: Array<() => Promise<void>> = [];
+    const cache = new SurfaceRegistry(new SurfaceResponseCache(storage), normalize, undefined,
+      (_key: string, write: () => Promise<void>) => new Promise<void>((resolve, reject) => {
+        pending.push(() => write().then(resolve, reject));
+      }));
+    const room = { ...address, endpoint: '/room/busy' };
+    const write = cache.write(room, { count: 1 }, guard);
+    expect(normalize).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
+    expect(storage.set).not.toHaveBeenCalled();
+    // The native transition-end callback, not elapsed time, releases the work.
+    await pending[0]!();
+    await write;
+    expect(normalize).toHaveBeenCalledTimes(1);
+    expect(storage.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps only the three most recently used inactive Room responses hot', async () => {
+    const { cache } = registry();
+    const rooms = Array.from({ length: 4 }, (_, n) => ({ ...address, endpoint: `/room/${n}` }));
+    const first = { count: 0 };
+    await cache.write(rooms[0]!, first, isCount);
+    await cache.write(rooms[1]!, { count: 1 }, isCount);
+    await cache.write(rooms[2]!, { count: 2 }, isCount);
+    expect(cache.peek(rooms[0]!, isCount)).toBe(first);
+    await cache.write(rooms[3]!, { count: 3 }, isCount);
+    expect(cache.peek(rooms[0]!, isCount)).toBe(first);
+    expect(cache.peek(rooms[1]!, isCount)).toBeNull();
+    expect(cache.peek(rooms[2]!, isCount)).toEqual({ count: 2 });
+    expect(cache.peek(rooms[3]!, isCount)).toEqual({ count: 3 });
+  });
+
   it('hydrates once, paints from memory on route return, and shares the fetched result', async () => {
     const { cache, rows, reads } = registry();
     rows.set(surfaceCacheKey(address), JSON.stringify({ count: 1 }));

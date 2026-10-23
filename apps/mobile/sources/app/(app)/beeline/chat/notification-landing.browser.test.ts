@@ -191,10 +191,12 @@ function shims(mobile: string): Record<string, string> {
     export const router = { push() {}, back() {}, replace() {}, navigate() {}, setParams() {}, canGoBack: () => false };
     export const usePathname = () => '/beeline/chat/${ROOM}';
     export const useSegments = () => [];
-    export const useNavigation = () => ({ setOptions() {}, addListener: () => () => undefined, goBack() {}, canGoBack: () => false, getParent: () => undefined, navigate() {}, dispatch() {} });`,
+    const navigation = { isFocused: () => true, setOptions() {}, addListener: () => () => undefined, goBack() {}, canGoBack: () => false, getParent: () => undefined, navigate() {}, dispatch() {} };
+    export const useNavigation = () => navigation;`,
     '@react-navigation/native': `import React from 'react';
     export const useIsFocused = () => true;
-    export const useNavigation = () => ({ setOptions() {}, addListener: () => () => undefined, goBack() {}, canGoBack: () => false, getParent: () => undefined, navigate() {}, dispatch() {} });
+    const navigation = { isFocused: () => true, setOptions() {}, addListener: () => () => undefined, goBack() {}, canGoBack: () => false, getParent: () => undefined, navigate() {}, dispatch() {} };
+    export const useNavigation = () => navigation;
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);`,
     '@react-native-async-storage/async-storage': `const store = new Map();
     export default { getItem: async (k) => store.get(k) ?? null, setItem: async (k, v) => { store.set(k, v); }, removeItem: async (k) => { store.delete(k); },

@@ -396,6 +396,7 @@ describe('GitHub phone operations', () => {
       WHERE room_id=$1 AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`, [corner])).rows[0];
     expect(run?.head_sha).toBe(newHead);
     const daemon = new DaemonService(database, new LiveHub());
+    Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
     await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
       .rejects.toThrow(/^STALE_HEAD:/);
     await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: newHead }, REVIEWER))

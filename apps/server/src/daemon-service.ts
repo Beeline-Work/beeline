@@ -3688,7 +3688,7 @@ export class DaemonService {
         !(await isZeroCheckCommander(db, input.cornerId, agentId))))
         throw new CornerVerdictRejectedError(
           'NOT_CONFIGURED_REVIEWER',
-          "only this corner's reviewer (or the Room reviewer when unset), or its zero-check commander, can record PASS; set reviewer with revise_corner",
+          "only this corner's configured reviewer (or the Room reviewer when unset), or its zero-check commander, can record PASS; set reviewer with revise_corner",
         );
       if (!target.pull_request_number || !target.head_sha)
         throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');

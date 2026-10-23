@@ -192,6 +192,7 @@ beforeEach(async () => {
     undefined,
     (cornerId) => operations.refreshStaleMergeability(cornerId),
   );
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
 });
 
 afterEach(async () => {

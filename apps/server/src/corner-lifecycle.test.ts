@@ -122,6 +122,8 @@ beforeAll(async () => {
     );
   phone = new PhoneService(db, 'http://test');
   daemon = new DaemonService(db, new LiveHub());
+  // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   githubRollupState = 'pending';
   githubHead = '';
   githubApp = {
@@ -1377,6 +1379,7 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
     const cornerId = await inReview();
     const recording = new RecordingDatabase(db);
     const recordedDaemon = new DaemonService(recording, new LiveHub());
+    Object.assign(recordedDaemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
     const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
     let lockId = cornerId;
     if (path === 'check webhook') {

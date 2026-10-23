@@ -15,7 +15,7 @@ import {
 import { getInstitutionalContext } from './institutional-memory-shadow.js';
 import { loadWorkspaceSkill } from './institutional-skills.js';
 import { PgliteDatabase } from './test-support.js';
-import { readServiceReviewPage } from './service-review.js';
+import { completeServiceReview, readServiceReviewPage } from './service-review.js';
 import { handoff, startWorkflow, saveWorkflow } from './workflow-runs.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000301';
@@ -182,6 +182,51 @@ describe('feedback-triage workflow', () => {
     expect(completed.rows).toHaveLength(targets.rows.length);
     console.log(`Demonstrated walk-scope: internal traffic excluded; ${targets.rows.length} active workspaces fully read; incomplete receipts refused`);
   }, 60_000);
+
+  it('Reproduction SR18: accepts all message extrema and commits workspace cursors atomically', async () => {
+    const runId = 'isolated-sr18';
+    await database.query(`INSERT INTO service_review_visits(workspace_id,agent_id,run_id,read_from,read_through)
+      SELECT id,$1,$2,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z' FROM workspaces`, [TRIAGER,runId]);
+    const first = '2026-01-01T02:00:00.000Z';
+    const last = '2026-01-01T22:00:00.000Z';
+    const toolActivity = [{type:'tool',name:'synthetic-tool'}];
+    for (const [id,room,time,activity] of [
+      ['sr18-first',ROOM,first,toolActivity],
+      ['sr18-middle',ROOM,'2026-01-01T12:00:00.000Z',{detail:'preserved',rowKind:'turn',createdAt:'wrong'}],
+      ['sr18-last',ROOM,last,toolActivity],
+      ['sr18-other',OTHER_ROOM,first,null],
+    ] as const) {
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at,activity)
+        VALUES($1,$2,$3,'Synthetic SR18 fixture',$4,$5::jsonb)`, [id,room,CREATOR,time,JSON.stringify(activity)]);
+    }
+    for (const [request,time] of [['early','2026-01-01T01:00:00Z'],['late','2026-01-01T23:00:00Z']]) {
+      await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,started_at)
+        VALUES($1,$2,$3,'complete',$4)`, [ROOM,request,TRIAGER,time]);
+    }
+    const receipts = [
+      {workspace:WORKSPACE,rowsRead:5,firstMessageTime:first,lastMessageTime:last,findings:'none'},
+      {workspace:OTHER_WORKSPACE,rowsRead:1,firstMessageTime:first,lastMessageTime:first,findings:'none'},
+    ];
+    const visits = () => database.query<{completed_at:unknown;receipt:unknown}>(
+      'SELECT completed_at,receipt FROM service_review_visits WHERE run_id=$1',[runId]);
+    // Whichever target is visited first, its update must roll back when the next receipt fails.
+    const targets = await database.query<{workspace_id:string}>('SELECT * FROM service_review_targets($1,$2)',[TRIAGER,runId]);
+    const invalidWorkspace = targets.rows.at(-1)!.workspace_id;
+    for (const wrong of [{rowsRead:0},{firstMessageTime:'2026-01-01T01:00:00.000Z'},{lastMessageTime:'2026-01-01T23:00:00.000Z'}]) {
+      await expect(completeServiceReview(database,TRIAGER,runId,
+        receipts.map(receipt => receipt.workspace === invalidWorkspace ? {...receipt,...wrong} : receipt)))
+        .rejects.toThrow('receipt must match');
+      expect((await visits()).rows.every(row => row.completed_at === null && row.receipt === null)).toBe(true);
+    }
+    await expect(completeServiceReview(database,TRIAGER,runId,receipts)).resolves.toBeUndefined();
+    const page = await readServiceReviewPage(database,TRIAGER,runId,WORKSPACE);
+    expect(page.rows.find(row => row.id === 'sr18-first')!.activity).toMatchObject({
+      activity:toolActivity,rowKind:'message',createdAt:expect.any(String),
+    });
+    expect(page.rows.find(row => row.id === 'sr18-middle')!.activity).toMatchObject({detail:'preserved',rowKind:'message'});
+    expect((await visits()).rows.every(row => row.completed_at !== null && row.receipt !== null)).toBe(true);
+    console.log('Demonstrated SR18: array and object messages accepted; turn extrema and incorrect coverage rejected; all cursors committed together');
+  });
 
   it('does no seed or description writes on the second migration startup', async () => {
     // Model an upgrade: fixtures predate the newly introduced markers.

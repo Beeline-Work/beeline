@@ -21,7 +21,9 @@ BEGIN
           AND v.visited_at > now()-interval '1 day')
     ), content AS (
       SELECT m.id,m.room_id,m.text,
-        coalesce(m.activity,'{}'::jsonb) || jsonb_build_object('createdAt',m.created_at,'rowKind','message') activity FROM messages m
+        (CASE WHEN jsonb_typeof(m.activity)='object' THEN m.activity
+          ELSE jsonb_build_object('activity',m.activity) END)
+          || jsonb_build_object('createdAt',m.created_at,'rowKind','message') activity FROM messages m
       JOIN target_rooms r ON r.id=m.room_id WHERE m.deleted_at IS NULL
         AND EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=review_workspace
           AND v.agent_id=review_agent AND v.run_id=review_run

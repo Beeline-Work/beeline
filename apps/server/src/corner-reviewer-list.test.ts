@@ -103,6 +103,8 @@ beforeEach(async () => {
   await reportPresence(REVIEWER_B, 'online');
   phone = new PhoneService(db, 'http://test');
   daemon = new DaemonService(db, new LiveHub());
+  // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
 });
 
 async function failTurn(c: AgentCommand) {
@@ -387,16 +389,11 @@ describe('approve_merge with a reviewer list', () => {
     ).rejects.toThrow('NOT_CONFIGURED_REVIEWER');
   });
 
-  it('counts the corner opener\'s own approval when it is on the reviewer list', async () => {
+  it('refuses the implementer even when configured as a Room fallback', async () => {
     await setReviewers(REVIEWER_A, OWNER_AGENT);
-    await daemon.execute(
-      'approveCornerMerge',
-      { cornerId: C, headSha: '1'.repeat(40) },
-      OWNER_AGENT,
-    );
-    expect(
-      (await cornerMergeGate(db, C, { number: 7, headSha: '1'.repeat(40) })).approved,
-    ).toBe(true);
+    await expect(daemon.execute('approveCornerMerge',
+      { cornerId: C, headSha: '1'.repeat(40) }, OWNER_AGENT)).rejects.toThrow('implementer cannot review');
+    expect((await cornerMergeGate(db, C, { number: 7, headSha: '1'.repeat(40) })).approved).toBe(false);
   });
 });
 

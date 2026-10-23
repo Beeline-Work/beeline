@@ -224,6 +224,9 @@ it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', a
   expect(mergeWakes[0]!.private).toBe(true);
 });
 it('a configured reviewer can record PASS from its DM without changing the reviewer gate', async () => {
+  const github = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 'secret');
+  vi.spyOn(github, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
+  Object.assign(daemon, { github });
   const opened = await open(), headSha = '9'.repeat(40);
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
@@ -1534,6 +1537,32 @@ it.each(['dm', 'room', 'corner', 'parent-room'] as const)('post receipt identifi
   expect((await phone.readRoom(target, HUMAN))?.messages.some(message => message.id === posted.id && message.text === 'Receipt path proof')).toBe(true);
 });
 
+
+it('opens with an independent reviewer and lets another member change it through metadata', async () => {
+  const input = { ...authority(order), requestId: order.turnRequestId, targetRoomId: ROOM,
+    name: 'Reviewer', objective: 'Prove corner reviewer assignment', implementer: 'worker', reviewer: 'ruby',
+    brief: { spec: 'Prove reviewer assignment', repositoryWork: false } };
+  const opened = await daemon.execute('createCorner', input, RUBY);
+  expect((await db.query(`SELECT reviewer_agent_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
+    .toEqual({ reviewer_agent_id: RUBY });
+  // Tool retries retain the original corner rather than opening duplicate work.
+  expect((await daemon.execute('createCorner', input, RUBY)).cornerId).toBe(opened.cornerId);
+  const turn = await worker(opened.cornerId);
+  await expect(daemon.execute('renameCorner', { ...authority(turn), cornerId: opened.cornerId, reviewer: 'worker' }, WORKER))
+    .rejects.toThrow('implementer cannot review');
+  await daemon.execute('renameCorner', { ...authority(turn), cornerId: opened.cornerId, reviewer: 'ruby' }, WORKER);
+  const lines = await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%set the corner reviewer%'`, [opened.cornerId]);
+  expect(lines.rowCount).toBe(1);
+  console.info('Demonstrated corner-reviewer: open assigns an independent reviewer; another member can set it without editing the brief; self review is refused.');
+});
+
+it('refuses opening with the implementer as reviewer atomically', async () => {
+  await expect(daemon.execute('createCorner', { ...authority(order), requestId: order.turnRequestId,
+    targetRoomId: ROOM, name: 'Reviewer', objective: 'Prove reviewer independence',
+    implementer: 'worker', reviewer: 'worker', brief: { spec: 'Prove reviewer independence', repositoryWork: false } }, RUBY))
+    .rejects.toThrow('implementer cannot review');
+  expect((await db.query(`SELECT 1 FROM rooms WHERE parent_id=$1`, [ROOM])).rowCount).toBe(0);
+});
 
 it.each(['room', 'corner'] as const)('Reproduction R1: silent %s rejects late final text before the terminal receipt', async scope => {
   const turn = scope === 'corner' ? await worker((await open()).cornerId) : order;

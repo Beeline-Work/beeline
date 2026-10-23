@@ -1,3 +1,4 @@
+import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import type { AgentMemberMetadata } from '@beeline/api-contract/daemon';
 import { AGENT_REACHABLE_HORIZON_MS } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -30,7 +31,7 @@ export async function agentMemberMetadata<T extends {
     agent_id: string; selected_model: string | null;
     reviewer_agent_id: string | null; reviewer_fallback_ids: string[];
   }>(`SELECT a.agent_id,a.selected_model,${agentUsageColumns('a', 'a.owner_id')},
-       parent.reviewer_agent_id,parent.reviewer_fallback_ids
+       ${cornerReviewerSql('room')} reviewer_agent_id,${cornerReviewerFallbacksSql('room')} reviewer_fallback_ids
      FROM agents a CROSS JOIN rooms room
      JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
      WHERE room.id=$1 AND a.agent_id=ANY($2::text[])`, [roomId, ids]) : undefined;

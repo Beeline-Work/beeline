@@ -1,3 +1,4 @@
+import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -125,7 +126,7 @@ export function cornerFactsSql(viewerExpr: string): {
 
 /** A running turn retains the review role recorded by its dispatch. */
 export function cornerWorkSql(): string {
-  const reviewerTurn = `(t.agent_id=ANY(array_remove(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids,NULL))
+  const reviewerTurn = `(t.agent_id=ANY(array_remove(ARRAY[${cornerReviewerSql('c')}]||${cornerReviewerFallbacksSql('c')},NULL))
     OR EXISTS(SELECT 1 FROM agent_commands dispatched
       LEFT JOIN messages source ON source.id=dispatched.source_message_id
       WHERE dispatched.room_id=t.room_id AND dispatched.agent_id=t.agent_id

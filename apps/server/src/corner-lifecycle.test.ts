@@ -159,6 +159,9 @@ beforeAll(async () => {
     githubApp as unknown as GitHubAppClient,
     'secret',
   );
+  // Keep real queue reconciliation; only commit-author evidence is a provider fixture.
+  vi.spyOn(github, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
+  Object.assign(daemon, { github });
 }, 30_000);
 afterAll(async () => db?.close());
 
@@ -1379,6 +1382,8 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
     const recording = new RecordingDatabase(db);
     const recordedDaemon = new DaemonService(recording, new LiveHub());
     const recordedGithub = new GitHubOperations(recording, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
+    vi.spyOn(recordedGithub, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
+    Object.assign(recordedDaemon, { github: recordedGithub });
     let lockId = cornerId;
     if (path === 'check webhook') {
       githubRollupState = 'passed';

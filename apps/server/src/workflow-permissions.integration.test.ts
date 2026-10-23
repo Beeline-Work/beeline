@@ -206,6 +206,31 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
     expect(row?.current_version).toBe(1);
   });
 
+  it('lets only a Workspace admin edit or delete an agent-made schedule through authenticated daemon HTTP', async () => {
+    const created = await call(SAVER, 'createAgentSchedule', { ...await turn(REQUESTER), title: 'Daily check',
+      prompt: 'Check the Room.', cadence: { kind: 'interval', everyMinutes: 60 } });
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
+    const scheduleId = created.body.scheduleId as string;
+    const row = async () => (await db.query(`SELECT message,cadence FROM agent_schedules WHERE id=$1`, [scheduleId])).rows[0];
+    const before = await row();
+    // The requester, a Room admin who is a Workspace member, and the scheduling
+    // agent's own (non-admin) owner are all refused, and nothing changes.
+    for (const actor of [REQUESTER, ROOM_ADMIN, ROLE_OWNER]) {
+      const edit = await call(SAVER, 'updateAgentSchedule', { ...await turn(actor), scheduleId, prompt: 'Rewritten.' });
+      expect(edit.status).toBe(403);
+      expect(JSON.stringify(edit.body)).toContain('workspace admins only');
+      const remove = await call(SAVER, 'deleteAgentSchedule', { ...await turn(actor), scheduleId });
+      expect(remove.status).toBe(403);
+      expect(await row()).toEqual(before);
+    }
+    const edited = await call(SAVER, 'updateAgentSchedule', { ...await turn(WORKSPACE_ADMIN), scheduleId, prompt: 'Check it twice.' });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect((await row())?.message).toBe('Check it twice.');
+    const removed = await call(SAVER, 'deleteAgentSchedule', { ...await turn(WORKSPACE_ADMIN), scheduleId });
+    expect(removed.status, JSON.stringify(removed.body)).toBe(200);
+    expect(await row()).toBeUndefined();
+  });
+
   it('allows the owner of an unselected list member to reassign, just as cancel does', async () => {
     const { context, name } = await savedWorkflow();
     const started = await call(SAVER, 'startWorkflow', { ...context, name, roleBindings: { worker: [WORKER, DELEGATE] } });

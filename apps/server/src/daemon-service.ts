@@ -234,7 +234,7 @@ import {
   startWorkflow,
   workflowRunRequester,
 } from './workflow-runs.js';
-import { activeWorkflowRunIds, scheduleWorkflowName } from './workflow-admin.js';
+import { activeWorkflowRunIds, humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { isCornerReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
@@ -5576,7 +5576,46 @@ export class DaemonService {
     );
     return { schedules };
   }
+  /**
+   * Editing or deleting a saved schedule is workspace-admin-only: the person
+   * whose message started this agent turn must be a human Workspace admin of
+   * the schedule's Room. A turn with no such person (a scheduled wake, or no
+   * active command) is refused.
+   */
+  private async requireScheduleAdmin(
+    db: SqlDatabase,
+    scheduleRoomId: string,
+    input: { roomId: string; requestId?: unknown; generationId?: unknown },
+    agentId: string,
+  ) {
+    const command = this.authorizedCommand ?? (
+      typeof input.requestId === 'string' && typeof input.generationId === 'string'
+        ? await authorizeCommandOutput(db, input.roomId, agentId, input.requestId, input.generationId)
+        : undefined);
+    const requester = command
+      ? (await db.query<{ author_id: string }>(
+          `SELECT author_id FROM messages WHERE id=$1 AND deleted_at IS NULL`,
+          [command.root_source_message_id],
+        )).rows[0]?.author_id
+      : undefined;
+    if (!requester || !(await humanRoomAdmin(db, scheduleRoomId, requester)))
+      throw new Error('workspace admins only: only a workspace admin can change or delete a saved schedule');
+  }
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
+    const target = (await this.database.query<{ room_id: string }>(
+      `SELECT room_id FROM agent_schedules
+       WHERE id=$1
+         AND (room_id=$2 OR ($4::boolean AND EXISTS (
+           SELECT 1 FROM memberships self_membership
+           WHERE self_membership.room_id=agent_schedules.room_id
+             AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
+         AND workflow_run IS NULL
+         AND (agent_id=$3 OR creator_id=agent_id)
+         AND (NOT $4::boolean OR agent_id=$3)`,
+      [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
+    )).rows[0];
+    if (!target) throw new Error('schedule not found');
+    await this.requireScheduleAdmin(this.database, target.room_id, input, agentId);
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
        WHERE id=$1
@@ -5593,7 +5632,8 @@ export class DaemonService {
     return this.writeResult();
   }
   /**
-   * Any agent in the Room may edit a schedule an agent created for itself.
+   * Any agent in the Room may carry the edit of a schedule an agent created
+   * for itself, but only for a human Workspace admin (`requireScheduleAdmin`).
    * Its runs are posted as the scheduler's line, never in a person's name, so
    * an edit cannot put words in anybody's mouth; a person's schedule is not
    * editable here.
@@ -5627,6 +5667,7 @@ export class DaemonService {
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null; room_id: string }>(
         `SELECT message,workflow_slug,room_id FROM agent_schedules WHERE id=$1
+           AND creator_id=agent_id
            AND (room_id=$2 OR ($4::boolean AND EXISTS (
              SELECT 1 FROM memberships self_membership
              WHERE self_membership.room_id=agent_schedules.room_id
@@ -5637,6 +5678,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!existing) throw new Error('schedule not found');
+    await this.requireScheduleAdmin(db, existing.room_id, input, agentId);
     const workflowName =
       (await scheduleWorkflowName(
         db,

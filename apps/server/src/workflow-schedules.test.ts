@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { TokenAuth } from './auth.js';
@@ -492,8 +493,13 @@ it('Reproduction ebc844ec744260fdaf5b93010d0ffe549b6e30e1a33efbd47cd8b939ef54f16
   const created = await daemon.execute('createAgentSchedule', input, AGENT);
   let rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
   expect(rows).toEqual([expect.objectContaining({ title: 'Play downloads check', maxRuns: 1 })]);
+  // Renaming a saved schedule is a Workspace admin's edit.
+  const ask = randomBytes(32).toString('hex');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Rename it')`, [ask, ROOM, ADMIN]);
+  const renameCommand = await createAgentCommand(db, { roomId: ROOM, agentId: AGENT, sourceMessageId: ask, reason: 'human_message' });
+  await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: renameCommand!.id, generationId: 'rename' }, AGENT);
   await daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,
-    title: 'Downloads check' }, AGENT);
+    title: 'Downloads check', requestId: renameCommand!.turn_request_id, generationId: 'rename' }, AGENT);
   rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
   expect(rows[0]).toMatchObject({ title: 'Downloads check', maxRuns: 1, cadence: input.cadence });
   await expect(daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,

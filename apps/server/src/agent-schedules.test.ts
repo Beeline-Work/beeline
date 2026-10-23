@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { createAgentCommand } from './agent-command.js';
+import type { SqlDatabase } from './database.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { RoomScheduleCadence } from '@beeline/api-contract/phone';
 import { migrate } from './database.js';
@@ -20,6 +22,29 @@ const OTHER_AGENT = 'd'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const CORNER = '33333333-3333-4333-8333-333333333333';
+
+/**
+ * An active agent turn started by `authorId`'s message. Editing or deleting a
+ * saved schedule is workspace-admin-only, judged by that person.
+ */
+async function turnFrom(
+  database: SqlDatabase,
+  daemon: DaemonService,
+  roomId: string,
+  agentId: string,
+  authorId = OWNER,
+) {
+  const id = randomBytes(32).toString('hex');
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Change the schedule')`, [
+    id,
+    roomId,
+    authorId,
+  ]);
+  const command = await createAgentCommand(database, { roomId, agentId, sourceMessageId: id, reason: 'human_message' });
+  const generationId = randomUUID();
+  await daemon.execute('claimAgentCommand', { roomId, commandId: command!.id, generationId }, agentId);
+  return { requestId: command!.turn_request_id, generationId };
+}
 
 async function fixture() {
   const database = new PgliteDatabase();
@@ -548,7 +573,7 @@ describe('agent tool schedule daemon operations', () => {
       await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Outside Workspace')`,
         [otherRoom, otherWorkspace, OWNER]);
       await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-        ($1,NULL,$2,'member'),($1,$3,$2,'member')`, [otherWorkspace, AGENT, otherRoom]);
+        ($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,NULL,$4,'owner')`, [otherWorkspace, AGENT, otherRoom, OWNER]);
       const outside = await create(AGENT, otherRoom);
 
       const listed = await daemon.execute('listAgentSchedules', {
@@ -564,11 +589,13 @@ describe('agent tool schedule daemon operations', () => {
       await daemon.execute('updateAgentSchedule', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
         scheduleId: own.scheduleId, prompt: 'Evening audit.', cadence,
+        ...await turnFrom(database, daemon, elsewhere, AGENT),
       }, AGENT);
       // The other-Workspace schedule is editable from here too.
       await daemon.execute('updateAgentSchedule', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
         scheduleId: outside.scheduleId, prompt: 'Outside evening audit.',
+        ...await turnFrom(database, daemon, elsewhere, AGENT),
       }, AGENT);
       expect((await daemon.execute('listAgentSchedules', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
@@ -583,6 +610,7 @@ describe('agent tool schedule daemon operations', () => {
       }
       await daemon.execute('deleteAgentSchedule', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true, scheduleId: own.scheduleId,
+        ...await turnFrom(database, daemon, elsewhere, AGENT),
       }, AGENT);
       expect((await daemon.execute('listAgentSchedules', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
@@ -626,17 +654,27 @@ describe('agent tool schedule daemon operations', () => {
           nextRunAt: created.nextRunAt,
         },
       ]);
-      // Another agent in the Room sees it and may delete it.
+      // Another agent in the Room sees it and may delete it for a Workspace admin,
+      // but not for a member or with no person behind the turn.
       const rivalList = await daemon.execute(
         'listAgentSchedules',
         { agentId: OTHER_AGENT, roomId: ROOM },
         OTHER_AGENT,
       );
       expect(rivalList.schedules).toEqual(listed.schedules);
+      for (const context of [{}, await turnFrom(database, daemon, ROOM, OTHER_AGENT, MEMBER)])
+        await expect(
+          daemon.execute(
+            'deleteAgentSchedule',
+            { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: created.scheduleId, ...context },
+            OTHER_AGENT,
+          ),
+        ).rejects.toThrow('workspace admins only');
       await expect(
         daemon.execute(
           'deleteAgentSchedule',
-          { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: created.scheduleId },
+          { agentId: OTHER_AGENT, roomId: ROOM, scheduleId: created.scheduleId,
+            ...await turnFrom(database, daemon, ROOM, OTHER_AGENT) },
           OTHER_AGENT,
         ),
       ).resolves.toBeTruthy();
@@ -683,16 +721,24 @@ describe('agent tool schedule daemon operations', () => {
         },
         AGENT,
       );
+      const change = {
+        agentId: OTHER_AGENT,
+        roomId: ROOM,
+        scheduleId: created.scheduleId,
+        prompt: 'Summarize the Room.',
+        cadence: { kind: 'interval' as const, everyMinutes: 60 },
+        maxRuns: 2,
+      };
+      // A Workspace member is refused even with a Room admin role, and nothing changes.
+      await database.query(`UPDATE memberships SET role='admin' WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+      await expect(daemon.execute('updateAgentSchedule',
+        { ...change, ...await turnFrom(database, daemon, ROOM, OTHER_AGENT, MEMBER) }, OTHER_AGENT,
+      )).rejects.toThrow('workspace admins only');
+      expect((await database.query(`SELECT message FROM agent_schedules WHERE id=$1`, [created.scheduleId])).rows)
+        .toEqual([{ message: 'Ping the Room.' }]);
       const updated = await daemon.execute(
         'updateAgentSchedule',
-        {
-          agentId: OTHER_AGENT,
-          roomId: ROOM,
-          scheduleId: created.scheduleId,
-          prompt: 'Summarize the Room.',
-          cadence: { kind: 'interval', everyMinutes: 60 },
-          maxRuns: 2,
-        },
+        { ...change, ...await turnFrom(database, daemon, ROOM, OTHER_AGENT) },
         OTHER_AGENT,
       );
       expect(updated.scheduleId).toBe(created.scheduleId);

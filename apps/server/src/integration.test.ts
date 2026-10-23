@@ -679,6 +679,9 @@ describe('monolith integration', () => {
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
+      // Schedule edits and deletes are judged by the person behind the turn.
+      'updateAgentSchedule',
+      'deleteAgentSchedule',
     ]);
     const who = await auth.authenticateDaemon(token);
     if (who && typeof input.roomId === 'string' && writes.has(name)) {

@@ -438,6 +438,7 @@ async function main() {
   let pushPending = Boolean(push); // one leader-start reconciliation
   let repairedPromotedCorners = false;
   let reconciledMergeability = false;
+  let reconciledPendingChecks = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const leader = new BackgroundLeader(
     jobsDatabase,
@@ -448,6 +449,7 @@ async function main() {
         pushPending = Boolean(push);
         repairedPromotedCorners = false;
         reconciledMergeability = false;
+        reconciledPendingChecks = false;
       }
       if (githubJobs && !repairedPromotedCorners) {
         const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
@@ -476,6 +478,11 @@ async function main() {
         const result = await backgroundJobs.run('github-mergeability', () =>
           githubJobs.refreshStaleMergeability());
         reconciledMergeability = result.ok;
+      }
+      if (githubJobs && !reconciledPendingChecks) {
+        const pendingChecks = await backgroundJobs.run('github-pending-checks', () =>
+          githubJobs.refreshOpenPendingChecks());
+        reconciledPendingChecks = pendingChecks.ok;
       }
       const now = Date.now();
       if (now - lastReconciliationAt >= reconciliationMs) {

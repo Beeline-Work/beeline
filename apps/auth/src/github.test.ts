@@ -24,13 +24,17 @@ it('uses the registered GitHub callback when no redirect override is supplied', 
 });
 
 const retryHead = 'a'.repeat(40);
-const passingRollupResponse = (input?: unknown) => String(input).includes('/repos/')
-  ? Response.json(String(input).includes('/check-suites?') ? { total_count: 0, check_suites: [] } : { total_count: 0, workflow_runs: [] })
-  : new Response(JSON.stringify({ data: { repository: { object: {
-  oid: retryHead, statusCheckRollup: { state: 'SUCCESS', contexts: { totalCount: 1, nodes: [
-    { __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
-  ] } },
-} } } }));
+const passingRollupResponse = (input?: unknown) => {
+  const url = String(input);
+  if (!url.includes('/repos/')) return new Response(JSON.stringify({ data: { repository: { object: {
+    oid: retryHead, statusCheckRollup: { state: 'SUCCESS', contexts: { totalCount: 1, nodes: [
+      { __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
+    ] } },
+  } } } }));
+  if (url.includes('/check-suites?')) return Response.json({ total_count: 0, check_suites: [] });
+  if (url.includes('/commits/') && url.includes('/pulls')) return Response.json([]);
+  return Response.json({ total_count: 0, workflow_runs: [] });
+};
 
 it.each(['check_suites', 'workflow_runs'])('CHECK-HEAD-1: reads later pages of %s registration', async key => {
   const seen: string[] = [];
@@ -47,6 +51,59 @@ it.each(['check_suites', 'workflow_runs'])('CHECK-HEAD-1: reads later pages of %
   expect(await app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).toMatchObject({
     state: 'pending', pendingRegistrations: true, total: 1 });
   expect(seen.some(url => url.endsWith('page=2'))).toBe(true);
+});
+
+it('Reproduction EMPTY-SUITE-1: a queued suite with zero check runs does not keep a green head pending', async () => {
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    const url = String(input);
+    if (url.endsWith('/graphql')) return passingRollupResponse();
+    if (url.includes('/check-suites?')) return Response.json({ total_count: 2, check_suites: [
+      { id: 108522773776, status: 'queued', latest_check_runs_count: 0, app: { slug: 'sentry' } },
+      { id: 108522774030, status: 'queued', latest_check_runs_count: 0, app: { slug: 'cursor' } },
+    ] });
+    if (url.includes('/commits/') && url.includes('/pulls'))
+      return Response.json([{ state: 'open', base: { ref: 'main' } }]);
+    if (url.includes('/protection/required_status_checks'))
+      return Response.json({ contexts: ['lint'], checks: [{ context: 'lint', app_id: 15368 }] });
+    return Response.json({ total_count: 0, workflow_runs: [] });
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({
+    state: 'passed', pendingRegistrations: false, total: 1,
+  });
+});
+
+it('Reproduction EMPTY-SUITE-1: a suite with a queued check run stays pending', async () => {
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    const url = String(input);
+    if (url.endsWith('/graphql')) return passingRollupResponse();
+    if (url.includes('/check-suites?'))
+      return Response.json({ total_count: 1, check_suites: [{ status: 'queued', latest_check_runs_count: 1 }] });
+    return Response.json({ total_count: 0, workflow_runs: [] });
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({
+    state: 'pending', pendingRegistrations: true, total: 1,
+  });
+});
+
+it('Reproduction EMPTY-SUITE-1: a required check that has not reported stays pending', async () => {
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    const url = String(input);
+    if (url.endsWith('/graphql')) return passingRollupResponse();
+    if (url.includes('/check-suites?')) return Response.json({ total_count: 0, check_suites: [] });
+    if (url.includes('/commits/') && url.includes('/pulls'))
+      return Response.json([{ state: 'open', base: { ref: 'main' } }]);
+    if (url.includes('/protection/required_status_checks'))
+      return Response.json({ contexts: ['TYPECHECK'], checks: [{ context: 'TYPECHECK', app_id: 15368 }] });
+    return Response.json({ total_count: 0, workflow_runs: [] });
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({
+    state: 'pending',
+    pendingRegistrations: true,
+    checks: expect.arrayContaining([{ name: 'TYPECHECK', status: 'pending' }]),
+  });
 });
 
 it('CHECK-HEAD-1: fails closed if workflow registration cannot be read', async () => {
@@ -67,7 +124,7 @@ it.each([502, 503, 504, 429])('R-GH-RETRY: shared rollup retries HTTP %s then su
     const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
     const result = expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({ state: 'passed', total: 1 });
     await vi.runAllTimersAsync(); await result;
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   } finally { vi.useRealTimers(); }
 });
 
@@ -93,7 +150,7 @@ it('R-GH-RETRY: shared rollup waits for Retry-After and never retries permanent 
     await vi.advanceTimersByTimeAsync(1999);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1); await result;
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
     fetchMock.mockReset().mockResolvedValue(new Response('{}', { status: 403 }));
     await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toMatchObject({ status: 403 });
     expect(fetchMock).toHaveBeenCalledTimes(1);

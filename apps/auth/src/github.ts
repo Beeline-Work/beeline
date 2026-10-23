@@ -320,6 +320,46 @@ export interface GitHubDispatchableWorkflow {
   readonly conclusion?: string;
 }
 
+/** A listed workflow or suite GitHub has not finished. An unreadable row stays open. */
+function registrationStillOpen(item: unknown): boolean {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return true;
+  const status = (item as { status?: unknown }).status;
+  return typeof status !== 'string' || status !== 'completed';
+}
+
+/**
+ * Installed apps get a check suite even when they never add a check run.
+ * Those suites stay queued forever and are not pending work. A suite that
+ * already has runs, or that omits its run count, still blocks.
+ */
+function suiteHasUnfinishedRuns(item: unknown): boolean {
+  if (!registrationStillOpen(item)) return false;
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return true;
+  const count = (item as { latest_check_runs_count?: unknown }).latest_check_runs_count;
+  if (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) return true;
+  return count > 0;
+}
+
+function requiredContextNames(body: Record<string, unknown>): string[] {
+  const checks = body.checks;
+  const contexts = body.contexts;
+  if (!Array.isArray(checks) && !Array.isArray(contexts))
+    throw new Error('GitHub required status checks are invalid');
+  const names = new Set<string>();
+  if (Array.isArray(checks)) {
+    for (const check of checks) {
+      if (!check || typeof check !== 'object' || Array.isArray(check)) continue;
+      const context = (check as { context?: unknown }).context;
+      if (typeof context === 'string' && context) names.add(context);
+    }
+  }
+  if (Array.isArray(contexts)) {
+    for (const context of contexts)
+      if (typeof context === 'string' && context) names.add(context);
+  }
+  return [...names];
+}
+
 export interface GitHubCheckRollup {
   readonly state: 'passed' | 'failed' | 'pending';
   readonly total: number;
@@ -884,9 +924,19 @@ export class GitHubAppClient {
         } as const,
       ];
     });
-    // A workflow or suite can be registered before it creates a check run.
-    // The rollup only covers existing contexts, so SUCCESS alone is insufficient.
-    const pending = await this.hasUnfinishedChecks(accessToken, fullName, headSha);
+    // A workflow can register before it creates a check run, and a suite can
+    // already hold queued runs the rollup has not listed. An empty suite is
+    // only the placeholder GitHub opens for an installed app.
+    let pending = await this.hasUnfinishedChecks(accessToken, fullName, headSha);
+    if (!pending && state === 'passed') {
+      const missing = await this.missingRequiredChecks(
+        accessToken, fullName, headSha, new Set(checks.map((check) => check.name)),
+      );
+      if (missing.length) {
+        pending = true;
+        for (const name of missing) checks.push({ name, status: 'pending' });
+      }
+    }
     return {
       state: pending ? 'pending' : state,
       pendingRegistrations: pending,
@@ -897,7 +947,9 @@ export class GitHubAppClient {
   }
 
   private async hasUnfinishedChecks(accessToken: string, fullName: string, headSha: string): Promise<boolean> {
-    const unfinished = async (path: string, key: string): Promise<boolean> => {
+    const unfinished = async (
+      path: string, key: string, blocks: (item: unknown) => boolean,
+    ): Promise<boolean> => {
       for (let page = 1; ; page++) {
         const separator = path.includes('?') ? '&' : '?';
         const body = await this.readRepositoryJson(
@@ -906,16 +958,57 @@ export class GitHubAppClient {
         const items = body[key];
         if (!Array.isArray(items) || typeof body.total_count !== 'number' || !Number.isSafeInteger(body.total_count) || body.total_count < 0)
           throw new Error('GitHub head check registration is invalid');
-        if (items.some(item => !item || typeof item.status !== 'string' || item.status !== 'completed')) return true;
+        if (items.some((item) => blocks(item))) return true;
         if (page * 100 >= body.total_count) return false;
         if (!items.length) throw new Error('GitHub head check registration is incomplete');
       }
     };
     const [suites, workflows] = await Promise.all([
-      unfinished(`commits/${headSha}/check-suites`, 'check_suites'),
-      unfinished(`actions/runs?head_sha=${headSha}`, 'workflow_runs'),
+      unfinished(`commits/${headSha}/check-suites`, 'check_suites', suiteHasUnfinishedRuns),
+      unfinished(`actions/runs?head_sha=${headSha}`, 'workflow_runs', registrationStillOpen),
     ]);
     return suites || workflows;
+  }
+
+  /** Branch-protection contexts that have not reported on this head. */
+  private async missingRequiredChecks(
+    accessToken: string,
+    fullName: string,
+    headSha: string,
+    reported: ReadonlySet<string>,
+  ): Promise<string[]> {
+    const response = await githubFetch(
+      `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/commits/${headSha}/pulls?per_page=100`,
+      { headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000) },
+    );
+    const pulls = await jsonArray(response, 'GitHub commit pull requests');
+    if (pulls.length >= 100) throw new Error('GitHub commit pull requests are incomplete');
+    const bases = new Set<string>();
+    for (const pull of pulls) {
+      if (pull.state !== 'open') continue;
+      const base = pull.base;
+      if (!base || typeof base !== 'object' || Array.isArray(base)) continue;
+      const ref = (base as { ref?: unknown }).ref;
+      if (typeof ref === 'string' && ref) bases.add(ref);
+    }
+    const missing = new Set<string>();
+    for (const branch of bases) {
+      let body: Record<string, unknown>;
+      try {
+        body = await this.readRepositoryJson(
+          accessToken,
+          fullName,
+          `branches/${encodeURIComponent(branch)}/protection/required_status_checks`,
+        );
+      } catch (error) {
+        if (error instanceof GitHubHttpError && error.status === 404) continue;
+        throw error;
+      }
+      for (const name of requiredContextNames(body)) {
+        if (!reported.has(name)) missing.add(name);
+      }
+    }
+    return [...missing];
   }
 
   /** Empty rollups can precede registration; establish absence independently. */

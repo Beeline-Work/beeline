@@ -68,7 +68,7 @@ export function beelineFilesSkillMarkdown(releaseId: string): string {
 
 ## Opening attachments
 
-Files and photos on the current message are already at local paths. For a file on an earlier message, call read(facet:attachment, messageId, attachmentId). For a file in the corner brief manifest, call read(facet:attachment, attachmentId) with the manifest objectId. Report a missing download to your commander.
+Files and photos on the current message are already at local paths. For a file on an earlier message, call read(facet:attachment, messageId, attachmentId). For a file in the corner brief manifest, call read(facet:attachment, attachmentId) with the manifest objectId. In a corner, open a private report with read(facet:message, messageId) using the report id. Copy the attachment id from that response, then call read(facet:attachment, messageId, attachmentId) with the same report id and read the returned local path. Order hand-offs use their supplied id the same way. Report a missing download to your commander.
 
 ## Writing a file
 

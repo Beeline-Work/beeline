@@ -262,7 +262,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
         OR command.review_context->'pullRequest' IS DISTINCT FROM fact.lifecycle->'pr'->'number'
         OR (command.review_context->>'briefRevision')::int IS DISTINCT FROM
           COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id),0)))
-      OR (command.reason IN ('corner_merge_conflict','corner_review_dispatch','subscribed_event')
+      OR (command.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
         AND source.system_event->'object'->>'headSha' IS NOT NULL
         AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
       OR (EXISTS (SELECT 1 FROM corner_brief_revisions brief

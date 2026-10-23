@@ -2159,23 +2159,18 @@ export async function archiveWorkflow(
       `SELECT workspace_id FROM rooms WHERE id=$1`, [command.room_id],
     )).rows[0];
     if (!room) throw new Error('workflow room not found');
-    // Archive has no run: the current save's source author is its requester;
-    // when that author is an agent, its human owner has the role-owner authority.
-    const skill = (await db.query<{ id: string; requester_id: string | null }>(
-      `SELECT skill.id,source.author_id requester_id FROM workspace_skills skill
-       JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
-       LEFT JOIN messages source ON source.id=version.source_message_ids[1] AND source.deleted_at IS NULL
+    // Archiving deletes a saved workflow for the whole Workspace, so only a
+    // human Workspace admin may do it; who saved it grants nothing.
+    const skill = (await db.query<{ id: string }>(
+      `SELECT skill.id FROM workspace_skills skill
        WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
        FOR UPDATE OF skill`,
       [room.workspace_id, input.name],
     )).rows[0];
     if (!skill) return { slug: input.name, archived: false };
-    await authorizeWorkflowControl(db, command, {
-      requesterId: skill.requester_id,
-      agentIds: skill.requester_id ? [skill.requester_id] : [],
-      authority: 'the saved workflow requester, its agent owner',
-      action: 'archive this workflow',
-    });
+    const actorId = await workflowRequester(db, command);
+    if (!(await humanRoomAdmin(db, command.room_id, actorId)))
+      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can archive this workflow', 403);
     const result = await db.query(
       `UPDATE workspace_skills SET state='stale',updated_at=now() WHERE id=$1 AND state='active'`,
       [skill.id],

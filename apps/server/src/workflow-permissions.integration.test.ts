@@ -128,7 +128,17 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
       expect(latest.roleBindings).toEqual({ worker: SAVER });
     });
 
-  it.each([['saved requester', REQUESTER], ['saving agent', SAVER], ['saving agent owner', ROLE_OWNER], ['Workspace admin', WORKSPACE_ADMIN]])(
+  // Archiving deletes a saved workflow for the Workspace: who saved it grants nothing.
+  it.each([['saved requester', REQUESTER], ['saving agent', SAVER], ['saving agent owner', ROLE_OWNER]])(
+    'refuses %s, who is not a Workspace admin, to archive', async (_label, actor) => {
+      const { name } = await savedWorkflow(actor === ROLE_OWNER || actor === SAVER ? SAVER : REQUESTER);
+      const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(actor, DELEGATE), name });
+      expect(archived.status).toBe(403);
+      expect(JSON.stringify(archived.body)).toContain('workspace admins only');
+      expect((await db.query(`SELECT state FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.state).toBe('active');
+    });
+
+  it.each([['Workspace admin', WORKSPACE_ADMIN]])(
     'allows %s to archive through a different agent', async (_label, actor) => {
       const { name } = await savedWorkflow(actor === ROLE_OWNER || actor === SAVER ? SAVER : REQUESTER);
       const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(actor, DELEGATE), name });

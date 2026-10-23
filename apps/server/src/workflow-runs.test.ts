@@ -154,6 +154,16 @@ async function commandFor(agentId: string, sourceMessageId?: string): Promise<Co
   return command;
 }
 
+/** Archiving is workspace-admin-only: run it from a human Workspace owner's message. */
+async function adminArchiveCommand(): Promise<CommandRow> {
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')
+     ON CONFLICT DO NOTHING`,
+    [WORKSPACE, OWNER],
+  );
+  return commandFor(IMPLEMENTER, await rootMessage(OWNER));
+}
+
 async function pendingCommandsFor(agentId: string): Promise<number> {
   const rows = await database.query<{ count: string }>(
     `SELECT count(*)::text count FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='pending'`,
@@ -1502,7 +1512,9 @@ describe('archive_workflow', () => {
   it('archives a workflow so a later start_workflow refuses it', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
-    const archived = await archiveWorkflow(database, command, { name: 'corner' });
+    // Its saving agent may not archive it; a Workspace admin may.
+    await expect(archiveWorkflow(database, command, { name: 'corner' })).rejects.toThrow('workspace admins only');
+    const archived = await archiveWorkflow(database, await adminArchiveCommand(), { name: 'corner' });
     expect(archived).toEqual({ slug: 'corner', archived: true });
     await expect(
       startWorkflow(database, command, {
@@ -1515,7 +1527,7 @@ describe('archive_workflow', () => {
   it('keeps a run in flight on its pinned version after the workflow is archived', async () => {
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER);
-    await archiveWorkflow(database, command, { name: 'corner' });
+    await archiveWorkflow(database, await adminArchiveCommand(), { name: 'corner' });
     const result = await handoff(database, command, {
       runId,
       outcome: 'pushed',
@@ -2150,7 +2162,7 @@ describe('agent workflow run reads and cancellation', () => {
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow({ ...CONTRACT, description: 'New definition' })});
-    await archiveWorkflow(database, command, { name: 'corner' });
+    await archiveWorkflow(database, await adminArchiveCommand(), { name: 'corner' });
     expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({
       runId, workflowSlug: 'corner', workflowVersion: 1, state: 'implement', status: 'live',
       role: 'implementer', boundAgentId: IMPLEMENTER, requiredFields: ['summary', 'prUrl'],

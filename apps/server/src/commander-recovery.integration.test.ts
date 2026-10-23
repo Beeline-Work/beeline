@@ -1088,3 +1088,95 @@ for (const delivery of ['report', 'postRoomMessage'] as const) {
       [report.turnRequestId])).rowCount).toBe(0);
   });
 }
+
+it('Reproduction R-ID: supplied private report and order ids reopen their payloads and refuse other readers', async () => {
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  const read = (messageId: string, agent = WORKER, roomId = opened.cornerId) =>
+    daemon.execute('getRoomMessage', { roomId, messageId }, agent);
+  expect(await read(turn.id)).toMatchObject({ body: expect.stringContaining('Build the widget') });
+  await expect(read(turn.id, RUBY, ROOM)).resolves.toBeDefined();
+  const uploaded = await new ObjectService(db, new MemoryObjectStorage(), 'http://test')
+    .uploadArtifact(WORKER, Buffer.from('Synthetic handoff'), 'text/plain', 'handoff.txt');
+  const attachment = { url: uploaded.url, name: 'handoff.txt', mimeType: 'text/plain', size: Buffer.byteLength('Synthetic handoff') };
+  await daemon.execute('postAgentAttachment', { ...authority(turn), attachment }, WORKER);
+  const report = await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: evidence ready' }, WORKER);
+  expect(await read(report.id, RUBY, DM)).toMatchObject({ body: 'done: evidence ready', attachments: [expect.objectContaining({ name: 'handoff.txt' })] });
+  expect(await read(report.id)).toMatchObject({ body: 'done: evidence ready' });
+  // Continuations retain private payloads and expose their own command ids.
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{kind}','\"lifecycle\"'::jsonb) WHERE id=$1`, [report.id]);
+  expect(await read(report.id, RUBY, DM)).toMatchObject({ body: 'done: evidence ready' });
+  // A current Room member who is neither sender nor recipient cannot see it.
+  const outsider = 'e'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Observer') ON CONFLICT DO NOTHING`, [outsider]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, outsider]);
+  await expect(read(report.id, outsider, ROOM)).rejects.toThrow('message access denied');
+  await expect(read(turn.id, outsider, ROOM)).rejects.toThrow('message access denied');
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [DM, RUBY]);
+  await expect(read(report.id, RUBY, ROOM)).rejects.toThrow('message access denied');
+});
+
+it('Reproduction R-ID: an order card id returns the expanded text and archived sibling messages retain read access', async () => {
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Build the widget from evidence' }, RUBY);
+  const card = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND card_type='agent-command'`, [opened.cornerId])).rows[0]!;
+  expect(await daemon.execute('getRoomMessage', { ...authority(turn), messageId: card.id }, WORKER))
+    .toMatchObject({ body: expect.stringContaining('Build the widget') });
+  const sibling = await open();
+  const messageId = randomBytes(32).toString('hex');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Archived evidence')`, [messageId, opened.cornerId, WORKER]);
+  await daemon.execute('archiveCorner', { ...authority(order), cornerId: opened.cornerId }, RUBY);
+  expect(await daemon.execute('getRoomMessage', { ...authority(order), messageId }, RUBY))
+    .toMatchObject({ body: 'Archived evidence' });
+  expect(await daemon.execute('getRoomMessage', { roomId: sibling.cornerId, messageId }, WORKER))
+    .toMatchObject({ body: 'Archived evidence' });
+});
+
+it('Reproduction R-ID: the read tool downloads bytes from a private report hand-off', async () => {
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  const bytes = Buffer.from('Synthetic private report attachment');
+  const uploaded = await new ObjectService(db, new MemoryObjectStorage(), 'http://test')
+    .uploadArtifact(WORKER, bytes, 'text/plain', 'report-evidence.txt');
+  const media = uploaded.url.split('/').at(-1)!;
+  await daemon.execute('postAgentAttachment', { ...authority(turn), attachment: {
+    url: uploaded.url, name: 'report-evidence.txt', mimeType: 'text/plain', size: bytes.length,
+  } }, WORKER);
+  const report = await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: evidence attached' }, WORKER);
+  const scratch = await mkdtemp(join(tmpdir(), 'beeline-read-id-'));
+  const bridge = createServer(async (request, response) => {
+    try {
+      if (request.url === '/v1/daemon/operations/getRoomMessage') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const result = await daemon.execute('getRoomMessage', JSON.parse(Buffer.concat(chunks).toString()), RUBY);
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+      } else if (request.url === '/v1/media/' + media) {
+        response.writeHead(200, { 'content-type': 'text/plain' }).end(bytes);
+      } else response.writeHead(404).end();
+    } catch (error) {
+      response.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ error: String(error) }));
+    }
+  });
+  try {
+    await new Promise<void>((resolve) => bridge.listen(0, '127.0.0.1', resolve));
+    const address = bridge.address();
+    if (!address || typeof address === 'string') throw new Error('missing proof port');
+    vi.stubEnv('BEELINE_DAEMON_BASE_URL', `http://127.0.0.1:${address.port}`);
+    vi.stubEnv('BEELINE_DAEMON_TOKEN', 'isolated-fixture-token');
+    vi.stubEnv('BEELINE_DAEMON_ROOM_ID', opened.cornerId);
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', opened.cornerId);
+    vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', scratch);
+    vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', '');
+    const message = JSON.parse(await callAgentTool('read', { facet: 'message', messageId: report.id }, 'read-report'));
+    expect(message.body).toBe('done: evidence attached');
+    const downloaded = JSON.parse(await callAgentTool('read', { facet: 'attachment', messageId: report.id, attachmentId: media }, 'read-report-file'));
+    expect(await readFile(downloaded.path)).toEqual(bytes);
+  } finally {
+    vi.unstubAllEnvs();
+    bridge.closeAllConnections();
+    await new Promise<void>((resolve, reject) => bridge.close((error) => error ? reject(error) : resolve()));
+    await rm(scratch, { recursive: true, force: true });
+  }
+});

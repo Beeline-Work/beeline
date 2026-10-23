@@ -3199,11 +3199,39 @@ export class DaemonService {
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
       throw new Error('invalid message offset');
-    let row = (
+    // Private hand-offs expose the command id as their message id. Only the
+    // sender and recipient may reopen that payload, even in a shared Room.
+    const handoff = (await this.database.query<{
+      agent_id: string; author_id: string; body: string; total: number;
+      attachments: DaemonAttachment[]; accessible: boolean;
+    }>(
+      `SELECT command.agent_id,command.private_payload->>'authorId' author_id,
+              substring(command.private_payload->>'text' FROM $3::integer + 1 FOR 4000) body,
+              char_length(command.private_payload->>'text') total,
+              command.private_payload->'attachments' attachments,
+              EXISTS(SELECT 1 FROM effective_memberships member
+                     WHERE member.room_id=CASE WHEN command.agent_id=$2 THEN command.room_id
+                       ELSE NULLIF(command.private_payload->>'fromRoomId','')::uuid END
+                       AND member.identity_id=$2
+                       AND member.removed_at IS NULL) accessible
+       FROM agent_commands command
+       WHERE command.id=$1 AND command.private_payload IS NOT NULL`,
+      [input.messageId, agentId, offset],
+    )).rows[0];
+    if (handoff && (!handoff.accessible ||
+        (handoff.agent_id !== agentId && handoff.author_id !== agentId)))
+      throw new Error('message access denied: private hand-off');
+    let row = handoff ?? (
       await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
-        `SELECT substring(text FROM $3::integer + 1 FOR 4000) body,
-                char_length(text) total, attachments
-         FROM messages WHERE room_id=$1 AND id=$2 AND presentation='message'`,
+        `SELECT substring(CASE WHEN card_type='agent-command' THEN card->>'text' ELSE text END
+                         FROM $3::integer + 1 FOR 4000) body,
+                char_length(CASE WHEN card_type='agent-command' THEN card->>'text' ELSE text END) total, attachments
+         FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms output ON output.id=$1
+         WHERE message.id=$2 AND message.deleted_at IS NULL
+           AND COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
+           AND (presentation='message' OR card_type='agent-command')`,
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
@@ -3223,12 +3251,13 @@ export class DaemonService {
         row = (
           await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
             `WITH ${AUTHORIZED_ROOMS_CTE}
-             SELECT substring(message.text FROM $6::integer + 1 FOR 4000) body,
-                    char_length(message.text) total,message.attachments
+             SELECT substring(CASE WHEN message.card_type='agent-command' THEN message.card->>'text' ELSE message.text END
+                              FROM $6::integer + 1 FOR 4000) body,
+                    char_length(CASE WHEN message.card_type='agent-command' THEN message.card->>'text' ELSE message.text END) total,message.attachments
              FROM messages message
              JOIN authorized_rooms authorized ON authorized.id=message.room_id
              WHERE message.id=$5 AND message.deleted_at IS NULL
-               AND message.presentation='message'`,
+               AND (message.presentation='message' OR message.card_type='agent-command')`,
             [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
               input.messageId, offset],
           )
@@ -3236,14 +3265,13 @@ export class DaemonService {
       }
     }
     if (!row) {
-      // A message that exists elsewhere in this Workspace is a refusal, not a
-      // miss: download_attachment reports `forbidden` instead of `not_found`.
+      // Existing messages outside the readable scope are refusals, not misses:
+      // download_attachment must preserve forbidden rather than not_found.
       const elsewhere = await this.database.query(
         `SELECT 1 FROM messages message
-         JOIN rooms source ON source.id=message.room_id
-         JOIN rooms here ON here.id=$1 AND here.workspace_id=source.workspace_id
-         WHERE message.id=$2 AND message.deleted_at IS NULL AND message.presentation='message'`,
-        [input.roomId, input.messageId],
+         WHERE message.id=$1 AND message.deleted_at IS NULL
+           AND (message.presentation='message' OR message.card_type='agent-command')`,
+        [input.messageId],
       );
       if (elsewhere.rowCount) throw new Error('message access denied from this Room');
       throw new Error('message not found in this Room');

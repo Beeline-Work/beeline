@@ -1,3 +1,4 @@
+import { externalFetch } from '@beeline/auth/external-fetch';
 import { createSign } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 
@@ -95,7 +96,7 @@ function jwt(header: object, claims: object, key: string, algorithm: 'RSA-SHA256
   return `${data}.${signer.sign({ key, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
 }
 async function checked(url: string, init: RequestInit): Promise<Response> {
-  const response = await fetch(url, init);
+  const response = await externalFetch(url, init);
   if (!response.ok) throw new Error(`Store HTTP ${response.status}`);
   return response;
 }
@@ -176,7 +177,7 @@ export function storeDownloadFetcher(env: NodeJS.ProcessEnv): DownloadFetcher {
           'filter[vendorNumber]': vendor,
           'filter[reportDate]': day,
         });
-        const response = await fetch(
+        const response = await externalFetch(
           `https://api.appstoreconnect.apple.com/v1/salesReports?${query}`,
           { headers: { Authorization: `Bearer ${token}` }, signal },
         );

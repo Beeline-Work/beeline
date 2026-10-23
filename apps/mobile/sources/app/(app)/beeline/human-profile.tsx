@@ -46,6 +46,11 @@ export function HumanProfile({
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const allowNavigation = useRef(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
   const [recordScope, setRecordScope] = useState<string | null>(null);
   const [profile, setProfile] = useState<WorkspaceMemberListView | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +84,6 @@ export function HumanProfile({
     let stopProfile: (() => void) | undefined;
     let stopWatch: (() => void) | undefined;
     setLoading(true);
-    setError(null);
     void (async () => {
       const [identity, baseUrl] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
       if (!identity) throw new Error('Sign in to view this profile.');
@@ -148,10 +152,13 @@ export function HumanProfile({
     try {
       await action();
     } catch (reason) {
-      setError(String(reason));
+      if (active.current) {
+        setError(String(reason));
+        setRetry((value) => value + 1);
+      }
     } finally {
       mutation.current = false;
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   };
   const dirty = editing && member !== null && role !== member.role;
@@ -163,7 +170,8 @@ export function HumanProfile({
       destructive: true,
     }));
   const close = async () => {
-    if (busy || !(await confirmDiscard())) return;
+    if (!(await confirmDiscard())) return;
+    active.current = false;
     allowNavigation.current = true;
     onClose();
   };
@@ -225,7 +233,7 @@ export function HumanProfile({
             {!member && (
               <Button
                 label="Retry"
-                onPress={() => setRetry((value) => value + 1)}
+                onPress={() => { setError(null); setRetry((value) => value + 1); }}
                 variant="secondary"
               />
             )}
@@ -242,15 +250,18 @@ export function HumanProfile({
                     actions={[
                       {
                         label: 'Message',
+                        loading: busy,
                         disabled: busy,
                         testID: 'human-profile-message',
                         onPress: () =>
                           void perform(async () => {
                             if (!(await confirmDiscard())) return;
+                            setEditing(false);
                             const room = await monolithPhoneOperation('resolveDirectMessage', {
                               workspaceId,
                               participantId: memberId,
                             });
+                            if (!active.current) return;
                             allowNavigation.current = true;
                             navigateToRoom(router, room.id);
                           }),

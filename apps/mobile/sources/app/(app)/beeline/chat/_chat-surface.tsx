@@ -1,4 +1,5 @@
-import { CornerLockAction } from '@/components/buzz/CornerLockAction';
+import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
+import { CornerActionsSheet } from '@/components/buzz/CornerActionsSheet';
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 import { showVoiceJoinError } from '@/buzz/voice-update';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
@@ -3539,6 +3540,10 @@ export function BuzzChatSurface({
         );
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
+        if (err instanceof MonolithRequestTimeoutError) {
+          refreshSignal.force();
+          Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
+        }
         console.warn('Stopping the turn failed:', err);
         return false;
       }
@@ -4506,6 +4511,7 @@ export function BuzzChatSurface({
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
+        refreshSignal.force();
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4794,6 +4800,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
+        refreshSignal.force();
         setMembershipError(
           `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
         );
@@ -5249,37 +5256,21 @@ export function BuzzChatSurface({
     else router.replace('/beeline/channels');
   }, [cornerReturnTarget, liveDraftStore, navigation, parentChannelId]);
 
-  const [closingCorner, setClosingCorner] = useState(false);
+  const closeCornerPending = useRef(false);
   const handleCloseCorner = useCallback(async () => {
-    if (closingCorner) return;
-    // `if (!transport) return` — the shape this replaces — made every press a
-    // SILENT no-op until the screen had connected, and permanently if that
-    // ever failed. The screen paints from cache, so the button is on screen
-    // well before `transport` exists: pressing it did nothing, said nothing,
-    // and published nothing, which is exactly what the captain saw (a corner
-    // with zero close requests accepted by the server after many presses).
-    // A control the reader can see must either act or explain itself.
-    if (!transport) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert(
-        `Not connected yet`,
-        `This ${CORNER_LABEL} could not be closed because the app is still connecting to the server. Try again in a moment.`,
-      );
-      return;
-    }
-    setClosingCorner(true);
+    if (closeCornerPending.current) return;
+    closeCornerPending.current = true;
     try {
+      if (!transport) throw new Error('Still connecting. Try again in a moment.');
       await transport.closeCorner(decodedId);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       handleBack();
-    } catch (err) {
-      console.warn('Close corner failed:', err);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Modal.alert('Could not close corner', err instanceof Error ? err.message : String(err));
+    } catch (error) {
+      refreshSignal.force();
+      Modal.alert('Could not close corner', error instanceof Error ? error.message : String(error));
     } finally {
-      setClosingCorner(false);
+      closeCornerPending.current = false;
     }
-  }, [closingCorner, decodedId, handleBack, transport]);
+  }, [decodedId, handleBack, transport, refreshSignal]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -7308,41 +7299,31 @@ export function BuzzChatSurface({
         />
       </HullActionSheetModal>
 
-      <HullActionSheetModal
-        accessibilityLabel={`Close ${CORNER_LABEL} actions`}
-        dismissOnBackdrop={!closingCorner}
-        onClose={() => { if (!closingCorner) setCornerActionsVisible(false); }}
-        testID="corner-actions-sheet"
+      <CornerActionsSheet
         title={headerTitle ?? cornerOwnerDisplay?.name ?? CORNER_LABEL}
         visible={cornerActionsVisible}
-      >
-        <CornerLockAction
-          locked={roomSurface?.cornerLocked === true}
-          disabled={closingCorner || !transport}
-          save={async (locked) => {
-            if (!transport) throw new Error('Still connecting. Try again in a moment.');
-            await transport.setCornerLocked(decodedId, locked);
-          }}
-          onSaved={() => refreshSignal.force()}
-          onError={(error) => Modal.alert('Could not change corner lock', error instanceof Error ? error.message : String(error))}
-        />
-        <HullActionSheetRow
-          accessibilityLabel={`Close ${CORNER_LABEL}`}
-          description={`Ends the edit session and archives this ${CORNER_LABEL}. Unmerged work is lost.`}
-          destructive
-          disabled={closingCorner}
-          label={closingCorner ? `Closing ${CORNER_LABEL}…` : `Close ${CORNER_LABEL}`}
-          onPress={() => {
-            void handleCloseCorner();
-          }}
-          testID="close-corner-action"
-        />
-        <HullActionSheetCancel
-          disabled={closingCorner}
-          onPress={() => setCornerActionsVisible(false)}
-          testID="corner-actions-close"
-        />
-      </HullActionSheetModal>
+        locked={roomSurface?.cornerLocked === true}
+        connected={Boolean(transport)}
+        onClose={() => setCornerActionsVisible(false)}
+        closeCorner={async () => {
+          if (!transport) throw new Error('Still connecting. Try again in a moment.');
+          await transport.closeCorner(decodedId);
+        }}
+        setLocked={async (locked) => {
+          if (!transport) throw new Error('Still connecting. Try again in a moment.');
+          await transport.setCornerLocked(decodedId, locked);
+        }}
+        onClosed={() => {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          handleBack();
+        }}
+        onSaved={() => refreshSignal.force()}
+        onError={(error) => {
+          refreshSignal.force();
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          Modal.alert('Could not complete request', error instanceof Error ? error.message : String(error));
+        }}
+      />
 
       <HullDialog
         actions={[

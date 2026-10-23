@@ -102,6 +102,7 @@
     ],
     "components/buzz/CornerBranchGlyph.tsx": ["CORNER_BRANCH_POINTS", "CornerBranchGlyph"],
     "components/buzz/CornerGlyph.tsx": ["CORNER_POINTS", "CornerGlyph"],
+    "components/buzz/CornerActionsSheet.tsx": ["CornerActionsSheet"],
     "components/buzz/CornerLockAction.tsx": ["CornerLockAction"],
     "components/buzz/CornerObjectiveLine.tsx": [
       "CornerBriefLink",

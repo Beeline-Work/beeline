@@ -1,5 +1,5 @@
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
+import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
 /**
@@ -61,9 +61,11 @@ export function phoneOperationRequestOptions(
   input: unknown,
   options?: { timeoutMs?: number },
 ): { timeoutMs?: number; idempotent?: boolean } | undefined {
+  // Repository installation may wait for GitHub's installation propagation;
+  // retain its existing longer deadline rather than cutting it to the default.
   if (name === 'actOnRepositoryCard') return { timeoutMs: options?.timeoutMs ?? 60_000, idempotent: !['install', 'organization'].includes(String((input as { action?: unknown })?.action)) };
   const idempotent = DATABASE_READS.has(name) || repeatableWrite(name, input);
-  if (!idempotent) return options;
+  if (!idempotent) return { timeoutMs: options?.timeoutMs ?? 20_000 };
   return { timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS, idempotent: true };
 }
 
@@ -92,19 +94,44 @@ export function phoneOperationFailureReason(error: unknown): string {
 export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name,
   input: PhoneOperationMap[Name]['input'],
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; baseUrl?: string },
 ): Promise<PhoneOperationMap[Name]['output']> {
   const request = phoneOperationRequestOptions(name, input, options);
+  // Bound authorization, transport and response decoding together. Native
+  // transports may ignore abort, so the caller also races the deadline.
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      performPhoneOperation(name, input, request, controller.signal, options?.baseUrl),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new MonolithRequestTimeoutError());
+          controller.abort();
+        }, request?.timeoutMs ?? 20_000);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function performPhoneOperation<Name extends keyof PhoneOperationMap>(
+  name: Name,
+  input: PhoneOperationMap[Name]['input'],
+  request: ReturnType<typeof phoneOperationRequestOptions>,
+  signal: AbortSignal,
+  baseUrl = getBuzzRuntimeConfig().monolithUrl,
+): Promise<PhoneOperationMap[Name]['output']> {
   const response = await monolithSession.fetch(
-    `${getBuzzRuntimeConfig().monolithUrl}/v1/phone/operations/${name}`,
+    `${baseUrl}/v1/phone/operations/${name}`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
+      signal,
     },
-    // Forwarded only when set: any other write keeps monolithSession.fetch's
-    // own no-timeout default.
-    ...(request ? [request] : []),
+    request,
   );
   if (!response.ok) {
     let code = 'request_failed';

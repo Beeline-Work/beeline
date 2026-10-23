@@ -1,3 +1,4 @@
+import { externalFetch } from '@beeline/auth/external-fetch';
 /**
  * One module owning every word we say to S3-compatible object storage
  * (production: Fly Tigris, provisioned with `fly storage create`).
@@ -71,6 +72,10 @@ export class ObjectStorage {
     if (options.fetch) this.#client.fetch = options.fetch.bind(globalThis);
   }
 
+  #fetchWithDeadline(input: string, init: RequestInit): Promise<Response> {
+    return externalFetch(input, init, this.#client.fetch.bind(this.#client));
+  }
+
   get bucket(): string {
     return this.#bucket;
   }
@@ -87,7 +92,7 @@ export class ObjectStorage {
   }
 
   async putObject(key: string, body: Uint8Array, contentType: string): Promise<void> {
-    const response = await this.#client.fetch(this.objectUrl(key), {
+    const response = await this.#fetchWithDeadline(this.objectUrl(key), {
       method: 'PUT',
       body: Buffer.from(body),
       headers: { 'content-type': contentType },
@@ -159,7 +164,7 @@ export class ObjectStorage {
 
   /** null when storage has no such object; other errors surface. */
   async headObject(key: string): Promise<HeadObjectResult | null> {
-    const response = await this.#client.fetch(this.objectUrl(key), { method: 'HEAD' });
+    const response = await this.#fetchWithDeadline(this.objectUrl(key), { method: 'HEAD' });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`object storage head failed: HTTP ${response.status}`);
     const length = response.headers.get('content-length');
@@ -171,7 +176,7 @@ export class ObjectStorage {
 
   /** 404 is null; other errors surface. Used when promoting an upload into avatars. */
   async getObject(key: string): Promise<Uint8Array | null> {
-    const response = await this.#client.fetch(this.objectUrl(key), { method: 'GET' });
+    const response = await this.#fetchWithDeadline(this.objectUrl(key), { method: 'GET' });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`object storage get failed: HTTP ${response.status}`);
     return new Uint8Array(await response.arrayBuffer());
@@ -179,7 +184,7 @@ export class ObjectStorage {
 
   /** Deleting a missing object is success: the sweep is idempotent on reruns. */
   async deleteObject(key: string): Promise<void> {
-    const response = await this.#client.fetch(this.objectUrl(key), { method: 'DELETE' });
+    const response = await this.#fetchWithDeadline(this.objectUrl(key), { method: 'DELETE' });
     if (!response.ok && response.status !== 404)
       throw new Error(`object storage delete failed: HTTP ${response.status}`);
   }

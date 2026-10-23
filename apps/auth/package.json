@@ -33,6 +33,11 @@
       "types": "./dist/store.d.ts",
       "import": "./dist/store.js",
       "default": "./dist/store.js"
+    },
+    "./external-fetch": {
+      "types": "./dist/external-fetch.d.ts",
+      "import": "./dist/external-fetch.js",
+      "default": "./dist/external-fetch.js"
     }
   },
   "scripts": {

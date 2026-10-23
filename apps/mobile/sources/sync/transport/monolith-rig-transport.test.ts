@@ -26,6 +26,7 @@ vi.mock('@/buzz/runtime-config', () => ({
 }));
 vi.mock('@/auth/monolith-session', () => ({
   MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
+  MonolithRequestTimeoutError: class extends Error {},
   monolithSession: {
     fetch: controls.fetch,
     authorization: controls.authorization,
@@ -568,6 +569,17 @@ describe('monolith Room send path', () => {
     );
   });
 
+  it('R1: bounds a Close corner transport that ignores abort', async () => {
+    vi.useFakeTimers();
+    try {
+      controls.fetch.mockImplementation(() => new Promise(() => {}));
+      const result = new MonolithRigTransport(identity).closeCorner(ROOM).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(await result).toBeInstanceOf(Error);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('persists the corner lock through the human operation', async () => {
     controls.fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
     const transport = new MonolithRigTransport(identity);
@@ -575,6 +587,7 @@ describe('monolith Room send path', () => {
     expect(controls.fetch).toHaveBeenCalledWith(
       'https://server.example/v1/phone/operations/setCornerLocked',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ roomId: ROOM, locked: true }) }),
+      expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
 
@@ -590,6 +603,7 @@ describe('monolith Room send path', () => {
         method: 'POST',
         body: JSON.stringify({ roomId: ROOM }),
       }),
+      expect.objectContaining({ timeoutMs: 20_000 }),
     );
     expect(String(controls.fetch.mock.calls[0]![1]?.body)).not.toContain('Close this corner.');
   });
@@ -700,6 +714,7 @@ describe('monolith Room send path', () => {
           avatarSeed: 'honeybee-seed',
         }),
       }),
+      expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
 
@@ -729,6 +744,7 @@ describe('monolith Room send path', () => {
           repositoryId: 77,
         }),
       }),
+      expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
 
@@ -745,6 +761,7 @@ describe('monolith Room send path', () => {
       expect.objectContaining({
         body: JSON.stringify({ workspaceId: 'workspace-id', name: 'Chat Room' }),
       }),
+      expect.objectContaining({ timeoutMs: 20_000 }),
     );
   });
 

@@ -2,7 +2,7 @@ import { quoteOutsideData } from './outside-data.js';
 import type { SystemEvent } from './system-events.js';
 
 /** A standing, event-driven wake for one agent in one Room. */
-export type SubscriptionSource = 'room' | 'repository' | 'service';
+export type SubscriptionSource = 'room' | 'repository' | 'service' | 'webhook';
 export type RoomSubscriptionView = {
   readonly title?: string;
   readonly id: string;
@@ -10,6 +10,8 @@ export type RoomSubscriptionView = {
   readonly agentId: string;
   readonly source: SubscriptionSource;
   readonly event: string;
+  readonly webhook?: { readonly url: string; readonly tokenSuffix: string; readonly tokenCreatedAt: number };
+  readonly recentCalls?: readonly WebhookCallView[];
   readonly repository?: string;
   readonly service?: 'Slack' | 'Linear' | 'Stripe';
   readonly channel?: string;
@@ -52,3 +54,14 @@ export function subscriptionActionPrompt(event: Pick<SystemEvent, 'subscriptionP
     : event.subscriptionPrompt ?? 'React to this event.';
   return `${action}\n\n${quoteOutsideData('subscription event', event.payload)}`;
 }
+
+export type WebhookCallView = {
+  readonly id: string;
+  readonly at: number;
+  readonly outcome: 'woke' | 'refused' | 'skipped';
+  readonly reason?: string;
+  readonly bytes: number;
+  readonly runId?: string;
+  readonly messageId?: string;
+  readonly repeatAt?: number;
+};

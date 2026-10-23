@@ -1996,6 +1996,12 @@ export async function startWorkflow(
         ...(trigger ? { trigger } : {}),
       },
     });
+    if (command.source_message_id) await db.query(
+      `WITH linked AS (
+        UPDATE subscription_webhook_calls SET run_id=$2 WHERE wake_message_id=$1 RETURNING subscription_id
+      ) UPDATE agent_subscriptions subscription SET fired_count=subscription.fired_count
+        FROM linked WHERE subscription.id=linked.subscription_id`,
+      [command.source_message_id, runId]);
     await scheduleRunTimer(db, {
       workspaceId: room.workspace_id,
       roomId: command.room_id,

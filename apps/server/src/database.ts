@@ -10,6 +10,7 @@ import { VOICE_SCHEMA } from './voice-schema.js';
 import { FREE_AGENTS_SCHEMA, FREE_AGENT_CONNECT_GUIDE } from './free-agents.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
+import { SUBSCRIPTION_WEBHOOKS_SCHEMA } from './subscription-webhooks.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
 import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
 import { SENTRY_WAKE_SCHEMA } from './sentry-wake.js';
@@ -211,7 +212,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 36;
+export const REQUIRED_SCHEMA_VERSION = 37;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3115,6 +3116,7 @@ export async function migrate(
        AND reason IN ('human_tag','direct_message')`,
   ));
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
+  await ddlScript('subscription webhook calls', SUBSCRIPTION_WEBHOOKS_SCHEMA);
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
   await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);

@@ -11,6 +11,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { scheduleWorkflowName } from './workflow-admin.js';
 import { connectedProviderApp, providerForEvent, queueProviderWebhook,
   providerEventIsAvailable, retireUnusedProviderWebhook } from './provider-webhooks.js';
+import { createWebhookCredentials, requireWebhookAdmin } from './subscription-webhooks.js';
 import { notifyConnectorHelper } from './postgres-live.js';
 
 export const AGENT_SUBSCRIPTIONS_SCHEMA = `
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS agent_subscriptions (
  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
  agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
- source text NOT NULL CHECK(source IN ('room','repository','service')),
+ source text NOT NULL CHECK(source IN ('room','repository','service','webhook')),
  event text NOT NULL,
  repository text,
  service_app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE,
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS agent_subscriptions (
  created_at timestamptz NOT NULL DEFAULT now(),
  last_fired_at timestamptz,
  CHECK ((source='room' AND repository IS NULL) OR (source='repository' AND repository IS NOT NULL)
+   OR (source='webhook' AND event='webhook.called')
    OR (source='service' AND service_app_id IS NOT NULL AND trigger_id IS NOT NULL))
 );
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS title text;
@@ -44,21 +46,30 @@ ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS service_channel_name te
 ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS trigger_id text;
 ALTER TABLE agent_subscriptions DROP CONSTRAINT IF EXISTS agent_subscriptions_source_check;
 ALTER TABLE agent_subscriptions DROP CONSTRAINT IF EXISTS agent_subscriptions_check;
+ALTER TABLE agent_subscriptions DROP CONSTRAINT IF EXISTS agent_subscriptions_source_v2_check;
+ALTER TABLE agent_subscriptions DROP CONSTRAINT IF EXISTS agent_subscriptions_shape_v2_check;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS webhook_token text;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS webhook_suffix text;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS webhook_token_created_at timestamptz;
+ALTER TABLE agent_subscriptions ADD COLUMN IF NOT EXISTS webhook_owner_id text REFERENCES identities(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS agent_subscriptions_webhook_owner ON agent_subscriptions(webhook_owner_id);
 DO $$ BEGIN
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='agent_subscriptions_source_v2_check') THEN
-  ALTER TABLE agent_subscriptions ADD CONSTRAINT agent_subscriptions_source_v2_check
-   CHECK(source IN ('room','repository','service'));
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='agent_subscriptions_source_v3_check') THEN
+  ALTER TABLE agent_subscriptions ADD CONSTRAINT agent_subscriptions_source_v3_check
+   CHECK(source IN ('room','repository','service','webhook'));
  END IF;
- IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='agent_subscriptions_shape_v2_check') THEN
-  ALTER TABLE agent_subscriptions ADD CONSTRAINT agent_subscriptions_shape_v2_check CHECK (
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='agent_subscriptions_shape_v3_check') THEN
+  ALTER TABLE agent_subscriptions ADD CONSTRAINT agent_subscriptions_shape_v3_check CHECK (
    (source='room' AND repository IS NULL) OR (source='repository' AND repository IS NOT NULL)
+   OR (source='webhook' AND event='webhook.called')
    OR (source='service' AND service_app_id IS NOT NULL AND trigger_id IS NOT NULL));
  END IF;
 END $$;
 DROP INDEX IF EXISTS agent_subscriptions_unique;
-CREATE UNIQUE INDEX IF NOT EXISTS agent_subscriptions_unique_v2
+DROP INDEX IF EXISTS agent_subscriptions_unique_v2;
+CREATE UNIQUE INDEX IF NOT EXISTS agent_subscriptions_unique_v3
  ON agent_subscriptions(room_id,agent_id,source,event,COALESCE(repository,''),
-   COALESCE(service_app_id::text,''),COALESCE(service_channel_id,''));
+   COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) WHERE source<>'webhook';
 CREATE INDEX IF NOT EXISTS agent_subscriptions_workspace ON agent_subscriptions(workspace_id);
 CREATE INDEX IF NOT EXISTS agent_subscriptions_agent ON agent_subscriptions(agent_id);
 CREATE INDEX IF NOT EXISTS agent_subscriptions_repository ON agent_subscriptions(repository,source,event);
@@ -92,6 +103,7 @@ function view(row: Row): RoomSubscriptionView {
       ? { registrationStatus: row.provider_status ?? 'registering' } : {}),
     ...(row.title ? { title: row.title } : {}),
     ...(row.trigger_text ? { when: row.trigger_text } : {}),
+    ...(row.source === 'webhook' ? { when: 'On webhook call' } : {}),
     prompt: row.prompt, ...(row.workflow_slug ? { workflowSlug: row.workflow_slug } : {}), firedCount: row.fired_count,
     createdAt: Math.floor(row.created_at.getTime() / 1000),
     ...(row.last_fired_at ? { lastFiredAt: Math.floor(row.last_fired_at.getTime() / 1000) } : {}),
@@ -134,7 +146,7 @@ function legacyId(id: string) {
 }
 
 function validEvent(source: SubscriptionSource, event: string): boolean {
-  return source === 'room'
+  return source === 'webhook' ? event === 'webhook.called' : source === 'room'
     ? isSubscribableEventKind(event)
     : source === 'repository' ? isRepositorySubscriptionEvent(event)
       : event === 'new_message' || Boolean(providerForEvent(event));
@@ -144,10 +156,10 @@ function validEvent(source: SubscriptionSource, event: string): boolean {
 export async function createAgentSubscription(
   db: SqlDatabase, agentId: string,
   input: { roomId: string; source: SubscriptionSource; event: string; repository?: string;
-    channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string },
+    requestId?: string; channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string },
   service?: { composio?: ComposioApps; receiverUrl: string },
 ): Promise<RoomSubscriptionView> {
-  return input.source === 'service' && providerForEvent(input.event)
+  return input.source === 'webhook' || (input.source === 'service' && providerForEvent(input.event))
     ? db.transaction((tx) => createAgentSubscriptionInDb(tx, agentId, input, service))
     : createAgentSubscriptionInDb(db, agentId, input, service);
 }
@@ -155,7 +167,7 @@ export async function createAgentSubscription(
 async function createAgentSubscriptionInDb(
   db: SqlDatabase, agentId: string,
   input: { roomId: string; source: SubscriptionSource; event: string; repository?: string;
-    channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string },
+    requestId?: string; channelId?: string; channelName?: string; title?: string; when?: string; prompt: string; workflowName?: string },
   service?: { composio?: ComposioApps; receiverUrl: string },
 ): Promise<RoomSubscriptionView> {
   const title = validateScheduleTitle(input.title);
@@ -165,7 +177,7 @@ async function createAgentSubscriptionInDb(
     throw new Error('when is required: a trigger phrase of one to five words');
   const prompt = input.prompt?.trim();
   if (!prompt || prompt.length > 4000) throw new Error('prompt must be 1–4000 characters');
-  if (!['room', 'repository', 'service'].includes(input.source) || !validEvent(input.source, input.event))
+  if (!['room', 'repository', 'service', 'webhook'].includes(input.source) || !validEvent(input.source, input.event))
     throw new Error('event is not available for this subscription source');
   const repository = input.source === 'repository' ? input.repository?.trim().toLowerCase() : undefined;
   if (input.source === 'repository' && (!repository || !/^[^/\s]+\/[^/\s]+$/.test(repository)))
@@ -187,6 +199,8 @@ async function createAgentSubscriptionInDb(
      WHERE room.id=$1 AND room.archived_at IS NULL`, [input.roomId, agentId],
   );
   if (!room.rowCount) throw new Error('agent is not a current Room member');
+  const webhookOwner = input.source === 'webhook'
+    ? await requireWebhookAdmin(db, input.roomId, undefined, { agentId, requestId: input.requestId }) : undefined;
   const workflowSlug = await scheduleWorkflowName(db, input.roomId, prompt, input.workflowName);
   if (repository) {
     const covered = await db.query(
@@ -236,7 +250,7 @@ async function createAgentSubscriptionInDb(
        service_app_id,service_account_id,service_channel_id,service_channel_name,trigger_id,title,trigger_text)
      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT(room_id,agent_id,source,event,COALESCE(repository,''),
-       COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) DO UPDATE
+       COALESCE(service_app_id::text,''),COALESCE(service_channel_id,'')) WHERE source<>'webhook' DO UPDATE
        SET title=EXCLUDED.title,trigger_text=EXCLUDED.trigger_text,prompt=EXCLUDED.prompt,workflow_slug=EXCLUDED.workflow_slug,
          service_channel_name=EXCLUDED.service_channel_name,trigger_id=EXCLUDED.trigger_id
      RETURNING *`,
@@ -245,6 +259,7 @@ async function createAgentSubscriptionInDb(
       input.source === 'service' && input.event === 'new_message' ? input.channelId : null,
       input.source === 'service' && input.event === 'new_message' ? input.channelName ?? null : null, triggerId ?? null, title, when],
   );
+  if (webhookOwner) await createWebhookCredentials(db, rows.rows[0]!.id, webhookOwner);
   if (providerConnectorId) await notifyConnectorHelper(db, providerConnectorId);
   if (providerStatus) rows.rows[0]!.provider_status = providerStatus;
   return view(rows.rows[0]!);

@@ -662,6 +662,13 @@ async function checksReported(
   transition: Transition,
   event: Extract<CornerEvent, { kind: 'checks' }>,
 ): Promise<Applied> {
+  // Read the durable event under the lifecycle lock, before either verdict can wake anyone.
+  const source = (await db.query<{ head_sha: string | null }>(
+    `SELECT system_event->'object'->>'headSha' head_sha FROM messages WHERE id=$1 AND room_id=$2`,
+    [event.sourceMessageId, cornerId],
+  )).rows[0];
+  if (source?.head_sha && source.head_sha !== corner.lifecycle.pr?.headSha)
+    return no('checks event belongs to an old head');
   if (await cornerReportWaiting(db, cornerId)) return no('the corner is waiting for an answer');
   // A fact replayed after the checks moved on is stale.
   if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);

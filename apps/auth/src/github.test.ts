@@ -24,11 +24,40 @@ it('uses the registered GitHub callback when no redirect override is supplied', 
 });
 
 const retryHead = 'a'.repeat(40);
-const passingRollupResponse = () => new Response(JSON.stringify({ data: { repository: { object: {
+const passingRollupResponse = (input?: unknown) => String(input).includes('/repos/')
+  ? Response.json(String(input).includes('/check-suites?') ? { total_count: 0, check_suites: [] } : { total_count: 0, workflow_runs: [] })
+  : new Response(JSON.stringify({ data: { repository: { object: {
   oid: retryHead, statusCheckRollup: { state: 'SUCCESS', contexts: { totalCount: 1, nodes: [
     { __typename: 'CheckRun', name: 'lint', status: 'COMPLETED', conclusion: 'SUCCESS' },
   ] } },
 } } } }));
+
+it.each(['check_suites', 'workflow_runs'])('CHECK-HEAD-1: reads later pages of %s registration', async key => {
+  const seen: string[] = [];
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    const url = String(input); seen.push(url);
+    if (url.endsWith('/graphql')) return passingRollupResponse();
+    const thisKey = url.includes('/check-suites?') ? 'check_suites' : 'workflow_runs';
+    if (thisKey !== key) return Response.json({ total_count: 0, [thisKey]: [] });
+    const second = url.endsWith('page=2');
+    return Response.json({ total_count: 101,
+      [key]: second ? [{ status: 'queued' }] : Array.from({ length: 100 }, () => ({ status: 'completed' })) });
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  expect(await app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).toMatchObject({
+    state: 'pending', pendingRegistrations: true, total: 1 });
+  expect(seen.some(url => url.endsWith('page=2'))).toBe(true);
+});
+
+it('CHECK-HEAD-1: fails closed if workflow registration cannot be read', async () => {
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    const url = String(input);
+    if (url.endsWith('/graphql')) return passingRollupResponse();
+    return new Response('{}', { status: 403 });
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toMatchObject({ status: 403 });
+});
 
 it.each([502, 503, 504, 429])('R-GH-RETRY: shared rollup retries HTTP %s then succeeds', async status => {
   vi.useFakeTimers();
@@ -38,7 +67,7 @@ it.each([502, 503, 504, 429])('R-GH-RETRY: shared rollup retries HTTP %s then su
     const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
     const result = expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({ state: 'passed', total: 1 });
     await vi.runAllTimersAsync(); await result;
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   } finally { vi.useRealTimers(); }
 });
 
@@ -64,7 +93,7 @@ it('R-GH-RETRY: shared rollup waits for Retry-After and never retries permanent 
     await vi.advanceTimersByTimeAsync(1999);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1); await result;
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     fetchMock.mockReset().mockResolvedValue(new Response('{}', { status: 403 }));
     await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toMatchObject({ status: 403 });
     expect(fetchMock).toHaveBeenCalledTimes(1);

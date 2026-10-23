@@ -38,6 +38,8 @@ let failMergeabilityRead: boolean;
 let workflowCount: number;
 let registeredCount: number;
 let onWorkflowRead: (() => Promise<void>) | undefined;
+let workflowStatus: string;
+let suiteStatus: string;
 let requests: string[];
 let server: Server | undefined;
 
@@ -101,6 +103,8 @@ beforeEach(async () => {
   workflowCount = 0;
   registeredCount = 1;
   onWorkflowRead = undefined;
+  workflowStatus = 'completed';
+  suiteStatus = 'completed';
   requests = [];
   app = new GitHubAppClient({
     appId: '1',
@@ -122,6 +126,9 @@ beforeEach(async () => {
       await onWorkflowRead?.();
       return Response.json({ total_count: workflowCount });
     }
+    if (url.includes('per_page=100')) return Response.json(url.includes('/check-suites?')
+      ? { total_count: 1, check_suites: [{ status: suiteStatus }] }
+      : { total_count: 1, workflow_runs: [{ status: workflowStatus }] });
     if (url.includes('/check-suites?') || url.includes('/actions/runs?')) {
       if (registeredCount) rollupState = 'PENDING';
       return Response.json({ total_count: registeredCount });
@@ -225,6 +232,39 @@ async function ownPr() {
 }
 
 describe('PR-scoped check gate', () => {
+  it.each(['queued', 'in_progress', 'waiting', 'pending', 'requested'])('Reproduction CHECK-HEAD-1: a %s workflow keeps the live gate pending after existing jobs pass', async status => {
+    workflowStatus = status;
+    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
+    workflowStatus = 'completed';
+    expect(await gate()).toMatchObject({ checks: 'passed', stage: 'waiting_for_yes' });
+  });
+
+  it('Reproduction CHECK-HEAD-1: a queued suite keeps the live gate pending', async () => {
+    suiteStatus = 'queued';
+    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
+    suiteStatus = 'completed';
+    expect(await gate()).toMatchObject({ checks: 'passed' });
+  });
+
+  it.each(['workflow', 'suite'])('CHECK-HEAD-1: a completed job webhook cannot dispatch review with a queued %s', async registration => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    if (registration === 'workflow') workflowStatus = 'queued'; else suiteStatus = 'queued';
+    await operations.processWebhook('check_run', { action: 'completed', installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' }, check_run: { name: 'test', status: 'completed',
+        conclusion: 'success', head_sha: SHA, check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA } } });
+    expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [AUTHOR])).rows[0]?.checks).toBe('pending');
+    expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(0);
+  });
+
+  it('keeps a formerly zero-check head pending when a workflow registers later', async () => {
+    await ownPr();
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}','{"total":0}') WHERE corner_id=$1`, [AUTHOR]);
+    rollupContexts = { totalCount: 0, nodes: [] };
+    workflowStatus = 'queued';
+    expect(await gate(AUTHOR)).toMatchObject({ checks: 'pending', mergeAllowed: false });
+  });
+
   it('uses GitHub statusCheckRollup as the verdict', async () => {
     await expect(gate()).resolves.toMatchObject({
       stage: 'waiting_for_yes',
@@ -554,7 +594,7 @@ describe('PR-scoped check gate', () => {
       [
         '--import',
         'tsx',
-        fileURLToPath(new globalThis.URL('../../body/src/read-only-mcp.ts', import.meta.url)),
+        fileURLToPath(new globalThis.URL('../../body/dist/read-only-mcp.js', import.meta.url)),
       ],
       {
         env: {
@@ -643,6 +683,18 @@ describe('PR-scoped check gate', () => {
     );
     const gate5 = await callGate(5);
     expect(gate5).toMatchObject({ approved: true, held: false, mergeAllowed: true });
+    // CHECK-HEAD-1: the shipped helper's checks read follows registration and
+    // live verdicts even when restore state still says pending.
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+      JSON.stringify({ checks: 'pending', pr: { number: 614, url: URL, headSha: SHA } })]);
+    workflowStatus = 'queued';
+    expect(await callGate(6)).toMatchObject({ checks: 'pending', mergeAllowed: false,
+      reason: expect.stringContaining('queued or running workflows or suites') });
+    workflowStatus = 'completed'; suiteStatus = 'queued';
+    expect(await callGate(7)).toMatchObject({ checks: 'pending', mergeAllowed: false });
+    suiteStatus = 'completed';
+    expect(await callGate(8)).toMatchObject({ checks: 'passed', mergeAllowed: true, reason: 'all recorded checks passed' });
+    console.info('Reproduction CHECK-HEAD-1: built helper read -> queued workflow/suite pending -> completed passed, stale restore text cleared');
     child.kill();
   });
 });

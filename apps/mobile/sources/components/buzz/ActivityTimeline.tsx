@@ -93,7 +93,9 @@ function ToolLedgerLineRow({
   const verb = line.outcome === 'failure' ? 'Failed' : line.outcome === 'running' ? 'Running' : action.charAt(0).toUpperCase() + action.slice(1);
   return (
     <TranscriptNavigationRow testID={testID} singleDestination
-      trailing={onPress ? { onPress, accessibilityLabel } : undefined}>
+      trailing={onPress ? { onPress, accessibilityLabel, accessibilityRole: 'button',
+        accessibilityState: { busy: line.outcome === 'running' },
+        accessibilityHint: 'Opens this call’s output' } : undefined}>
       <InlineRow style={styles.toolCopy}>
         <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text>
         <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>{line.label}</Text>

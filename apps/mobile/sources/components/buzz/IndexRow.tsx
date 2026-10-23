@@ -109,6 +109,9 @@ const navigationStyles = StyleSheet.create(({ buzz }) => ({
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 export type IndexRowTrailingPress = {
+  accessibilityRole?: AccessibilityRole;
+  accessibilityState?: AccessibilityState;
+  accessibilityHint?: string;
   accessibilityLabel?: string;
   disabled?: boolean;
   onPress: () => void;

@@ -221,7 +221,7 @@ describe('one-line tool ledger', () => {
       const [row] = hostNodes(renderer, new RegExp(`^tool-ledger-line-${id}$`));
       expect(row.findAllByType('View').some((node: any) => JSON.stringify(node.props.style)?.includes('44'))).toBe(true);
     }
-    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).findAllByType('Pressable')).toHaveLength(1);
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).findByType('Pressable').props.accessibilityRole).toBe('button');
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress,
     ).toBeUndefined();

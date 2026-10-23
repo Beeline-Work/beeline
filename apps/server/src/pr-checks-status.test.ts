@@ -374,13 +374,12 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ checks: 'passed', checkCount: 0 });
   });
 
-  it('does not single out a configured reviewer that opened the corner', async () => {
+  it('refuses PASS when the configured reviewer is the corner implementer', async () => {
     await ownPr();
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
     await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
-    // The server does not referee whether the configured reviewer opened
-    // this corner: it is dispatched and can PASS like any other reviewer.
+    // An opener with no separate worker is the effective implementer.
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
       approved: false,
@@ -391,8 +390,8 @@ describe('PR-scoped check gate', () => {
     });
     await expect(
       daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
-    ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
-    expect(await gate(AUTHOR)).toMatchObject({ approved: true, mergeAllowed: true });
+    ).rejects.toThrow('the corner implementer cannot review its own work');
+    expect(await gate(AUTHOR)).toMatchObject({ approved: false, mergeAllowed: false });
   });
 
   it('keeps configured reviewer approval bound to the requested PR and exact head', async () => {

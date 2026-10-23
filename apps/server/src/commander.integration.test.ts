@@ -224,6 +224,9 @@ it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', a
   expect(mergeWakes[0]!.private).toBe(true);
 });
 it('a configured reviewer can record PASS from its DM without changing the reviewer gate', async () => {
+  const github = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 'secret');
+  vi.spyOn(github, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
+  Object.assign(daemon, { github });
   const opened = await open(), headSha = '9'.repeat(40);
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,

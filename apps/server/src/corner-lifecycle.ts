@@ -1,3 +1,4 @@
+import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cornerReportWaiting } from './corner-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { isZeroCheckCommander } from './corner-merge-approval.js';
@@ -251,7 +252,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
               ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
               fact.commissioned_by,fact.lifecycle,
               corner.archived_at IS NOT NULL archived,
-              parent.reviewer_agent_id configured_reviewer_id,
+              ${cornerReviewerSql()} configured_reviewer_id,
               configured.kind configured_reviewer_kind,
               configured.name configured_reviewer_name,
               EXISTS (
@@ -259,14 +260,14 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
                 JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
                   AND reviewer.kind='agent'
                 WHERE reviewer_membership.room_id=parent.id
-                  AND reviewer_membership.identity_id=parent.reviewer_agent_id
+                  AND reviewer_membership.identity_id=${cornerReviewerSql()}
                   AND reviewer_membership.removed_at IS NULL
               ) reviewer_parent_member,
-              parent.reviewer_fallback_ids
+              ${cornerReviewerFallbacksSql()} reviewer_fallback_ids
        FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
-       LEFT JOIN identities configured ON configured.id=parent.reviewer_agent_id
+       LEFT JOIN identities configured ON configured.id=${cornerReviewerSql()}
        WHERE fact.corner_id=$1
        FOR UPDATE OF fact`,
       [cornerId],
@@ -848,7 +849,7 @@ async function ensureReviewDispatch(
      JOIN rooms corner ON corner.id=command.room_id
      JOIN rooms parent ON parent.id=corner.parent_id
      WHERE command.room_id=$1 AND command.action='input'
-       AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+       AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
        AND command.agent_id IS DISTINCT FROM $3
        AND command.state IN ('pending','claimed')
        AND ((command.review_context->>'headSha'=(SELECT lifecycle->'pr'->>'headSha' FROM corner_facts WHERE corner_id=$1)
@@ -944,7 +945,7 @@ async function blockingReview(
          AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
        WHERE command.room_id=$1 AND command.action='input'
          AND command.state='complete' AND turn.status='complete'
-         AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+         AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
          AND (command.reason='corner_review_dispatch'
            OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
          AND COALESCE(command.review_context->>'headSha',source.system_event->'object'->>'headSha',
@@ -1343,7 +1344,7 @@ export async function cornerMergeGate(
     approved: boolean;
     holds: CornerMergeGate['holds'];
   }>(
-      `SELECT parent.reviewer_agent_id configured_reviewer_id,
+      `SELECT ${cornerReviewerSql()} configured_reviewer_id,
               EXISTS (
                 SELECT 1 FROM corner_merge_approvals approval
                 WHERE approval.corner_id=fact.corner_id AND approval.pull_request_number=$2
@@ -1354,9 +1355,10 @@ export async function cornerMergeGate(
                       SELECT 1 FROM memberships member
                       JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
                       WHERE member.room_id=parent.id AND member.identity_id=approval.approved_by
+                        AND approval.approved_by IS DISTINCT FROM ${cornerImplementerSql('fact', 'corner')}
                         AND member.removed_at IS NULL
-                        AND (approval.approved_by=parent.reviewer_agent_id
-                          OR approval.approved_by=ANY(parent.reviewer_fallback_ids))
+                        AND (approval.approved_by=${cornerReviewerSql()}
+                          OR approval.approved_by=ANY(${cornerReviewerFallbacksSql()}))
                     )
                     -- Or a current Workspace owner or admin.
                     OR EXISTS (

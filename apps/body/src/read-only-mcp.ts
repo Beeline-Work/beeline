@@ -801,6 +801,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     name,
     objective,
     ...(args.implementer !== undefined ? { implementer: args.implementer as string } : {}),
+    ...(args.reviewer !== undefined ? { reviewer: args.reviewer as string } : {}),
     ...(args.brief
       ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
@@ -837,6 +838,7 @@ async function reviseCornerBrief(args: JsonObject): Promise<string> {
       roomId: (await activeCommandContext()).roomId,
       requestId,
       expectedRevision: args.expectedRevision as number,
+      reviewer: args.reviewer as string | undefined,
       brief: {
         spec: args.spec as string,
         repositoryWork: args.repositoryWork as boolean | undefined,
@@ -3570,15 +3572,16 @@ async function executeAgentOperation(
     }
     case 'rename_corner': {
       const cornerId = targetCornerId(args);
-      const refusal = cornerTextRefusal('name', args.name);
+      const refusal = args.name === undefined && args.reviewer !== undefined ? null : cornerTextRefusal('name', args.name);
       if (refusal) throw new Error(refusal);
       const result = await daemonExecute('renameCorner', {
         cornerId,
-        name: String(args.name),
+        ...(args.name !== undefined ? { name: String(args.name) } : {}),
+        ...(args.reviewer !== undefined ? { reviewer: args.reviewer as string } : {}),
         ...(args.objective !== undefined ? { objective: args.objective } : {}),
         ...(args.brief !== undefined ? { brief: args.brief } : {}),
       });
-      return `renamed the corner to ${String(result.name)}`;
+      return args.name === undefined ? 'updated the corner reviewer' : `renamed the corner to ${String(result.name)}`;
     }
     case 'create_schedule':
       return createSchedule(args);

@@ -1,0 +1,330 @@
+{
+  "before": {
+    "desktop-dark": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        391.0,
+        491.0
+      ],
+      "stopInk": [
+        1211.5,
+        1254.0
+      ],
+      "nameLeftDelta": 34.0,
+      "stopRightDelta": -10.0
+    },
+    "desktop-light": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        391.0,
+        491.0
+      ],
+      "stopInk": [
+        1211.5,
+        1254.0
+      ],
+      "nameLeftDelta": 34.0,
+      "stopRightDelta": -10.0
+    },
+    "phone-dark": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        35.0,
+        135.0
+      ],
+      "stopInk": [
+        359.5,
+        402.0
+      ],
+      "nameLeftDelta": 18.5,
+      "stopRightDelta": 6.0
+    },
+    "phone-light": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        35.0,
+        135.0
+      ],
+      "stopInk": [
+        359.5,
+        402.0
+      ],
+      "nameLeftDelta": 18.5,
+      "stopRightDelta": 6.0
+    }
+  },
+  "after": {
+    "desktop-dark": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        357.0,
+        457.0
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "nameLeftDelta": 0.0,
+      "stopRightDelta": 0.0
+    },
+    "desktop-light": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        357.0,
+        457.0
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "nameLeftDelta": 0.0,
+      "stopRightDelta": 0.0
+    },
+    "phone-dark": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        17.0,
+        117.0
+      ],
+      "stopInk": [
+        353.5,
+        396.0
+      ],
+      "nameLeftDelta": 0.5,
+      "stopRightDelta": 0.0
+    },
+    "phone-light": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        17.0,
+        117.0
+      ],
+      "stopInk": [
+        353.5,
+        396.0
+      ],
+      "nameLeftDelta": 0.5,
+      "stopRightDelta": 0.0
+    }
+  },
+  "after-room": {
+    "desktop-dark": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        357.0,
+        457.0
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "nameLeftDelta": 0.0,
+      "stopRightDelta": 0.0
+    },
+    "desktop-light": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        357.0,
+        457.0
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "nameLeftDelta": 0.0,
+      "stopRightDelta": 0.0
+    },
+    "phone-dark": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        17.0,
+        117.0
+      ],
+      "stopInk": [
+        353.5,
+        396.0
+      ],
+      "nameLeftDelta": 0.5,
+      "stopRightDelta": 0.0
+    },
+    "phone-light": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        17.0,
+        117.0
+      ],
+      "stopInk": [
+        353.5,
+        396.0
+      ],
+      "nameLeftDelta": 0.5,
+      "stopRightDelta": 0.0
+    }
+  },
+  "after-corner": {
+    "desktop-dark": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        357.0,
+        457.0
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "nameLeftDelta": 0.0,
+      "stopRightDelta": 0.0
+    },
+    "desktop-light": {
+      "textBox": [
+        356,
+        1264
+      ],
+      "textInk": [
+        357.0,
+        745.5
+      ],
+      "nameInk": [
+        357.0,
+        457.0
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "nameLeftDelta": 0.0,
+      "stopRightDelta": 0.0
+    },
+    "phone-dark": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        17.0,
+        117.0
+      ],
+      "stopInk": [
+        353.5,
+        396.0
+      ],
+      "nameLeftDelta": 0.5,
+      "stopRightDelta": 0.0
+    },
+    "phone-light": {
+      "textBox": [
+        16,
+        396
+      ],
+      "textInk": [
+        16.5,
+        320.5
+      ],
+      "nameInk": [
+        17.0,
+        117.0
+      ],
+      "stopInk": [
+        353.5,
+        396.0
+      ],
+      "nameLeftDelta": 0.5,
+      "stopRightDelta": 0.0
+    }
+  }
+}

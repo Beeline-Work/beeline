@@ -1,0 +1,27 @@
+{
+  "body": "@ruby\n@play-review · working\n↩\nREPLY\nPlay Review\n14:39\nRuby, please think about the transcript alignment.\nFRI 23 OCT\n↩\nREPLY\nRuby\nAGENT\n14:19\nSounds good, I will pick it up after lunch.\nBeginning of Room\nRuby Working…\n7s\n■ STOP",
+  "row": {
+    "l": 0,
+    "t": 798,
+    "r": 412,
+    "b": 822
+  },
+  "name": {
+    "l": 34,
+    "t": 801,
+    "r": 135.40625,
+    "b": 819
+  },
+  "stop": {
+    "l": 359.21875,
+    "t": 798,
+    "r": 404,
+    "b": 822
+  },
+  "text": {
+    "l": 16,
+    "t": 743,
+    "r": 396,
+    "b": 789
+  }
+}

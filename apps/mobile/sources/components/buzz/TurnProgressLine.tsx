@@ -63,7 +63,7 @@ export function TurnProgressLine({
   inset = true,
 }: {
   label: string;
-  /** The inspector already supplies the transcript inset around this row. */
+  /** Desktop callers already supply the transcript inset around this row. */
   inset?: boolean;
   /** Server receipt time, unix seconds, the elapsed counter ticks from. */
   startedAt?: number;
@@ -263,6 +263,8 @@ const styles = StyleSheet.create((theme) => {
     stopLabel: {
       ...groknight.type.sectionHead,
       color: groknight.accent,
+      // Trailing tracking belongs between letters, outside the visible edge.
+      transform: [{ translateX: groknight.type.sectionHead.letterSpacing }],
     },
     stopPressed: {
       opacity: 0.6,

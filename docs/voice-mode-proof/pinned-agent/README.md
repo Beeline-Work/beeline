@@ -1,10 +1,7 @@
 # Voice reply and private pin proof
 
-Reproductions R1, R2 and R3 use the approved stand-ins from brief revision 3.
-The reported call was recovered after correcting the Fly request header to use
-the vaulted token directly. The original `Bearer` header caused the REST 401;
-the Machines log route returned 404 and GraphQL exposed no App logs field.
-The corrected retained-log route returns 200 and reaches the reported call.
+Reproductions R1, R2 and R3 use the approved stand-ins retained in brief revision 4.
+Production provenance below is accepted by that revision; no further log investigation is needed.
 
 The matching market question occurred at **21:19 UTC / 17:19 Eastern**, rather
 than 17:19 UTC. Retained logs show **quick `search_web` followed by `answer`**

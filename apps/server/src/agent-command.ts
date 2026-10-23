@@ -447,8 +447,8 @@ export async function createAgentCommand(
   );
   if (!member.rowCount) return undefined;
   if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
-      input.privatePayload?.kind !== 'order' && input.privatePayload?.kind !== 'report' && !member.rows[0]!.human_input &&
-      await cornerReportWaiting(db, input.roomId))
+      input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input &&
+      await cornerReportWaiting(db, input.roomId, input.privatePayload?.kind))
     return undefined;
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);

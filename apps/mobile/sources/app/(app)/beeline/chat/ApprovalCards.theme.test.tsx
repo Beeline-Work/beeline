@@ -290,7 +290,8 @@ describe.each(['bone', 'obsidian'] as const)('every parsed approval state in %s'
       expect(ids).not.toContain('squire-approval-open');
       expect(ids).not.toContain('write-permission-allow');
       expect(text.toLowerCase()).toContain(state === 'denied' ? 'denied' : state === 'expired' ? 'expired' : state === 'failed' ? 'failed' : 'allowed');
-      expect(text).toContain('08:57');
+      const decisionTime = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date(1792760240 * 1000));
+      expect(text).toContain(decisionTime);
       if (state === 'once' || state === 'always') expect(text).toContain(state === 'once' ? 'Once' : 'Always');
     }
   });

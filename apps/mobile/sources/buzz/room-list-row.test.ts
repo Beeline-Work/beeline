@@ -11,7 +11,7 @@ vi.mock('react-native', async () => {
   return { Text: host('Text'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => {
-  const value = new Proxy({}, { get: () => value });
+  const value: any = new Proxy({}, { get: (_target, key) => (key === Symbol.toPrimitive ? () => 0 : value) });
   return {
     StyleSheet: { create: (factory: (theme: unknown) => unknown) => factory({ buzz: value }) },
   };

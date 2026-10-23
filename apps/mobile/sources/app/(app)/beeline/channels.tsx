@@ -43,6 +43,7 @@ import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerS
 import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
+import { InlineRow } from '@/components/buzz/IndexRow';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
@@ -93,8 +94,6 @@ const COMPOSE_FAB_CLEARANCE = 80;
 const LOBBY_LIST_BOTTOM_SPACING = 24;
 const ROW_HEIGHT = 64;
 const LEAVE_TILE_HIT_SLOP = { top: 18, bottom: 18, left: 8, right: 8 };
-/** Match the fixed trailing inset used by Room and corner conversation headers. */
-const HEADER_RIGHT_SPACING = 16;
 
 type EmptyRoomActionsProps = {
   canAddRoom: boolean;
@@ -876,7 +875,7 @@ export default function BuzzChannels() {
         style={[styles.container, { paddingTop: insets.top }]}
         testID={refreshing ? 'room-list-refreshing' : 'room-list-idle'}
       >
-        <View style={styles.header}>
+        <InlineRow style={styles.header}>
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
@@ -888,7 +887,7 @@ export default function BuzzChannels() {
                   onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' } } as never)} />
             </View>
           )}
-        </View>
+        </InlineRow>
         {!isDesktop && (
           <RoomListToolbar
             filter={filter}
@@ -1002,7 +1001,7 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title}
+                  <RoomListSectionHeader title={section.title} inset="roomList"
                     actionAccessibilityLabel={section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'}
                     onAction={viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace) ? undefined : () => compose(section.kind === 'rooms' ? 'room' : 'message')} />
                 ) : null
@@ -1183,10 +1182,10 @@ const styles = StyleSheet.create((theme) => {
     },
     header: {
       minHeight: 62,
-      paddingLeft: hull.space.lg,
-      // Fixed target spacing matches the Room and corner conversation headers;
-      // action centres stay aligned even when their drawn marks differ in size.
-      paddingRight: HEADER_RIGHT_SPACING,
+      paddingLeft: hull.roomList.edge,
+      // The tray's ink, not its target, ends on the Room list edge; Room and
+      // corner conversation headers keep their own 16 px target spacing.
+      paddingRight: hull.roomList.trayEnd,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -1256,7 +1255,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomRightRadius: hull.roomCard.cornerRadius,
     },
     roomCell: {
-      paddingHorizontal: hull.roomCard.inset,
+      paddingHorizontal: hull.roomList.edge,
     },
     roomCellLast: { paddingBottom: hull.roomCard.gap },
     chatActions: {

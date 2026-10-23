@@ -19,7 +19,9 @@ vi.mock('react-native-reanimated', () => ({
   withTiming: (value: number) => value,
 }));
 vi.mock('react-native-unistyles', () => {
-  const token: any = new Proxy({}, { get: (_target, key) => (key === 'bgUnread' ? 'BG_UNREAD' : token) });
+  const token: any = new Proxy({}, {
+    get: (_target, key) => (key === 'bgUnread' ? 'BG_UNREAD' : key === Symbol.toPrimitive ? () => 0 : token),
+  });
   return {
     StyleSheet: { create: (factory: (theme: unknown) => unknown) => factory({ buzz: token }) },
   };

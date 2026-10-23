@@ -24,6 +24,7 @@ const COMPONENT_RULES = new Set(['raw-button', 'custom-row', 'custom-header']);
 /** The shared parts that own those controls: rows, headers, buttons, sheets and dialogs. */
 export const SHARED_CONTROL_OWNERS = new Set([
   'components/buzz/Button.tsx',
+  'components/buzz/ConversationRow.tsx',
   'components/buzz/EmptyState.tsx',
   'components/buzz/ErrorBanner.tsx',
   'components/buzz/HullActionSheet.tsx',
@@ -32,6 +33,7 @@ export const SHARED_CONTROL_OWNERS = new Set([
   'components/buzz/IndexRow.tsx',
   'components/buzz/PageHeader.tsx',
   'components/buzz/RoomListSectionHeader.tsx',
+  'components/buzz/RoomListToolbar.tsx',
   'components/buzz/ShowMoreRow.tsx',
 ]);
 

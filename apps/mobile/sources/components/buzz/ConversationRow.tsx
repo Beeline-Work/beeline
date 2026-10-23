@@ -126,6 +126,7 @@ export function ConversationRow({
         style={({ pressed }) => [
           styles.rowPressable,
           desktop && styles.desktopRow,
+          desktop && selected && styles.desktopSelectedRow,
           !desktop && styles.mobileRow,
           item.unread && styles.unreadRow,
           pressed && styles.pressed,
@@ -207,7 +208,14 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     gap: theme.buzz.space.sm,
   },
-  desktopRow: { minHeight: 62, paddingLeft: theme.buzz.space.lg },
+  // The name sits on the Room list edge and the status dot's ink ends on it.
+  desktopRow: {
+    minHeight: 62,
+    paddingLeft: theme.buzz.roomList.edge,
+    paddingRight: theme.buzz.roomList.dotEnd,
+  },
+  // The selected accent rule takes its width from the padding, not the name.
+  desktopSelectedRow: { paddingLeft: theme.buzz.roomList.selectedStart },
   mobileRow: { minHeight: 68, paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm },
   copy: { flex: 1, minWidth: 0 },
   heading: { minHeight: 23, flexDirection: 'row', alignItems: 'center' },

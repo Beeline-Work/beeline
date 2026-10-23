@@ -33,9 +33,10 @@ export function RoomListSectionHeader({
   title: string;
   /**
    * Content already supplies its own screen inset; `row` aligns with
-   * SettingsRow titles; `sheet` aligns with sheet rows.
+   * SettingsRow titles; `sheet` aligns with sheet rows; `roomList` puts the
+   * label and the + ink on the Room list edge.
    */
-  inset?: 'screen' | 'content' | 'row' | 'sheet';
+  inset?: 'screen' | 'content' | 'row' | 'sheet' | 'roomList';
   /** Flush when the surrounding section already supplies its vertical gap. */
   spacing?: 'section' | 'flush';
   /**
@@ -61,6 +62,7 @@ export function RoomListSectionHeader({
         inset === 'content' && styles.contentInset,
         inset === 'row' && styles.rowInset,
         inset === 'sheet' && styles.sheetInset,
+        inset === 'roomList' && (tapLineHeight ? styles.roomListCompactInset : styles.roomListInset),
         surface === 'sheet' && styles.sheetSurface,
         !tapLineHeight && styles.phoneSpacing,
         onAction && !tapLineHeight && styles.actionSpacing,
@@ -156,6 +158,14 @@ const styles = StyleSheet.create((theme) => {
     contentInset: { paddingHorizontal: 0 },
     rowInset: { paddingHorizontal: hull.space.sm },
     sheetInset: { paddingHorizontal: HULL_SHEET_INSET },
+    roomListInset: {
+      paddingLeft: hull.roomList.edge,
+      paddingRight: hull.roomList.addEnd,
+    },
+    roomListCompactInset: {
+      paddingLeft: hull.roomList.edge,
+      paddingRight: hull.roomList.compactAddEnd,
+    },
     sheetSurface: { paddingTop: hull.space.md, backgroundColor: 'transparent' },
     flushSpacing: { paddingTop: 0 },
     sectionHeaderText: {

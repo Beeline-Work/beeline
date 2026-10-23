@@ -976,6 +976,7 @@ function readGithubEvent(value: unknown): NonNullable<RoomViewMessage['githubEve
     return null;
   }
   return {
+    ...field('cornerId', uuid(item.cornerId) ? item.cornerId : undefined),
     type: item.type,
     action: item.action,
     actor: item.actor,

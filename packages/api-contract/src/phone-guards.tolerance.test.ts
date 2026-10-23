@@ -912,3 +912,11 @@ it('preserves validated merge-queue state in a corner response', () => {
   expect(readCornerListView({ room: header, corners: [invalid], viewer, watchFilters: [] })?.corners[0]?.lifecycle.mergeQueue)
     .toBeUndefined();
 });
+
+it('keeps a validated corner destination on repository events', () => {
+  const event = { type: 'pull-request', action: 'merged', actor: 'ruby', title: 'Work',
+    url: 'https://github.com/owner/widgets/pull/1', cornerId: roomId };
+  const read = (githubEvent: unknown) => readRoomViewMessage({ ...message, githubEvent })?.githubEvent;
+  expect(read(event)?.cornerId).toBe(roomId);
+  expect(read({ ...event, cornerId: 'invalid' })?.cornerId).toBeUndefined();
+});

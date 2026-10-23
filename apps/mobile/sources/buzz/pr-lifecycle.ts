@@ -117,6 +117,7 @@ export function lifecycleItem(message: SystemLineMessage): LifecycleItem | undef
       title: event.title,
       state,
       kind: issue ? 'issue' : 'pull-request',
+      ...(event.cornerId ? { cornerId: event.cornerId } : {}),
       kindLine: `${issue ? 'Issue' : 'PR'}${number ? ` #${number}` : ''}`,
       url: event.url,
       actor: event.actor,
@@ -234,7 +235,7 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
     run.ids.push(message.id);
     run.items.push({
       ...item,
-      ...(item.url && corners.has(canonical(item.url))
+      ...(item.url && !item.cornerId && corners.has(canonical(item.url))
         ? { cornerId: corners.get(canonical(item.url)) }
         : {}),
     });

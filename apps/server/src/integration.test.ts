@@ -3245,9 +3245,8 @@ describe('monolith integration', () => {
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
-    // A source-free opening has no requesting message to anchor a line to.
-    // Its absence from the transcript must not affect inherited corner access.
-    expect(parent.messages).not.toContainEqual(
+    // A source-free opening is visible at its open time through inherited access.
+    expect(parent.messages).toContainEqual(
       expect.objectContaining({
         daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
       }),
@@ -6413,7 +6412,7 @@ describe('monolith integration', () => {
     const parent = await phone.readRoom(ROOM, HUMAN);
     expect(
       parent?.messages.find((message) => message.daemonFact?.cornerId === cornerId)?.daemonFact,
-    ).toBeUndefined();
+    ).toMatchObject({ type: 'corner-open', cornerId });
   });
 
   it('creates a human corner that inherits only Room-level subscriptions from a stale parent row', async () => {
@@ -6537,7 +6536,7 @@ describe('monolith integration', () => {
     ).toBe(true);
   });
 
-  it('marks the message a human corner was opened from, and follows its rename', async () => {
+  it('marks the message a human corner was opened from and keeps the opening historical', async () => {
     const sourceId = '7'.repeat(64);
     expect(
       (
@@ -6567,7 +6566,7 @@ describe('monolith integration', () => {
         type: 'corner-open',
         cornerId,
         name: 'quiet-amber-corner',
-        objective: '',
+        objective: 'quiet-amber-corner',
         sourceMessageId: sourceId,
       },
     });
@@ -6586,11 +6585,11 @@ describe('monolith integration', () => {
       (await operation('updateRoom', { roomId: cornerId, name: 'bright-river-corner' })).status,
     ).toBe(204);
     expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
-      name: 'bright-river-corner',
+      name: 'quiet-amber-corner',
       sourceMessageId: sourceId,
     });
 
-    // A source that is not a message in this Room opens the corner unmarked.
+    // A missing source leaves an unanchored opening at the current position.
     const unmarked = await operation('createHumanCorner', {
       roomId: ROOM,
       title: 'stray-corner',
@@ -6603,7 +6602,7 @@ describe('monolith integration', () => {
       (await phone.readRoom(ROOM, HUMAN))?.messages.some(
         (message) => message.daemonFact?.cornerId === unmarkedId,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('forwards a message into a human corner and starts someone else’s yolo agent without a grant', async () => {
@@ -9192,7 +9191,7 @@ describe('monolith integration', () => {
       type: 'corner-open',
       cornerId,
       name: 'Ship-the-widget',
-      objective: 'Ship the widget end to end',
+      objective: 'Ship-the-widget',
     });
     // The NAME titles the corner; the objective stays the statement of work.
     const corner = await database.query<{

@@ -98,7 +98,7 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
     tier={linked || card.status !== 'open' ? 'record' : 'ask'}
     testID={`repository-onboarding-${card.kind}`}
     title={linked ? 'Repository linked' : card.kind === 'starters' ? 'Pick a starting task' : card.repository ? 'Switch repository' : !card.canLink ? 'No repository yet' : 'Choose a repository'}
-    subline={linked ? `${card.repository}${card.repositoryPrivate === undefined ? '' : ` · ${card.repositoryPrivate ? 'private' : 'public'}`}` : undefined}
+    subline={linked ? card.repository : undefined}
     compactBody primaryBody footerDivider={false}
     inlineError={!linked && error ? { title: "GitHub didn't connect", description: error } : undefined}
     body={linked || error ? undefined : card.kind === 'repository' ? card.canLink ? needsConnection

@@ -40,7 +40,7 @@ function Proof() {
     {mode === 'Workspace' ? <WorkspaceChoice /> : <View style={{ padding: 16 }}>
       <Text style={{ ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary, marginBottom: 24 }}>#general</Text>
       <RepositoryOnboardingCard key={mode} viewerId={viewer} author={author}
-        card={mode === 'Linked' ? { ...card, status: 'settled', state: 'repo_linked', repository: 'lunchboxfortwo/beeline-notes', repositoryPrivate: true } : card} />
+        card={mode === 'Linked' ? { ...card, status: 'settled', state: 'repo_linked', repository: 'lunchboxfortwo/beeline-notes' } : card} />
       {mode === 'Error' ? <RepositoryOnboardingCard card={{ ...card, id: 'other-card' }} viewerId={viewer} author={author} /> : null}
     </View>}
   </View></SafeAreaProvider>;

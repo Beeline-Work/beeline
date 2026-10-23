@@ -31,8 +31,10 @@ with the absent snapshot, reads zero workspaces and navigates to community.
 The initiating card now consumes the error query, displays the approved inline
 error and Dismiss/Try again actions, and leaves other cards normal. Dismiss and
 remount do not replay it; the installation result and picker parameters survive.
-A linked repository settles to the compact record, using server-projected real
-repository visibility. The Workspace screen uses the shared PageHeader,
+A settled card with an existing repository name renders the compact record.
+The card and its repository list do not carry visibility. Under Ruby’s repair
+order, Connected therefore shows `owner/repo` only; it does not claim private or
+public. The original server producer write and System-message lock are unchanged. The Workspace screen uses the shared PageHeader,
 HullDialogInput boxed variant, existing glyphs and IndexRow dividers.
 
 The native captures use the PR debug APK on an isolated API 36 emulator with

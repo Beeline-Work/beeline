@@ -135,12 +135,12 @@ it('R-GITHUB-CARD: keeps an operation failure local and retries the failed actio
   await act(async () => renderer.unmount());
 });
 
-it.each([true, false])('collapses a linked repository into its real visibility record (%s)', async (repositoryPrivate) => {
+it('collapses a linked repository using its existing name without inventing visibility', async () => {
   let renderer: any;
-  await act(async () => { renderer=create(<RepositoryOnboardingCard card={{...card,status:'settled',repositoryPrivate}} viewerId={H} />); });
+  await act(async () => { renderer=create(<RepositoryOnboardingCard card={{...card,status:'settled'}} viewerId={H} />); });
   const props=renderer.root.findByType('TranscriptCard').props;
   expect(props.title).toBe('Repository linked');
-  expect(props.subline).toBe(`test/current · ${repositoryPrivate ? 'private' : 'public'}`);
+  expect(props.subline).toBe('test/current');
   expect(props.body).toBeUndefined();
   expect(props.actions).toEqual([]);
   expect(props.identity).toBeTruthy();

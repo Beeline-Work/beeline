@@ -1101,6 +1101,7 @@ export class MonolithCornerTurnLoop {
       // no matter which session last prepared the shared corner worktree.
       ...agentGitIdentityEnv(this.agent),
       ...cacheEnv,
+      BEELINE_TURN_CONTEXT_FILE: this.commandContext.path,
       ...(androidAssets && this.options.config.agentHomeRoot
         ? {
             ANDROID_AVD_HOME: androidAssets.avdBase,

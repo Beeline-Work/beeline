@@ -1058,7 +1058,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "post_artifact",
-    "description": "Upload a validated deliverable from a session path. Queues it for the final reply; uploading alone does not deliver a report. HTML must be self-contained with inline styles/images.",
+    "description": "Upload a validated deliverable from a session path. Queues it for the final reply; uploading alone does not deliver a report. Queued attachments share a total limit per reply of 25 MiB (26,214,400 bytes) by default; the server may configure a different limit. Use smaller files or deliver the queued batch before posting more. HTML must be self-contained with inline styles/images.",
     "inputSchema": {
       "type": "object",
       "required": ["path"],

@@ -5,7 +5,6 @@ import { approvalCardSource } from './approval-card-source.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
-import { turnMessageRepetition } from './turn-repetition.js';
 import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
 import { FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_TURN_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -319,9 +318,10 @@ const MAX_REPLY_STEPS_BYTES = 4_000_000;
  * column stores, or null when it has none. Only tool rows and notes belong
  * there; anything else is refused rather than stored.
  */
-function replySteps(steps: unknown): string | null {
+// Reserve internal notes beyond the validated helper payload for closing prose.
+function replySteps(steps: unknown, summaryNotes = 0): string | null {
   if (steps === undefined) return null;
-  if (!Array.isArray(steps) || steps.length > MAX_REPLY_STEPS)
+  if (!Array.isArray(steps) || steps.length > MAX_REPLY_STEPS + summaryNotes)
     throw new Error('reply steps are invalid');
   for (const step of steps as Record<string, unknown>[]) {
     if (!step || typeof step !== 'object') throw new Error('reply steps are invalid');
@@ -335,7 +335,7 @@ function replySteps(steps: unknown): string | null {
       throw new Error('reply steps are invalid');
   }
   const json = JSON.stringify(steps);
-  if (Buffer.byteLength(json) > MAX_REPLY_STEPS_BYTES) throw new Error('reply steps are invalid');
+  if (Buffer.byteLength(json) > MAX_REPLY_STEPS_BYTES + summaryNotes * 100_000) throw new Error('reply steps are invalid');
   return steps.length ? json : null;
 }
 /** Corner reads and merge writes that also admit a current parent Room member. */
@@ -499,6 +499,7 @@ export class DaemonService {
       'postAgentThought',
       'retractAgentLiveOutput',
       'postAgentTurnReceipt',
+      'markAgentTurnSilent',
       'postAgentActivity',
       'postSquireApproval',
       'postComputerSession',
@@ -1476,6 +1477,19 @@ export class DaemonService {
           input as Input<'retractAgentLiveOutput'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'markAgentTurnSilent': {
+        const command = this.authorizedCommand;
+        if (!command) throw new CommandRefusalError('silence requires an active turn', 409);
+        if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
+          'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
+          'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
+          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed'].includes(command.reason))
+          throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
+        await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
+          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
+          [command.room_id, authenticatedAgentId, command.turn_request_id]);
+        return this.writeResult() as Output<Name>;
+      }
       case 'postAgentTurnReceipt':
         return (await this.turnReceipt(
           input as Input<'postAgentTurnReceipt'>,
@@ -3963,8 +3977,8 @@ export class DaemonService {
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
     let steps = replySteps(input.steps);
     // Explicit same-address posts can already have
-    // committed this answer. Keep the terminal row for receipts, replay and
-    // tool activity, but remove repeated prose from the conversation surface.
+    // committed a message. Keep the closing text in turn activity regardless
+    // of wording, rather than publishing a second conversation message.
     const earlier = input.requestId && input.presentation !== 'card'
       ? (await this.database.query<{ id: string; text: string }>(
           `SELECT id,text FROM messages
@@ -3975,19 +3989,15 @@ export class DaemonService {
           [input.roomId, agentId, input.requestId, input.generationId],
         )).rows
       : [];
-    const supersedesPosts = Boolean(this.commandTransaction && earlier.length &&
-      (await this.database.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND removed_at IS NULL`, [agentId])).rowCount);
-    const matches = earlier.map(row => turnMessageRepetition(input.text, row.text));
-    const same = !supersedesPosts && matches.includes('same');
-    const similar = !supersedesPosts && matches.includes('similar') && (input.steps?.length ?? 0) < MAX_REPLY_STEPS;
-    const repeated = same || similar;
-    if (!same && similar) steps = replySteps([
-      ...(input.steps ?? []), { kind: 'note', title: 'Turn summary', text: input.text },
-    ]);
-    if (supersedesPosts) steps = replySteps([
-      ...(input.steps ?? []),
-      ...[...earlier].reverse().map(row => ({kind: 'note' as const,title: 'Earlier update',text: row.text})),
-    ].slice(0, MAX_REPLY_STEPS));
+    const repeated = Boolean(this.commandTransaction && earlier.length);
+    if (repeated) {
+      const notes = Array.from({ length: Math.ceil(input.text.length / MAX_REPLY_NOTE_LENGTH) }, (_, index) => ({
+        kind: 'note' as const, title: 'Turn summary',
+        text: input.text.slice(index * MAX_REPLY_NOTE_LENGTH, (index + 1) * MAX_REPLY_NOTE_LENGTH),
+        ...(index ? { continues: true as const } : {}),
+      }));
+      steps = replySteps([...(input.steps ?? []), ...notes], notes.length);
+    }
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -4332,20 +4342,16 @@ export class DaemonService {
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);
     }
-    if (supersedesPosts && saved.presentation === 'message') {
-      // Free agents sometimes post an answer explicitly and then paraphrase it
-      // at settle. Keep the final answer visible, retaining the earlier prose
-      // in activity instead of trying to infer semantic equality.
-      const demoted = await this.database.query<{id:string}>(
-        `UPDATE messages SET presentation='activity' WHERE id=ANY($1::text[])
-         AND room_id=$2 AND author_id=$3 AND request_id=$4
-         AND legacy_event->>'turnGenerationId'=$5 AND presentation='message' AND deleted_at IS NULL
-         RETURNING id`,
-        [earlier.map(row=>row.id),input.roomId,agentId,input.requestId,input.generationId]);
-      for (const row of demoted.rows) this.live.publish({type:'invalidate',roomId:input.roomId,
-        reason:'message',agentId,messageId:row.id});
-    }
-    if (repeated && this.commandTransaction && saved.presentation === 'message' && !saved.attachments.length) {
+    if (repeated && this.commandTransaction && saved.presentation === 'message') {
+      // Deliver queued artifacts on the existing public post, so suppressing
+      // closing prose never hides the turn's deliverable.
+      if (saved.attachments.length) {
+        await this.database.query(`UPDATE messages SET attachments=attachments || $2::jsonb WHERE id=$1`,
+          [earlier[0]!.id, JSON.stringify(saved.attachments)]);
+        await this.database.query(`UPDATE messages SET attachments='[]'::jsonb WHERE id=$1`, [saved.id]);
+        saved = { ...saved, attachments: [] };
+        this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId, messageId: earlier[0]!.id });
+      }
       // This is still inside the authorized command transaction. System/card
       // producers keep their existing insert path and are never demoted here.
       const demoted = (await this.database.query<{ presentation: 'activity'; version: number }>(
@@ -4436,8 +4442,14 @@ export class DaemonService {
        WHERE room_id=$1 AND agent_id=$2`,
       [input.roomId, agentId],
     );
-    if (Number(queued.rows[0]!.total) + attachment.size > this.mediaMaximumBytes)
-      throw new CommandRefusalError('queued attachments exceed the size cap', 400);
+    const usedBytes = Number(queued.rows[0]!.total);
+    if (usedBytes + attachment.size > this.mediaMaximumBytes)
+      throw new CommandRefusalError(
+        `Queued attachments exceed the ${this.mediaMaximumBytes}-byte total limit per reply: ` +
+          `${usedBytes} bytes already queued; artifact size: ${attachment.size} bytes. ` +
+          'Use smaller files, or deliver the queued attachments with your next reply or report before posting more.',
+        400,
+      );
     await this.database.query(
       `INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,generation_id)
        VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -8715,6 +8727,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentThought: true,
   retractAgentLiveOutput: true,
   postAgentTurnReceipt: true,
+  markAgentTurnSilent: true,
   postAgentActivity: true,
   postBackgroundToolCompletion: true,
   postSquireApproval: true,

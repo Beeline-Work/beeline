@@ -188,7 +188,6 @@
     "src/system-line.test.ts": 21249,
     "src/system-messages-lock.test.ts": 11673,
     "src/tray-approval-ask.test.ts": 4,
-    "src/turn-repetition.test.ts": 6,
     "src/turn-silence-notice.test.ts": 49654,
     "src/voice-budget.test.ts": 1026,
     "src/voice-context.test.ts": 2880,

@@ -6,4 +6,4 @@ kit="$(cd "$(dirname "$0")" && pwd)"
 node "$kit/serve.mjs" "/tmp/rlm88/web-$1" 8792 & srv=$!
 trap 'kill $srv' EXIT
 sleep 1
-node "$kit/capture.mjs" "$1" 8792 >/tmp/rlm88/capture-$1.log 2>&1 || { tail -20 /tmp/rlm88/capture-$1.log; exit 1; }
+node "$kit/capture.mjs" "$1" 8792 >"/tmp/rlm88/capture-$1.log" 2>&1 || { tail -20 "/tmp/rlm88/capture-$1.log"; exit 1; }

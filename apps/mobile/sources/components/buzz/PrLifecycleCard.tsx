@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleSummary, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
-import { TranscriptNavigationRow } from './IndexRow';
+import { InlineRow, TranscriptNavigationRow } from './IndexRow';
 import { LedgerDisclosure } from './LedgerDisclosure';
 import { ChevronGlyph, CHEVRON_ROW_SIZE } from './ChevronGlyph';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
@@ -198,7 +198,7 @@ export function RepositoryLifecycleRow({
             : undefined
         }
       >
-        <View style={styles.cornerCopy}>
+        <InlineRow style={styles.cornerCopy}>
           <Text style={[styles.repositoryTitle, styles.cornerName]} numberOfLines={1} ellipsizeMode="tail">
             <Text style={styles.verb}>{verb} </Text>
             {item.title}
@@ -215,7 +215,7 @@ export function RepositoryLifecycleRow({
               }}
             >{` PR ${number}`}</Text>
           ) : null}
-        </View>
+        </InlineRow>
       </TranscriptNavigationRow>
     );
   }

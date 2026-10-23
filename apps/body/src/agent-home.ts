@@ -19,8 +19,9 @@
  *
  * **Skills.** Every `<harness-home>/skills` is rebuilt on activation with the
  * explicit default allowlist plus narrow names stored on this agent's runtime
- * record. Shared skills are validated and copied as non-executable ordinary
- * files; ambient directories are never inherited. Ordinary operator MCP server
+ * record. Shared skills are validated and copied as private ordinary
+ * files, preserving owner execution permission for launchers; ambient
+ * directories are never inherited. Ordinary operator MCP server
  * declarations are COPIED into the harness home so every Room/corner session
  * has the tools the host offers — without them a harness boots with a login but
  * nothing to advertise over ACP. Codex-acp
@@ -1384,10 +1385,10 @@ async function provisionManagedSkillsDir(
   const parent = dirname(target);
   await assertRealContainedDirectory(parent, dirname(parent));
   const plan = await planManagedSkills(managedSkills, sharedSkills, optionalShares);
-  // The reuse test is content, on BOTH sides. The destination is agent-writable,
+  // The reuse test is content and file mode, on BOTH sides. The destination is agent-writable,
   // so its own existence, mtime or a receipt file it could have written are all
-  // worthless as proof: the only evidence that matters is that every byte still
-  // under it is the byte this plan would put there, and that nothing there is a
+  // worthless as proof: the only evidence that matters is that every byte and
+  // file mode matches this plan, and that nothing there is a
   // link or a shared inode a session could mutate underneath the harness.
   if ((await materializedSkillManifest(target)) === plan.manifest) return;
   const staged = resolve(parent, `.skills.${process.pid}.${randomUUID()}.tmp`);
@@ -1434,7 +1435,7 @@ async function planManagedSkills(
   const names = new Set(managedSkills.map((skill) => skill.name));
   for (const skill of managedSkills) {
     entries.push({ kind: 'managed', name: skill.name, content: skill.content });
-    lines.push(`d ${skill.name}`, `f ${skill.name}/SKILL.md ${sha256(skill.content)}`);
+    lines.push(`d ${skill.name}`, `f ${skill.name}/SKILL.md 600 ${sha256(skill.content)}`);
   }
   for (const shared of sharedSkills) {
     if (names.has(shared.name)) {
@@ -1445,8 +1446,8 @@ async function planManagedSkills(
       const tree: string[] = [];
       await walkSafeSkillTree(shared.source, shared.source, {
         directory: async (rel) => void tree.push(`d ${join(shared.name, rel)}`),
-        file: async (rel, realPath) =>
-          void tree.push(`f ${join(shared.name, rel)} ${sha256(await readFile(realPath))}`),
+        file: async (rel, realPath, mode) =>
+          void tree.push(`f ${join(shared.name, rel)} ${mode.toString(8)} ${sha256(await readFile(realPath))}`),
       });
       entries.push({ kind: 'shared', name: shared.name, source: shared.source });
       lines.push(...tree);
@@ -1484,7 +1485,7 @@ async function materializedSkillManifest(target: string): Promise<string | undef
         continue;
       }
       if (!entryStats.isFile() || entryStats.nlink !== 1) return false;
-      lines.push(`f ${rel} ${sha256(await readFile(path))}`);
+      lines.push(`f ${rel} ${(entryStats.mode & 0o7777).toString(8)} ${sha256(await readFile(path))}`);
     }
     return true;
   };
@@ -1664,7 +1665,7 @@ interface SkillTreeVisitor {
   /** A directory the copy would create, by its path relative to the skill root. */
   directory(rel: string): Promise<void>;
   /** An ordinary file the copy would carry, with the real path to read it from. */
-  file(rel: string, realPath: string): Promise<void>;
+  file(rel: string, realPath: string, mode: number): Promise<void>;
 }
 
 /**
@@ -1708,7 +1709,8 @@ async function walkSafeSkillTree(
   if (!stats.isFile() || stats.nlink !== 1) {
     throw new Error(`shared skill contains a nonordinary file: ${source}`);
   }
-  await visitor.file(rel, resolvedSource);
+  // Keep files private and discard special bits and group/other permissions.
+  await visitor.file(rel, resolvedSource, 0o600 | (stats.mode & 0o100));
 }
 
 async function copySafeSkillTree(
@@ -1720,10 +1722,10 @@ async function copySafeSkillTree(
     directory: async (rel) => {
       await mkdir(resolve(target, rel), { mode: 0o700 });
     },
-    file: async (rel, realPath) => {
+    file: async (rel, realPath, mode) => {
       const destination = resolve(target, rel);
       await copyFile(realPath, destination);
-      await chmod(destination, 0o600);
+      await chmod(destination, mode);
     },
   });
 }

@@ -986,7 +986,7 @@ describe('operator skills + MCP passthrough', () => {
       [...BEELINE_DEFAULT_SKILL_NAMES, 'review-pr'].sort(),
     );
     expect(lstatSync(resolve(sharedAgent, 'pi', 'skills/review-pr')).isSymbolicLink()).toBe(false);
-    expect(lstatSync(resolve(sharedAgent, 'pi', 'skills/review-pr/run.sh')).mode & 0o111).toBe(0);
+    expect(lstatSync(resolve(sharedAgent, 'pi', 'skills/review-pr/run.sh')).mode & 0o777).toBe(0o700);
     // A default-share agent gets every operator entry, review-pr included.
     expect(existsSync(resolve(cleanAgent, 'pi', 'skills/review-pr'))).toBe(true);
     // Explicit narrowing excludes the operator's other skills.
@@ -1644,6 +1644,34 @@ describe('mounted imported MCP server names', () => {
 });
 
 describe('skill provision reuse', () => {
+  it('runs an installed Impeccable launcher and repairs stripped execution permission', async () => {
+    const operatorHome = await scratch('beeline-launcher-operator-');
+    const source = resolve(operatorHome, '.agents/skills/impeccable');
+    await mkdir(source, { recursive: true });
+    await writeFile(resolve(source, 'SKILL.md'), 'Run ./launch.sh to start the skill.\n');
+    await writeFile(resolve(source, 'launch.sh'), '#!/bin/sh\nprintf "impeccable ready\\n"\n');
+    await chmod(resolve(source, 'launch.sh'), 0o755);
+    const root = resolve(await scratch('beeline-launcher-agent-'), 'agent-home');
+    const input = { root, operatorHome, agentKind: 'codex' as const };
+    const installed = resolve(root, 'codex/skills/impeccable/launch.sh');
+    const run = () => execFileSync(installed, { encoding: 'utf8' });
+
+    await prepareRoomAgentHome(input);
+    expect(run()).toBe('impeccable ready\n');
+    expect(lstatSync(installed).mode & 0o7777).toBe(0o700);
+    expect(lstatSync(resolve(root, 'codex/skills/impeccable/SKILL.md')).mode & 0o7777).toBe(0o600);
+
+    // Migrate a copy produced by an older installer, even with identical bytes.
+    await chmod(installed, 0o600);
+    await prepareRoomAgentHome(input);
+    expect(run()).toBe('impeccable ready\n');
+
+    // A source mode-only change must also invalidate the reused tree.
+    await chmod(resolve(source, 'launch.sh'), 0o644);
+    await prepareRoomAgentHome(input);
+    expect(lstatSync(installed).mode & 0o7777).toBe(0o600);
+  });
+
   /**
    * Provision twice and report whether the second call rebuilt the tree. The
    * inode of the skills directory is the honest witness: a rebuild stages a

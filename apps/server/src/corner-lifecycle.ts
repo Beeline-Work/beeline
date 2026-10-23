@@ -1411,18 +1411,23 @@ export async function claimCornerMergeAttempt(
   database: SqlDatabase,
   cornerId: string,
   headSha: string,
+  onBlocked?: (reason: string) => void,
 ): Promise<boolean> {
+  const blocked = (reason: string) => { onBlocked?.(reason); return false; };
   return database.transaction(async (db) => {
     await lockCornerLifecycle(db, cornerId);
     const corner = await loadCorner(db, cornerId);
     const pr = corner?.lifecycle.pr;
-    if (!corner || corner.archived || !pr?.number || pr.headSha !== headSha) return false;
+    if (!corner) return blocked('the corner no longer exists');
+    if (corner.archived) return blocked('the corner is archived');
+    if (!pr?.number) return blocked('the corner has no pull request');
+    if (pr.headSha !== headSha) return blocked('the pull request head changed before the merge claim');
     // Recheck local authority at claim after the earlier gate read.
     // No provider request belongs in this transaction.
     // A brief revised during the GitHub read is seen here: revisions take this lock.
     await assertCornerBriefAllowsMerge(db, cornerId);
     const gate = await cornerMergeGate(db, cornerId, { number: pr.number, headSha });
-    if (!gate.open) return false;
+    if (!gate.open) return blocked(gate.held ? 'a hold stands' : 'no yes on this head');
     const claimed = await db.query(
       `UPDATE corner_facts SET merge_attempt_head=$2,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
        WHERE corner_id=$1
@@ -1431,7 +1436,7 @@ export async function claimCornerMergeAttempt(
        RETURNING 1`,
       [cornerId, headSha],
     );
-    return claimed.rowCount > 0;
+    return claimed.rowCount > 0 || blocked('a merge attempt for this head is still awaiting GitHub confirmation');
   });
 }
 

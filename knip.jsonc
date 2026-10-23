@@ -131,6 +131,8 @@
         // Gradle bundles this native screenshot fixture through its entryFile override.
         "scripts/corner-pr-cards-native-proof.tsx",
         "scripts/transcript-events-native-proof.tsx",
+        // Browser bundling and the temporary Metro main select these proof entries by path.
+        "scripts/disclosure-rows-{browser,native}-proof.tsx",
         "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",

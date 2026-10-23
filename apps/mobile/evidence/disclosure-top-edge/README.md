@@ -73,3 +73,5 @@ implements; its two legacy UI-policy fingerprints are removed. The owning
 component registration remains. No System-message lock fixture or message
 grammar changes are required. The separate repository header loses only the
 wrapper rule above grouped disclosures; singleton records retain that rule.
+`knip.jsonc` declares the browser and native proof entry files selected by the
+bundler and temporary Metro main; the shared proof stays reachable through imports.

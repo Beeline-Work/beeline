@@ -39,7 +39,10 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   const repositoryRun = items.every(isRepositoryLifecycleItem);
   if (repositoryRun)
     return (
-      <View style={anchored || items.length > 1 ? undefined : styles.run} testID={testID ?? `notification-run-${message.id}`}>
+      <View
+        style={anchored || items.length > 1 ? undefined : styles.run}
+        testID={testID ?? `notification-run-${message.id}`}
+      >
         {items.length > 1 ? (
           <Pressable
             style={styles.header}
@@ -175,27 +178,57 @@ export function RepositoryLifecycleRow({
   onOpenUrl(url: string): void;
 }) {
   const state = item.state.replace(/^PR /, '');
-  // The call-site line keeps its own closed wording in the shared format.
-  const closedCallSite = glyph && state === 'Closed';
-  const verb = closedCallSite ? 'Corner closed' : state.charAt(0).toUpperCase() + state.slice(1);
+  const verb = state.charAt(0).toUpperCase() + state.slice(1);
   const number =
     item.url?.match(/\/(?:pull|issues)\/(\d+)/)?.[1] ?? item.kindLine.match(/#(\d+)/)?.[1];
+  const cornerTestID = testID ?? `notification-run-cell-corner-${item.id}`;
+  if (item.kind === 'corner') {
+    return (
+      <TranscriptNavigationRow
+        testID={`notification-run-cell-${item.id}`}
+        singleDestination
+        leading={<CornerBranchGlyph />}
+        trailing={
+          item.cornerId
+            ? {
+                accessibilityLabel: `Open corner ${item.title}`,
+                onPress: () => onOpenCorner(item.cornerId!),
+                testID: cornerTestID,
+              }
+            : undefined
+        }
+      >
+        <View style={styles.cornerCopy}>
+          <Text style={[styles.repositoryTitle, styles.cornerName]} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={styles.verb}>{verb} </Text>
+            {item.title}
+          </Text>
+          {state === 'Merged' && number && item.url ? (
+            <Text
+              style={styles.number}
+              accessibilityRole="link"
+              accessibilityLabel={`Open PR ${number}`}
+              testID={`notification-run-cell-url-${item.id}`}
+              onPress={(event) => {
+                event.stopPropagation();
+                onOpenUrl(item.url!);
+              }}
+            >{` PR ${number}`}</Text>
+          ) : null}
+        </View>
+      </TranscriptNavigationRow>
+    );
+  }
   const copy = (
     <Text style={styles.repositoryTitle} numberOfLines={2} ellipsizeMode="tail">
       <Text style={styles.verb}>{verb} </Text>
       {number && item.url ? <Text style={styles.number}>#{number} </Text> : null}
-      {closedCallSite
-        ? `· #${item.title}`
-        : item.kind === 'corner'
-          ? `corner #${item.title}`
-          : item.title}
+      {item.title}
     </Text>
   );
-  const cornerTestID = testID ?? `notification-run-cell-corner-${item.id}`;
   return (
     <TranscriptNavigationRow
       testID={`notification-run-cell-${item.id}`}
-      singleDestination={item.kind === 'corner' && Boolean(item.cornerId) && !item.url}
       leading={glyph ? <CornerBranchGlyph /> : undefined}
       primary={
         item.url
@@ -225,6 +258,8 @@ const styles = StyleSheet.create(({ buzz }) => ({
   run: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
   header: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: buzz.space.sm },
   summary: { ...buzz.type.meta, color: buzz.textSecondary, flex: 1 },
+  cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
+  cornerName: { flexShrink: 1, minWidth: 0 },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
   number: {

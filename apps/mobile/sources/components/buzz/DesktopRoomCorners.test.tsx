@@ -14,7 +14,6 @@ vi.mock('./CornerWaitingPulse', () => ({
 }));
 
 import { DesktopRoomCorners } from './DesktopRoomCorners';
-import { beelineThemes } from '@/buzz/groknight';
 import { applyChatListCorners } from '@/buzz/room-corner-store';
 
 (
@@ -22,7 +21,7 @@ import { applyChatListCorners } from '@/buzz/room-corner-store';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('DesktopRoomCorners', () => {
-  it('marks each corner name with the brass # every other corner name carries', () => {
+  it('shows a bare corner name beside its corner glyph', () => {
     const item = {
       room: { id: 'room', name: 'alpha', updatedAt: 1 },
       cornerCount: 1,
@@ -31,16 +30,11 @@ describe('DesktopRoomCorners', () => {
     applyChatListCorners([item], -1);
     let tree!: ReturnType<typeof create>;
     act(() => {
-      tree = create(
-        <DesktopRoomCorners item={item} onOpen={() => {}} />,
-      );
+      tree = create(<DesktopRoomCorners item={item} onOpen={() => {}} />);
     });
     const name = tree.root
       .findByProps({ testID: 'desktop-corner-c1' })
       .findAllByType('Text' as never)[0]!;
-    const [sigil, title] = name.props.children;
-    expect(sigil.props.children).toBe('#');
-    expect(sigil.props.style.color).toBe(beelineThemes.obsidian.accent);
-    expect(title).toBe('Docs refresh');
+    expect(name.props.children).toBe('Docs refresh');
   });
 });

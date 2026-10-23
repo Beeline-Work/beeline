@@ -21,6 +21,8 @@ import { CORNER_BRANCH_POINTS, CornerBranchGlyph } from './CornerBranchGlyph';
 import { CORNER_EXTENT } from './CornerGlyph';
 import { CornerOpenedMarker, CornerOpenedMarkers } from './CornerOpenedMarker';
 import brand from '@/buzz/brand.json';
+import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
+import { anchorCornerMarkers } from '@/buzz/corner-markers';
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -44,16 +46,22 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 function textOf(renderer: ReactTestRenderer): string {
-  const flatten = (node: any): string =>
-    typeof node === 'string' ? node : (node?.children ?? []).map(flatten).join('');
-  const lines: string[] = [];
-  const walk = (node: any) => {
-    if (!node || typeof node === 'string') return;
-    if (node.type === 'Text') lines.push(flatten(node));
-    else (node.children ?? []).forEach(walk);
-  };
-  walk(renderer.toJSON());
-  return lines.join(' | ');
+  const flatten = (value: any): string =>
+    typeof value === 'string' || typeof value === 'number'
+      ? String(value)
+      : Array.isArray(value)
+        ? value.map(flatten).join('')
+        : flatten(value?.props?.children ?? []);
+  return renderer.root
+    .findAll((node: any) => {
+      if (node.type !== 'Text') return false;
+      for (let parent = node.parent; parent; parent = parent.parent)
+        if (parent.type === 'Text') return false;
+      return true;
+    })
+    .map((node: any) => flatten(node.props.children))
+    .join('')
+    .replace(/\u00a0/g, ' ');
 }
 
 const pressable = (renderer: ReactTestRenderer) =>
@@ -68,7 +76,7 @@ describe('CornerOpenedMarker', () => {
     const target = pressable(renderer);
     expect(target.props.accessibilityRole).toBe('link');
     expect(target.props.accessibilityLabel).toBe('Open corner quiet amber corner');
-    expect(textOf(renderer)).toBe('Opened corner #quiet amber corner');
+    expect(textOf(renderer)).toBe('Opened quiet amber corner');
     // The drop-down mark leads the line.
     expect(renderer.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
 
@@ -81,7 +89,7 @@ describe('CornerOpenedMarker', () => {
     const renderer = render(
       <CornerOpenedMarker title="quiet amber corner" closed onOpen={onOpen} testID="marker" />,
     );
-    expect(textOf(renderer)).toBe('Corner closed · #quiet amber corner');
+    expect(textOf(renderer)).toBe('Closed quiet amber corner');
     act(() => pressable(renderer).props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -126,14 +134,20 @@ describe('anchored corner runs', () => {
         },
       })),
     } as unknown as import('@/buzz/room-view-presentation').ChatDisplayMessage;
-    const renderer = render(<CornerOpenedMarkers message={message} onOpenCorner={onOpenCorner} />);
+    const renderer = render(
+      <CornerOpenedMarkers
+        message={message}
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={() => undefined}
+      />,
+    );
     const host = (id: string) =>
       renderer.root.findAll(
         (node: any) => typeof node.type === 'string' && node.props.testID === id,
       )[0];
     if (count === 1) {
       expect(host('notification-run-expand-source')).toBeUndefined();
-      expect(textOf(renderer)).toBe('Opened corner #name-0');
+      expect(textOf(renderer)).toBe('Opened name-0');
     } else {
       expect(textOf(renderer)).toBe(`${count} corners opened`);
       expect(host('corner-opened-marker-corner-0')).toBeUndefined();
@@ -141,7 +155,11 @@ describe('anchored corner runs', () => {
       expect(host('notification-run-expand-source').props.accessibilityState.expanded).toBe(true);
       act(() =>
         renderer.update(
-          <CornerOpenedMarkers message={{ ...message }} onOpenCorner={onOpenCorner} />,
+          <CornerOpenedMarkers
+            message={{ ...message }}
+            onOpenCorner={onOpenCorner}
+            onOpenUrl={() => undefined}
+          />,
         ),
       );
       expect(host('corner-opened-marker-corner-0')).toBeTruthy();
@@ -157,3 +175,85 @@ describe('anchored corner runs', () => {
     act(() => renderer.unmount());
   });
 });
+
+it.each(['Room', 'DM', 'corner'])(
+  'updates one %s call-site row through review, merge and close',
+  () => {
+    const onOpenCorner = vi.fn(),
+      onOpenUrl = vi.fn();
+    const source = { id: 'request', text: 'Please build this', timestamp: 1, isUser: true };
+    const marker = {
+      id: 'same-marker',
+      text: '',
+      timestamp: 2,
+      isUser: false,
+      daemonFact: {
+        type: 'corner-open' as const,
+        sourceMessageId: source.id,
+        cornerId: 'destination',
+        name: '2832/steps-row-line',
+        objective: '',
+      },
+    };
+    const paint = (fact = marker.daemonFact) => {
+      const rows = foldPrLifecycleRuns(
+        anchorCornerMarkers([{ ...source }, { ...marker, daemonFact: fact }]),
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].cornerMarkers).toHaveLength(1);
+      return (
+        <CornerOpenedMarkers message={rows[0]} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
+      );
+    };
+    const renderer = render(paint());
+    expect(textOf(renderer)).toBe('Opened 2832/steps-row-line');
+    // A PR exists during review, but neither the verb nor the number changes.
+    act(() =>
+      renderer.update(
+        paint({
+          ...marker.daemonFact,
+          pullRequest: { number: 2832, url: 'https://github.com/Beeline-Work/beeline/pull/2832' },
+        } as any),
+      ),
+    );
+    expect(textOf(renderer)).toBe('Opened 2832/steps-row-line');
+    const target = () =>
+      renderer.root.find(
+        (node: any) =>
+          node.type === 'Pressable' && node.props.testID === 'corner-opened-marker-destination',
+      );
+    const originalTarget = target();
+    act(() =>
+      renderer.update(
+        paint({
+          ...marker.daemonFact,
+          type: 'corner-complete',
+          outcome: 'landed',
+          pullRequest: { number: 2832, url: 'https://github.com/Beeline-Work/beeline/pull/2832' },
+        } as any),
+      ),
+    );
+    expect(textOf(renderer)).toBe('Merged 2832/steps-row-line PR 2832');
+    expect(target()).toBe(originalTarget);
+    const link = renderer.root.find(
+      (node: any) => node.type === 'Text' && node.props.accessibilityLabel === 'Open PR 2832',
+    );
+    const event = { stopPropagation: vi.fn() };
+    act(() => link.props.onPress(event));
+    expect(event.stopPropagation).toHaveBeenCalledOnce();
+    expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/Beeline-Work/beeline/pull/2832');
+    expect(onOpenCorner).not.toHaveBeenCalled();
+    act(() => target().props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith('destination');
+    act(() =>
+      renderer.update(
+        paint({ ...marker.daemonFact, type: 'corner-complete', outcome: 'abandoned' } as any),
+      ),
+    );
+    expect(textOf(renderer)).toBe('Closed 2832/steps-row-line');
+    expect(target()).toBe(originalTarget);
+    act(() => target().props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledTimes(2);
+    act(() => renderer.unmount());
+  },
+);

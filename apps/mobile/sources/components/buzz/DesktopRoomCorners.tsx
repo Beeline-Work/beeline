@@ -43,7 +43,6 @@ export function DesktopRoomCorners({
           >
             <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
             <Text numberOfLines={1} style={styles.name}>
-              <Text style={styles.sigil}>#</Text>
               {cornerShortTitle(item.room.name, corner.name, corner.id)}
             </Text>
             <CornerWaitingPulse state={corner.state}>
@@ -75,8 +74,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   name: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, flex: 1 },
-  // The same brass `#` every other corner name carries.
-  sigil: { color: theme.buzz.accent },
   state: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   waiting: { color: theme.buzz.accent },
 }));

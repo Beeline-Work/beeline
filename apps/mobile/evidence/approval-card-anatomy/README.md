@@ -37,3 +37,5 @@ The fixture buttons record “Action received”; Squire Review keeps its extern
 | tray | [Android](bone/tray.png) | [Android](obsidian/tray.png) |
 
 [Android interaction receipts](interaction-receipts.json) confirm callback delivery for grant No, Squire View request, spending Allow once, target No and connector No; vault-reference expansion was also exercised. These fixture callbacks do not grant production permissions. The server integration tests establish the corresponding committed decision behavior.
+
+[Previous-client compatibility receipt](old-client-compatibility.json): the unmodified tray renderer from the previous PR head renders the new server copy and labels, and No still dispatches deny at its original action index. Only its relative import paths were adapted for the temporary test location.

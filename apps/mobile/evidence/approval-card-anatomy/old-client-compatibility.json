@@ -1,0 +1,22 @@
+{
+  "case": "OLD-CLIENT-COPY",
+  "clientHead": "7539857263f95edf7b5db4ba34d95db2313571bc",
+  "component": "NeedsYouCell",
+  "sourceChanges": "relative component imports changed to aliases only, to render the historical source from a temporary test directory",
+  "result": "passed",
+  "newLabels": [
+    "Once",
+    "Always",
+    "No"
+  ],
+  "originalActionTestIDs": [
+    "needs-you-action-tray-0",
+    "needs-you-action-tray-1",
+    "needs-you-action-tray-2"
+  ],
+  "denialCallback": "deny at original index 2",
+  "copy": [
+    "wants to run a script",
+    "Free disk space"
+  ]
+}

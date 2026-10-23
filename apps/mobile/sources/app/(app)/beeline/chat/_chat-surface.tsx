@@ -5947,7 +5947,7 @@ export function BuzzChatSurface({
       return item.cornerMarkers?.length ? (
         <View>
           {ledgerMessage}
-          <CornerOpenedMarkers message={item} onOpenCorner={openCorner} />
+          <CornerOpenedMarkers message={item} onOpenCorner={openCorner} onOpenUrl={handleOpenGitHubEvent} />
         </View>
       ) : (
         ledgerMessage

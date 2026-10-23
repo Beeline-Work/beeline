@@ -608,14 +608,14 @@ describe('Room message variant components', () => {
     const secondaryAction = renderer.root.findByProps({
       testID: 'notification-run-cell-url-message',
     });
-    expect(secondaryAction.props.accessibilityLabel).toBe('Open corner · PR #42');
-    act(() => secondaryAction.props.onPress());
+    expect(secondaryAction.props.accessibilityLabel).toBe('Open PR 42');
+    act(() => secondaryAction.props.onPress({ stopPropagation: vi.fn() }));
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/42');
     expect(renderer.root.findAllByType('HullSurface')).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
     const json = JSON.stringify(renderer.toJSON());
     expect(json).toContain('Merged');
-    expect(json).toContain('#42');
+    expect(json).toContain('PR 42');
     expect(json).toContain('Ship the archived transcript card');
     expect(json).not.toContain('@beebee');
     expect(json).not.toContain('View ↗');
@@ -641,7 +641,8 @@ describe('Room message variant components', () => {
     const card = renderer.root.findByProps({
       testID: 'notification-run-cell-corner-message',
     });
-    expect(JSON.stringify(renderer.toJSON())).toContain('corner #flaky auth');
+    expect(JSON.stringify(renderer.toJSON())).toContain('flaky auth');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('corner #');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test so the suite stops failing at random');
     act(() => card.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
@@ -711,7 +712,8 @@ describe('Room message variant components', () => {
         onOpenUrl={() => undefined}
       />,
     );
-    expect(JSON.stringify(renderer.toJSON())).toContain('corner #Fix the flaky');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Fix the flaky');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('corner #');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test so the suite stops failing at random');
   });
 

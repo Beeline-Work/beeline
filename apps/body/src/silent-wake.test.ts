@@ -33,8 +33,16 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   }
   await context.leave();
   await expect(callAgentTool('no_reply_needed', {}, 'silent-3')).rejects.toThrow('no active server command');
-  // R1: the helper must drain output before sending its terminal receipt.
-  expect(fetch).not.toHaveBeenCalled();
+  // R1: record silence immediately, leaving the terminal receipt to the helper
+  // after it drains output. Rejected wakes and calls after silence write nothing.
+  expect(fetch).toHaveBeenCalledTimes(6);
+  for (const [url, request] of fetch.mock.calls) {
+    expect(url).toEqual(new URL('http://localhost/v1/daemon/operations/markAgentTurnSilent'));
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body)).toEqual({
+      roomId: 'room', requestId: 'turn', taskId: 'root', generationId: context.generationId,
+    });
+  }
 });
 it('declares the exact Claude terminal tool in every new session, retaining existing names and isolated settings', () => {
   const meta = sessionToolScopeMeta('claude-agent-acp', 'other,other') as { claudeCode: { options: { env: Record<string, string>; settings: unknown } } };

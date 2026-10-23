@@ -20,7 +20,8 @@ import { StateDot } from './StateDot';
 /** A horizontal composition for inline navigation and non-index layout.
  * Unlike an index entry, its children retain their own typography and targets.
  */
-export function InlineRow({ style, ...props }: ViewProps) {
+export function InlineRow({ style, onPress, ...props }: ViewProps & { onPress?: () => void }) {
+  if (onPress) return <Pressable {...props} onPress={onPress} style={[inlineStyles.row, style]} />;
   return <View {...props} style={[inlineStyles.row, style]} />;
 }
 

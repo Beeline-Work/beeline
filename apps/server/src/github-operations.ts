@@ -1079,8 +1079,11 @@ export class GitHubOperations {
    * `landCorner`, telling a started merge apart from one GitHub refused, so
    * `merge_corner` can report the refusal instead of `merge-started`.
    */
-  async landCornerOutcome(cornerId: string): Promise<LandCornerOutcome> {
-    const notAttempted = { status: 'not-attempted' } as const;
+  async landCornerOutcome(cornerId: string, onBlocked?: (reason: string) => void): Promise<LandCornerOutcome> {
+    const notAttempted = (reason: string) => {
+      onBlocked?.(reason);
+      return { status: 'not-attempted' } as const;
+    };
     await assertCornerBriefAllowsMerge(this.database, cornerId);
     let status: Awaited<ReturnType<GitHubOperations['prChecksStatus']>>;
     try {
@@ -1090,9 +1093,12 @@ export class GitHubOperations {
         `[server] corner ${cornerId} merge gate read failed:`,
         error instanceof Error ? error.message : String(error),
       );
-      return notAttempted;
+      return notAttempted('GitHub merge gate read failed');
     }
-    if (!status.mergeAllowed) return notAttempted;
+    if (!status.mergeAllowed) return notAttempted([
+      status.checks !== 'passed' ? `checks are ${status.checks}` : '',
+      status.approved ? '' : 'no yes on this head', status.held ? 'a hold stands' : '',
+    ].filter(Boolean).join('; ') || 'the merge gate is closed');
     const target = (
       await this.database.query<CornerWebhookTarget & {
         number: number;
@@ -1115,8 +1121,9 @@ export class GitHubOperations {
         [cornerId, status.headSha],
       )
     ).rows[0];
-    if (!target) return notAttempted;
-    if (!(await claimCornerMergeAttempt(this.database, cornerId, status.headSha))) return notAttempted;
+    if (!target) return notAttempted('the merge target no longer matches the corner head or linked GitHub repository');
+    if (!(await claimCornerMergeAttempt(this.database, cornerId, status.headSha, onBlocked)))
+      return { status: 'not-attempted' };
     try {
       const result = await this.app.mergePullRequest(
         Number(target.installation_id),
@@ -1137,7 +1144,12 @@ export class GitHubOperations {
       }
     } catch (error) {
       let pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>> | undefined;
-      let confirmedUnqueued = false;
+      const queueAttempted = record(error)?.queueAttempted === true;
+      // A REST 4xx rejected the operation. Unlike a lost response, it cannot
+      // hide an accepted merge; still require the matching unmerged PR read.
+      const definiteRefusal = !queueAttempted && record(error)?.mergeAttempted === true && error instanceof GitHubHttpError
+        && error.status >= 400 && error.status < 500;
+      let confirmedUnqueued = definiteRefusal;
       try {
         const token = await this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
@@ -1163,7 +1175,7 @@ export class GitHubOperations {
         return { status: 'started' };
       }
       const reason = error instanceof Error ? error.message : String(error);
-      if (record(error)?.queueAttempted === true && !confirmedUnqueued) {
+      if (queueAttempted && !confirmedUnqueued) {
         // Leave the review-stage claim recoverable when enqueue acceptance
         // cannot yet be read, rather than inscribing a terminal refusal.
         return { status: 'refused', reason };

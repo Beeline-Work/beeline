@@ -58,18 +58,16 @@ export function saveLocalSettings(settings: LocalSettings): void {
   mmkv.set('local-settings', JSON.stringify(settings));
 }
 
-/** The person's explicit Settings → Appearance choice. Its presence — not the
- *  in-app value — is what distinguishes a choice from a value seeded from the
- *  system, so a later system change can never overwrite the choice. The key is
- *  kept from the pre-seed implementation so an existing chooser migrates. */
+/** Launch preference mirrored for Android's native splash. Keep the legacy
+ * key so existing installations can migrate without losing their settings. */
 const APPEARANCE_CHOICE_KEY = 'appearance-launch';
 
-export function loadAppearanceChoice(): 'light' | 'dark' | null {
+export function loadAppearanceChoice(): 'system' | 'light' | 'dark' | null {
   const raw = mmkv.getString(APPEARANCE_CHOICE_KEY);
-  return raw === 'light' || raw === 'dark' ? raw : null;
+  return raw === 'system' || raw === 'light' || raw === 'dark' ? raw : null;
 }
 
-export function saveAppearanceChoice(mode: 'light' | 'dark'): void {
+export function saveAppearanceChoice(mode: 'system' | 'light' | 'dark'): void {
   mmkv.set(APPEARANCE_CHOICE_KEY, mode);
 }
 
@@ -84,4 +82,12 @@ export function retrieveTempText(id: string): string | null {
   const content = mmkv.getString(key) ?? null;
   if (content) mmkv.delete(key);
   return content;
+}
+
+/** Move existing installations to System once, preserving later choices. */
+export function migrateSystemAppearance(): void {
+  if (mmkv.getString('appearance-system-v1') === 'done') return;
+  saveLocalSettings({ ...loadLocalSettings(), appearance: 'system' });
+  saveAppearanceChoice('system');
+  mmkv.set('appearance-system-v1', 'done');
 }

@@ -19,44 +19,32 @@ vi.mock('react-native', () => ({
   Appearance: { getColorScheme: () => colorScheme.value },
 }));
 
-describe('seeding the app appearance from the system', () => {
+describe('System appearance migration and resolution', () => {
   beforeEach(() => {
     vi.resetModules();
     mmkvValues.clear();
     colorScheme.value = 'light';
   });
 
-  it('seeds light on a fresh install on a light system', async () => {
+  it.each(['light', 'dark'])('moves a stored %s choice to System exactly once', async (appearance) => {
+    mmkvValues.set('appearance-launch', appearance);
+    mmkvValues.set('local-settings', JSON.stringify({ appearance, uiSize: 'large' }));
     const { seedAppAppearanceFromSystem } = await import('./app-appearance-seed');
+    const { loadLocalSettings, saveLocalSettings, saveAppearanceChoice } = await import('@/sync/persistence');
+    seedAppAppearanceFromSystem();
+    expect(loadLocalSettings()).toMatchObject({ appearance: 'system', uiSize: 'large' });
+    saveLocalSettings({ ...loadLocalSettings(), appearance: 'dark' });
+    saveAppearanceChoice('dark');
+    vi.resetModules();
+    const restarted = await import('./app-appearance-seed');
+    expect(restarted.seedAppAppearanceFromSystem()).toBe('dark');
+    expect(loadLocalSettings().appearance).toBe('dark');
+  });
 
+  it('defaults to System and resolves unknown OS preference to light', async () => {
+    colorScheme.value = null;
+    const { seedAppAppearanceFromSystem } = await import('./app-appearance-seed');
     expect(seedAppAppearanceFromSystem()).toBe('light');
-    expect(JSON.parse(mmkvValues.get('local-settings')!)).toMatchObject({ appearance: 'light' });
-  });
-
-  it('seeds dark on a fresh install on a dark system', async () => {
-    colorScheme.value = 'dark';
-    const { seedAppAppearanceFromSystem } = await import('./app-appearance-seed');
-
-    expect(seedAppAppearanceFromSystem()).toBe('dark');
-    expect(JSON.parse(mmkvValues.get('local-settings')!)).toMatchObject({ appearance: 'dark' });
-  });
-
-  it('follows a later system change when nothing was chosen', async () => {
-    mmkvValues.set('local-settings', JSON.stringify({ appearance: 'dark' }));
-    colorScheme.value = 'light';
-    const { seedAppAppearanceFromSystem } = await import('./app-appearance-seed');
-
-    expect(seedAppAppearanceFromSystem()).toBe('light');
-    expect(JSON.parse(mmkvValues.get('local-settings')!)).toMatchObject({ appearance: 'light' });
-  });
-
-  it('never seeds over an explicit choice', async () => {
-    mmkvValues.set('appearance-launch', 'dark');
-    mmkvValues.set('local-settings', JSON.stringify({ appearance: 'dark' }));
-    colorScheme.value = 'light';
-    const { seedAppAppearanceFromSystem } = await import('./app-appearance-seed');
-
-    expect(seedAppAppearanceFromSystem()).toBe('dark');
-    expect(JSON.parse(mmkvValues.get('local-settings')!)).toMatchObject({ appearance: 'dark' });
+    expect(JSON.parse(mmkvValues.get('local-settings')!).appearance).toBe('system');
   });
 });

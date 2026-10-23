@@ -1,5 +1,6 @@
 import { ScrollViewStyleReset } from 'expo-router/html';
 import '../unistyles';
+import { beelineThemes } from '../buzz/groknight';
 
 // This file is web-only and used to configure the root HTML for every
 // web page during static rendering.
@@ -33,14 +34,12 @@ export default function Root({ children }: { children: React.ReactNode }) {
   );
 }
 
-// The Appearance setting defaults to Obsidian (dark) regardless of OS color
-// scheme — see `sync/localSettings.ts`'s `localSettingsDefaults` — so this
-// static default matches that, and the script below is what actually reads
-// the user's choice once the page has browser storage to read it from.
+// Light is the no-preference fallback; the blocking script also honors the
+// one-time migration before the application bundle reads local settings.
 const responsiveBackground = `
-body {
-  /* Speakeasy brand canvas — the same value the unistyles themes carry. */
-  background-color: #14091A;
+body { background-color: #F3EEE4; }
+@media (prefers-color-scheme: dark) {
+  body { background-color: #14091A; }
 }`;
 
 // Mirrors sync/browser-string-storage.ts's namespacing ('beeline.settings.' +
@@ -53,10 +52,11 @@ const appearanceOverrideScript = `
   try {
     var raw = window.localStorage.getItem('beeline.settings.local-settings');
     var parsed = raw ? JSON.parse(raw) : null;
-    if (parsed && parsed.appearance === 'light') {
+    var migrated = window.localStorage.getItem('beeline.settings.appearance-system-v1') === 'done';
+    var choice = migrated && parsed ? parsed.appearance : 'system';
+    if (choice === 'light' || choice === 'dark') {
       var style = document.createElement('style');
-      /* Bone canvas — apps/mobile/sources/buzz/groknight.ts beelineThemes.bone.bgVoid */
-      style.textContent = 'body { background-color: #F3EEE4; }';
+      style.textContent = 'body { background-color: ' + (choice === 'dark' ? ${JSON.stringify(beelineThemes.obsidian.bgVoid)} : ${JSON.stringify(beelineThemes.bone.bgVoid)}) + '; }';
       document.head.appendChild(style);
     }
   } catch (e) {}

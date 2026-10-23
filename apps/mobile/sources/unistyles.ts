@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Appearance, Platform } from 'react-native';
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 import {
     boneLargeTheme,
@@ -16,7 +16,7 @@ import {
     applyEffectiveAndroidLaunchAppearance,
     pinAndroidLaunchAppearance,
 } from './buzz/android-launch-appearance';
-import { seedAppAppearanceFromSystem } from './buzz/app-appearance-seed';
+import { resolveAppAppearance, seedAppAppearanceFromSystem } from './buzz/app-appearance-seed';
 
 const appThemes = {
     obsidian: obsidianTheme,
@@ -38,11 +38,9 @@ declare module 'react-native-unistyles' {
     export interface UnistylesBreakpoints extends AppBreakpoints { }
 }
 
-/** Settings → Appearance stores 'light' | 'dark'; Unistyles themes are named
- *  after their surface material. Kept as its own function so the mapping is
- *  unit-testable without booting Unistyles. */
+/** Resolve the selected preference to a palette named for its surface material. */
 export function themeNameForAppearance(appearance: LocalSettings['appearance']): AppThemeName {
-    return appearance === 'light' ? 'bone' : 'obsidian';
+    return resolveAppAppearance(appearance) === 'light' ? 'bone' : 'obsidian';
 }
 
 export function themeNameForDisplay(
@@ -55,11 +53,10 @@ export function themeNameForDisplay(
     return `${base}${uiSize === 'small' ? 'Small' : 'Large'}` as AppThemeName;
 }
 
-// Seed before anything reads local settings: a first install (or first run
-// after an update) replicates the system dark-mode setting instead of the
-// hardcoded dark default, so the app and the splash agree from the start.
+// Complete the one-time migration before any settings consumers mount.
 seedAppAppearanceFromSystem();
 const initialSettings = loadLocalSettings();
+let currentDisplay = initialSettings;
 const initialThemeName = themeNameForDisplay(initialSettings.appearance, initialSettings.uiSize);
 
 StyleSheet.configure({
@@ -78,7 +75,6 @@ function applyRootBackground(themeName: AppThemeName): void {
 }
 
 applyRootBackground(initialThemeName);
-applyEffectiveAndroidLaunchAppearance();
 
 /** The Settings → Appearance toggle's write path: switches the live Unistyles
  *  theme and carries the native root/system chrome along with it, the same
@@ -87,6 +83,7 @@ export function setAppDisplay(
     appearance: LocalSettings['appearance'],
     uiSize: LocalSettings['uiSize'],
 ): void {
+    currentDisplay = { ...currentDisplay, appearance, uiSize };
     const themeName = themeNameForDisplay(appearance, uiSize);
     UnistylesRuntime.setTheme(themeName);
     applyRootBackground(themeName);
@@ -108,3 +105,14 @@ export function applyAppearanceChoice(
     setAppDisplay(appearance, uiSize);
     pinAndroidLaunchAppearance(appearance);
 }
+
+// The OS remains the authority only while System is selected. Keep the latest
+// text size when updating the palette without changing the stored preference.
+Appearance.addChangeListener(() => {
+    if (currentDisplay.appearance === 'system') {
+        setAppDisplay('system', currentDisplay.uiSize);
+    }
+});
+
+// Subscribe before clearing a native override: that reset can emit a change.
+applyEffectiveAndroidLaunchAppearance();

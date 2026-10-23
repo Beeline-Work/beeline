@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // theme.ts reads react-native's Platform.select at import time.
 vi.mock('react-native', () => ({
   Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
-  Appearance: { getColorScheme: () => 'dark' },
+  Appearance: { getColorScheme: () => scheme.value, addChangeListener: (listener: () => void) => { scheme.listener = listener; return { remove() {} }; } },
 }));
 
+const scheme = vi.hoisted(() => ({ value: 'dark' as 'light' | 'dark' | null, listener: () => {} }));
 const mmkvValues = vi.hoisted(() => new Map<string, string>());
 vi.mock('react-native-mmkv', () => ({
   MMKV: class {
@@ -35,14 +36,17 @@ vi.mock('./buzz/android-launch-appearance-native', () => ({
 }));
 
 describe('the appearance toggle wired into Unistyles', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
+    const { Platform } = await import('react-native');
+    Object.assign(Platform, { OS: 'android' });
     mmkvValues.clear();
+    scheme.value = 'dark';
     configure.mockClear();
     setTheme.mockClear();
     setRootViewBackgroundColor.mockClear();
     setBackgroundColorAsync.mockClear();
-    setAndroidNightMode.mockClear();
+    setAndroidNightMode.mockReset();
   });
 
   it('registers both obsidian and bone, defaulting cold start to obsidian', async () => {
@@ -69,6 +73,7 @@ describe('the appearance toggle wired into Unistyles', () => {
   });
 
   it('cold-starts into bone when the persisted appearance is light', async () => {
+    mmkvValues.set('appearance-system-v1', 'done');
     mmkvValues.set('appearance-launch', 'light');
     mmkvValues.set('local-settings', JSON.stringify({ appearance: 'light' }));
     await import('./unistyles');
@@ -97,11 +102,11 @@ describe('the appearance toggle wired into Unistyles', () => {
     expect(setAndroidNightMode).not.toHaveBeenCalled();
   });
 
-  it('pins the cold-start splash only for an explicit choice', async () => {
+  it('clears the old Android splash pin when migrating to System', async () => {
     mmkvValues.set('appearance-launch', 'dark');
     await import('./unistyles');
 
-    expect(setAndroidNightMode).toHaveBeenCalledWith('dark');
+    expect(setAndroidNightMode).toHaveBeenCalledWith('system');
   });
 
   it('re-pins the next Android splash when Appearance is chosen', async () => {
@@ -114,4 +119,36 @@ describe('the appearance toggle wired into Unistyles', () => {
     applyAppearanceChoice('light', 'medium');
     expect(setAndroidNightMode).toHaveBeenCalledWith('light');
   });
+
+  it('catches the OS change emitted while clearing an old Android override', async () => {
+    setAndroidNightMode.mockImplementationOnce(() => {
+      scheme.value = 'light';
+      scheme.listener();
+    });
+    await import('./unistyles');
+    expect(setTheme).toHaveBeenLastCalledWith('bone');
+  });
+
+  for (const platform of ['ios', 'android', 'web']) {
+    it(`follows live system changes on ${platform}, preserving explicit choices and text size`, async () => {
+      const { Platform } = await import('react-native');
+      Object.assign(Platform, { OS: platform });
+      const { applyAppearanceChoice, setAppDisplay } = await import('./unistyles');
+      setAppDisplay('system', 'large');
+      scheme.value = 'light';
+      scheme.listener();
+      expect(setTheme).toHaveBeenLastCalledWith(platform === 'web' ? 'bone' : 'boneLarge');
+      scheme.value = 'dark';
+      scheme.listener();
+      expect(setTheme).toHaveBeenLastCalledWith(platform === 'web' ? 'obsidian' : 'obsidianLarge');
+      applyAppearanceChoice('light', 'large');
+      setTheme.mockClear();
+      scheme.listener();
+      expect(setTheme).not.toHaveBeenCalled();
+      applyAppearanceChoice('system', 'large');
+      scheme.value = null;
+      scheme.listener();
+      expect(setTheme).toHaveBeenLastCalledWith(platform === 'web' ? 'bone' : 'boneLarge');
+    });
+  }
 });

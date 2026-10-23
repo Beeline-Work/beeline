@@ -1,0 +1,106 @@
+[
+  {
+    "step": "dark",
+    "observations": [
+      {
+        "choice": "system",
+        "system": "light",
+        "theme": "bone",
+        "background": "rgb(243, 238, 228)",
+        "darkMedia": false
+      },
+      {
+        "choice": "system",
+        "system": "dark",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": true
+      }
+    ]
+  },
+  {
+    "step": "light",
+    "observations": [
+      {
+        "choice": "system",
+        "system": "light",
+        "theme": "bone",
+        "background": "rgb(243, 238, 228)",
+        "darkMedia": false
+      },
+      {
+        "choice": "system",
+        "system": "dark",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": true
+      },
+      {
+        "choice": "system",
+        "system": "light",
+        "theme": "bone",
+        "background": "rgb(243, 238, 228)",
+        "darkMedia": false
+      }
+    ]
+  },
+  {
+    "step": "explicit-dark",
+    "observations": [
+      {
+        "choice": "system",
+        "system": "light",
+        "theme": "bone",
+        "background": "rgb(243, 238, 228)",
+        "darkMedia": false
+      },
+      {
+        "choice": "system",
+        "system": "dark",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": true
+      },
+      {
+        "choice": "system",
+        "system": "light",
+        "theme": "bone",
+        "background": "rgb(243, 238, 228)",
+        "darkMedia": false
+      },
+      {
+        "choice": "dark",
+        "system": "dark",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": true
+      },
+      {
+        "choice": "dark",
+        "system": "dark",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": true
+      },
+      {
+        "choice": "dark",
+        "system": "light",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": false
+      }
+    ]
+  },
+  {
+    "step": "restart",
+    "observations": [
+      {
+        "choice": "dark",
+        "system": "light",
+        "theme": "obsidian",
+        "background": "rgb(20, 9, 26)",
+        "darkMedia": false
+      }
+    ]
+  }
+]

@@ -2,14 +2,10 @@ import { loadAppearanceChoice, saveAppearanceChoice } from '@/sync/persistence';
 import type { LocalSettings } from '@/sync/localSettings';
 import { setAndroidNightMode } from './android-launch-appearance-native';
 
-/** The Android launch theme follows the same authority the app renders from.
- *  A never-chosen appearance is not pinned: the splash follows the system
- *  exactly like the seeded app does. An explicit choice is pinned so the
- *  splash matches it on every later cold start. */
+/** Restore the selected launch theme, clearing old native pins for System. */
 export function applyEffectiveAndroidLaunchAppearance(): void {
   const choice = loadAppearanceChoice();
-  if (choice === null) return;
-  setAndroidNightMode(choice);
+  setAndroidNightMode(choice ?? 'system');
 }
 
 /** Settings → Appearance write path. Records the choice — the marker that

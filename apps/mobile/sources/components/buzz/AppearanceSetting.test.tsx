@@ -19,7 +19,7 @@ import { AppearanceSetting } from './AppearanceSetting';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('AppearanceSetting', () => {
-  it('opens the light/dark picker and reports the chosen appearance', () => {
+  it('opens the System/Light/Dark picker and reports the chosen appearance', () => {
     const onChange = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => {
@@ -32,14 +32,14 @@ describe('AppearanceSetting', () => {
     act(() => row.props.onPress());
     expect(renderer.root.findByProps({ testID: 'appearance-sheet' }).props.visible).toBe(true);
     expect(
-      ['dark', 'light'].map(
+      ['system', 'light', 'dark'].map(
         (appearance) => renderer.root.findByProps({ testID: `appearance-${appearance}` }).props
           .label,
       ),
-    ).toEqual(['Dark', 'Light']);
+    ).toEqual(['System', 'Light', 'Dark']);
 
-    act(() => renderer.root.findByProps({ testID: 'appearance-light' }).props.onPress());
-    expect(onChange).toHaveBeenCalledWith('light');
+    act(() => renderer.root.findByProps({ testID: 'appearance-system' }).props.onPress());
+    expect(onChange).toHaveBeenCalledWith('system');
     expect(renderer.root.findByProps({ testID: 'appearance-sheet' }).props.visible).toBe(false);
   });
 
@@ -47,10 +47,10 @@ describe('AppearanceSetting', () => {
     const onChange = vi.fn();
     let renderer!: ReturnType<typeof create>;
     act(() => {
-      renderer = create(<AppearanceSetting onChange={onChange} value="dark" />);
+      renderer = create(<AppearanceSetting onChange={onChange} value="system" />);
     });
     act(() => renderer.root.findByProps({ testID: 'appearance-setting' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'appearance-dark' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'appearance-system' }).props.onPress());
     expect(onChange).not.toHaveBeenCalled();
   });
 });

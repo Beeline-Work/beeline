@@ -565,6 +565,17 @@ function readAgentSignInCard(value: unknown): NonNullable<RoomViewMessage['agent
   };
 }
 
+function readHumanApprovalIdentity(value: unknown): RoomViewIdentity | undefined {
+  const identity = readIdentity(value);
+  return identity?.kind === 'human' ? identity : undefined;
+}
+
+function readApprovalFact(value: unknown): { label: string; value: string } | null {
+  const item = record(value);
+  return item && nonempty(item.label) && nonempty(item.value)
+    ? { label: item.label, value: item.value } : null;
+}
+
 function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squireApproval']> | null {
   const item = record(value);
   const agent = readIdentity(item?.agent);
@@ -588,6 +599,14 @@ function readSquireApproval(value: unknown): NonNullable<RoomViewMessage['squire
     detail: item.detail,
     approvalUrl: item.approvalUrl,
     linkKind,
+    ...field('owner', readHumanApprovalIdentity(item.owner)),
+    ...field('status', oneOf(item.status, ['approved', 'denied', 'expired'])),
+    ...field('decidedBy', readHumanApprovalIdentity(item.decidedBy)),
+    ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
+    ...field('reason', nonempty(item.reason) ? item.reason : undefined),
+    ...field('action', nonempty(item.action) ? item.action : undefined),
+    ...field('reference', nonempty(item.reference) ? item.reference : undefined),
+    ...field('facts', readList(item.facts, readApprovalFact)),
     ...field('approvalId', nonempty(item.approvalId) ? item.approvalId : undefined),
     ...(uuid(item.sourceRoomId) && hex64(item.sourceMessageId)
       ? { sourceRoomId: item.sourceRoomId, sourceMessageId: item.sourceMessageId }
@@ -919,6 +938,8 @@ function readPermission(value: unknown): NonNullable<RoomViewMessage['permission
     ...field('decider', decider && decider.kind === 'human' ? decider : undefined),
     ...field('repository', typeof item.repository === 'string' ? item.repository : undefined),
     ...field('purpose', oneOf(item.purpose, ['squire-spending'])),
+    ...field('reason', nonempty(item.reason) ? item.reason : undefined),
+    ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
     ...field('cornerId', uuid(item.cornerId) ? item.cornerId : undefined),
   };
 }
@@ -930,6 +951,10 @@ function readTargetBranch(value: unknown): NonNullable<RoomViewMessage['targetBr
   }
   return {
     proposalId: item.proposalId,
+    ...field('purpose', nonempty(item.purpose) ? item.purpose : undefined),
+    ...field('status', oneOf(item.status, ['allowed', 'denied'])),
+    ...field('decidedBy', readHumanApprovalIdentity(item.decidedBy)),
+    ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
     from: item.from,
     to: item.to,
     ...field('repository', typeof item.repository === 'string' ? item.repository : undefined),

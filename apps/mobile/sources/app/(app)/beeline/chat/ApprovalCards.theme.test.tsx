@@ -245,3 +245,18 @@ it('puts No first while preserving existing tray action testIDs and decisions', 
   await act(async () => { await buttons[0].props.onPress({ stopPropagation() {} }); });
   expect(onAction).toHaveBeenCalledWith(item, expect.objectContaining({ decision: 'deny' }));
 });
+
+// These fixtures traverse the production phone parser and display adapter.
+describe.each(['bone', 'obsidian'] as const)('parsed settled approval controls in %s', themeName => {
+  it.each(['squire-allowed', 'squire-denied', 'squire-expired', 'target-denied', 'permission-allowed'] as const)('removes pending controls for %s', name => {
+    proofTheme.value = themeName;
+    const view = render(approvalCaseElement(name));
+    const ids = view.root.findAll((node: ReactTestInstance) => typeof node.props.testID === 'string').map((node: ReactTestInstance) => node.props.testID);
+    expect(ids).not.toContain('squire-approval-open');
+    expect(ids).not.toContain('write-permission-allow');
+    expect(ids).not.toContain('write-permission-deny');
+    expect(ids).not.toContain('target-branch-confirm');
+    expect(ids).not.toContain('target-branch-deny');
+    expect(view.root.findAll((node: ReactTestInstance) => node.props.label === 'Review ↗')).toHaveLength(0);
+  });
+});

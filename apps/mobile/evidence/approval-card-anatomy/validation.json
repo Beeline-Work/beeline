@@ -118,5 +118,43 @@
       "execution": "All files covered in memory-bounded groups; two performance-budget cases passed unchanged in an isolated single-worker rerun."
     },
     "historicalDeniedConnectorCompatibility": "old-client-connector-denied.json"
+  },
+  "productionPhoneParserRepair": {
+    "reproduction": "APPROVAL-PHONE-PARSER",
+    "receipt": "production-parser.json",
+    "path": [
+      "readRoomViewMessage",
+      "displayRoomMessage",
+      "production approval cards"
+    ],
+    "sharedPackagesPassed": 660,
+    "mobile": {
+      "filesPassed": 599,
+      "filesSkipped": 4,
+      "passed": 5000,
+      "skipped": 5,
+      "failed": 0
+    },
+    "themeAndDecisionCopyPassed": 75,
+    "calmAndDesignLintPassed": 17,
+    "uiPolicyPassed": 29,
+    "rootTypecheck": "passed",
+    "android": {
+      "screenshots": 62,
+      "themes": [
+        "Bone",
+        "Obsidian"
+      ],
+      "parsedSettledControls": "absent",
+      "nativeOutcomeAssertions": "passed"
+    },
+    "server": {
+      "files": 212,
+      "passed": 3620,
+      "skipped": 19,
+      "failed": 0,
+      "integrationCases": 255,
+      "execution": "Full coverage in memory-bounded groups; no failed cases."
+    }
   }
 }

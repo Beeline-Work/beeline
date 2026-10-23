@@ -1,7 +1,8 @@
 import React from 'react';
 import { GrantRequestCard, SquireApprovalCard, WritePermissionCard, TargetBranchProposalCard, ConnectorOfferCard } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
 import { NeedsYouCell } from '../sources/components/buzz/NeedsYouCell';
-import type { ChatDisplayMessage } from '../sources/buzz/room-view-presentation';
+import { displayRoomMessage, type ChatDisplayMessage } from '../sources/buzz/room-view-presentation';
+import { readRoomViewMessage } from '@beeline/api-contract/phone';
 const noop = () => {};
 export const proofAgent = { pubkey: 'b'.repeat(64), kind: 'agent' as const, name: 'Jellybean', handle: 'jellybean' };
 export const proofOwner = { pubkey: 'a'.repeat(64), kind: 'human' as const, name: 'Lunchbox', handle: 'lunchboxfortwo' };
@@ -14,7 +15,19 @@ export const approvalCases = [
 ] as const;
 export type ApprovalCase = typeof approvalCases[number];
 export function approvalCaseElement(name: ApprovalCase, onAction: () => void = noop) {
-  const message = (data: Partial<ChatDisplayMessage>): ChatDisplayMessage => ({ id: name, text: '', timestamp, isUser: false, ...data });
+  const message = (data: Partial<ChatDisplayMessage>): ChatDisplayMessage => {
+    if (!data.squireApproval && !data.writePermission && !data.targetBranchProposal)
+      return { id: name, text: '', timestamp, isUser: false, ...data };
+    const permission = data.writePermission;
+    const target = data.targetBranchProposal;
+    const parsed = readRoomViewMessage({ id: 'c'.repeat(64), text: '', createdAt: timestamp,
+      author: proofAgent, presentation: 'card', squireApproval: data.squireApproval,
+      ...(permission ? { permission: { ...permission, agent: proofAgent, requester: proofOwner } } : {}),
+      ...(target ? { targetBranch: { ...target, agent: proofAgent, requester: proofOwner } } : {}),
+    });
+    if (!parsed) throw new Error(`Invalid approval proof payload: ${name}`);
+    return displayRoomMessage(parsed, proofOwner.pubkey);
+  };
   const agent = proofRosterAgent;
   if (name.startsWith('grant-')) return <GrantRequestCard agent={agent} message={message({ grantRequest: {
     agent: proofAgent, owner: proofOwner, requester: proofOwner,
@@ -34,7 +47,7 @@ export function approvalCaseElement(name: ApprovalCase, onAction: () => void = n
         : [{ label: tool === 'edit_payment_card' ? 'Card' : 'Key', value: 'Fly · org-deploy' }, { label: 'Goes to', value: '@jellybean, once' }, { label: 'Can', value: tool === 'fetch_credential' ? 'Read the key value' : action }],
       ...(tool === 'fetch_credential' ? { reference: 'vault://proof-owner/proof-service/proof-key' } : {}),
       approvalUrl: 'https://approve.example.test/proof', approvalId: name,
-      linkKind: name === 'squire-passkey' || name === 'squire-purchase' ? 'passkey' : name === 'squire-vouch' ? 'vouch' : 'approval', sourceRoomId: 'proof-room', sourceMessageId: 'proof-request',
+      linkKind: name === 'squire-passkey' || name === 'squire-purchase' ? 'passkey' : name === 'squire-vouch' ? 'vouch' : 'approval', sourceRoomId: '11111111-1111-4111-8111-111111111111', sourceMessageId: 'd'.repeat(64),
       ...(name === 'squire-allowed' || name === 'squire-denied' || name === 'squire-expired' ? { status: name === 'squire-allowed' ? 'approved' : name === 'squire-expired' ? 'expired' : 'denied', decidedAt: timestamp + 240 } : {}),
     } })} />;
   }

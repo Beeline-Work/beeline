@@ -1,3 +1,4 @@
+// Workspace bootstrap failure classification approved by lunchboxfortwo, message 763d8e665ec25825aa5d743f9354bf1d85d644695a0868868363e0c8ca1620a1 (yes to dc2b6595424352a29596120be6b9c92ac48797767d42672b19434011da7e3e6c); PR #2842, two inscribeSilence entries only.
 // Hold source line and revised idle alert approved by lunchboxfortwo, message d11eb900ed471847b1901ecca1d8086fb000a7731e0ee9c43ae0181367a5c4d8; associated producer/wrapper snapshots only.
 // Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
@@ -4786,7 +4787,8 @@
       "'agent'",
       "'claimed'",
       "'hiccup'",
-      "'unreported_order:'"
+      "'unreported_order:'",
+      "'workspace-failure'"
     ],
     "occurrences": 1
   },
@@ -4803,7 +4805,8 @@
       "'failed'",
       "'hiccup'",
       "'turn-failed'",
-      "'unreported_order:'"
+      "'unreported_order:'",
+      "'workspace-failure'"
     ],
     "occurrences": 1
   },

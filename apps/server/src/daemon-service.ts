@@ -4943,8 +4943,7 @@ export class DaemonService {
       kind: 'squire-approval-decided',
       requestId: input.requestId,
       wakes: [agentId],
-      // The decision is agent input, not a member-facing approval receipt.
-      presentation: 'activity',
+      presentation: 'card',
       cardType: 'squire-approval-decision',
       card: { approvalId, tool, title, detail, status: input.status, agentId, agentName: agent.name },
     });

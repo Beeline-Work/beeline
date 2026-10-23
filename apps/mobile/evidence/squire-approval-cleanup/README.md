@@ -1,26 +1,15 @@
-# Squire approval cleanup
+# Squire approval card cleanup
 
-Reproductions: `R-SQUIRE-CARD` and `R-SQUIRE-ROOM`.
+Reproduction: `R-SQUIRE-CARD`. Scope follows brief revision 2: logo and footer only.
 
-The reported production approval requires a new vault/passkey ceremony. This proof uses an Android native build with the real card and an isolated local service running production `DaemonService` and `PhoneService` against PGlite. The incoming Squire decision is simulated; no live vault approval, production server deployment, or real credential access occurred.
+| Before | After |
+| --- | --- |
+| [Android before](android-before.png) | [Android after](android-after.png) |
 
-| Path | Before | After |
-| --- | --- | --- |
-| System approval card | [Android before](android-before.png) | [Android after](android-after.png) |
-| Local approval relay | [Before relay](android-relay-before.png) | [After relay](android-relay-after.png) |
+The same native fetch_credential approval card originally showed the requesting agent’s face and a wrapped “approval stays with Trusty Squire” footer. It now shows the existing `/v1/connectors/logo/trusty-squire.svg` logo and only Review and View request in the footer. Requester attribution remains in the subline. The actions retain their native touch height.
 
-`R-SQUIRE-CARD`: the same fetch_credential card originally showed the requester’s face and a wrapped “approval stays with Trusty Squire” footer. It now shows the existing connector SVG and only Review and View request in the footer. Requester attribution remains in the subline. Both native actions retain their touch height.
+A fresh production approval requires a new vault/passkey ceremony. These captures use the production `SquireApprovalCard` on a leased Android emulator with the same disposable approval data before and after the change; they do not exercise a live vault ceremony. The logo loaded from the production connector URL. No server change or deployment was needed.
 
-`R-SQUIRE-ROOM`: the HTTP integration regressions reproduced visible approval decision rows before the fix. The new regressions exercise approved, denied and expired decisions in Rooms and corners, including legacy card rows. Member Room reads, history, history-around, unread boundaries and Room previews exclude them, while the agent conversation still includes the original request ID and decision. A resume command is created for that same request.
+To repeat, temporarily select `apps/mobile/scripts/squire-approval-native-proof.tsx` as the native app entry, start Metro with the installed development client, and open it on the leased emulator. Restore the normal app entry before running the mobile suite.
 
-The Android relay proof additionally claims those resume commands and posts a continuation using their original turn request IDs. The Room and corner show the request and continuation, with no approval sentence. [Service output](relay-result.json) records the retained agent-only decisions and completed resume commands. The System DM card remains present.
-
-To repeat the local service proof from the repository root:
-
-```sh
-node --import tsx scripts/prove-squire-approval-cleanup.mjs
-```
-
-For Android, temporarily select `apps/mobile/scripts/squire-approval-native-proof.tsx` as the app entry, start Metro on port 18739, reverse ports 18739 and 18740 on the leased emulator, and open the dev-client URL. Tap “Approve test request” to simulate the Squire relay decision. Restore the normal app entry before running the mobile suite. The proof service listens only on loopback and uses disposable identities and an in-memory database.
-
-The card captures used the same native fetch_credential fixture before and after the source change. The relay captures used server-indexed DTOs. Only Android was used for manual UI verification; browser tests remain part of the required full mobile suite.
+Regression tests in `RoomMessageVariants.test.tsx` assert the Squire logo source, retained requester attribution and actions, absent footer text for Squire and Link, and Link’s unchanged identity. The existing Review/source-link behavior test is unchanged. Only Android was used for manual UI verification; browser tests remain part of the required mobile suite.

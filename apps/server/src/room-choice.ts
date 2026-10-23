@@ -37,8 +37,7 @@ export const CORNER_LIFECYCLE_CARD_TYPE = 'corner-workflow-handoff';
 /**
  * Decision and wake rows kept only for a daemon and never shown (C101): a
  * grant decision and an accepted connector offer settle their card in place,
- * so the hidden line would read the same answer twice. Squire decisions are
- * private inputs to the asking turn. The corner
+ * so the hidden line would read the same answer twice. The corner
  * lifecycle's bookkeeping card joins this list for a different reason: it
  * duplicates the corner's own real conversation rather than a settled card,
  * but a human must never see it either.
@@ -54,7 +53,6 @@ export function hiddenWakeCardSql(alias?: string): string {
   return (
     `${column} IS DISTINCT FROM 'grant-decision' ` +
     `AND ${column} IS DISTINCT FROM 'connector-offer-decision' ` +
-    `AND ${column} IS DISTINCT FROM 'squire-approval-decision' ` +
     `AND ${column} IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'`
   );
 }

@@ -51,5 +51,44 @@
   },
   "rootTypecheck": "passed",
   "deadCodeNewFindings": 0,
-  "note": "Full-suite coverage plus focused reruns; not a single all-green invocation. Squire provider supplies no verified human identity, so its attribution remains neutral."
+  "note": "Full-suite coverage plus focused reruns; not a single all-green invocation. Squire provider supplies no verified human identity, so its attribution remains neutral.",
+  "reviewRepairs": {
+    "findings": [
+      "Tray subject hidden when reason exists",
+      "Settled grants lost Once/Always scope"
+    ],
+    "mobile": {
+      "themeMatrix": 63,
+      "decisionCopy": 2,
+      "unchangedHostAndOtherCardTests": 120,
+      "calmLint": 8,
+      "designLint": 9,
+      "totalPassed": 202
+    },
+    "previousClientCommandAndReason": {
+      "passed": 1
+    },
+    "trayExistingCopyRegression": {
+      "passed": 1
+    },
+    "server": {
+      "needsYouSuitePassed": 36,
+      "includesThreeKindPayloadRegression": true
+    },
+    "finalMobileTypecheck": "passed",
+    "approvedMockSha256": "b6600fcf2a52071b3248b273d265e73ea2b93d6ccbefc7928ec70723ce67b0c8",
+    "android": {
+      "cases": 31,
+      "themes": [
+        "Bone",
+        "Obsidian"
+      ],
+      "screenshots": 62,
+      "checks": [
+        "active theme canvas",
+        "native subject and reason",
+        "native Once/Always scope and Allowed attribution"
+      ]
+    }
+  }
 }

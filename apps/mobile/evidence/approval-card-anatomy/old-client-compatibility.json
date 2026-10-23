@@ -17,6 +17,9 @@
   "denialCallback": "deny at original index 2",
   "copy": [
     "wants to run a script",
+    "python3 cleanup.py",
     "Free disk space"
-  ]
+  ],
+  "subjectPreserved": true,
+  "reasonSeparate": true
 }

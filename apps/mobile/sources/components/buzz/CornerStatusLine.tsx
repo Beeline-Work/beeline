@@ -36,8 +36,6 @@ const styles = StyleSheet.create((theme) => {
       width: '100%',
       minWidth: 0,
       minHeight: 44,
-      // The transcript's content inset, so the line sits on the prose margin.
-      paddingHorizontal: 16,
     },
     copy: {
       ...hull.type.meta,

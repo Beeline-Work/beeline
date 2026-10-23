@@ -64,6 +64,36 @@ async function main() {
   get('tool-run-more-read').click(); await pause();
   assert(get('tool-ledger-line-edit'), 'N more must reveal failed step');
   assert(get('tool-ledger-line-edit').querySelector('polyline')?.getAttribute('stroke') === (theme === 'bone' ? '#8a6323' : '#b08a4a'), 'tool destination needs brass chevron');
+  get('tool-run-group-read').click(); await pause();
+  get('tool-run-group-read').click(); await pause();
+  assert(get('tool-run-more-read')?.textContent?.trim() === '2 more', 'reopened long list needs 2 more');
+  assert(!get('tool-ledger-line-edit'), 'reopened list must cap at two');
+  assert(get('tool-run-container-read').querySelectorAll('[data-testid^="tool-ledger-line-"]').length === 2, 'expanded long list must show exactly two children');
+  const groups = ['tool-run-container-read', `notification-run-${repositoryId}`, 'notification-run-checks', 'notification-run-payments', 'notification-run-notices', 'inline-output'];
+  for (const id of groups) {
+    const style = getComputedStyle(get(id));
+    assert(style.marginTop === '8px' && style.marginBottom === '8px', `${id}: unequal group spacing`);
+  }
+  for (const [previous, next] of [[`notification-run-${repositoryId}`, 'notification-run-checks'], ['notification-run-checks', 'notification-run-payments'], ['notification-run-payments', 'notification-run-notices'], ['notification-run-notices', 'inline-output']]) {
+    assert(Math.abs(get(next).getBoundingClientRect().top - get(previous).getBoundingClientRect().bottom - 16) < 1, `${next}: leftover group gap`);
+  }
+  const number = [...document.querySelectorAll('[role="link"]')].find(node => node.textContent === 'PR 2721')!;
+  assert(number, 'PR link missing');
+  assert(number.getBoundingClientRect().height < 30, 'PR link wrapped');
+  for (const node of document.querySelectorAll('[dir="auto"]')) {
+    if (getComputedStyle(node).textDecorationLine.includes('underline')) {
+      assert(node.textContent === node.textContent?.trim(), 'underlined link contains surrounding spaces');
+    }
+  }
+  const arrowX = (id: string) => {
+    const arrows = get(id).querySelectorAll('svg');
+    const box = arrows[arrows.length - 1].getBoundingClientRect();
+    return box.left + box.width / 2;
+  };
+  assert(Math.abs(arrowX('corner-status-line') - arrowX('notification-run-cell-check')) < 1, 'status chevron column differs');
+  assert(Math.abs(get('corner-status-line').getBoundingClientRect().left - get('notification-run-cell-check').getBoundingClientRect().left) < 1, 'status left edge differs');
+  const card = get('script-card').getBoundingClientRect();
+  assert(card.bottom - get('script').getBoundingClientRect().bottom >= 16, 'script has no bottom padding');
   document.getElementById('result')!.textContent =
     `PASS DISCLOSURE-EDGE: ${before ? 'original edge' : 'no edge'}, 44px targets, edge taps expand/collapse, next-message spacing`;
 }

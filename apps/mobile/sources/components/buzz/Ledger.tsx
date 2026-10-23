@@ -1,4 +1,4 @@
-import { LedgerDisclosure } from './LedgerDisclosure';
+import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Platform,
@@ -926,7 +926,7 @@ export function LedgerGhostLine({
 }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <View style={styles.ghostBlock} testID={testID}>
+    <LedgerLogGroup style={styles.ghostBlock} testID={testID}>
       <LedgerDisclosure
         expanded={expanded}
         accessibilityLabel={label}
@@ -941,7 +941,7 @@ export function LedgerGhostLine({
           </Text>
         </ScrollView>
       ) : null}
-    </View>
+    </LedgerLogGroup>
   );
 }
 
@@ -1176,7 +1176,6 @@ const styles = StyleSheet.create((theme) => ({
   ghostBlock: {
     width: '100%',
     minWidth: 0,
-    marginTop: theme.buzz.space.sm,
   },
   ghostBody: {
     ...theme.buzz.type.machine,

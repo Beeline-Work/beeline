@@ -83,7 +83,7 @@ for theme in ([args.theme] if args.theme else ['bone', 'obsidian']):
         assert bounds(node)[3] - bounds(node)[1] >= math.floor(44 * density), f'{key}: touch height'
         expanded = nodes()
         assert any(n.get('resource-id') == child for n in expanded), f'{key}: child not revealed'
-        if key == 'tool-run-group-read' and theme == 'bone':
+        if key == 'tool-run-group-read':
             assert not any(n.get('resource-id') == 'tool-ledger-line-edit' for n in expanded), 'long run must cap at two'
             tap('tool-run-more-read')
             assert any(n.get('resource-id') == 'tool-ledger-line-edit' for n in nodes()), 'N more must reveal remaining steps'
@@ -96,6 +96,8 @@ for theme in ([args.theme] if args.theme else ['bone', 'obsidian']):
         tap(key)
     for _ in range(3):
         scroll(top=True)
+    assert any(n.get('resource-id') == 'tool-run-more-read' for n in nodes()), 'expanded screenshots must retain N more'
+    assert not any(n.get('resource-id') == 'tool-ledger-line-edit' for n in nodes()), 'expanded screenshots must cap the steps'
     for index in range(3):
         nodes()
         capture(f'android-{theme}-expanded-{index + 1}')

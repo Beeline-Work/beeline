@@ -6368,15 +6368,17 @@ export function BuzzChatSurface({
             {/* The corner's PR state, inscribed above the transcript: one line
             that links to GitHub, where review and merge happen. */}
             {isCorner && (
-              <CornerStatusLine
-                lifecycle={roomSurface?.cornerLifecycle}
-                archived={isArchived}
-                onOpenPullRequest={(url) => {
-                  void openExternalUrl(url).catch(() => {
-                    Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
-                  });
-                }}
-              />
+              <View style={styles.cornerStatusInset}>
+                <CornerStatusLine
+                  lifecycle={roomSurface?.cornerLifecycle}
+                  archived={isArchived}
+                  onOpenPullRequest={(url) => {
+                    void openExternalUrl(url).catch(() => {
+                      Modal.alert('Could not open pull request', 'Open the PR from GitHub instead.');
+                    });
+                  }}
+                />
+              </View>
             )}
 
             <View style={styles.transcriptViewport}>
@@ -7682,6 +7684,7 @@ const styles = StyleSheet.create((theme) => {
       overflowY: 'auto',
       overflowAnchor: 'none',
     } as any,
+    cornerStatusInset: { paddingHorizontal: groknight.space.md },
     messageListContent: {
       paddingHorizontal: groknight.space.md,
       paddingVertical: groknight.space.md,

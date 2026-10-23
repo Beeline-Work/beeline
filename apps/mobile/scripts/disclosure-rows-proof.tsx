@@ -19,7 +19,7 @@ const events = snapshot.runs[0].map((row) => ({
   ...(row.card_type === 'daemon-fact' ? { daemonFact: row.card } : { githubEvent: row.card }),
 })) as ChatDisplayMessage[];
 const repository = foldPrLifecycleRuns(events)[0];
-// Checks still use LedgerDisclosure; repository-only groups have a separate header.
+// Every event run shares the same disclosure and group spacing.
 const checks = {
   id: 'checks',
   notificationLifecycleRun: {
@@ -70,17 +70,17 @@ export function DisclosureRowsProof() {
       <View testID="next-message" style={{ marginTop: 24 }}>
         <Text style={body}>Thanks. Keep the row easy to tap.</Text>
       </View>
-      <View style={{ marginTop: 24 }}>
+      <View>
         <NotificationLifecycleCard
           message={repository}
           onOpenCorner={() => {}}
           onOpenUrl={() => {}}
         />
       </View>
-      <View style={{ marginTop: 24 }}>
+      <View>
         <NotificationLifecycleCard message={checks} onOpenCorner={() => {}} onOpenUrl={() => {}} />
       </View>
-      <View style={{ marginTop: 24 }}>
+      <View>
         <NotificationLifecycleCard message={{ id: 'payments', notificationLifecycleRun: { subline: '', items: [
           { id: 'pay-1', kind: 'payment', state: 'sent', kindLine: 'Payment', title: '$12 · example', actor: 'system', updatedBy: 'pay-1', url: 'https://example.com/receipt' },
           { id: 'pay-2', kind: 'payment', state: 'received', kindLine: 'Payment', title: '$8 · example', actor: 'system', updatedBy: 'pay-2' },

@@ -22,7 +22,7 @@ import {
 } from './Ledger';
 import { MonoMarkdown } from './MonoMarkdown';
 import { StreamingProse } from './StreamingProse';
-import { LedgerDisclosure } from './LedgerDisclosure';
+import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
 import { InlineRow, TranscriptNavigationRow } from './IndexRow';
 
 type ActivityTimelineProps = {
@@ -124,8 +124,8 @@ function ToolRunGroupRow({
   const summary = toolGroupSummary(run.count, run.failed, run.durationMs, run.notes);
   const steps = run.count > 0 || run.notes === 0;
   return (
-    <View>
-      <LedgerDisclosure expanded={expanded} onPress={() => setExpanded(value => !value)}
+    <LedgerLogGroup testID={`tool-run-container-${run.id}`}>
+      <LedgerDisclosure expanded={expanded} onPress={() => { if (expanded) setShowAll(false); setExpanded(value => !value); }}
         accessibilityLabel={`${summary}, expandable`} accessibilityState={{ expanded }} rowTestID={`tool-run-group-${run.id}`}>
         {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
         {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
@@ -148,7 +148,7 @@ function ToolRunGroupRow({
         rowTestID={`tool-run-more-${run.id}`}>
         {run.lines.length - 2} more
       </LedgerDisclosure> : null}
-    </View>
+    </LedgerLogGroup>
   );
 }
 

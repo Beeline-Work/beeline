@@ -199,7 +199,7 @@
       "name",
       "withLedgerDayCaption"
     ],
-    "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure"],
+    "components/buzz/LedgerDisclosure.tsx": ["LedgerDisclosure", "LedgerLogGroup"],
     "components/buzz/LifecycleCard.tsx": [
       "LifecycleRecordCard",
       "GitHubEventCard",

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
@@ -41,7 +41,13 @@ export function LedgerDisclosure({
     </Pressable>
   );
 }
+/** One spacing rhythm around every expandable transcript group. */
+export function LedgerLogGroup({ style, ...props }: ViewProps) {
+  return <View {...props} style={[styles.group, style]} />;
+}
+
 const styles = StyleSheet.create(({ buzz }) => ({
+  group: { marginVertical: buzz.space.sm },
   row: {
     minHeight: 44,
     minWidth: 44,

@@ -471,7 +471,7 @@ export function TranscriptCard({
             >{`${codeLabel ?? 'Script'} · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}</LedgerDisclosure></View>
           ) : null}
           {code !== undefined && (!foldCode || codeOpen) ? (
-            <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>
+            <View style={[styles.code, foldCode && styles.foldedCode, tier === 'ask' && styles.askCode]} testID={codeTestID}>
               {codePath ? <Text style={styles.codePath}>{codePath}</Text> : null}
               <Text selectable style={styles.codeText}>
                 {code}
@@ -801,6 +801,7 @@ const styles = StyleSheet.create((theme) => {
       borderRadius: metric.codeRadius,
       backgroundColor: card.bgHighlight,
     },
+    foldedCode: { marginBottom: metric.headTop },
     askCode: { backgroundColor: card.bgPressed },
     codePath: { ...card.type.machine, fontSize: metric.codePathSize, color: card.ledgerQuiet },
     codeText: { ...card.type.machine, color: card.textSecondary },

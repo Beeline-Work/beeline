@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleSummary, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
 import { InlineRow, TranscriptNavigationRow } from './IndexRow';
-import { LedgerDisclosure } from './LedgerDisclosure';
+import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
 
 interface NotificationLifecycleCardProps {
@@ -35,10 +35,10 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   }));
   const summary = lifecycleSummary(items);
   return (
-    <View style={!anchored && items.length === 1 && items[0].kind === 'issue' ? styles.issueRun : undefined}
+    <LedgerLogGroup style={!anchored && items.length === 1 && items[0].kind === 'issue' ? styles.issueRun : undefined}
       testID={testID ?? `notification-run-${message.id}`}>
       {items.length > 1 ? <LedgerDisclosure expanded={expanded}
-        onPress={() => setExpanded(value => !value)} accessibilityLabel={summary}
+        onPress={() => { if (expanded) setShowAll(false); setExpanded(value => !value); }} accessibilityLabel={summary}
         accessibilityState={{ expanded }} rowTestID={`notification-run-expand-${message.id}`}>
         {summary.split(' · ').map((part, index) => <Text key={index} style={/fail/i.test(part) ? styles.failed : undefined}>
           {index ? ' · ' : ''}{part}
@@ -54,7 +54,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
           accessibilityLabel={`${items.length - 2} more events`} onPress={() => setShowAll(true)}
           rowTestID={`notification-run-more-${message.id}`}>{items.length - 2} more</LedgerDisclosure> : null}
       </> : null}
-    </View>
+    </LedgerLogGroup>
   );
 });
 type RepositoryItem = NotificationLifecycleRun['items'][number];
@@ -112,7 +112,8 @@ export function RepositoryLifecycleRow({
           </Text>
           {state === 'Merged' && number && item.url ? (
             <Text
-              style={styles.number}
+              style={[styles.number, styles.cornerNumber]}
+              numberOfLines={1}
               accessibilityRole="link"
               accessibilityLabel={`Open PR ${number}`}
               testID={`notification-run-cell-url-${item.id}`}
@@ -120,7 +121,7 @@ export function RepositoryLifecycleRow({
                 event.stopPropagation();
                 onOpenUrl(item.url!);
               }}
-            >{` PR ${number}`}</Text>
+            >{`PR ${number}`}</Text>
           ) : null}
         </InlineRow>
       </TranscriptNavigationRow>
@@ -129,7 +130,7 @@ export function RepositoryLifecycleRow({
   const copy = (
     <Text style={styles.repositoryTitle} numberOfLines={2} ellipsizeMode="tail">
       <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
-      {number && item.url ? <Text style={styles.number}>#{number} </Text> : null}
+      {number && item.url ? <><Text style={styles.number}>#{number}</Text>{' '}</> : null}
       {item.title}
     </Text>
   );
@@ -167,7 +168,8 @@ export function RepositoryLifecycleRow({
 const styles = StyleSheet.create(({ buzz }) => ({
   failed: { color: buzz.accent },
   issueRun: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
-  cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
+  cornerCopy: { flexDirection: 'row', alignItems: 'baseline', gap: buzz.space.xs },
+  cornerNumber: { flexShrink: 0 },
   cornerName: { flexShrink: 1, minWidth: 0 },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },

@@ -1,0 +1,25 @@
+{
+  "main": {
+    "head": "9054174165545880fb70a1fd40c472ae997fd13f",
+    "build": "/tmp/jellybean-thinking/web-main-360",
+    "command": "EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:18890 NODE_OPTIONS=--max-old-space-size=6144 npx expo export --platform web --output-dir /tmp/jellybean-thinking/web-main-360",
+    "cwd": ".scratch/thinking-main/apps/mobile"
+  },
+  "pr": {
+    "head": "13a90715b488dea74d8834720e8dcd9fec55b196",
+    "build": "/tmp/jellybean-thinking/web-pr-360",
+    "command": "EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:18890 NODE_OPTIONS=--max-old-space-size=6144 npx expo export --platform web --output-dir /tmp/jellybean-thinking/web-pr-360",
+    "cwd": "apps/mobile"
+  },
+  "viewport": {
+    "phone": [
+      360,
+      892
+    ],
+    "desktop": [
+      1280,
+      860
+    ]
+  },
+  "dpr": 2
+}

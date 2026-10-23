@@ -103,6 +103,8 @@ describe('resource MCP transport authorization', () => {
       tool: 'inject_card',
       title: 'Purchase approval',
       detail: 'Noise-cancelling headphones · at Acme · 199.00 USD',
+      action: 'buy Noise-cancelling headphones',
+      facts: [{ label: 'From', value: 'Acme' }, { label: 'Amount', value: '199.00 USD' }],
       approvalId: 'purchase-7',
       approvalUrl: 'https://trustysquire.ai/vault/pay/purchase-7',
       linkKind: 'approval',
@@ -214,6 +216,8 @@ describe('resource MCP transport authorization', () => {
       tool: 'fetch_credential',
       title: 'Credential access approval',
       detail: 'Reveal OpenAI · rotate deployment',
+      action: 'reveal a key', reason: 'rotate deployment',
+      facts: [{ label: 'Key', value: 'OpenAI' }, { label: 'Can', value: 'Read the key value' }],
       approvalUrl: 'https://trustysquire.test/passkey/fetch',
       linkKind: 'passkey',
     });
@@ -232,6 +236,11 @@ describe('resource MCP transport authorization', () => {
       title: 'Credential deletion approval',
       detail: 'Delete Stripe',
     });
+  });
+
+  it('keeps raw credential references out of human approval copy', () => {
+    expect(squireApprovalCopy('edit_credential', { reference: 'vault://opaque/id' }))
+      .toEqual({ title: 'Credential edit approval', detail: 'Edit a saved credential' });
   });
 
   it('names a google_session wall from its structured needs_user field, never prose', () => {
@@ -837,4 +846,22 @@ describe('resource MCP transport authorization', () => {
       }
     },
   );
+});
+
+describe('approval presentation metadata', () => {
+  const relay = (name: string, args: Record<string, unknown>) => squireApprovalFromMcp(
+    { id: 7, method: 'tools/call', params: { name, arguments: args } },
+    { id: 7, result: { structuredContent: { approval_url: 'https://trustysquire.ai/vault/test', approval_id: 'presentation' } } },
+  );
+  it('keeps a vault reference folded and names the sign-in site from the URL', () => {
+    expect(relay('operate_login', { reference: 'vault://test/login', url: 'https://console.example.test/path', reason: 'Read the reports.' })).toMatchObject({
+      action: 'sign in to console.example.test', reference: 'vault://test/login', reason: 'Read the reports.',
+      facts: [{ label: 'Site', value: 'console.example.test' }, { label: 'Can', value: 'Fill the saved password' }],
+    });
+  });
+  it('keeps the amount when a purchase has no merchant', () => {
+    expect(relay('inject_card', { item: 'Headphones', amount_cents: 19900, currency: 'usd' })).toMatchObject({
+      action: 'buy Headphones', facts: [{ label: 'From', value: 'Checkout' }, { label: 'Amount', value: '199.00 USD' }],
+    });
+  });
 });

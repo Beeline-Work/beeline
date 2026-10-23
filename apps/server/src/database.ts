@@ -211,7 +211,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 35;
+export const REQUIRED_SCHEMA_VERSION = 36;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -1950,6 +1950,8 @@ UPDATE messages SET card=card || '{"toState":"review"}'::jsonb
 UPDATE corner_facts SET workflow_state='review' WHERE workflow_state='land';
 DROP INDEX IF EXISTS corner_facts_workflow_land_idx;
 CREATE INDEX IF NOT EXISTS corner_facts_commissioned_by_idx ON corner_facts(commissioned_by);
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
+CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(reviewer_agent_id);
 -- True while a human corner still carries the name the phone generated for it;
 -- any rename clears it (corner-title.ts).
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
@@ -2736,7 +2738,7 @@ CREATE TABLE IF NOT EXISTS connector_offers (
   reason text NOT NULL,
   machine_id text NOT NULL,
   status text NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','connecting','accepted')),
+    CHECK (status IN ('pending','connecting','accepted','denied')),
   message_id text REFERENCES messages(id) ON DELETE SET NULL,
   command_id text,
   accepted_by text REFERENCES identities(id),
@@ -2760,7 +2762,7 @@ ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_intent_check
 ALTER TABLE connector_offers ADD COLUMN IF NOT EXISTS provider text;
 ALTER TABLE connector_offers DROP CONSTRAINT IF EXISTS connector_offers_status_check;
 ALTER TABLE connector_offers ADD CONSTRAINT connector_offers_status_check
-  CHECK (status IN ('pending','connecting','accepted'));
+  CHECK (status IN ('pending','connecting','accepted','denied'));
 DROP INDEX IF EXISTS connector_offers_open_idx;
 CREATE UNIQUE INDEX connector_offers_open_idx
   ON connector_offers(room_id, connector_type) WHERE status IN ('pending','connecting');

@@ -26,17 +26,10 @@ import { fallbackMemberName } from '@/buzz/member-display';
 import { displayModel } from '@/buzz/model-display';
 import { CHANNEL_MENTION_HANDLE, SYSTEM_MENTION_HANDLE, hasChannelMentionToken } from '@/buzz/room-participants';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
-import { describeWriteRequest } from '@/buzz/write-request-copy';
 import { emojiTextStyle } from '@/buzz/emoji-text';
 import {
-  connectorOfferActionLabel,
   connectorOfferConnectingLine,
-  connectorOfferOutcomeLine,
-  connectorOfferReconnectTitle,
-  connectorOfferSwitchTitle,
-  connectorOfferTitle,
   connectorOfferWaitingLine,
-  CONNECTOR_OFFER_SWITCH_ACTION,
 } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
 import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
@@ -67,6 +60,8 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
+import { squireApprovalAction } from '@beeline/api-contract/phone';
+import { AgentApprovalCard, approvalAudience, approvalDecisionNote } from '@/components/buzz/AgentApprovalCard';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline, TurnStepsLine } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -114,6 +109,7 @@ export interface WritePermissionCardProps {
   viewerCanManage?: boolean;
   actionId: string | null;
   targetBranch?: string;
+  roomName?: string;
   onDecision(message: ChatDisplayMessage, decision: WriteDecision): void;
   onOpenCorner(cornerId: string): void;
 }
@@ -126,6 +122,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   viewerCanManage = false,
   actionId,
   targetBranch,
+  roomName,
   onDecision,
   onOpenCorner,
 }: WritePermissionCardProps) {
@@ -143,31 +140,20 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
       ? Boolean(permission.ownerPubkey) && viewerPubkey === permission.ownerPubkey
       : viewerPubkey === permission.requesterPubkey || viewerCanManage);
   const footerNote = pending
-    ? !permission.repository
-      ? 'missing target'
-      : squireSpending
-        ? 'owner confirmation'
-        : !canDecide
-          ? 'requester or workspace admin'
-          : 'owner confirmation'
-    : permission.status === 'allowed'
-      ? 'allowed once'
-      : permission.status === 'denied'
-        ? 'denied'
-        : permission.status === 'failed'
-          ? 'corner could not open'
-          : 'request expired';
+    ? !permission.repository ? 'missing target' : !canDecide ? squireSpending ? 'waiting for its owner' : 'waiting for the requester or a workspace admin' : undefined
+    : approvalDecisionNote(permission.status, permission.decider, permission.decidedAt ?? message.timestamp, viewerPubkey);
   const actions: TranscriptCardAction[] =
     pending && canDecide && permission.repository
       ? [
           {
-            label: 'Deny',
+            label: 'No',
+            secondary: true,
             disabled: busy,
             onPress: () => onDecision(message, 'deny'),
             testID: 'write-permission-deny',
           },
           {
-            label: 'Allow',
+            label: squireSpending ? 'Allow once' : 'Allow',
             primary: true,
             disabled: busy,
             loading: busy,
@@ -187,48 +173,17 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
           ]
         : [];
   return (
-    <TranscriptCard
-      tier={pending ? 'ask' : 'record'}
-      testID={`write-permission-${permission.status}`}
-      wrapTitle
-      identity={
-        <IdentityMark
-          kind="agent"
-          seed={display.avatarSeed ?? permission.agentPubkey}
-          avatarUrl={display.avatarUrl}
-          face={display.face}
-          name={display.name}
-          size={26}
-        />
-      }
-      title={
-        <>
-          <TranscriptCardHandle>@{display.name.replace(/^@/, '')}</TranscriptCardHandle>{' '}
-          {squireSpending ? 'asks for spending approval' : 'asks to open an edit corner'}
-        </>
-      }
-      subline={describeWriteRequest(permission.tool)}
-      stamp={ledgerStamp(message.timestamp)}
-      code={
-        permission.repository
-          ? `${permission.repository}${targetBranch ? ` · ${targetBranch}` : ''}`
-          : undefined
-      }
-      body={
-        squireSpending
-          ? 'Trusty Squire stays in its vault-backed process. Only its owner can confirm this spending or checkout-capable action.'
-          : permission.repository
-            ? 'Opening a corner gives the agent a branch, not merge authority. A person still approves the merge.'
-            : 'This write request is missing its repository target and cannot be allowed.'
-      }
-      quietBody
-      footerNote={footerNote}
-      footerNoteTestID={
-        pending && permission.repository && !canDecide ? 'corner-approval-audience-wait' : undefined
-      }
-      footerNoteTone={
-        permission.status === 'failed' || (pending && !permission.repository) ? 'failed' : 'quiet'
-      }
+    <AgentApprovalCard
+      tier={pending ? 'ask' : 'record'} testID={`write-permission-${permission.status}`} wrapTitle
+      askingAgent={{ pubkey: permission.agentPubkey, kind: 'agent', name: display.name }} agent={agent}
+      title={<><TranscriptCardHandle>@{display.name.replace(/^@/, '')}</TranscriptCardHandle>{' '}{squireSpending ? 'wants to spend with Trusty Squire' : 'wants to open an edit corner'}</>}
+      subline={`${squireSpending ? roomName ? `#${roomName}` : 'Room' : permission.repository ?? 'Repository'} · ${approvalAudience(permission.requester, viewerPubkey)}`}
+      stamp={ledgerStamp(message.timestamp)} body={permission.reason}
+      facts={squireSpending ? [{ label: 'Uses', value: permission.tool }, { label: 'Can', value: 'Pay with a saved card at checkout' }]
+        : [{ label: 'Repository', value: permission.repository ?? 'Missing target' }, { label: 'Branch from', value: targetBranch ?? 'main' }, { label: 'Can', value: 'Push to its own branch · merge still needs you' }]}
+      footerNote={footerNote} decisionNote={!pending}
+      footerNoteTestID={pending && permission.repository && !canDecide ? 'corner-approval-audience-wait' : undefined}
+      footerNoteTone={permission.status === 'failed' || (pending && !permission.repository) ? 'failed' : 'quiet'}
       actions={actions}
     />
   );
@@ -238,6 +193,8 @@ export { GrantRequestCard, type GrantDecision, type GrantRequestCardProps } from
 
 export interface SquireApprovalCardProps {
   message: ChatDisplayMessage;
+  agent?: AgentPresentation;
+  viewerPubkey?: string;
   onOpenSource?(roomId: string, messageId: string): void;
 }
 
@@ -246,57 +203,33 @@ export interface SquireApprovalCardProps {
  * exact page Squire returned, where Squire's own passkey policy decides it.
  */
 export const SquireApprovalCard = React.memo(function SquireApprovalCard({
-  message,
-  onOpenSource,
+  message, agent, viewerPubkey, onOpenSource,
 }: SquireApprovalCardProps) {
   const approval = message.squireApproval!;
-  const agentName = (approval.agent.handle ?? approval.agent.name).replace(/^@/, '');
-  const actionLabel =
-    approval.linkKind === 'passkey'
-      ? 'Use passkey ↗'
-      : approval.linkKind === 'vouch'
-        ? 'Vouch ↗'
-        : 'Review ↗';
-  const actions: TranscriptCardAction[] = [
-    {
-      label: actionLabel,
-      primary: true,
-      accessibilityRole: 'link',
-      onPress: () => void openExternalUrl(approval.approvalUrl),
-      testID: 'squire-approval-open',
-    },
-  ];
-  if (approval.sourceRoomId && approval.sourceMessageId && onOpenSource) {
-    actions.push({
-      label: 'View request',
-      accessibilityRole: 'link',
-      onPress: () => onOpenSource(approval.sourceRoomId!, approval.sourceMessageId!),
-      testID: 'squire-approval-source',
-    });
-  }
-  return (
-    <TranscriptCard
-      tier="ask"
-      testID="squire-approval-card"
-      wrapTitle
-      identity={
-        <IdentityMark
-          kind="agent"
-          seed={approval.agent.pubkey}
-          avatarUrl={approval.agent.avatar}
-          face={approval.agent.face}
-          name={approval.agent.name}
-          size={26}
-        />
-      }
-      title={approval.title}
-      subline={`${approval.detail} · requested by @${agentName}`}
-      sublineTestID="squire-approval-detail"
-      stamp={ledgerStamp(message.timestamp)}
-      footerNote={approval.tool === 'Link' ? 'approval stays with Link' : 'approval stays with Trusty Squire'}
-      actions={actions}
-    />
-  );
+  const display = resolveAgentDisplayIdentity(approval.agent.pubkey, agent);
+  const name = agent ? display.name : approval.agent.name;
+  const settled = Boolean(approval.status);
+  const reference = approval.reference ?? approval.detail.match(/vault:\/\/[^\s·]+/)?.[0];
+  const parts = approval.detail.split(' · ');
+  const facts = approval.facts ?? (approval.tool === 'inject_card'
+    ? [{ label: 'From', value: parts[1]?.replace(/^at /, '') || 'Checkout' }, ...(parts[2] ? [{ label: 'Amount', value: parts[2] }] : [])]
+    : [{ label: approval.tool === 'operate_login' ? 'Site' : 'Key', value: reference ? 'Saved credential' : parts[0]?.replace(/^(Reveal|Edit|Delete|Sign in to) /, '') || 'Saved credential' },
+       { label: 'Can', value: approval.tool === 'fetch_credential' ? 'Read the key value' : approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind) }]);
+  const actions: TranscriptCardAction[] = [];
+  if (approval.sourceRoomId && approval.sourceMessageId && onOpenSource) actions.push({
+    label: 'View request', accessibilityRole: 'link',
+    onPress: () => onOpenSource(approval.sourceRoomId!, approval.sourceMessageId!), testID: 'squire-approval-source',
+  });
+  if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey ↗' : approval.linkKind === 'vouch' ? 'Vouch ↗' : 'Review ↗',
+    primary: true, accessibilityRole: 'link', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
+  return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card" wrapTitle
+    askingAgent={approval.agent} agent={agent}
+    title={`@${name.replace(/^@/, '')} wants to ${approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)}`}
+    subline={`${approval.tool === 'Link' ? 'Link' : 'Trusty Squire'} · ${approvalAudience(approval.owner, viewerPubkey)}`}
+    sublineTestID="squire-approval-detail" stamp={ledgerStamp(message.timestamp)}
+    body={approval.reason} facts={facts} foldCode codeLabel="vault reference" code={reference} codePath={reference ? 'vault reference' : undefined}
+    footerNote={approval.status ? approvalDecisionNote(approval.status, approval.decidedBy, approval.decidedAt ?? message.timestamp, viewerPubkey, approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)) : undefined}
+    decisionNote={settled} actions={actions} />;
 });
 
 export interface ConnectorOfferCardProps {
@@ -320,20 +253,9 @@ export interface ConnectorOfferCardProps {
   ): void;
   /** Opens the Workbench page — the settled card is one of its three remaining doors. */
   onOpenWorkbench(): void;
+  onDecline?(offerId: string): void;
 }
 
-/**
- * The connector-offer card (R5): the agent reaches for a Workbench tool it
- * needs, at the moment of need. Same chassis as the grant card, a different
- * question — `Add Trusty Squire as a tool?` — with ONE server-owned subtitle
- * naming the consequence and the standing safety boundary together ("still no
- * raw key in chat"). ONE affirmative action, with the check glyph, for the
- * person the agent addressed (whose keys the tool will hold) or a Workspace
- * manager; everyone else reads the ask and `waiting for @addressee`. It
- * enters `connecting for @who` while the existing Workbench ceremony runs,
- * then settles into `added by @who · 12:04` only after the helper reports
- * connected. The phone mirrors the server's authority; it never decides it.
- */
 export function AppSignInCard({ message, agentName, canConnect, onConnect, busy }: {
   message: ChatDisplayMessage;
   agentName: string;
@@ -406,6 +328,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   onAccept,
   onContinue,
   onOpenWorkbench,
+  onDecline,
 }: ConnectorOfferCardProps) {
   const offer = message.connectorOffer!;
   const display = resolveAgentDisplayIdentity(offer.agent.pubkey, agent);
@@ -420,10 +343,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
     pending && canAccept
       ? [
           {
-            label:
-              offer.intent === 'switch'
-                ? CONNECTOR_OFFER_SWITCH_ACTION
-                : connectorOfferActionLabel(offer.connectorName),
+            label: offer.intent === 'switch' ? 'Switch' : offer.intent === 'reconnect' ? 'Reconnect' : 'Add',
             primary: true,
             disabled: actionId !== null,
             loading: busy,
@@ -451,21 +371,15 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             ]
           : [];
   return (
-    <TranscriptCard
+    <AgentApprovalCard
       tier={pending || connecting ? 'ask' : 'record'}
-      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`}
-      wrapTitle
-
-      identity={<IdentityMark kind="agent" seed={display.avatarSeed ?? offer.agent.pubkey} avatarUrl={display.avatarUrl} face={display.face} name={agentName} size={26} />}
-      title={
-        offer.intent === 'reconnect'
-          ? connectorOfferReconnectTitle(offer.provider)
-          : offer.intent === 'switch'
-            ? connectorOfferSwitchTitle(offer.connectorName, offer.provider)
-            : connectorOfferTitle(offer.connectorName)
-      }
-      subline={offer.consequence}
-      sublineTestID={`connector-offer-${offer.offerId}-line`}
+      testID={`connector-offer-${pending ? 'pending' : connecting ? 'connecting' : 'settled'}`} wrapTitle
+      askingAgent={offer.agent} agent={agent}
+      title={`@${agentName.replace(/^@/, '')} wants to ${offer.intent === 'reconnect' ? 'reconnect' : offer.intent === 'switch' ? 'switch' : 'add'} ${offer.connectorName}`}
+      subline={`Connectors · ${approvalAudience(offer.addressee, viewerPubkey)}`}
+      sublineTestID={`connector-offer-${offer.offerId}-line`} body={offer.reason}
+      facts={[{ label: 'Can', value: offer.connectorType === 'trusty-squire' ? 'Sign in to sites · use vault keys' : offer.connectorType === 'wallet' ? 'Sign transactions with your wallet' : 'Use the connected service' }, { label: 'Changes', value: 'Your Connectors' }]}
+      decisionNote={!pending && !connecting}
       stamp={ledgerStamp(message.timestamp)}
       footerNote={
         connecting
@@ -474,7 +388,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             ? canAccept
               ? undefined
               : connectorOfferWaitingLine(offer)
-            : (connectorOfferOutcomeLine(offer) ?? undefined)
+            : approvalDecisionNote(offer.status === 'denied' ? 'denied' : 'allowed', offer.acceptedBy, offer.acceptedAt ?? message.timestamp, viewerPubkey)
       }
       footerNoteTestID={
         connecting
@@ -485,7 +399,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
               : `connector-offer-${offer.offerId}-waiting`
             : `connector-offer-${offer.offerId}-outcome`
       }
-      actions={actions}
+      actions={pending && canAccept && onDecline ? [{ label: 'No', secondary: true, onPress: () => onDecline(offer.offerId), testID: `connector-offer-${offer.offerId}-deny`, disabled: actionId !== null }, ...actions] : actions}
     />
   );
 });
@@ -729,6 +643,9 @@ export interface TargetBranchProposalCardProps {
   actionId: string | null;
   notice: string | null;
   onConfirm(message: ChatDisplayMessage): void;
+  onDeny?(message: ChatDisplayMessage): void;
+  viewerPubkey?: string;
+  roomName?: string;
 }
 
 export const TargetBranchProposalCard = React.memo(function TargetBranchProposalCard({
@@ -739,58 +656,29 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
   viewerIsAgent,
   actionId,
   notice,
-  onConfirm,
+  onConfirm, onDeny, viewerPubkey, roomName,
 }: TargetBranchProposalCardProps) {
   const proposal = message.targetBranchProposal!;
-  const applied = currentTargetBranch === proposal.to;
+  const applied = proposal.status === 'allowed' || currentTargetBranch === proposal.to;
+  const settled = applied || proposal.status === 'denied';
   const busy = actionId === proposal.proposalId;
   const canConfirm = !viewerIsAgent && canManageWorkspace;
   const askingAgent = proposal.agentPubkey
     ? resolveAgentDisplayIdentity(proposal.agentPubkey, agent).name.replace(/^@/, '')
     : undefined;
   return (
-    <TranscriptCard
-      tier={applied ? 'record' : 'ask'}
-      testID="target-branch-proposal"
-      wrapTitle
-      title={
-        askingAgent ? (
-          <>
-            <TranscriptCardHandle>@{askingAgent}</TranscriptCardHandle>{' '}
-            {applied ? 'asked to change the target branch' : 'asks to change the target branch'}
-          </>
-        ) : applied ? (
-          'Target branch changed'
-        ) : (
-          'Change the target branch'
-        )
-      }
-      stamp={ledgerStamp(message.timestamp)}
-      code={`${proposal.from} → ${proposal.to}`}
-      body={
-        `Confirming republishes this ${ROOM_LABEL}'s repository binding under your key. ` +
-        `${CORNER_LABEL}s already open automatically rebase onto ${proposal.to}.`
-      }
-      quietBody
-      footerNote={
-        applied ? 'confirmed' : canConfirm ? (notice ?? undefined) : 'workspace manager only'
-      }
-      footerNoteTone={!applied && !canConfirm ? 'failed' : 'quiet'}
-      actions={
-        !applied && canConfirm
-          ? [
-              {
-                label: 'Confirm',
-                primary: true,
-                loading: busy,
-                disabled: busy,
-                onPress: () => onConfirm(message),
-                testID: 'target-branch-confirm',
-              },
-            ]
-          : []
-      }
-    />
+    <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="target-branch-proposal" wrapTitle
+      askingAgent={{ pubkey: proposal.agentPubkey ?? '', kind: 'agent', name: askingAgent ?? 'Agent' }} agent={agent}
+      title={`@${askingAgent ?? 'Agent'} wants to change the target branch`}
+      subline={`${roomName ? `#${roomName}` : proposal.repository ?? 'Room'} · for you`}
+      stamp={ledgerStamp(message.timestamp)} body={proposal.purpose}
+      facts={[{ label: 'From', value: proposal.from }, { label: 'To', value: proposal.to }, { label: 'Can', value: `Rebase open corners onto ${proposal.to}` }]}
+      footerNote={settled ? approvalDecisionNote(proposal.status ?? 'allowed', proposal.decidedBy, proposal.decidedAt ?? message.timestamp, viewerPubkey) : canConfirm ? notice ?? undefined : 'waiting for a Workspace manager'}
+      decisionNote={settled}
+      actions={!settled && canConfirm ? [
+        ...(onDeny ? [{ label: 'No', secondary: true, disabled: busy, onPress: () => onDeny(message), testID: 'target-branch-deny' }] : []),
+        { label: 'Confirm', primary: true, loading: busy, disabled: busy, onPress: () => onConfirm(message), testID: 'target-branch-confirm' },
+      ] : []} />
   );
 });
 

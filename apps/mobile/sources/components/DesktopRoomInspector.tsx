@@ -644,6 +644,7 @@ function CornerCockpit({
           <View style={styles.cockpitStatusSlot} testID="desktop-work-corner-status-slot">
             {ack && (
               <TurnProgressLine
+                inset={false}
                 label={ack.label}
                 startedAt={ack.startedAt}
                 onStop={ack.stop ? () => void stop() : undefined}

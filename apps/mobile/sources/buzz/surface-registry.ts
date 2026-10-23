@@ -6,6 +6,8 @@ type Guard<T> = (value: unknown) => value is T;
 type Select = (address: SurfaceCacheAddress, value: unknown, stamp: number) => unknown;
 type Observer = (address: SurfaceCacheAddress, value: unknown, stamp: number) => void;
 const MAX_HOT_SURFACES = 128;
+const MAX_INACTIVE_ROOMS = 3;
+type DeferWrite = (key: string, work: () => Promise<void>) => Promise<void>;
 
 /** Validated projections shared by mounted routes and restored from durable storage on a miss. */
 export class SurfaceRegistry {
@@ -24,6 +26,7 @@ export class SurfaceRegistry {
     private readonly durable: SurfaceResponseCache,
     private readonly normalize: (value: unknown) => unknown = (value) => value,
     private readonly select: Select = (_address, value) => value,
+    private readonly deferWrite: DeferWrite = (_key, work) => work(),
   ) {}
 
   peek<T>(address: SurfaceCacheAddress, guard: Guard<T>): T | null {
@@ -78,6 +81,14 @@ export class SurfaceRegistry {
     this.stamps.set(key, stamp);
     this.selected.delete(key);
     for (const observer of this.observers.get(address.endpoint) ?? []) observer(address, value, stamp);
+    const inactiveRooms = [...this.values.keys()].filter((candidate) =>
+      !this.listeners.has(candidate) && /^\/room\/[^/]+$/.test(String((JSON.parse(candidate) as unknown[])[3])));
+    for (const oldest of inactiveRooms.slice(0, Math.max(0, inactiveRooms.length - MAX_INACTIVE_ROOMS))) {
+      this.values.delete(oldest);
+      this.stamps.delete(oldest);
+      this.selected.delete(oldest);
+      if (!this.reads.has(oldest) && !this.fetches.has(oldest)) this.revisions.delete(oldest);
+    }
     if (this.values.size <= MAX_HOT_SURFACES) return;
     for (const oldest of this.values.keys()) {
       if (this.listeners.has(oldest)) continue;
@@ -116,13 +127,26 @@ export class SurfaceRegistry {
     return this.peek(address, guard);
   }
 
-  async write<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>, stamp?: number): Promise<void> {
-    const normalized = this.publish(address, value, guard, stamp);
-    await this.persist(address, normalized, guard);
+  write<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>, stamp?: number): Promise<void> {
+    const epoch = this.epoch;
+    const key = surfaceCacheKey(address);
+    const revision = this.revisions.get(key) ?? 0;
+    return this.deferWrite(key, async () => {
+      if (epoch !== this.epoch || revision !== (this.revisions.get(key) ?? 0)) return;
+      const normalized = this.publish(address, value, guard, stamp);
+      await this.durable.write(address, normalized, guard);
+    });
   }
 
   persist<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>): Promise<void> {
-    return this.durable.write(address, value, guard);
+    const epoch = this.epoch;
+    const key = surfaceCacheKey(address);
+    const revision = this.revisions.get(key) ?? 0;
+    return this.deferWrite(key, async () => {
+      if (epoch === this.epoch && revision === (this.revisions.get(key) ?? 0)) {
+        await this.durable.write(address, value, guard);
+      }
+    });
   }
 
   /**
@@ -160,7 +184,7 @@ export class SurfaceRegistry {
         return this.peek(address, guard);
       }
       await this.write(address, value, guard, stamp);
-      return value;
+      return this.peek(address, guard);
     });
     this.fetches.set(key, pending);
     void pending.then(() => {

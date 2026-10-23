@@ -55,7 +55,12 @@ export class LiveOverlayDecoder {
   ) {}
 
   decode(event: NostrEvent): LiveOverlay | null {
-    if (event.kind !== KIND_AGENT_DRAFT || !verifyEvent(event)) return null;
+    if (
+      event.kind !== KIND_AGENT_DRAFT ||
+      !/^[0-9a-f]{64}$/.test(event.id) ||
+      !Number.isFinite(event.created_at) || event.created_at < 0 ||
+      event.content.length > 1_048_576
+    ) return null;
     const marker = exactTag(event, 't');
     if (
       marker !== TAG_AGENT_DRAFT &&
@@ -123,6 +128,7 @@ export class LiveOverlayDecoder {
         (event.created_at === previous.createdAt && event.id <= previous.eventId))
     )
       return false;
+    if (!verifyEvent(event)) return false;
     this.newest.set(key, { createdAt: event.created_at, eventId: event.id });
     return true;
   }

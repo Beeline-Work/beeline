@@ -3,10 +3,9 @@ import { Text, View } from 'react-native';
 import { AGENT_GRANT_VERBS, parseCommandGrantTarget } from '@beeline/api-contract/agent-grants';
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
-import { grantRequestLine } from '@/buzz/agent-grant-copy';
 import { ledgerStamp } from '@/buzz/relative-time';
-import { IdentityMark } from './IdentityMark';
-import { TranscriptCard, type TranscriptCardAction } from './TranscriptCard';
+import { AgentApprovalCard, approvalAudience, approvalDecisionNote } from './AgentApprovalCard';
+import { type TranscriptCardAction } from './TranscriptCard';
 
 export type GrantDecision = 'always' | 'once' | 'deny';
 
@@ -52,18 +51,21 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
     <View testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}>
       {request.grants.map((grant) => {
         const script = grant.script?.contents ?? (grant.kind === 'command' ? grant.target : undefined);
-        const purpose = grant.purpose;
+        const purpose = grant.purpose ?? grant.reason;
         const basename = (value: string) => value.split(/[\\/]/).pop() || value;
         let runs: string | undefined;
+        let uses: string | undefined;
         if (grant.kind === 'command') {
-          try { runs = parseCommandGrantTarget(grant.target).argv.map(basename).join(' '); }
+          try { const rule = parseCommandGrantTarget(grant.target); runs = rule.argv.map(basename).join(' '); uses = rule.secrets.join(', ') || undefined; }
           catch { /* Legacy targets may predate the command grammar. */ }
         }
-        const facts = purpose ? [
+        const scope = grant.status === 'once' ? 'Once' : grant.status === 'approved' ? 'Always' : undefined;
+        const facts = [
           ...(runs ? [{ label: 'Runs', value: runs }] : []),
+          ...(uses && !(grant.purpose && grant.touches && grant.capabilities) ? [{ label: 'Uses', value: uses }] : []),
           ...(grant.touches ? [{ label: 'Touches', value: grant.touches }] : grant.kind !== 'command' ? [{ label: 'Touches', value: grant.appName ?? grant.target }] : []),
-          ...(grant.capabilities ? [{ label: 'Can', value: grant.capabilities }] : []),
-        ] : [];
+          ...(grant.capabilities ? [{ label: 'Can', value: grant.capabilities }] : !grant.purpose && grant.kind !== 'command' ? [{ label: 'Can', value: `Use ${grant.appName ?? grant.target}` }] : []),
+        ].slice(0, 3);
         const busy = actionId === grant.grantId;
         const pendingGrant = grant.status === 'pending';
         const actions: TranscriptCardAction[] =
@@ -101,32 +103,25 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
           });
         }
         return (
-          <TranscriptCard
+          <AgentApprovalCard
             key={grant.grantId}
             tier={pendingGrant ? 'ask' : 'record'}
             testID={`grant-${grant.grantId}`}
-            identity={
-              <IdentityMark
-                kind="agent"
-                seed={display.avatarSeed ?? request.agent.pubkey}
-                avatarUrl={display.avatarUrl}
-                face={display.face}
-                name={agentName}
-                size={26}
-              />
-            }
+            askingAgent={request.agent}
+            agent={agent}
             wrapTitle
             title={
               <Text testID={`grant-${grant.grantId}-ask`}>
-                {purpose ? `@${agentName.replace(/^@/, '')} wants to ${grant.kind === 'command' ? 'run a script' : `${grant.kind === 'mcp' && grant.target.startsWith('connection-install:') ? 'connect' : AGENT_GRANT_VERBS[grant.kind]} ${grant.appName ?? grant.target}`}` : grantRequestLine(request.requester.name, `@${agentName.replace(/^@/, '')}`, grant)}
+                {`@${agentName.replace(/^@/, '')} wants to ${grant.kind === 'command' ? grant.purpose || grant.script ? 'run a script' : 'run a command' : `${grant.kind === 'mcp' && grant.target.startsWith('connection-install:') ? 'connect' : AGENT_GRANT_VERBS[grant.kind]} ${grant.appName ?? grant.target}`}`}
               </Text>
             }
             stamp={ledgerStamp(message.timestamp)}
-            subline={purpose ? `${grant.machine ? `${grant.machine} · ` : ''}${request.owner.pubkey === viewerPubkey ? 'for you' : `for @${request.owner.name.replace(/^@/, '')}`}` : undefined}
+            subline={`${grant.machine ? `${grant.machine} · ` : ''}${approvalAudience(request.owner, viewerPubkey)}`}
             body={purpose}
             facts={facts}
             foldCode
             code={script}
+            codeLabel={!grant.purpose && !grant.script && grant.kind === 'command' ? 'command' : undefined}
             codeTestID={script !== undefined ? `grant-${grant.grantId}-script` : undefined}
             codePath={grant.script?.path}
             footerNote={
@@ -140,17 +135,10 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
                     : sharedAssetRequest
                       ? 'waiting for a Workspace manager or the agent owner'
                     : `waiting for @${request.owner.name.replace(/^@/, '')}`
-                : purpose && grant.decidedBy && grant.decidedAt && ['once', 'approved', 'denied'].includes(grant.status)
-                  ? `${grant.status === 'denied' ? 'Denied' : 'Allowed'} by ${grant.decidedBy.pubkey === viewerPubkey ? 'you' : `@${grant.decidedBy.name.replace(/^@/, '')}`} · ${ledgerStamp(grant.decidedAt)}`
-                : grant.status === 'once'
-                  ? 'allowed once'
-                  : grant.status === 'approved'
-                    ? 'always allowed'
-                    : grant.status === 'denied'
-                      ? 'denied'
-                      : 'revoked'
+                : approvalDecisionNote(grant.status, grant.decidedBy, grant.decidedAt ?? message.timestamp, viewerPubkey)
             }
-            decisionNote={Boolean(purpose) && !pendingGrant}
+            decisionNote={!pendingGrant}
+            decisionScope={scope}
             footerNoteTone={
               grant.status === 'denied' || grant.status === 'revoked' ? 'failed' : 'quiet'
             }

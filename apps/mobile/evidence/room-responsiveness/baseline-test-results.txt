@@ -1,0 +1,30 @@
+Current-main test proof: 8021af7c3b4a5cb82ddd30f6eb1f2d2d0cbf4ba1
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  sources/buzz/surface-registry.test.ts > shared mobile surface registry > defers Room validation, conversion and serialization until navigation completes
+ FAIL  sources/buzz/surface-registry.test.ts > shared mobile surface registry > keeps only the three most recently used inactive Room responses hot
+ FAIL  sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > does not render the Room surface boundary when pushing and popping a corner
+ FAIL  sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > reuses the Room state and transcript when a corner is pushed and popped
+ FAIL  sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > does not save the Room during a corner push or pop
+ Test Files  2 failed (2)
+      Tests  5 failed | 67 skipped (72)
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 8 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects 'unknown signer' before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects 'unrelated lane' before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects 'missing request' before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects 'malformed id' before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects 'invalid sequence' before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects 'oversized draft' before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > rejects duplicate and older snapshots before verification
+ FAIL  src/live-overlay.test.ts > live overlay verification budget > verifies each accepted long snapshot once, never replaying earlier text
+ Test Files  1 failed (1)
+      Tests  8 failed | 1 passed (9)
+
+Fixed validation:
+Root typecheck: PASS
+Focused mobile responsiveness: 99 passed
+Shared client: 150 passed
+Workflow paths: PASS
+Dead-code baseline: 4 existing, 0 introduced
+Desktop Rust library check: PASS (Rust 1.96.1, two jobs)
+
+Local limitation: native fingerprint end-to-end fails in this checkout and isolated main; runtime pins unchanged.

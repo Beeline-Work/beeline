@@ -526,6 +526,7 @@ beforeAll(async () => {
   phone = new PhoneService(db, 'http://test');
   live = new LiveHub();
   daemon = new DaemonService(db, live);
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
 }, 30_000);
 afterAll(async () => closeDatabase?.());
 beforeEach(async () => {

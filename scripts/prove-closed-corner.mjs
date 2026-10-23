@@ -9,7 +9,7 @@ import { TokenAuth, tokenHash } from '../apps/server/dist/auth.js';
 import { PhoneService } from '../apps/server/dist/phone-service.js';
 import { createBeelineServer } from '../apps/server/dist/server.js';
 const db = new PgliteDatabase();
-const owner = 'a'.repeat(64), agent = 'b'.repeat(64), head = 'c'.repeat(40);
+const owner = 'a'.repeat(64), agent = 'b'.repeat(64), implementer = 'd'.repeat(64), head = 'c'.repeat(40);
 const workspace = '11111111-1111-4111-8111-111111111111';
 const parent = '22222222-2222-4222-8222-222222222222';
 const corner = '33333333-3333-4333-8333-333333333333';
@@ -17,15 +17,15 @@ const base = process.argv.includes('--base');
 let server;
 try {
   await migrate(db);
-  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Commander')`, [owner, agent]);
-  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, owner]);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Commander'),($3,'agent','Implementer')`, [owner, agent, implementer]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$2)`, [agent, owner, implementer]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Proof')`, [workspace]);
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`, [owner]);
   await db.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,repository_key,repository_resolution,github_installation_id,reviewer_agent_id) VALUES($1,$2,'Parent','owner/widgets','repository',77,$3)`, [parent, workspace, agent]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`, [corner, workspace, parent, agent]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace, parent, agent]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,$3::jsonb)`, [corner, agent, JSON.stringify({pr:{number:1,headSha:head}})]);
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,$3::jsonb)`, [corner, implementer, JSON.stringify({pr:{number:1,headSha:head}})]);
   await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`, [corner, agent, head]);
   const operations = new GitHubOperations(db, {}, {
     installationToken: async () => ({token:'fixture',expiresAt:'2030-01-01T00:00:00Z'}),

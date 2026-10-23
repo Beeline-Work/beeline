@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
+import { ribbon } from '@/buzz/beeline-glyph';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
 import {
@@ -31,8 +32,8 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * that pair to exactly one meaning, an agent is alive and working, which is
  * precisely what a turn in progress is.
  *
- * The shape of the line is the status-line idiom: a mark, the verb line, then
- * elapsed minutes and seconds ticking once per second. The mark is the Beeline
+ * The mark leads the line at the transcript text edge, followed by the verb
+ * and elapsed counter. The mark is the Beeline
  * icon (`BeelineMarkSpinner`) painting itself and releasing — never a cycling
  * text glyph or a row of dots. A glyph whose advance width changes per frame
  * walks the label's left edge back and forth, so the mark sits in one fixed
@@ -60,8 +61,11 @@ export function TurnProgressLine({
   onStop,
   stopping = false,
   testID,
+  inset = true,
 }: {
   label: string;
+  /** Desktop callers already supply the transcript inset around this row. */
+  inset?: boolean;
   /** Server receipt time, unix seconds, the elapsed counter ticks from. */
   startedAt?: number;
   /** A new human steer was committed against this running turn. */
@@ -89,11 +93,11 @@ export function TurnProgressLine({
       accessibilityLabel={stateLabel ? `${label} (${stateLabel})` : label}
       accessibilityLiveRegion="polite"
       accessibilityRole="progressbar"
-      style={styles.bar}
+      style={inset ? styles.bar : [styles.bar, styles.insetBar]}
       testID={testID}
     >
       <HullLivePulse style={styles.row}>
-        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
+        <View style={[styles.glyphCell, styles.leadingGlyph]} testID={testID ? `${testID}-glyph` : undefined}>
           <BeelineMarkSpinner live />
         </View>
         <Text numberOfLines={1} style={styles.label}>
@@ -216,8 +220,9 @@ const styles = StyleSheet.create((theme) => {
       width: '100%',
       minWidth: 0,
       marginBottom: TURN_LINE_BAR_MARGIN_BOTTOM,
-      paddingHorizontal: 8,
+      paddingHorizontal: groknight.space.md,
     },
+    insetBar: { paddingHorizontal: 0 },
     row: {
       minHeight: TURN_LINE_ROW_MIN_HEIGHT,
       minWidth: 0,
@@ -233,6 +238,12 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    // Remove the SVG's transparent leading inset from layout, keeping the
+    // original gap after its fixed cell and aligning the visible mark to text.
+    leadingGlyph: {
+      width: MARK_CELL - ribbon.cellInkInset,
+      alignItems: 'flex-end',
     },
     label: {
       ...groknight.type.machine,
@@ -259,6 +270,8 @@ const styles = StyleSheet.create((theme) => {
     stopLabel: {
       ...groknight.type.sectionHead,
       color: groknight.accent,
+      // Trailing tracking belongs between letters, outside the visible edge.
+      transform: [{ translateX: groknight.type.sectionHead.letterSpacing }],
     },
     stopPressed: {
       opacity: 0.6,

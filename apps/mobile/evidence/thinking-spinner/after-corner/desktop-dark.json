@@ -1,0 +1,39 @@
+{
+  "body": "Beeline\nAll 5\nUnread 2\nPinned 0\n\nROOMS\n#beeline\nyou · Ruby, please think about the transcript alignment.\n42m\n#markets\n@niglet · Z.ai is down 28% from its high two weeks ago.\n54m\n#design\n@ruby · The header mock is ready for a look.\n59m\nDIRECT MESSAGES\n@ruby\nyou · Ruby, please think about the transcript alignment.\n44m\n@speedy\n@speedy · Review is done. Ready to land.\n1h\nPlay Review\n#beeline/Thinking alignment\nAGENT · working\nAlign the thinking status margins\nFRI 23 OCT\nPlay Review\n14:42\nRuby, please think about the transcript alignment.\nRuby Brewing…\n7s\n■ STOP",
+  "row": {
+    "l": 356,
+    "t": 775,
+    "r": 1264,
+    "b": 799
+  },
+  "name": {
+    "l": 378.09375,
+    "t": 778,
+    "r": 479.5,
+    "b": 796
+  },
+  "glyph": {
+    "l": 356,
+    "t": 778,
+    "r": 370.09375,
+    "b": 796
+  },
+  "svg": {
+    "l": 352.09375,
+    "t": 778,
+    "r": 370.09375,
+    "b": 796
+  },
+  "stop": {
+    "l": 1219.21875,
+    "t": 775,
+    "r": 1264,
+    "b": 799
+  },
+  "text": {
+    "l": 356,
+    "t": 721,
+    "r": 1264,
+    "b": 744
+  }
+}

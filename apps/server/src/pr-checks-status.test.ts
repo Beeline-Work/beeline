@@ -199,6 +199,7 @@ beforeEach(async () => {
     undefined,
     (cornerId) => operations.refreshStaleMergeability(cornerId),
   );
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
 });
 
 afterEach(async () => {
@@ -378,8 +379,7 @@ describe('PR-scoped check gate', () => {
     await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
     await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
-    // The server does not referee whether the configured reviewer opened
-    // this corner: it is dispatched and can PASS like any other reviewer.
+    // An opener with no separate worker is the effective implementer.
     expect(await gate(AUTHOR)).toMatchObject({
       checks: 'passed',
       approved: false,
@@ -388,6 +388,13 @@ describe('PR-scoped check gate', () => {
       reviewerExists: true,
       reviewerWake: { status: 'waiting' },
     });
+    await expect(
+      daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
+    ).rejects.toMatchObject({ status: 409, message: expect.stringContaining('the corner implementer cannot review its own work') });
+    expect(await gate(AUTHOR)).toMatchObject({ approved: false, mergeAllowed: false });
+
+    // Opening the corner is allowed when another agent implements the work.
+    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, REVIEWER]);
     await expect(
       daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
     ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });

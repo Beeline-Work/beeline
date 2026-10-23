@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 const noop = () => {};
 const navigation = {
+  isFocused: () => true,
   addListener: () => noop,
   setOptions: noop,
   canGoBack: () => false,

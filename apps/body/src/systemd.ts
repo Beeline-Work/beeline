@@ -258,16 +258,26 @@ export function startLocalWatchdog(
   intervalMs: number | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
   onStall: () => void = () => process.exit(75),
+  onPending?: () => void,
 ): () => void {
   const localDeadline = process.platform === 'darwin';
   if (!env.WATCHDOG_USEC && !localDeadline) return () => undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   let pending = false;
+  let warned = false;
   let stopped = false;
   const timer = setInterval(
     () => {
-      if (pending || stopped) return;
+      if (stopped) return;
+      if (pending) {
+        if (!warned) {
+          warned = true;
+          onPending?.();
+        }
+        return;
+      }
       pending = true;
+      warned = false;
       if (localDeadline && !deadline) deadline = setTimeout(onStall, 180_000);
       // The existing local tick asks the work loops to run. A wedged loop never
       // completes this barrier, even while sockets and other agents keep running.

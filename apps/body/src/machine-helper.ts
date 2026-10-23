@@ -708,18 +708,29 @@ async function serveMachineHelper(
   });
   await control.start();
   signals.on('SIGHUP', onHangup);
+  const pendingWatchdogAgents = new Set<string>();
   const stopWatchdog = startLocalWatchdog(
     notifier,
     statusLine,
     async () => {
       // Startup/backoff slots have no live core to acknowledge. Include every
       // hosted core so an actual stalled loop cannot borrow a sibling's health.
-      await Promise.all([...hosted.values()].map((agent) => agent.core.requestWorkLoopProgress()));
+      pendingWatchdogAgents.clear();
+      await Promise.all([...hosted.values()].map(async (agent) => {
+        pendingWatchdogAgents.add(agent.agentId);
+        try { await agent.core.requestWorkLoopProgress(); }
+        finally { pendingWatchdogAgents.delete(agent.agentId); }
+      }));
       return true;
     },
     undefined,
     env,
     () => restartHelper('failed'),
+    () => console.warn('[helper] watchdog awaiting work-loop progress', JSON.stringify(
+      [...pendingWatchdogAgents].map(agentId => ({
+        agentId, ...hosted.get(agentId)?.core.workLoopDiagnostics(),
+      })),
+    )),
   );
 
   const freeAgentIdle = options.freeAgentIdle;

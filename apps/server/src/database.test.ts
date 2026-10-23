@@ -902,6 +902,83 @@ describe('PostgresDatabase reconnects', () => {
     expect(pool.connect).toHaveBeenCalledTimes(4);
   });
 
+  it('DNS-RETRY-1 classifies temporary DNS failures by code only', () => {
+    expect(isTransientDatabaseConnectionError(Object.assign(
+      new Error('getaddrinfo EAI_AGAIN database.example.invalid'), { code: 'EAI_AGAIN' },
+    ))).toBe(true);
+    expect(isTransientDatabaseConnectionError({ code: 'EAI_AGAIN' })).toBe(true);
+    expect(isTransientDatabaseConnectionError(
+      new Error('getaddrinfo EAI_AGAIN database.example.invalid'),
+    )).toBe(false);
+  });
+
+  it('DNS-RETRY-1 completes the original query after a temporary DNS checkout failure', async () => {
+    const dnsError = Object.assign(new Error('getaddrinfo EAI_AGAIN database.example.invalid'), {
+      code: 'EAI_AGAIN', syscall: 'getaddrinfo', hostname: 'database.example.invalid',
+    });
+    const query = vi.fn().mockResolvedValue(result([{ answer: 1 }]));
+    const pool = poolWithQuery(query);
+    vi.mocked(pool.connect).mockRejectedValueOnce(dnsError);
+    const pause = vi.fn().mockResolvedValue(undefined);
+    const database = new PostgresDatabase('', 5, { pool, pause });
+
+    await expect(database.query('SELECT $1::int AS answer', [1])).resolves.toEqual(
+      result([{ answer: 1 }]),
+    );
+    expect(pool.connect).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls).toEqual([['SELECT $1::int AS answer', [1]]]);
+    expect(pause.mock.calls).toEqual([[100]]);
+    expect(database.poolTelemetry()).toMatchObject({ checkouts: 1, checkoutFailures: 1 });
+  });
+
+  it('DNS-RETRY-1 preserves the retry budget and final temporary DNS error', async () => {
+    const errors = Array.from({ length: 4 }, () => Object.assign(
+      new Error('getaddrinfo EAI_AGAIN database.example.invalid'), { code: 'EAI_AGAIN' },
+    ));
+    const connect = vi.fn();
+    for (const error of errors) connect.mockRejectedValueOnce(error);
+    const pool = { on: vi.fn(), connect, end: vi.fn() } as unknown as Pool;
+    const pause = vi.fn().mockResolvedValue(undefined);
+    const database = new PostgresDatabase('', 5, { pool, pause });
+
+    await expect(database.query('SELECT 1')).rejects.toBe(errors[3]);
+    expect(connect).toHaveBeenCalledTimes(4);
+    expect(pause.mock.calls).toEqual([[100], [300], [700]]);
+    expect(database.poolTelemetry()).toMatchObject({ checkouts: 0, checkoutFailures: 4 });
+  });
+
+  it.each(['ENOTFOUND', 'EAI_NONAME', 'EAI_FAIL'])(
+    'DNS-RETRY-1 does not retry permanent DNS failure %s', async (code) => {
+      const error = Object.assign(new Error(`getaddrinfo ${code} database.example.invalid`), { code });
+      expect(isTransientDatabaseConnectionError(error)).toBe(false);
+      const pool = { on: vi.fn(), connect: vi.fn().mockRejectedValue(error), end: vi.fn() } as unknown as Pool;
+      const pause = vi.fn().mockResolvedValue(undefined);
+      const database = new PostgresDatabase('', 5, { pool, pause });
+
+      await expect(database.query('SELECT 1')).rejects.toBe(error);
+      expect(pool.connect).toHaveBeenCalledTimes(1);
+      expect(pause).not.toHaveBeenCalled();
+    },
+  );
+
+  it('DNS-RETRY-1 retries transaction checkout without replaying failed transaction work', async () => {
+    const error = Object.assign(new Error('getaddrinfo EAI_AGAIN database.example.invalid'), {
+      code: 'EAI_AGAIN',
+    });
+    const query = vi.fn().mockResolvedValue(result([]));
+    const pool = poolWithQuery(query);
+    vi.mocked(pool.connect).mockRejectedValueOnce(error);
+    const pause = vi.fn().mockResolvedValue(undefined);
+    const database = new PostgresDatabase('', 5, { pool, pause });
+    const work = vi.fn().mockRejectedValue(error);
+
+    await expect(database.transaction(work)).rejects.toBe(error);
+    expect(pool.connect).toHaveBeenCalledTimes(2);
+    expect(pause.mock.calls).toEqual([[100]]);
+    expect(work).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls).toEqual([['BEGIN'], ['ROLLBACK']]);
+  });
+
   it('does not retry non-connection errors', async () => {
     const uniqueViolation = Object.assign(new Error('duplicate key'), { code: '23505' });
     const query = vi.fn().mockRejectedValue(uniqueViolation);

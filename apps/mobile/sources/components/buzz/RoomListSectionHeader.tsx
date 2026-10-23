@@ -133,9 +133,6 @@ function SectionAddGlyph({ color }: { color: string }) {
 const ACTION_GLYPH = 24;
 const ACTION_STROKE = 2.4;
 const LABEL_LINE = typeRoles.sectionLabel.lineHeight;
-/** Measured: the plus's ink ends this far inside its glyph box. */
-const ACTION_GLYPH_INK_INSET = 3.5;
-const ACTION_INK_INSET = (44 - ACTION_GLYPH) / 2 + ACTION_GLYPH_INK_INSET;
 const ACTION_HIT_SLOP = {
   top: (44 - ACTION_GLYPH) / 2,
   bottom: (44 - ACTION_GLYPH) / 2,
@@ -163,11 +160,11 @@ const styles = StyleSheet.create((theme) => {
     sheetInset: { paddingHorizontal: HULL_SHEET_INSET },
     roomListInset: {
       paddingLeft: hull.roomList.edge,
-      paddingRight: hull.roomList.edge - ACTION_INK_INSET,
+      paddingRight: hull.roomList.addEnd,
     },
     roomListCompactInset: {
       paddingLeft: hull.roomList.edge,
-      paddingRight: hull.roomList.edge - ACTION_GLYPH_INK_INSET,
+      paddingRight: hull.roomList.compactAddEnd,
     },
     sheetSurface: { paddingTop: hull.space.md, backgroundColor: 'transparent' },
     flushSpacing: { paddingTop: 0 },

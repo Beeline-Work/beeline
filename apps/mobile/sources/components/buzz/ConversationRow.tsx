@@ -195,10 +195,6 @@ export function ConversationRow({
   );
 }
 
-/** The 8-point status dot is centred in its 14-point cell. */
-const STATUS_DOT_INK_INSET = (14 - 8) / 2;
-const SELECTED_RULE_WIDTH = 1;
-
 const styles = StyleSheet.create((theme) => ({
   liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   row: {
@@ -216,10 +212,10 @@ const styles = StyleSheet.create((theme) => ({
   desktopRow: {
     minHeight: 62,
     paddingLeft: theme.buzz.roomList.edge,
-    paddingRight: theme.buzz.roomList.edge - STATUS_DOT_INK_INSET,
+    paddingRight: theme.buzz.roomList.dotEnd,
   },
   // The selected accent rule takes its width from the padding, not the name.
-  desktopSelectedRow: { paddingLeft: theme.buzz.roomList.edge - SELECTED_RULE_WIDTH },
+  desktopSelectedRow: { paddingLeft: theme.buzz.roomList.selectedStart },
   mobileRow: { minHeight: 68, paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm },
   copy: { flex: 1, minWidth: 0 },
   heading: { minHeight: 23, flexDirection: 'row', alignItems: 'center' },
@@ -279,7 +275,7 @@ const styles = StyleSheet.create((theme) => ({
   mobileCornerToggle: { right: 14, bottom: 14 },
   selected: {
     backgroundColor: theme.buzz.bgHighlight,
-    borderLeftWidth: SELECTED_RULE_WIDTH,
+    borderLeftWidth: 1,
     borderLeftColor: theme.buzz.accent,
   },
   pressed: { backgroundColor: theme.buzz.bgPressed },

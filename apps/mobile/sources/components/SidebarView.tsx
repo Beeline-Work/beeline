@@ -1,4 +1,4 @@
-import { HEADER_TRAY_INK_INSET, TrayGlyph } from '@/components/buzz/TrayGlyph';
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { InlineRow } from '@/components/buzz/IndexRow';
@@ -88,7 +88,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   desktopWorkspaceHeader: {
     paddingLeft: theme.buzz.roomList.edge,
     // The tray's ink, not its target, ends on the Room list edge.
-    paddingRight: theme.buzz.roomList.edge - HEADER_TRAY_INK_INSET,
+    paddingRight: theme.buzz.roomList.trayEnd,
     paddingTop: 8,
     paddingBottom: 8,
     alignItems: 'center',

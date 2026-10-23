@@ -1,4 +1,4 @@
-import { HEADER_TRAY_INK_INSET, TrayGlyph } from '@/components/buzz/TrayGlyph';
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -1185,7 +1185,7 @@ const styles = StyleSheet.create((theme) => {
       paddingLeft: hull.roomList.edge,
       // The tray's ink, not its target, ends on the Room list edge; Room and
       // corner conversation headers keep their own 16 px target spacing.
-      paddingRight: hull.roomList.edge - HEADER_TRAY_INK_INSET,
+      paddingRight: hull.roomList.trayEnd,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',

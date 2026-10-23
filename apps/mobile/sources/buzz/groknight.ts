@@ -8,6 +8,8 @@ import brand from './brand.json';
  * and the ledger quiet/ghost tiers are for labels and redundant metadata only,
  * never for narration or human messages.
  */
+const ROOM_LIST_EDGE = 20;
+
 const shared = {
   brandMark: brand.mark,
   // The one box radius, shared by every theme (DESIGN.md → Shape).
@@ -49,8 +51,24 @@ const shared = {
   },
   // One Room list edge on phone and desktop (approved Room list margins mock):
   // labels, filters, cards and the ink of the edge icons sit this far from the
-  // screen or sidebar edge. Other screens keep their own insets.
-  roomList: { edge: 20 },
+  // screen or sidebar edge. Other screens keep their own insets. The *End and
+  // selectedStart paddings put a mark's ink, not its target, on the edge: the
+  // edge less how far the ink sits inside its box (measured).
+  roomList: {
+    edge: ROOM_LIST_EDGE,
+    // 22-point tray: its box ink ends 14.5 inside its 44-point target.
+    trayEnd: ROOM_LIST_EDGE - 14.5,
+    // Search mark: its ink ends 13.5 inside its 44-point target.
+    searchEnd: ROOM_LIST_EDGE - 13.5,
+    // Phone +: 10 of target outside the 24-point glyph, then 3.5 inside it.
+    addEnd: ROOM_LIST_EDGE - 13.5,
+    // Desktop +: the glyph box ends on the padding; its ink is 3.5 inside.
+    compactAddEnd: ROOM_LIST_EDGE - 3.5,
+    // Desktop rows: the 8-point status dot is centred in its 14-point cell.
+    dotEnd: ROOM_LIST_EDGE - 3,
+    // A selected desktop row's 1-point accent rule comes out of its padding.
+    selectedStart: ROOM_LIST_EDGE - 1,
+  },
   agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
 } as const;
 

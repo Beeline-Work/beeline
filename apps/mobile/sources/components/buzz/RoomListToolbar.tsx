@@ -113,15 +113,12 @@ export function RoomListToolbar({
   );
 }
 
-/** Measured: the search mark's ink ends this far inside its 44 px target. */
-const SEARCH_INK_INSET = 13.5;
-
 const styles = StyleSheet.create((theme) => ({
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingLeft: theme.buzz.roomList.edge,
-    paddingRight: theme.buzz.roomList.edge - SEARCH_INK_INSET,
+    paddingRight: theme.buzz.roomList.searchEnd,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },

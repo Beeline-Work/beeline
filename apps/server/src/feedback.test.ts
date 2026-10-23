@@ -190,17 +190,40 @@ describe('report_feedback (agent path)', () => {
     expect(stored[1]).toMatchObject({ room_id: CORNER });
   });
 
-  it('answers a duplicate with the existing id and caps new items at fifty per UTC day', async () => {
+  it('Reproduction R1: stores the fifty-first distinct report through the daemon route', async () => {
+    for (let index = 0; index < 50; index++) await report({ summary: `distinct problem ${index}` });
+    const result = await report({ summary: 'fifty-first' });
+    expect(result.duplicate).toBe(false);
+    expect(await items()).toHaveLength(51);
+    expect((await database.query('SELECT summary FROM feedback_items WHERE id=$1', [result.itemId])).rows)
+      .toEqual([{ summary: 'fifty-first' }]);
+  });
+
+  it('Reproduction R1: bounds daily rows and keeps the latest overflow visible to triage', async () => {
     const first = await report({ summary: 'The grant card never resolves.' });
-    const again = await report({ summary: '  the GRANT card never resolves ' });
-    expect(again).toEqual({ itemId: first.itemId, duplicate: true });
-    for (let index = 1; index < 50; index++) await report({ summary: `distinct problem ${index}` });
-    await expect(report({ summary: 'fifty-first' })).rejects.toThrow('feedback cap reached');
-    // A duplicate still answers at the cap.
-    await expect(report({ summary: 'the grant card never resolves' })).resolves.toEqual({
-      itemId: first.itemId,
-      duplicate: true,
-    });
+    for (let index = 1; index < 200; index++) await report({ summary: `distinct problem ${index}` });
+    expect(await report({ summary: 'the GRANT card never resolves' }))
+      .toEqual({ itemId: first.itemId, duplicate: true });
+    const overflow = await report({ summary: 'overflow first', detail: 'first context' });
+    await database.query("UPDATE feedback_items SET status='dismissed' WHERE id=$1", [overflow.itemId]);
+    const latest = await report({ summary: 'overflow latest', detail: 'latest context', toolName: 'read' }, CORNER);
+    expect(latest.itemId).toBe(overflow.itemId);
+    expect(await items()).toHaveLength(201);
+    const visible = await database.query(
+      "SELECT summary,detail,occurrence_count,status,room_id,tool_name,occurrences FROM feedback_items WHERE status='new' AND id=$1",
+      [overflow.itemId],
+    );
+    expect(visible.rows).toEqual([{
+      summary: 'overflow latest', detail: 'latest context', occurrence_count: 2,
+      status: 'new', room_id: CORNER, tool_name: 'read', occurrences: [],
+    }]);
+    // A separate agent retains its own allowance.
+    expect((await report({ summary: 'another agent problem' }, ROOM, OUTSIDER)).duplicate).toBe(false);
+    // Moving yesterday's rows out of today restores the ordinary daily allowance.
+    await database.query("UPDATE feedback_items SET created_at=now()-interval '1 day' WHERE reporter_identity_id=$1", [AGENT]);
+    const tomorrow = await report({ summary: 'new day problem' });
+    expect(tomorrow.itemId).not.toBe(overflow.itemId);
+    expect(tomorrow.duplicate).toBe(false);
   });
 
   it('Reproduction duplicate-cap: shares open items across agents without spending their cap', async () => {
@@ -220,11 +243,9 @@ describe('report_feedback (agent path)', () => {
     expect(counts.rows[0]!.occurrences).toEqual([
       expect.objectContaining({ agentId: OUTSIDER, roomId: CORNER, createdAt: expect.any(String) }),
     ]);
-    for (let index = 0; index < 50; index++)
+    for (let index = 0; index < 200; index++)
       await report({ summary: `other problem ${index}` }, ROOM, OUTSIDER);
-    await expect(report({ summary: 'fifty-first' }, ROOM, OUTSIDER)).rejects.toThrow(
-      'feedback cap reached',
-    );
+    await expect(report({ summary: 'past safety ceiling' }, ROOM, OUTSIDER)).resolves.toMatchObject({ duplicate: false });
     await database.query(
       "UPDATE feedback_items SET created_at=now()-interval '2 hours', occurrences='[]', occurrence_count=1 WHERE id=$1",
       [first.itemId],

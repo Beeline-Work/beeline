@@ -1,3 +1,4 @@
+import { FEEDBACK_AGENT_DAILY_CAP } from '@beeline/api-contract/daemon';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import * as Sentry from '@sentry/node';
@@ -11,7 +12,7 @@ import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 
-it('Reproduction R1/R2: feedback cap and workflow lookup refuse without Sentry events; faults still report', async () => {
+it('Reproduction R1/R2: feedback overflow and workflow lookup produce no Sentry events; faults still report', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -51,7 +52,7 @@ it('Reproduction R1/R2: feedback cap and workflow lookup refuse without Sentry e
       });
       return { status: response.status, body: await response.json() };
     };
-    for (let index = 0; index < 50; index++) {
+    for (let index = 0; index < FEEDBACK_AGENT_DAILY_CAP; index++) {
       expect((await post('reportFeedback', { ...turn, category: 'bug', summary: `Unique feedback ${index}` })).status).toBe(200);
     }
     const cap = await post('reportFeedback', { ...turn, category: 'bug', summary: 'Over daily cap' });
@@ -59,7 +60,9 @@ it('Reproduction R1/R2: feedback cap and workflow lookup refuse without Sentry e
     await Sentry.flush(2000);
     const events = () => envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))).filter(item => item.exception);
     console.log('R1/R2 evidence', JSON.stringify({ cap, missing, captured: events().length }));
-    expect(cap).toEqual({ status: 429, body: { error: 'feedback cap reached: 50 reports per agent per UTC day' } });
+    expect(cap).toEqual({ status: 200, body: { itemId: expect.stringMatching(/^fb_/), duplicate: false } });
+    const repeatedOverflow = await post('reportFeedback', { ...turn, category: 'bug', summary: 'Latest excess report' });
+    expect(repeatedOverflow).toEqual({ status: 200, body: { itemId: cap.body.itemId, duplicate: true } });
     expect(missing).toEqual({ status: 404, body: { error: 'workflow run is unavailable in this Room' } });
     // Full IDs skip prefix resolution and reach the read/mutation lookups.
     const fullMissingId = 'deadbeef' + '0'.repeat(56);

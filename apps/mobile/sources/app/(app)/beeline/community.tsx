@@ -1,6 +1,5 @@
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-import { useAutoFitText } from '@/buzz/use-autofit-text';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import * as Crypto from 'expo-crypto';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -24,7 +23,7 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
+import { PageHeader } from '@/components/buzz/PageHeader';
 import { RoomGlyph } from '@/components/buzz/RoomGlyph';
 import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 
@@ -59,7 +58,6 @@ export default function WorkspaceChoice() {
   );
   const hasWorkspaces = communities.length > 0;
   const viewerName = workspaceList?.viewer.name?.trim() ?? '';
-  const welcomeRef = useAutoFitText(viewerName ? `Welcome, ${viewerName}` : 'Welcome');
   const workspaceName = draftName ?? (viewerName ? `${viewerName}'s team` : 'My team');
   const createWorkspace = async () => {
     if (!identity || creating || !workspaceName.trim()) return;
@@ -141,27 +139,21 @@ export default function WorkspaceChoice() {
       viewerAvatarUrl={workspaceList?.viewer.avatar}
       viewerFace={workspaceList?.viewer.face}
     >
+      <View style={{ paddingTop: insets.top }}>
+        <PageHeader title={viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
+          titleTestID="choice-title" prominent
+          onBack={hasWorkspaces ? () => router.canGoBack() ? router.back() : router.replace('/beeline/channels') : undefined} />
+      </View>
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
-          { paddingTop: insets.top + theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },
+          { paddingTop: theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },
         ]}
         keyboardShouldPersistTaps="handled"
         style={styles.container}
         testID="workspace-choice"
       >
         <View style={styles.column}>
-          {hasWorkspaces ? (
-            <Button label="" variant="quiet"
-              accessibilityLabel="Back"
-              onPress={() =>
-                router.canGoBack() ? router.back() : router.replace('/beeline/channels')
-              }
-             icon={<ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />} />
-          ) : null}
-          <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={1} accessibilityRole="header" style={styles.title} testID="choice-title">
-            {viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
-          </Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}
           </Text>
@@ -171,7 +163,7 @@ export default function WorkspaceChoice() {
               maxLength={80} editable={!creating} value={workspaceName} onChangeText={setDraftName}
               onSubmitEditing={() => void createWorkspace()} /> : null}
             <ChoiceCard
-              description={enabled ? (creating ? "Creating your Workspace…" : workspaceName) : "New workspace for your team"}
+              description={creating ? "Creating your Workspace…" : "New workspace for your team"}
               glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => enabled ? void createWorkspace() : router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
@@ -260,7 +252,6 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
     copy: {
       ...Typography.default(),
       ...hull.type.meta,

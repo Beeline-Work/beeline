@@ -84,6 +84,8 @@ export type TranscriptCardProps = {
   identity?: ReactNode;
   body?: ReactNode;
   quietBody?: boolean;
+  bodyTone?: 'failed';
+  standardBody?: boolean;
   /** Controls an ask needs beyond rows and choices (a field, a step list). */
   children?: ReactNode;
   rows?: readonly TranscriptCardRow[];
@@ -231,6 +233,8 @@ export function TranscriptCard({
   children,
   body,
   quietBody = false,
+  bodyTone,
+  standardBody = false,
   rows = [],
   choices = [],
   noteInput,
@@ -430,8 +434,8 @@ export function TranscriptCard({
             <SettlingText
               active={animateArrival}
               durationMs={TRANSCRIPT_SETTLE_MS}
-              steadyColor={quietBody ? steady.quiet : steady.body}
-              style={[styles.body, quietBody && styles.bodyQuiet]}
+              steadyColor={bodyTone === 'failed' ? theme.buzz.dialogDanger : quietBody ? steady.quiet : steady.body}
+              style={[styles.body, standardBody && styles.bodyStandard, quietBody && styles.bodyQuiet, bodyTone === 'failed' && styles.bodyFailed]}
             >
               {body}
             </SettlingText>
@@ -761,6 +765,8 @@ const styles = StyleSheet.create((theme) => {
     },
     detailInset: { marginHorizontal: metric.side },
     facts: { marginTop: card.space.sm },
+    bodyStandard: { ...card.type.body },
+    bodyFailed: { color: card.dialogDanger },
     bodyQuiet: { color: card.ledgerQuiet },
     code: {
       marginTop: metric.codeTop,

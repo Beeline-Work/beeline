@@ -1,0 +1,24 @@
+import React, { useState } from 'react';
+import { router } from 'expo-router';
+import { registerRootComponent } from 'expo';
+import { View, Text } from 'react-native';
+import { useFonts } from 'expo-font';
+import { StyleSheet, UnistylesRuntime, useUnistyles } from 'react-native-unistyles';
+import { obsidianTheme, boneTheme } from '../sources/theme';
+import { Button } from '../sources/components/buzz/Button';
+import { RepositoryOnboardingCard } from '../sources/app/(app)/beeline/chat/RepositoryOnboardingCard';
+StyleSheet.configure({themes:{obsidian:obsidianTheme,bone:boneTheme},settings:{initialTheme:'obsidian'}});
+const viewer='a'.repeat(64);
+const card={id:'card-one',roomId:'room',agentId:'c'.repeat(64),requesterId:viewer,kind:'repository' as const,canLink:true,state:'install_missing' as const,status:'open' as const,githubLinked:false,defaultName:'my-project',repositories:[],starters:[]};
+function Proof(){
+ const [loaded]=useFonts({'SpaceGrotesk-Regular':require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),'SpaceGrotesk-Medium':require('../sources/assets/fonts/SpaceGrotesk-Medium.ttf'),'SpaceGrotesk-SemiBold':require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),'IBMPlexMono-Regular':require('../sources/assets/fonts/IBMPlexMono-Regular.ttf')});
+ const [normal,setNormal]=useState(false);const [bone,setBone]=useState(false);const {theme}=useUnistyles();
+ if(!loaded)return null;
+ return <View style={{flex:1,backgroundColor:theme.buzz.bgBase,padding:24,paddingTop:64,gap:16}}>
+ <Text style={{...theme.buzz.type.bodyStrong,color:theme.buzz.textPrimary}}>Repository connection</Text>
+ <View style={{flexDirection:'row',gap:8}}><Button label="Normal cards" variant="quiet" onPress={()=>{router.setParams({repositoryPicker:undefined,githubConnectionError:undefined});setNormal(true);}}/><Button label="Bone" variant="quiet" onPress={()=>{UnistylesRuntime.setTheme(bone?'obsidian':'bone');setBone(!bone);}}/></View>
+ <RepositoryOnboardingCard key={String(normal)} card={card} viewerId={viewer} {...{connectionError:normal?undefined:'github_account_already_linked'}}/>
+ <RepositoryOnboardingCard key={'other'+normal} card={{...card,id:'card-two'}} viewerId={viewer} {...{connectionError:normal?undefined:'github_account_already_linked'}}/>
+ </View>;
+}
+registerRootComponent(Proof);

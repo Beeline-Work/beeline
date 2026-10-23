@@ -9,6 +9,7 @@ import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transpo
 
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
+  withholdWorkspaceSnapshot: false,
   appStateListeners: [] as Array<(state: string) => void>,
   bottomInset: 0,
   renderRows: false,
@@ -157,7 +158,7 @@ vi.mock('@/buzz/surface-storage', () => {
     for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
   };
   const cache = {
-    peek: vi.fn((address: string) => hotSurfaces.values.get(address) ?? null),
+    peek: vi.fn((address: string) => deck.withholdWorkspaceSnapshot && address.includes('/workspaces') ? null : hotSurfaces.values.get(address) ?? null),
     read: vi.fn(async () => null),
     write: vi.fn(async (address: string, value: unknown, _guard: unknown) => {
       cache.publish(address, value);
@@ -1090,3 +1091,12 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
     removeItem: async () => undefined,
   },
 }));
+
+it('R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot', async () => {
+  deck.withholdWorkspaceSnapshot = true;
+  try {
+    const renderer = await mountDeck();
+    expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    await act(async () => renderer.unmount());
+  } finally { deck.withholdWorkspaceSnapshot = false; }
+});

@@ -1,13 +1,12 @@
-vi.mock('expo-router', () => ({ useLocalSearchParams: () => ({}) }));
+vi.mock('expo-router', () => ({ useLocalSearchParams: () => mocks.params, router: { setParams: vi.fn((params) => { Object.assign(mocks.params, params); }) } }));
 vi.mock('@/components/buzz/ErrorBanner', () => ({ErrorBanner:(props:any)=>React.createElement('ErrorBanner',props)}));
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
-const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})) }));
+const mocks = vi.hoisted(() => ({ enabled: true, params: {} as Record<string, string | undefined>, operation: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})) }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('react-native', () => ({ AppState: { addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'android' } }));
 vi.mock('@/components/buzz/TranscriptCard', () => ({ TranscriptCard: (props: any) => React.createElement('TranscriptCard', props) }));

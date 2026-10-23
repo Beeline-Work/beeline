@@ -170,11 +170,12 @@ describe('the create-or-join choice', () => {
       expect.arrayContaining([
         'Start a Workspace, or join one you were invited to.',
         'Create a Workspace',
-        "Ada's team",
         'Join with an invite link',
         'Paste the link someone sent you.',
       ]),
     );
+    expect(texts).not.toContain("Ada's team");
+    expect(find(renderer, 'choice-workspace-name')[0]!.props.value).toBe("Ada's team");
     expect(texts).not.toContain('Welcome to Beeline');
     expect(texts.join(' ')).not.toContain('Already use Beeline?');
     expect(texts).not.toContain('Account settings');

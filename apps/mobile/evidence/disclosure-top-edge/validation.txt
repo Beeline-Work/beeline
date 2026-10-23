@@ -1,0 +1,22 @@
+npm run corner:prepare: PASS (7 workspace build tasks, 7 successful)
+npm run typecheck: PASS
+npm run lint:ui-components -- --base HEAD: PASS (563 source modules; 171 registered shared files)
+npm run dead-code: PASS (4 existing findings, 0 introduced; proof entry files declared in knip.jsonc)
+Before style change: 3 new regression tests failed because the top border was still 1.
+After style change:
+
+Mobile component and disclosure browser tests
+Test Files  3 passed (3)
+Tests  50 passed (50)
+
+Existing event browser and design tests (the disclosure browser tests overlap the run above)
+Test Files  5 passed (5)
+Tests  33 passed (33)
+
+UI policy tests
+ℹ tests 29
+ℹ pass 29
+ℹ fail 0
+
+Android debug build: BUILD SUCCESSFUL in 2m 43s (x86_64, two workers, 4 GiB Gradle heap).
+Native edge-tap results and rounded row heights: before/android-results.json and after/android-results.json.

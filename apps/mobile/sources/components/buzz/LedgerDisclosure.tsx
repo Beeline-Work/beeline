@@ -45,8 +45,6 @@ const styles = StyleSheet.create(({ buzz }) => ({
     minHeight: 44,
     minWidth: 0,
     justifyContent: 'center',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: buzz.borderQuiet,
     paddingHorizontal: buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'center',

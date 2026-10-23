@@ -221,7 +221,7 @@ Flat by default. Depth is tonal: the elevation ladder in Colors, one hairline, a
 
 A **box** (border + fill + radius) appears only around something the user must find and act on (an input, a button, a poll option), or a small number of distinct, non-repeating regions (the merge-approval panel, a safety notice, a grant card). A box never wraps an ordinary message, attachment, or avatar.
 
-A **rule** is one edge, no fill, no radius. Hairlines divide an index (Room list, members, settings). In the transcript, code fences and ghost lines take a quiet 2 px left rule; tool runs use a hairline top edge.
+A **rule** is one edge, no fill, no radius. Hairlines divide an index (Room list, members, settings). In the transcript, code fences and ghost lines take a quiet 2 px left rule. Steps and repository-event disclosures carry no top rule; their type and chevron mark them, with a 44 px minimum tap height. Rules inside expanded steps and standalone repository records remain.
 
 **Choice options are plates, not ledger rows.** A poll or question option is its own house-radius plate with a 1 px border, `space.sm` apart, a letter on a 26 px square, label in `body`, consequence in `meta` at `ledgerQuiet`.
 

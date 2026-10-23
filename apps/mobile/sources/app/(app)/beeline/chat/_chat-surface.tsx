@@ -283,6 +283,7 @@ import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
   agentActivityReplyExcerpt,
   beginReplyTarget,
+  canBeginReply,
   prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
@@ -7055,7 +7056,7 @@ export function BuzzChatSurface({
             testID="message-select-action"
           />
         ) : null}
-        {messageActionsTarget ? (
+        {messageActionsTarget && canBeginReply(messageActionsTarget, decodedId) ? (
           <HullActionSheetRow
             accessibilityLabel="Reply to message"
             label="Reply"

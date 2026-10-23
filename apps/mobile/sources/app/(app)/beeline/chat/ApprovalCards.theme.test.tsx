@@ -192,7 +192,7 @@ function render(element: React.ReactElement): ReactTestRenderer {
   return renderer;
 }
 
-import { approvalCases, approvalCaseElement, proofRosterAgent } from '../../../../../scripts/approval-card-cases';
+import { approvalCases, approvalCaseElement, proofRosterAgent, parsedApprovalCases, type ApprovalCase } from '../../../../../scripts/approval-card-cases';
 
 describe.each(['bone', 'obsidian'] as const)('approved approval anatomy in %s', themeName => {
   it.each(approvalCases)('renders %s with its asking avatar, content, actions and active theme', name => {
@@ -258,5 +258,40 @@ describe.each(['bone', 'obsidian'] as const)('parsed settled approval controls i
     expect(ids).not.toContain('target-branch-confirm');
     expect(ids).not.toContain('target-branch-deny');
     expect(view.root.findAll((node: ReactTestInstance) => node.props.label === 'Review ↗')).toHaveLength(0);
+  });
+});
+
+
+describe.each(['bone', 'obsidian'] as const)('every parsed approval state in %s', themeName => {
+  it.each(parsedApprovalCases)('renders server payload %s through the production parser', caseName => {
+    proofTheme.value = themeName;
+    const [kind, state] = caseName.split('--');
+    const fixture = approvalCaseElement(caseName as ApprovalCase);
+    const message = (fixture.props as { message: import('@/buzz/room-view-presentation').ChatDisplayMessage }).message;
+    const view = render(fixture);
+    const nodes = view.root.findAll((node: ReactTestInstance) => typeof node.props.testID === 'string');
+    const ids = nodes.map((node: ReactTestInstance) => node.props.testID as string);
+    const text = JSON.stringify(view.toJSON());
+    if (kind.startsWith('squire-')) {
+      expect(message.squireApproval?.reason).toBeTruthy();
+      expect(message.squireApproval?.facts?.length).toBe(3);
+      if (kind === 'squire-key') expect(message.squireApproval?.reference).toContain('vault://');
+    } else if (kind === 'target-branch') expect(message.targetBranchProposal?.purpose).toBeTruthy();
+    else if (kind === 'spending' || kind === 'edit-corner') expect(message.writePermission?.reason).toBeTruthy();
+    if (state === 'pending') {
+      const expected = kind.startsWith('grant-') ? 'grant-proof-grant-once'
+        : kind.startsWith('squire-') ? 'squire-approval-open'
+        : kind === 'target-branch' ? 'target-branch-confirm'
+        : kind.startsWith('connector-') ? 'connector-offer-22222222-2222-4222-8222-222222222222-accept'
+        : 'write-permission-allow';
+      expect(ids).toContain(expected);
+    } else {
+      expect(ids.filter((id: string) => /-(deny|once|always|confirm|accept)$/.test(id))).toEqual([]);
+      expect(ids).not.toContain('squire-approval-open');
+      expect(ids).not.toContain('write-permission-allow');
+      expect(text.toLowerCase()).toContain(state === 'denied' ? 'denied' : state === 'expired' ? 'expired' : state === 'failed' ? 'failed' : 'allowed');
+      expect(text).toContain('08:57');
+      if (state === 'once' || state === 'always') expect(text).toContain(state === 'once' ? 'Once' : 'Always');
+    }
   });
 });

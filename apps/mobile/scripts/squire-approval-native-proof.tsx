@@ -10,7 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 require('../sources/unistyles');
 import { setAppAppearance } from '../sources/unistyles';
 import { Button } from '../sources/components/buzz/Button';
-import { approvalCases, approvalCaseElement } from './approval-card-cases';
+import { parsedApprovalCases as approvalCases, approvalCaseElement, type ApprovalCase } from './approval-card-cases';
 LogBox.ignoreAllLogs();
 function Proof() {
   const [index, setIndex] = React.useState(0);
@@ -31,7 +31,7 @@ function Proof() {
       <Button label="Obsidian" onPress={() => setAppAppearance('dark', 'medium')} />
       <Button label="Next" accessibilityLabel="Next variant" onPress={() => {setIndex((index+1)%approvalCases.length);setActed(false);}} />
     </View>
-    <View key={`${index}-${theme.buzz.bgBase}`}>{approvalCaseElement(approvalCases[index]!, () => setActed(true))}</View>
+    <View key={`${index}-${theme.buzz.bgBase}`}>{approvalCaseElement(approvalCases[index]! as ApprovalCase, () => setActed(true))}</View>
     {acted && <Text style={{...theme.buzz.type.meta,color:theme.buzz.textSecondary}}>Action received</Text>}
   </ScrollView></GestureHandlerRootView>;
 }

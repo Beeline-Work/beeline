@@ -1,0 +1,315 @@
+{
+  "scope": "Once/Always apply only to command grants. Other card kinds use only their supported wire statuses.",
+  "cases": [
+    {
+      "kind": "grant-legacy",
+      "state": "pending",
+      "case": "grant-legacy--pending"
+    },
+    {
+      "kind": "grant-legacy",
+      "state": "once",
+      "case": "grant-legacy--once"
+    },
+    {
+      "kind": "grant-legacy",
+      "state": "always",
+      "case": "grant-legacy--always"
+    },
+    {
+      "kind": "grant-legacy",
+      "state": "denied",
+      "case": "grant-legacy--denied"
+    },
+    {
+      "kind": "grant-purpose",
+      "state": "pending",
+      "case": "grant-purpose--pending"
+    },
+    {
+      "kind": "grant-purpose",
+      "state": "once",
+      "case": "grant-purpose--once"
+    },
+    {
+      "kind": "grant-purpose",
+      "state": "always",
+      "case": "grant-purpose--always"
+    },
+    {
+      "kind": "grant-purpose",
+      "state": "denied",
+      "case": "grant-purpose--denied"
+    },
+    {
+      "kind": "squire-key",
+      "state": "pending",
+      "case": "squire-key--pending"
+    },
+    {
+      "kind": "squire-key",
+      "state": "allowed",
+      "case": "squire-key--allowed"
+    },
+    {
+      "kind": "squire-key",
+      "state": "denied",
+      "case": "squire-key--denied"
+    },
+    {
+      "kind": "squire-key",
+      "state": "expired",
+      "case": "squire-key--expired"
+    },
+    {
+      "kind": "squire-purchase",
+      "state": "pending",
+      "case": "squire-purchase--pending"
+    },
+    {
+      "kind": "squire-purchase",
+      "state": "allowed",
+      "case": "squire-purchase--allowed"
+    },
+    {
+      "kind": "squire-purchase",
+      "state": "denied",
+      "case": "squire-purchase--denied"
+    },
+    {
+      "kind": "squire-purchase",
+      "state": "expired",
+      "case": "squire-purchase--expired"
+    },
+    {
+      "kind": "squire-login",
+      "state": "pending",
+      "case": "squire-login--pending"
+    },
+    {
+      "kind": "squire-login",
+      "state": "allowed",
+      "case": "squire-login--allowed"
+    },
+    {
+      "kind": "squire-login",
+      "state": "denied",
+      "case": "squire-login--denied"
+    },
+    {
+      "kind": "squire-login",
+      "state": "expired",
+      "case": "squire-login--expired"
+    },
+    {
+      "kind": "squire-edit-key",
+      "state": "pending",
+      "case": "squire-edit-key--pending"
+    },
+    {
+      "kind": "squire-edit-key",
+      "state": "allowed",
+      "case": "squire-edit-key--allowed"
+    },
+    {
+      "kind": "squire-edit-key",
+      "state": "denied",
+      "case": "squire-edit-key--denied"
+    },
+    {
+      "kind": "squire-edit-key",
+      "state": "expired",
+      "case": "squire-edit-key--expired"
+    },
+    {
+      "kind": "squire-delete-key",
+      "state": "pending",
+      "case": "squire-delete-key--pending"
+    },
+    {
+      "kind": "squire-delete-key",
+      "state": "allowed",
+      "case": "squire-delete-key--allowed"
+    },
+    {
+      "kind": "squire-delete-key",
+      "state": "denied",
+      "case": "squire-delete-key--denied"
+    },
+    {
+      "kind": "squire-delete-key",
+      "state": "expired",
+      "case": "squire-delete-key--expired"
+    },
+    {
+      "kind": "squire-edit-card",
+      "state": "pending",
+      "case": "squire-edit-card--pending"
+    },
+    {
+      "kind": "squire-edit-card",
+      "state": "allowed",
+      "case": "squire-edit-card--allowed"
+    },
+    {
+      "kind": "squire-edit-card",
+      "state": "denied",
+      "case": "squire-edit-card--denied"
+    },
+    {
+      "kind": "squire-edit-card",
+      "state": "expired",
+      "case": "squire-edit-card--expired"
+    },
+    {
+      "kind": "squire-vouch",
+      "state": "pending",
+      "case": "squire-vouch--pending"
+    },
+    {
+      "kind": "squire-vouch",
+      "state": "allowed",
+      "case": "squire-vouch--allowed"
+    },
+    {
+      "kind": "squire-vouch",
+      "state": "denied",
+      "case": "squire-vouch--denied"
+    },
+    {
+      "kind": "squire-vouch",
+      "state": "expired",
+      "case": "squire-vouch--expired"
+    },
+    {
+      "kind": "squire-passkey",
+      "state": "pending",
+      "case": "squire-passkey--pending"
+    },
+    {
+      "kind": "squire-passkey",
+      "state": "allowed",
+      "case": "squire-passkey--allowed"
+    },
+    {
+      "kind": "squire-passkey",
+      "state": "denied",
+      "case": "squire-passkey--denied"
+    },
+    {
+      "kind": "squire-passkey",
+      "state": "expired",
+      "case": "squire-passkey--expired"
+    },
+    {
+      "kind": "spending",
+      "state": "pending",
+      "case": "spending--pending"
+    },
+    {
+      "kind": "spending",
+      "state": "allowed",
+      "case": "spending--allowed"
+    },
+    {
+      "kind": "spending",
+      "state": "denied",
+      "case": "spending--denied"
+    },
+    {
+      "kind": "spending",
+      "state": "expired",
+      "case": "spending--expired"
+    },
+    {
+      "kind": "spending",
+      "state": "failed",
+      "case": "spending--failed"
+    },
+    {
+      "kind": "edit-corner",
+      "state": "pending",
+      "case": "edit-corner--pending"
+    },
+    {
+      "kind": "edit-corner",
+      "state": "allowed",
+      "case": "edit-corner--allowed"
+    },
+    {
+      "kind": "edit-corner",
+      "state": "denied",
+      "case": "edit-corner--denied"
+    },
+    {
+      "kind": "edit-corner",
+      "state": "expired",
+      "case": "edit-corner--expired"
+    },
+    {
+      "kind": "edit-corner",
+      "state": "failed",
+      "case": "edit-corner--failed"
+    },
+    {
+      "kind": "target-branch",
+      "state": "pending",
+      "case": "target-branch--pending"
+    },
+    {
+      "kind": "target-branch",
+      "state": "allowed",
+      "case": "target-branch--allowed"
+    },
+    {
+      "kind": "target-branch",
+      "state": "denied",
+      "case": "target-branch--denied"
+    },
+    {
+      "kind": "connector-add",
+      "state": "pending",
+      "case": "connector-add--pending"
+    },
+    {
+      "kind": "connector-add",
+      "state": "allowed",
+      "case": "connector-add--allowed"
+    },
+    {
+      "kind": "connector-add",
+      "state": "denied",
+      "case": "connector-add--denied"
+    },
+    {
+      "kind": "connector-switch",
+      "state": "pending",
+      "case": "connector-switch--pending"
+    },
+    {
+      "kind": "connector-switch",
+      "state": "allowed",
+      "case": "connector-switch--allowed"
+    },
+    {
+      "kind": "connector-switch",
+      "state": "denied",
+      "case": "connector-switch--denied"
+    },
+    {
+      "kind": "connector-reconnect",
+      "state": "pending",
+      "case": "connector-reconnect--pending"
+    },
+    {
+      "kind": "connector-reconnect",
+      "state": "allowed",
+      "case": "connector-reconnect--allowed"
+    },
+    {
+      "kind": "connector-reconnect",
+      "state": "denied",
+      "case": "connector-reconnect--denied"
+    }
+  ]
+}

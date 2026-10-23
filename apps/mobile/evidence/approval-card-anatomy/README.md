@@ -66,6 +66,10 @@ Settled grants retain `Allowed by you · time` and show `Scope: Once` or `Scope:
 
 ## Production phone parser repair
 
-Reproduction `APPROVAL-PHONE-PARSER`: the reviewed head (`e1a6ab580`) drops Squire outcome/presentation fields, target proposal outcome/purpose fields, and permission reason/time in `readRoomViewMessage`. The saved [before/after payload receipt](production-parser.json) demonstrates that loss and the corrected projection. The Android fixtures now pass through `readRoomViewMessage` and `displayRoomMessage` before rendering the production cards. All gallery screenshots were repeated in Bone and Obsidian on that parsed path; native-tree assertions verify settled Squire, target and permission cards have their outcome and no pending controls. External approval ceremonies remain disposable fixtures.
+Reproduction `APPROVAL-PHONE-PARSER`: the reviewed head (`e1a6ab580`) drops Squire outcome/presentation fields, target proposal outcome/purpose fields, and permission reason/time in `readRoomViewMessage`. The saved [before/after payload receipt](production-parser.json) demonstrates that loss and the corrected projection. The Android fixtures now pass through `readRoomViewMessage` and `displayRoomMessage` before rendering the production cards. The Squire, target and permission gallery screenshots were repeated in Bone and Obsidian on that parsed path; native-tree assertions verify settled Squire, target and permission cards have their outcome and no pending controls. External approval ceremonies remain disposable fixtures.
 
 The existing theme assertions are unchanged. New cases explicitly check absence of settled-card controls in both themes; new API regressions cover allowed/denied/expired outcomes, verified human decision makers, reason/time/purpose, folded references/facts, and malformed optional data. No existing assertion was relaxed.
+
+## Complete parsed state matrix
+
+The [expanded matrix](parsed-states/README.md) covers every request kind through the production parser, including grants and connectors, with all supported settled states and grant Once/Always scope. Its manifest, red output and native assertion receipt live beside the screenshots. No unsupported Always wire state is invented for single-decision cards.

@@ -156,5 +156,47 @@
       "integrationCases": 255,
       "execution": "Full coverage in memory-bounded groups; no failed cases."
     }
+  },
+  "completeParsedStateMatrix": {
+    "redParserHead": "e1a6ab5801c52caa33fd050328a6684d26997ad0",
+    "redThemeSuite": {
+      "passed": 91,
+      "failed": 106
+    },
+    "redNewMatrix": {
+      "failedRegressions": 90,
+      "passedBaselineCases": 34
+    },
+    "greenThemeSuite": {
+      "passed": 197,
+      "failed": 0
+    },
+    "nativeCases": 62,
+    "nativeScreenshots": 124,
+    "themes": [
+      "Bone",
+      "Obsidian"
+    ],
+    "sharedPackagesPassed": 660,
+    "mobile": {
+      "filesPassed": 599,
+      "filesSkipped": 4,
+      "passed": 5124,
+      "skipped": 5,
+      "failed": 0
+    },
+    "server": {
+      "files": 212,
+      "passed": 3620,
+      "skipped": 19,
+      "failed": 0,
+      "integrationCases": 255,
+      "execution": "Full coverage in memory-bounded groups; no failed cases."
+    },
+    "rootTypecheck": "passed",
+    "uiPolicyTestsPassed": 29,
+    "calmDesignLintPassed": 17,
+    "decisionCopyPassed": 2,
+    "greenCommit": "See SHA-labelled final rerun output posted in the corner."
   }
 }

@@ -131,6 +131,7 @@ import {
   ensureSystemIdentity,
   systemIdentityMention,
   systemLine,
+  recordCornerOpened,
   GITHUB_SUBJECT,
   type SystemPhrase,
   wakeLateCornerWatcher,
@@ -8082,31 +8083,28 @@ export class DaemonService {
           [parentCommand.source_message_id, commandRoomId],
         )
       ).rows[0];
-      const destinations = [
-        { roomId, sourceMessageId: commandRoomId === roomId ? source?.id : undefined },
-        ...(source && commandRoomId !== roomId
-          ? [{ roomId: commandRoomId, sourceMessageId: source.id }] : []),
-      ];
-      // The parent record never carries a private origin. Only that origin's
-      // own transcript receives its source id, with no second lifecycle wake.
-      for (const destination of destinations) {
+      if (source) {
         await systemLine(db, {
-          roomId: destination.roomId,
+          roomId: commandRoomId,
           subject: { kind: 'agent', id: agentId, name: opener.name },
           verb: 'opened a corner',
-          kind: destination.roomId === roomId ? 'corner-opened' : undefined,
           object: { text: name, id: cornerId },
           presentation: 'card',
           cardType: 'daemon-fact',
-          card: { type: 'corner-open', cornerId, name, objective,
-            ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },
-          afterMessageId: destination.sourceMessageId,
+          card: { type: 'corner-open', cornerId, name, objective, sourceMessageId: source.id },
+          afterMessageId: source.id,
         });
       }
       await advanceCorner(db, cornerId, {
         kind: 'open',
         workspaceId: parent.workspace_id,
         implementerAgentId,
+      });
+      // The corner's own start record carries the event, independent of any
+      // visible call-site marker. Parent Room subscriptions keep their scope.
+      await recordCornerOpened(db, {
+        roomId, cornerId, subject: { kind: 'agent', id: agentId, name: opener.name },
+        name,
       });
 
     });

@@ -1,3 +1,4 @@
+// Call-site-only corner opens and independent opened-event delivery approved by lunchboxfortwo in brief revision 1, message 30b1db58d9819b8559224bfded163c10e9f542cf044d173de651400ce8cd85b7.
 // Repository onboarding card transaction wrapper approved by lunchboxfortwo, message 22c2fef8e5afa3331eb6ee66039921966481c635ff90e926e0acd85a0b5666ff; wording unchanged.
 // Operator System DM producer and durable forwarding approved by lunchboxfortwo in brief revision 2 (Room message ccb9b9b8); arbitrary owner-commanded text.
 // Completed-review wording and prior-verdict dependencies approved by lunchboxfortwo, message 8f5d9e14635e915a7a06076c616bab717c1835c3a7197c32301e1b390ce3f29b (PR #2783 only).
@@ -2317,10 +2318,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:eaddee1e9532d453",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:6a7343a43be8858a",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name, objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
+    "template": "systemLine(db, {\n    roomId: commandRoomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name, objective, sourceMessageId: source.id },\n    afterMessageId: source.id,\n})",
     "literals": [
       "''",
       "'agent'",
@@ -4704,7 +4705,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/system-line.ts:systemLine:message-write:eba460c9b053aed6",
+    "id": "src/system-line.ts:writeSystemLine:message-write:eba460c9b053aed6",
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
     "template": "INSERT messages text=text, card=input.card ? JSON.stringify({ ...input.card, ask: approvalAsk(input.cardType, input.card) }) : null :: jsonb, system_event=JSON.stringify(event) :: jsonb, author_id=authorId, presentation=input.presentation ?? 'system', card_type=input.cardType ?? null",
@@ -4753,7 +4754,7 @@
     "occurrences": 1
   },
   {
-    "id": "src/system-line.ts:systemLine:systemLine:e0ae8ec70dfb0126",
+    "id": "src/system-line.ts:writeSystemLine:systemLine:e0ae8ec70dfb0126",
     "file": "apps/server/src/system-line.ts",
     "kind": "systemLine",
     "template": "systemLine(db, {\n    id: firedId, roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },\n    verb: 'received', object: 'a Room event', consequence: input.kind,\n    kind: 'subscription-fired', causeId: id, wakes: [subscription.agent_id],\n    payload: { source: 'room', event: input.kind, text },\n    subscriptionPrompt: subscription.prompt,\n    subscriptionWorkflowSlug: subscription.workflow_slug ?? undefined,\n})",
@@ -5748,6 +5749,30 @@
     "kind": "message-write",
     "template": "INSERT messages text=text, author_id=SYSTEM_IDENTITY_ID",
     "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/system-line.ts:writeSystemLine:message-write:d0fa97ce97873cf9",
+    "file": "apps/server/src/system-line.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages system_event=JSON.stringify(event) :: jsonb",
+    "literals": [
+      "' '",
+      "''",
+      "'NFKD'",
+      "'_'",
+      "'agent'",
+      "'check-failed'",
+      "'computer-session-activity'",
+      "'github'",
+      "'string'",
+      "'subscription-fired'",
+      "'workflow-handoff'",
+      "`@${agentHandle(phrase.subject.name)}`",
+      "`@${clause(phrase.subject.name).replace(/^@/, '')}`",
+      "`@${row.handle ?? agentHandle(row.name)}`",
+      "`@${row.handle}`"
+    ],
     "occurrences": 1
   }
 ]

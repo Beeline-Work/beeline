@@ -6,7 +6,7 @@
  * source message's `cornerMarkers`, in the order the corners were opened.
  *
  * A card whose source is not resident (older history not paged in, a deleted
- * row) stays on its own row, so the corner it opened is never unreachable.
+ * row) stays hidden until its source is resident. Corners remain in the list.
  */
 type MarkerCarrier = {
   id: string;
@@ -15,34 +15,31 @@ type MarkerCarrier = {
   daemonFact?: { sourceMessageId?: string; type?: string };
 };
 
+export function isCornerOpen(message: MarkerCarrier): boolean {
+  return message.daemonFact?.type === 'corner-open' ||
+    message.systemEvent?.kind === 'corner-opened';
+}
+
 export function anchorCornerMarkers<T extends MarkerCarrier>(
   messages: readonly T[],
 ): (T & { cornerMarkers?: T[] })[] {
   const resident = new Map<string, string>();
   for (const message of messages) {
     // A marker never carries another marker: it leaves its own row.
-    if (message.daemonFact?.sourceMessageId) continue;
+    if (isCornerOpen(message) || message.daemonFact?.sourceMessageId) continue;
     resident.set(message.id, message.id);
     if (message.relayId) resident.set(message.relayId, message.id);
   }
   const markers = new Map<string, T[]>();
-  const anchored = new Set<string>();
   for (const message of messages) {
-    if (
-      message.daemonFact?.type &&
-      message.daemonFact.type !== 'corner-open' &&
-      message.systemEvent?.kind !== 'corner-opened'
-    )
-      continue;
+    if (!isCornerOpen(message)) continue;
     const source = message.daemonFact?.sourceMessageId;
     const anchor = source ? resident.get(source) : undefined;
     if (!anchor) continue;
     markers.set(anchor, [...(markers.get(anchor) ?? []), message]);
-    anchored.add(message.id);
   }
-  if (!anchored.size) return [...messages];
   return messages.flatMap((message) => {
-    if (anchored.has(message.id)) return [];
+    if (isCornerOpen(message)) return [];
     const attached = markers.get(message.id);
     return [attached ? { ...message, cornerMarkers: attached } : message];
   });

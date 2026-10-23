@@ -1,3 +1,4 @@
+import { isCornerOpen } from './corner-markers';
 import { cornerDisplayName, cornerShortTitle } from '@beeline/api-contract/phone';
 import type { SystemLineMessage } from './system-lines';
 
@@ -76,16 +77,6 @@ function lifecycleItem(message: SystemLineMessage): LifecycleItem | undefined {
     };
   }
   if (fact) {
-    if (fact.type === 'corner-open' || message.systemEvent?.kind === 'corner-opened') {
-      return {
-        ...base,
-        title: lifecycleCornerTitle(fact),
-        state: 'Opened',
-        kind: 'corner',
-        kindLine: 'corner',
-        cornerId: fact.cornerId,
-      };
-    }
     if (fact.type === 'corner-complete' && fact.outcome === 'landed' && fact.pullRequest) {
       return {
         ...base,
@@ -211,6 +202,7 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
   const result: T[] = [];
   let run: { anchor: T; ids: string[]; items: LifecycleItem[]; index: number } | undefined;
   for (const message of messages) {
+    if (isCornerOpen(message)) continue;
     const fact = message.deleted ? undefined : message.daemonFact;
     if (
       (fact?.type === 'corner-complete' &&

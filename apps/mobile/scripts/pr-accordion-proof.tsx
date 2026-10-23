@@ -2,6 +2,7 @@ import React from 'react';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import { NotificationLifecycleCard } from '../sources/components/buzz/PrLifecycleCard';
+import { anchorCornerMarkers } from '../sources/buzz/corner-markers';
 import { CornerOpenedMarker } from '../sources/components/buzz/CornerOpenedMarker';
 import { foldPrLifecycleRuns, lifecycleCornerTitle } from '../sources/buzz/pr-lifecycle';
 import type { ChatDisplayMessage } from '../sources/buzz/room-view-presentation';
@@ -27,7 +28,10 @@ const rows = snapshot.runs.flatMap((run, index) => [
       }) as ChatDisplayMessage,
   ),
 ]);
-const messages = foldPrLifecycleRuns(rows);
+const source = { id: 'asking-message', text: 'Please open a corner for this task', timestamp: 1, isUser: true };
+const anchored = { ...rows.find(row => row.daemonFact?.type === 'corner-open')!, id: 'anchored-open',
+  daemonFact: { ...rows.find(row => row.daemonFact?.type === 'corner-open')!.daemonFact!, sourceMessageId: source.id } };
+const messages = foldPrLifecycleRuns(anchorCornerMarkers<ChatDisplayMessage>([...rows, source, anchored]));
 let destination = '';
 root.render(
   <>
@@ -52,7 +56,11 @@ root.render(
           }}
         />
       ) : (
-        <div key={message.id}>{message.text}</div>
+        <div key={message.id} data-testid={message.id}>{message.text}
+          {message.cornerMarkers?.map(marker => <CornerOpenedMarker key={marker.id}
+            testID="anchored-marker" title={lifecycleCornerTitle(marker.daemonFact!)}
+            onOpen={() => { destination = marker.daemonFact!.cornerId; }} />)}
+        </div>
       ),
     )}
   </>,
@@ -63,7 +71,7 @@ async function main() {
   const toggle = get(`notification-run-expand-${first}`);
   assert(toggle.textContent === '1 issue filed · 1 PR merged', 'mixed type summary');
   assert(
-    document.querySelectorAll('[data-testid^="notification-run-cell-"]').length === 0,
+    Array.from(document.querySelectorAll('[data-testid^="notification-run-cell-"]')).filter(el => !get('asking-message').contains(el)).length === 0,
     'starts expanded',
   );
   toggle.click();
@@ -85,19 +93,23 @@ async function main() {
   const second = snapshot.runs[1][0].id;
   get(`notification-run-expand-${second}`).click();
   await pause();
-  assert(document.body.textContent?.includes('corner #'), 'unanchored corner row missing');
+  assert(!document.querySelectorAll('[data-testid^="notification-run-cell-"]').length ||
+    !Array.from(document.querySelectorAll('[data-testid^="notification-run-cell-"]')).some(el => !get('asking-message').contains(el) && el.textContent?.includes('Opened')), 'legacy opened row visible');
+  assert(get('asking-message').contains(get('anchored-marker')), 'marker is not under asking message');
+  get('anchored-marker').click();
+  assert(destination === anchored.daemonFact.cornerId, 'anchored corner destination');
   get(`notification-run-expand-${second}`).click();
   await pause();
   assert(document.body.textContent?.includes('Decision stays visible'), 'agent decision folded');
   toggle.click();
   await pause();
   assert(
-    document.querySelectorAll('[data-testid^="notification-run-cell-"]').length === 0,
+    Array.from(document.querySelectorAll('[data-testid^="notification-run-cell-"]')).filter(el => !get('asking-message').contains(el)).length === 0,
     'collapse',
   );
   assert(document.documentElement.scrollWidth <= innerWidth, 'horizontal overflow');
   document.getElementById('result')!.textContent =
-    'PASS EVENT-ROWS-V2: real Room events, mixed summary, collapsed, expanded, links, unanchored corner row, decision boundary';
+    'PASS EVENT-ROWS-V2: real Room events, mixed summary, collapsed, expanded, links, R1 legacy opens hidden, anchored marker under asking message, decision boundary';
 }
 main().catch(
   (error) => (document.getElementById('result')!.textContent = `FAIL: ${error.message}`),

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { anchorCornerMarkers } from './corner-markers';
 
-type Row = { id: string; relayId?: string; text?: string; daemonFact?: { sourceMessageId?: string } };
+type Row = { id: string; relayId?: string; text?: string; daemonFact?: { sourceMessageId?: string; type?: string } };
 
 const message = (id: string): Row => ({ id, relayId: id, text: id });
 const marker = (id: string, source: string): Row => ({
   id,
   relayId: id,
-  daemonFact: { sourceMessageId: source },
+  daemonFact: { type: 'corner-open', sourceMessageId: source },
 });
 
 describe('anchorCornerMarkers', () => {
@@ -30,14 +30,15 @@ describe('anchorCornerMarkers', () => {
     expect(anchored[0]!.cornerMarkers?.map((row) => row.id)).toEqual(['m1', 'm2']);
   });
 
-  it('leaves a marker on its own row when its source is not resident', () => {
+  it('hides a marker until its source is resident', () => {
     const rows = [message('b'), marker('m1', 'older-history')];
-    expect(anchorCornerMarkers(rows)).toEqual(rows);
+    expect(anchorCornerMarkers(rows)).toEqual([message('b')]);
+    expect(anchorCornerMarkers([message('older-history'), ...rows])[0].cornerMarkers?.[0].id).toBe('m1');
   });
 
   it('never hangs a marker under another marker', () => {
     const anchored = anchorCornerMarkers([marker('m1', 'gone'), marker('m2', 'm1')]);
-    expect(anchored.map((row) => row.id)).toEqual(['m1', 'm2']);
+    expect(anchored.map((row) => row.id)).toEqual([]);
     expect(anchored.every((row) => !row.cornerMarkers)).toBe(true);
   });
 
@@ -57,4 +58,8 @@ it('never attaches a settled close to its source as a visible closed marker', ()
   const rows = anchorCornerMarkers([source, closed]);
   expect(rows).toEqual([source, closed]);
   expect(rows[0]).not.toHaveProperty('cornerMarkers');
+});
+
+it('Reproduction R1: hides legacy unanchored corner rows', () => {
+  expect(anchorCornerMarkers([message('a'), { id: 'legacy', daemonFact: { type: 'corner-open' } }])).toEqual([message('a')]);
 });

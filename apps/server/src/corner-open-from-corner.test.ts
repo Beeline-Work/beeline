@@ -106,15 +106,15 @@ it('opens a sibling corner in the parent Room from a corner turn', async () => {
   ).rows[0];
   expect(room).toEqual({ parent_id: ROOM, repository_key: 'owner/widgets' });
 
-  // The Room keeps a neutral record; the calling corner gets its source marker.
+  // Only the calling transcript gets a source marker.
   const cards = (
     await db.query<{ room_id: string; card: { sourceMessageId?: string } }>(
       `SELECT room_id,card FROM messages WHERE card->>'type'='corner-open' AND card->>'cornerId'=$1`,
       [second.cornerId],
     )
   ).rows;
-  expect(cards).toHaveLength(2);
-  expect(cards.find((card) => card.room_id === ROOM)?.card).not.toHaveProperty('sourceMessageId');
+  expect(cards).toHaveLength(1);
+  expect(cards.find((card) => card.room_id === ROOM)).toBeUndefined();
   expect(cards.find((card) => card.room_id === first.cornerId)?.card.sourceMessageId).toBe(
     input.brief.approval.sourceMessageId,
   );
@@ -161,4 +161,26 @@ it('attaches a file shared in the calling corner to the sibling corner brief', a
     )
   ).rows[0];
   expect(stored?.attachments.map((file) => file.objectId)).toEqual([mediaId]);
+}, 30_000);
+
+it('Reproduction R1: a private turn opens a corner without adding a Room row, while subscribers wake', async () => {
+  const command = await commissioned(ROOM, '@hoots open privately');
+  await db.query(`UPDATE agent_commands SET source_message_id=NULL,private_payload=$2::jsonb WHERE id=$1`,
+    [command.id, JSON.stringify({ text: 'Open privately', authorId: HUMAN, fromRoomId: ROOM, kind: 'order' })]);
+  const watcher = 'e'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Watcher','watcher')`, [watcher]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [watcher,HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
+    VALUES($1,$2,$3,'member','["corner-opened"]')`, [WORKSPACE,ROOM,watcher]);
+  const before = (await phone.readRoom(ROOM, HUMAN))!.messages.map(m => m.id);
+  const created = await daemon.execute('createCorner', {
+    roomId: ROOM, requestId: command.turnRequestId, generationId: 'g1',
+    idempotencyKey: 'private-open', name: 'Private-open', objective: 'Private work',
+    repository: 'owner/widgets', brief: {spec:'Private work', repositoryWork:false},
+  }, AGENT);
+  expect((await phone.readRoom(ROOM, HUMAN))!.messages.map(m => m.id)).toEqual(before);
+  expect((await db.query(`SELECT id FROM messages WHERE card->>'type'='corner-open' AND card->>'cornerId'=$1`, [created.cornerId])).rows).toEqual([]);
+  expect((await db.query(`SELECT room_id FROM agent_commands WHERE agent_id=$1 AND reason='subscribed_event'`, [watcher])).rows).toEqual([{room_id: ROOM}]);
+  expect((await db.query(`SELECT system_event->>'kind' kind FROM messages WHERE id=$1`, [created.cornerId])).rows).toEqual([{kind:'corner-opened'}]);
+  console.info('Demonstrated Reproduction R1: private open -> unchanged Room transcript; opened subscriber woken');
 }, 30_000);

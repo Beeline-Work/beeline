@@ -4,7 +4,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { GITHUB_SUBJECT, systemLine } from './system-line.js';
+import { GITHUB_SUBJECT, systemLine, recordCornerOpened } from './system-line.js';
 import { readAgentCommands } from './agent-command.js';
 import { closeCornerState } from './corner-close.js';
 import type { CornerWatchKind } from '@beeline/api-contract/daemon';
@@ -216,4 +216,26 @@ it.each(['removed membership', 'archived watcher'])('%s stops wakes', async (rea
   else await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [A]);
   await emit();
   expect(await wakes()).toEqual([]);
+});
+
+it('Reproduction R1: corner start wakes opened watches without a Room row, once', async () => {
+  await watch(['opened']);
+  await systemLine(db, {id:B, roomId:B, authorId:H, subject:{kind:'system',name:'Beeline'}, verb:'opened',
+    presentation:'card',cardType:'corner-workflow-handoff',card:{runId:B}});
+  const event = {roomId:P,cornerId:B,subject:{kind:'agent' as const,id:H,name:'Other opener'},name:'B'};
+  expect((await recordCornerOpened(db,event)).inserted).toBe(true);
+  expect((await recordCornerOpened(db,event)).inserted).toBe(false);
+  expect(await wakes()).toHaveLength(1);
+  expect((await db.query(`SELECT id FROM messages WHERE room_id=$1`, [P])).rows).toEqual([]);
+});
+
+it('Reproduction R1: Room subscription actions still fire from a corner start record', async () => {
+  await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
+    VALUES($1,$2,$3,$4,'room','corner-opened','Inspect the new corner')`, [OTHER,WS,P,W]);
+  await systemLine(db, {id:B, roomId:B, authorId:H, subject:{kind:'system',name:'Beeline'}, verb:'opened',
+    presentation:'card',cardType:'corner-workflow-handoff',card:{runId:B}});
+  expect((await recordCornerOpened(db, {roomId:P,cornerId:B,subject:{kind:'agent',id:H,name:'Other opener'},name:'B'})).inserted).toBe(true);
+  expect((await db.query(`SELECT fired_count FROM agent_subscriptions WHERE id=$1`,[OTHER])).rows).toEqual([{fired_count:1}]);
+  expect((await readAgentCommands(db,P,W)).commands.some(command => command.source.body.includes('Inspect the new corner'))).toBe(true);
+  expect((await db.query(`SELECT id FROM messages WHERE room_id=$1 AND card->>'type'='corner-open'`, [P])).rows).toEqual([]);
 });

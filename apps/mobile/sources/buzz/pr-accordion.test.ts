@@ -73,7 +73,7 @@ describe('locked event row v2', () => {
     expect(rows[1]).toBe(decision);
     expect(rows[1].notificationLifecycleRun).toBeUndefined();
   });
-  it('folds unanchored corner opens, hides closes and cleanup, preserves merged PR facts', () => {
+  it('hides unanchored corner opens, closes and cleanup, preserves merged PR facts', () => {
     const opened = corner('opened', 'corner-open');
     const merged = {
       ...corner('merged', 'corner-complete'),
@@ -89,11 +89,11 @@ describe('locked event row v2', () => {
       corner('closed', 'corner-complete'),
       corner('cleaned', 'worktree-cleaned'),
     ]);
-    expect(rows.map((row) => row.id)).toEqual(['opened']);
+    expect(rows.map((row) => row.id)).toEqual(['merged']);
     expect(lifecycleSummary(rows[0].notificationLifecycleRun!.items)).toBe(
-      '1 corner opened · 1 PR merged',
+      '1 PR merged',
     );
-    expect(rows[0].notificationLifecycleRun?.items[1]).toMatchObject({
+    expect(rows[0].notificationLifecycleRun?.items[0]).toMatchObject({
       cornerId: 'merged',
       url: merged.daemonFact.pullRequest.url,
     });
@@ -186,9 +186,5 @@ it('retains the original opening event when the server settles that card in plac
       verb: 'opened a corner',
     },
   };
-  expect(foldPrLifecycleRuns([opened])[0].notificationLifecycleRun?.items[0]).toMatchObject({
-    state: 'Opened',
-    kind: 'corner',
-    cornerId: 'corner',
-  });
+  expect(foldPrLifecycleRuns([opened])).toEqual([]);
 });

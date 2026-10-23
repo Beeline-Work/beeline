@@ -440,6 +440,26 @@ export async function systemLine(
   database: SqlDatabase,
   input: SystemLineInput,
 ): Promise<SystemLineResult> {
+  return writeSystemLine(database, input);
+}
+
+/** Deliver the open from the corner's existing start record, without a Room row. */
+export async function recordCornerOpened(
+  database: SqlDatabase,
+  input: { roomId: string; cornerId: string; subject: SystemSubject; name: string },
+): Promise<SystemLineResult> {
+  return writeSystemLine(database, {
+    id: input.cornerId, roomId: input.roomId, subject: input.subject,
+    verb: 'opened a corner', kind: 'corner-opened',
+    object: { text: input.name, id: input.cornerId }, card: { cornerId: input.cornerId },
+  }, true);
+}
+
+async function writeSystemLine(
+  database: SqlDatabase,
+  input: SystemLineInput,
+  existingCornerStart = false,
+): Promise<SystemLineResult> {
     database = new CornerAccessDatabase(database);
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
@@ -466,7 +486,13 @@ export async function systemLine(
     notBefore: Date | null,
     watches: { watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }[],
   ) => {
-    const result = await db.query(
+    const result = existingCornerStart ? await db.query(
+      `UPDATE messages SET system_event=$2::jsonb,event_root_cause_id=$1,event_depth=0,
+         event_woken=$3
+       WHERE id=$1 AND room_id=$1::uuid AND card_type='corner-workflow-handoff'
+         AND system_event->>'kind' IS DISTINCT FROM 'corner-opened'`,
+      [id, JSON.stringify(event), wakes.length + watches.length],
+    ) : await db.query(
       `INSERT INTO messages(
          id,room_id,author_id,text,presentation,request_id,durable_fact,
          card_type,card,system_event,event_cause_id,event_root_cause_id,event_depth,

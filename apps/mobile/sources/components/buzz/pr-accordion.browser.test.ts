@@ -1,14 +1,17 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'vitest';
+import { beelineThemes } from '@/buzz/groknight';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 for (const width of [390, 1280])
+  for (const theme of ['obsidian', 'bone'] as const)
   for (const reduced of [false, true]) {
     it.skipIf(!existsSync(CHROME))(
-      `EVENT-ROWS-V2: ${width}px reduced=${reduced}`,
+      `EVENT-ROWS-V2: ${width}px theme=${theme} reduced=${reduced}`,
       async () => {
         const mobile = process.cwd();
         const shims = webProofShims(mobile);
+        shims['react-native-unistyles'] = shims['react-native-unistyles'].replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         shims['react-native-reanimated'] = shims['react-native-reanimated'].replace(
           'useReducedMotion = () => true',
           `useReducedMotion = () => ${reduced}`,
@@ -20,9 +23,10 @@ for (const width of [390, 1280])
           mobile,
           shims,
           width,
+          head: `<style>body { background: ${beelineThemes[theme].bgBase}; color: ${beelineThemes[theme].textPrimary}; padding: 16px; box-sizing: border-box; font-family: sans-serif; } #result { white-space: pre-wrap; overflow-wrap: anywhere; }</style>`,
           query: reduced ? '?reduced' : '',
           screenshotPath: process.env.PR_ACCORDION_SCREENSHOT_DIR
-            ? path.join(process.env.PR_ACCORDION_SCREENSHOT_DIR, `${width}-${reduced}.png`)
+            ? path.join(process.env.PR_ACCORDION_SCREENSHOT_DIR, `${width}-${theme}-${reduced}.png`)
             : undefined,
         });
         expect(proof.status, proof.stderr).toBe(0);

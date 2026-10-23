@@ -3229,7 +3229,7 @@ describe('monolith integration', () => {
       roomId: ROOM,
       requestId: 'corner-before-late-join',
       name: 'Existing-corner',
-      objective: 'Keep this corner readable from its durable parent Room card',
+      objective: 'Keep this corner readable from the Corners list',
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
@@ -3240,7 +3240,7 @@ describe('monolith integration', () => {
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
-    expect(parent.messages).toContainEqual(
+    expect(parent.messages).not.toContainEqual(
       expect.objectContaining({
         daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
       }),
@@ -9164,7 +9164,7 @@ describe('monolith integration', () => {
     );
   });
 
-  it('posts one corner-open daemon-fact card and does not push it', async () => {
+  it('opens a corner without a source message silently and does not push it', async () => {
     const send = vi.fn(async () => undefined);
     const loop = new PushDeliveryLoop(database, { send });
     await loop.runOnce(); // establish the durable floor before the new events
@@ -9185,14 +9185,7 @@ describe('monolith integration', () => {
       `SELECT author_id,card FROM messages WHERE room_id=$1 AND card_type='daemon-fact'`,
       [ROOM],
     );
-    expect(cards.rows).toHaveLength(1);
-    expect(cards.rows[0]!.author_id).toBe(AGENT);
-    expect(cards.rows[0]!.card).toEqual({
-      type: 'corner-open',
-      cornerId,
-      name: 'Ship-the-widget',
-      objective: 'Ship the widget end to end',
-    });
+    expect(cards.rows).toEqual([]);
     // The NAME titles the corner; the objective stays the statement of work.
     const corner = await database.query<{
       name: string;

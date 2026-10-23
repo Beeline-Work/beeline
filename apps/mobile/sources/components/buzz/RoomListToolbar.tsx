@@ -96,6 +96,7 @@ export function RoomListToolbar({
         placeholder="Search Rooms and direct messages"
         placeholderTextColor={styles.label.color}
         variant="search"
+        style={styles.searchInput}
         testID={desktop ? 'desktop-room-search' : 'room-search'}
       />
     </View>
@@ -121,6 +122,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingRight: theme.buzz.roomList.searchEnd,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
+  },
+  searchInput: {
+    paddingLeft: theme.buzz.roomList.edge,
+    paddingRight: theme.buzz.roomList.searchEnd,
   },
   filters: { flexDirection: 'row', gap: theme.buzz.space.sm, alignItems: 'center' },
   desktopFilters: {

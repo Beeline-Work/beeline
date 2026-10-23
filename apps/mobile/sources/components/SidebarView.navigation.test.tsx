@@ -856,3 +856,25 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: { getItem: async () => null, setItem: async () => undefined },
 }));
+
+
+describe('Room list search edge', () => {
+  it.each([false, true])('aligns the native input inset with the filters (desktop=%s)', async (desktop) => {
+    const { RoomListToolbar } = await import('./buzz/RoomListToolbar');
+    const { StyleSheet } = await import('react-native');
+    const { completeTestTheme } = await import('@/test/test-theme');
+    const tokens = completeTestTheme(theme).buzz.roomList;
+    const onQuery = vi.fn();
+    let toolbar: ReactTestRenderer;
+    act(() => { toolbar = create(<RoomListToolbar desktop={desktop} filter="all" onFilter={() => {}} query="" onQuery={onQuery} />); });
+    act(() => toolbar.root.findAllByProps({ testID: 'room-search-toggle' })[0].props.onPress());
+    const input = toolbar!.root.findAllByType('TextInput')[0];
+    expect(input.props.testID).toBe(desktop ? 'desktop-room-search' : 'room-search');
+    const style = StyleSheet.flatten(input.props.style);
+    expect(style.paddingLeft ?? style.paddingHorizontal ?? style.padding ?? 0).toBe(tokens.edge);
+    expect(style.paddingRight ?? style.paddingHorizontal ?? style.padding ?? 0).toBe(tokens.searchEnd);
+    act(() => input.props.onChangeText('general'));
+    expect(onQuery).toHaveBeenCalledWith('general');
+    act(() => toolbar!.unmount());
+  });
+});

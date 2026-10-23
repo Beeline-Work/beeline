@@ -12932,6 +12932,44 @@ describe('monolith integration', () => {
     expect(resumeExpired.rows).toEqual([{ action: 'resume' }]);
   });
 
+  it.each((['approved', 'denied', 'expired'] as const).flatMap(status =>
+    ['room', 'corner'].flatMap(place => [false, true].map(legacy => ({ status, place, legacy }))),
+  ))('R-SQUIRE-ROOM: keeps $status private in $place (legacy=$legacy) while resuming the asking turn', async ({ status, place, legacy }) => {
+    const roomId = place === 'room' ? ROOM : '22222222-2222-4222-8222-222222222226';
+    if (place === 'corner') await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Approval corner')`,
+      [roomId, WORKSPACE, ROOM],
+    );
+    const asked = (await (await operation('sendRoomMessage', {
+      roomId, text: '@bee use the test credential', mentions: [AGENT],
+    })).json()) as { messageId: string };
+    const before = await phone.readRoom(roomId, HUMAN);
+    expect(before).not.toBeNull();
+    const deckBefore = (await phone.readChats(WORKSPACE, HUMAN))?.chats.find(chat => chat.room.id === ROOM);
+    const decision = await daemonOperation('postSquireApprovalDecision', {
+      roomId, requestId: asked.messageId, approvalId: `private-${status}`, status,
+      tool: 'fetch_credential', title: 'Credential access approval', detail: 'Reveal test credential',
+    });
+    expect(decision.status).toBe(200);
+    const { id } = await decision.json() as { id: string };
+    if (legacy) await database.query(`UPDATE messages SET presentation='card' WHERE id=$1`, [id]);
+    const after = await phone.readRoom(roomId, HUMAN);
+    expect(after?.messages.map(message => message.id)).not.toContain(id);
+    expect(after?.viewer.readCursor).toEqual(before?.viewer.readCursor);
+    expect((await phone.readHistory(roomId, HUMAN))?.messages.map(message => message.id)).not.toContain(id);
+    expect((await phone.readHistoryAround(roomId, HUMAN, id))?.messages.map(message => message.id)).not.toContain(id);
+    const deckAfter = (await phone.readChats(WORKSPACE, HUMAN))?.chats.find(chat => chat.room.id === ROOM);
+    expect(deckAfter?.latestMessage).toEqual(deckBefore?.latestMessage);
+    expect(deckAfter?.unread).toEqual(deckBefore?.unread);
+    const conversation = await daemonOperation('getRoomConversation', { roomId });
+    expect((await conversation.json()).items).toContainEqual(expect.objectContaining({
+      id, type: legacy ? 'card' : 'activity', requestId: asked.messageId,
+      systemEvent: expect.objectContaining({ kind: 'squire-approval-decided' }),
+    }));
+    expect((await database.query(`SELECT action FROM agent_commands
+      WHERE source_message_id=$1 AND turn_request_id=$2`, [id, asked.messageId])).rows).toEqual([{ action: 'resume' }]);
+  });
+
   it("lets another human trigger the agent owner's mounted Squire without a card", async () => {
     const MACHINE = 'machine-squire-box';
     const SIBLING = 'd'.repeat(64);

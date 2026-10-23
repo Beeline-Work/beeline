@@ -67,6 +67,7 @@ import { CornerGlyph } from '@/components/buzz/CornerGlyph';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { openExternalUrl } from '@/utils/open-external-url';
 import { ActivityTimeline, TurnStepsLine } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
@@ -276,20 +277,30 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
       testID="squire-approval-card"
       wrapTitle
       identity={
-        <IdentityMark
-          kind="agent"
-          seed={approval.agent.pubkey}
-          avatarUrl={approval.agent.avatar}
-          face={approval.agent.face}
-          name={approval.agent.name}
-          size={26}
-        />
+        approval.tool === 'Link' ? (
+          <IdentityMark
+            kind="agent"
+            seed={approval.agent.pubkey}
+            avatarUrl={approval.agent.avatar}
+            face={approval.agent.face}
+            name={approval.agent.name}
+            size={26}
+          />
+        ) : (
+          <IdentityMark
+            kind="human"
+            seed="trusty-squire"
+            name="Trusty Squire"
+            avatarUrl={`${getBuzzRuntimeConfig().monolithUrl}/v1/connectors/logo/trusty-squire.svg`}
+            size={26}
+            testID="squire-approval-logo"
+          />
+        )
       }
       title={approval.title}
       subline={`${approval.detail} · requested by @${agentName}`}
       sublineTestID="squire-approval-detail"
       stamp={ledgerStamp(message.timestamp)}
-      footerNote={approval.tool === 'Link' ? 'approval stays with Link' : 'approval stays with Trusty Squire'}
       actions={actions}
     />
   );

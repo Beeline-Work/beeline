@@ -73,7 +73,7 @@ export interface SystemLineInput {
    * is a routing list only — it starts turns, and never stands in for a tag.
    */
   readonly wakes?: readonly string[];
-  /** Agent-only browser observations use activity and never paint in the transcript. */
+  /** Agent-only observations and approval decisions never paint in the transcript. */
   readonly presentation?: 'system' | 'card' | 'activity';
   readonly cardType?: string;
   readonly card?: Record<string, unknown>;

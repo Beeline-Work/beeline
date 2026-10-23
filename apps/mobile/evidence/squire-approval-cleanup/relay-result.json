@@ -1,0 +1,91 @@
+{
+  "approval": {
+    "id": "ef2022cfc7e7e5ffadb29bfcd9612e3d2e3fe3f86337668efb18d92016b39c8f",
+    "text": "Trusty Squire needs your approval for Credential access approval \u00b7 Reveal test credential",
+    "createdAt": 1792762041,
+    "createdAtMs": 1792762041924,
+    "version": 0,
+    "author": {
+      "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+      "kind": "human",
+      "name": "System",
+      "handle": "system",
+      "avatar": "http://10.0.2.2:18740/v1/connectors/logo/system.svg"
+    },
+    "presentation": "card",
+    "systemEvent": {
+      "verb": "needs your approval for",
+      "object": {
+        "text": "Credential access approval"
+      },
+      "subject": {
+        "kind": "system",
+        "name": "Trusty Squire"
+      },
+      "consequence": "Reveal test credential"
+    },
+    "squireApproval": {
+      "ask": "Approve Credential access approval?",
+      "tool": "fetch_credential",
+      "agent": {
+        "kind": "agent",
+        "name": "Jellybean",
+        "handle": "jellybean",
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "title": "Credential access approval",
+      "detail": "Reveal test credential",
+      "linkKind": "approval",
+      "commandId": "c7322bc129d08bdd80d61fe29f16596eee3dc7db0d18df036e0c0cbfd91de215",
+      "expiresAt": 1792848441957,
+      "approvalId": "proof-22222222-2222-4222-8222-222222222222",
+      "approvalUrl": "https://approve.example.test/proof",
+      "generationId": "proof-generation",
+      "sourceRoomId": "22222222-2222-4222-8222-222222222222",
+      "sourceMessageId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "rooms": [
+    {
+      "name": "Room",
+      "messages": [
+        "@jellybean use the test credential",
+        "Test credential request continued."
+      ],
+      "decisions": [
+        {
+          "type": "activity",
+          "requestId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "body": "Trusty Squire approved Credential access approval \u00b7 Reveal test credential"
+        }
+      ]
+    },
+    {
+      "name": "Corner",
+      "messages": [
+        "@jellybean use the test credential",
+        "Test credential request continued."
+      ],
+      "decisions": [
+        {
+          "type": "activity",
+          "requestId": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "body": "Trusty Squire approved Credential access approval \u00b7 Reveal test credential"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "action": "resume",
+      "state": "complete",
+      "turn_request_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "action": "resume",
+      "state": "complete",
+      "turn_request_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "decided": true
+}

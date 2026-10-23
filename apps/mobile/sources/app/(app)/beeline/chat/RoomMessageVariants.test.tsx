@@ -2747,6 +2747,28 @@ describe('Room message variant components', () => {
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
   });
 
+  it.each(['fetch_credential', 'Link'])('R-SQUIRE-CARD: uses the service identity and no footer note for %s', (tool) => {
+    const approval = message({ squireApproval: {
+      agent: { pubkey: 'agent', kind: 'agent', name: 'Terra', handle: 'terra' },
+      tool, title: 'Credential access approval', detail: 'Reveal a test credential',
+      approvalUrl: 'https://approve.example.test/test', approvalId: 'test', linkKind: 'approval',
+      sourceRoomId: 'source-room', sourceMessageId: 'source-message',
+    } });
+    const view = render(<SquireApprovalCard message={approval} onOpenSource={vi.fn()} />);
+    const identity = view.root.findByType('IdentityMark' as never);
+    if (tool !== 'Link') {
+      expect(identity.props.avatarUrl).toMatch(/\/v1\/connectors\/logo\/trusty-squire\.svg$/);
+      expect(identity.props.name).toBe('Trusty Squire');
+    } else {
+      expect(identity.props.seed).toBe('agent');
+    }
+    expect(view.root.findAll((node: ReactTestInstance) => node.type === 'Text' &&
+      typeof node.props.children === 'string' && node.props.children.startsWith('approval stays with'))).toHaveLength(0);
+    expect(view.root.findByProps({ testID: 'squire-approval-detail' }).props.children).toContain('requested by @terra');
+    expect(view.root.findByProps({ testID: 'squire-approval-open' })).toBeDefined();
+    expect(view.root.findByProps({ testID: 'squire-approval-source' })).toBeDefined();
+  });
+
   describe('connector-offer card (R5)', () => {
     const agent = { pubkey: 'otter', kind: 'agent' as const, name: 'Otter', handle: 'otter' };
     const zeke = { pubkey: 'zeke', kind: 'human' as const, name: 'Zeke', handle: 'zeke' };

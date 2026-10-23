@@ -1,0 +1,306 @@
+[
+ {
+  "side": "before",
+  "theme": "bone",
+  "view": "headers",
+  "headers": [
+   {
+    "text": "ROOMS",
+    "fontSize": "13px",
+    "rowText": "ROOMS\n3\n\uf103",
+    "rowHeight": 44,
+    "svg": false
+   },
+   {
+    "text": "DIRECT MESSAGES",
+    "fontSize": "13px",
+    "rowText": "DIRECT MESSAGES\n2\n\uf103",
+    "rowHeight": 44,
+    "svg": false
+   }
+  ]
+ },
+ {
+  "side": "before",
+  "theme": "bone",
+  "state": "working",
+  "slot": {
+   "x": 0,
+   "y": 780,
+   "width": 412,
+   "height": 50,
+   "top": 780,
+   "right": 412,
+   "bottom": 830,
+   "left": 0
+  },
+  "background": "rgb(243, 238, 228)",
+  "padding": "9px 0px 8px",
+  "text": "Ruby thinking\u2026"
+ },
+ {
+  "side": "before",
+  "theme": "bone",
+  "state": "settled",
+  "slot": {
+   "x": 0,
+   "y": 789,
+   "width": 412,
+   "height": 33,
+   "top": 789,
+   "right": 412,
+   "bottom": 822,
+   "left": 0
+  },
+  "background": "rgba(0, 0, 0, 0)",
+  "padding": "0px",
+  "text": "Ruby finished \u00b7 42s"
+ },
+ {
+  "side": "before",
+  "theme": "bone",
+  "state": "idle",
+  "slot": {
+   "x": 0,
+   "y": 822,
+   "width": 412,
+   "height": 0,
+   "top": 822,
+   "right": 412,
+   "bottom": 822,
+   "left": 0
+  },
+  "background": "rgba(0, 0, 0, 0)",
+  "padding": "0px",
+  "text": ""
+ },
+ {
+  "side": "before",
+  "theme": "obsidian",
+  "view": "headers",
+  "headers": [
+   {
+    "text": "ROOMS",
+    "fontSize": "13px",
+    "rowText": "ROOMS\n3\n\uf103",
+    "rowHeight": 44,
+    "svg": false
+   },
+   {
+    "text": "DIRECT MESSAGES",
+    "fontSize": "13px",
+    "rowText": "DIRECT MESSAGES\n2\n\uf103",
+    "rowHeight": 44,
+    "svg": false
+   }
+  ]
+ },
+ {
+  "side": "before",
+  "theme": "obsidian",
+  "state": "working",
+  "slot": {
+   "x": 0,
+   "y": 780,
+   "width": 412,
+   "height": 50,
+   "top": 780,
+   "right": 412,
+   "bottom": 830,
+   "left": 0
+  },
+  "background": "rgb(20, 9, 26)",
+  "padding": "9px 0px 8px",
+  "text": "Ruby thinking\u2026"
+ },
+ {
+  "side": "before",
+  "theme": "obsidian",
+  "state": "settled",
+  "slot": {
+   "x": 0,
+   "y": 789,
+   "width": 412,
+   "height": 33,
+   "top": 789,
+   "right": 412,
+   "bottom": 822,
+   "left": 0
+  },
+  "background": "rgba(0, 0, 0, 0)",
+  "padding": "0px",
+  "text": "Ruby finished \u00b7 42s"
+ },
+ {
+  "side": "before",
+  "theme": "obsidian",
+  "state": "idle",
+  "slot": {
+   "x": 0,
+   "y": 822,
+   "width": 412,
+   "height": 0,
+   "top": 822,
+   "right": 412,
+   "bottom": 822,
+   "left": 0
+  },
+  "background": "rgba(0, 0, 0, 0)",
+  "padding": "0px",
+  "text": ""
+ },
+ {
+  "side": "after",
+  "theme": "bone",
+  "view": "headers",
+  "headers": [
+   {
+    "text": "ROOMS",
+    "fontSize": "12px",
+    "rowText": "ROOMS",
+    "rowHeight": 44,
+    "svg": true,
+    "stroke": "2.4"
+   },
+   {
+    "text": "DIRECT MESSAGES",
+    "fontSize": "12px",
+    "rowText": "DIRECT MESSAGES",
+    "rowHeight": 44,
+    "svg": true,
+    "stroke": "2.4"
+   }
+  ]
+ },
+ {
+  "side": "after",
+  "theme": "bone",
+  "state": "working",
+  "slot": {
+   "x": 0,
+   "y": 780,
+   "width": 412,
+   "height": 50,
+   "top": 780,
+   "right": 412,
+   "bottom": 830,
+   "left": 0
+  },
+  "background": "rgb(243, 238, 228)",
+  "padding": "9px 0px 8px",
+  "text": "Ruby thinking\u2026"
+ },
+ {
+  "side": "after",
+  "theme": "bone",
+  "state": "settled",
+  "slot": {
+   "x": 0,
+   "y": 780,
+   "width": 412,
+   "height": 50,
+   "top": 780,
+   "right": 412,
+   "bottom": 830,
+   "left": 0
+  },
+  "background": "rgb(243, 238, 228)",
+  "padding": "9px 0px 8px",
+  "text": "Ruby finished \u00b7 42s"
+ },
+ {
+  "side": "after",
+  "theme": "bone",
+  "state": "idle",
+  "slot": {
+   "x": 0,
+   "y": 822,
+   "width": 412,
+   "height": 0,
+   "top": 822,
+   "right": 412,
+   "bottom": 822,
+   "left": 0
+  },
+  "background": "rgba(0, 0, 0, 0)",
+  "padding": "0px",
+  "text": ""
+ },
+ {
+  "side": "after",
+  "theme": "obsidian",
+  "view": "headers",
+  "headers": [
+   {
+    "text": "ROOMS",
+    "fontSize": "12px",
+    "rowText": "ROOMS",
+    "rowHeight": 44,
+    "svg": true,
+    "stroke": "2.4"
+   },
+   {
+    "text": "DIRECT MESSAGES",
+    "fontSize": "12px",
+    "rowText": "DIRECT MESSAGES",
+    "rowHeight": 44,
+    "svg": true,
+    "stroke": "2.4"
+   }
+  ]
+ },
+ {
+  "side": "after",
+  "theme": "obsidian",
+  "state": "working",
+  "slot": {
+   "x": 0,
+   "y": 780,
+   "width": 412,
+   "height": 50,
+   "top": 780,
+   "right": 412,
+   "bottom": 830,
+   "left": 0
+  },
+  "background": "rgb(20, 9, 26)",
+  "padding": "9px 0px 8px",
+  "text": "Ruby thinking\u2026"
+ },
+ {
+  "side": "after",
+  "theme": "obsidian",
+  "state": "settled",
+  "slot": {
+   "x": 0,
+   "y": 780,
+   "width": 412,
+   "height": 50,
+   "top": 780,
+   "right": 412,
+   "bottom": 830,
+   "left": 0
+  },
+  "background": "rgb(20, 9, 26)",
+  "padding": "9px 0px 8px",
+  "text": "Ruby finished \u00b7 42s"
+ },
+ {
+  "side": "after",
+  "theme": "obsidian",
+  "state": "idle",
+  "slot": {
+   "x": 0,
+   "y": 822,
+   "width": 412,
+   "height": 0,
+   "top": 822,
+   "right": 412,
+   "bottom": 822,
+   "left": 0
+  },
+  "background": "rgba(0, 0, 0, 0)",
+  "padding": "0px",
+  "text": ""
+ }
+]

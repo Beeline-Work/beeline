@@ -18,8 +18,8 @@ for width in [412,1280]:
    openpage(theme,state)
    receipt=js('''const s=document.querySelector('[data-testid="hanging-turn-chrome"]'), c=document.querySelector('[data-testid="composer"]'), t=document.querySelector('[data-testid="transcript"]'),css=getComputedStyle(s);return {slot:s.getBoundingClientRect().toJSON(),composer:c.getBoundingClientRect().toJSON(),transcript:t.getBoundingClientRect().toJSON(),background:css.backgroundColor,padding:css.padding,transform:css.transform};''')
    receipt.update(width=width,theme=theme,state=state);receipts.append(receipt)
-   assert (receipt['background']!='rgba(0, 0, 0, 0)')==(state=='working'),receipt
-   assert (receipt['padding']!='0px')==(state=='working'),receipt
+   assert (receipt['background']!='rgba(0, 0, 0, 0)')==(state!='idle'),receipt
+   assert (receipt['padding']!='0px')==(state!='idle'),receipt
    if width==412:shot('web-'+state+'-'+theme)
   if width==412:
    shot('web-three-collapsed-'+theme)
@@ -44,4 +44,4 @@ for width in [412,1280]:
   subset=[r for r in receipts if r['width']==width and r['theme']==theme]
   assert len({(r['composer']['y'],r['composer']['height'],r['transcript']['height']) for r in subset})==1
 out.joinpath('web-layouts.json').write_text(json.dumps(receipts,indent=2)+'\n')
-print('PASS: phone and desktop; both themes; idle/settled transparent, thinking covered; fixed composer/list bounds; single, three and four corners, expanded navigation and more.')
+print('PASS: phone and desktop; both themes; idle transparent, thinking and settled covered; fixed composer/list bounds; single, three and four corners, expanded navigation and more.')

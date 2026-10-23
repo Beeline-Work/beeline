@@ -591,7 +591,6 @@ export const SidebarView = React.memo(function SidebarView() {
                   {!query.trim() && (
                     <RoomListSectionHeader
                       title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
-                      count={section.data.length}
                       tapLineHeight
                       actionTestID={
                         section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'

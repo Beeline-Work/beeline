@@ -3291,6 +3291,7 @@ async function executeAgentOperation(
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
       if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake');
+      await daemonExecute('markAgentTurnSilent', {});
       // The helper drains in-flight activity and drafts before its terminal receipt.
       // Completing here revokes authority while those writes are still running.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');

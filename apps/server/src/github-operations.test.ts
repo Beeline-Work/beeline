@@ -94,6 +94,30 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it('CLOSED-1: archived corners cannot merge even with passing checks and a current yes', async () => {
+    const { corners, headSha, app } = await checksFixture();
+    const cornerId = corners[0]!;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await database.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number)
+      VALUES($1,$2,$3,1)`, [cornerId, REVIEWER, headSha]);
+    expect(await operations.prChecksStatus({ cornerId })).toMatchObject({ mergeAllowed: true });
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    expect(await operations.prChecksStatus({ cornerId })).toMatchObject({
+      stage: 'closed', checks: 'passed', approved: true, held: false, mergeAllowed: false,
+    });
+  });
+
+  it.each([true, false])('CLOSED-1: merge explains a closed corner with recorded PR=%s', async hasPr => {
+    const { corners } = await checksFixture();
+    const cornerId = corners[0]!;
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    if (!hasPr) await database.query(`UPDATE corner_facts SET lifecycle='{}'::jsonb WHERE corner_id=$1`, [cornerId]);
+    const daemon = new DaemonService(database, new LiveHub());
+    expect(await daemon.execute('mergeCorner', { cornerId }, REVIEWER)).toEqual({
+      status: 'blocked', blocker: 'the corner is closed',
+    });
+  });
+
   it('R-GH-403-WEBHOOK: rate-limited live PR confirmation is deferred, then retried after reset', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const reset = Math.floor(Date.now() / 1000) + 600;

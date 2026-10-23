@@ -61,7 +61,7 @@ async function main() {
   await pause();
   const first = snapshot.runs[0][0].id;
   const toggle = get(`notification-run-expand-${first}`);
-  assert(toggle.textContent === '1 issue filed · 1 PR merged', 'mixed type summary');
+  assert(toggle.textContent === '1 issue filed · 1 corner merged', 'mixed type summary');
   assert(
     document.querySelectorAll('[data-testid^="notification-run-cell-"]').length === 0,
     'starts expanded',
@@ -85,7 +85,8 @@ async function main() {
   const second = snapshot.runs[1][0].id;
   get(`notification-run-expand-${second}`).click();
   await pause();
-  assert(document.body.textContent?.includes('corner #'), 'unanchored corner row missing');
+  assert(document.body.textContent?.includes('Merged dashboard-downloads-stage'), 'unanchored corner row missing');
+  assert(!document.body.textContent?.includes('corner #'), 'unexpected corner prefix');
   get(`notification-run-expand-${second}`).click();
   await pause();
   assert(document.body.textContent?.includes('Decision stays visible'), 'agent decision folded');

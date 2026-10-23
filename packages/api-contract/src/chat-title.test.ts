@@ -45,10 +45,10 @@ describe('cornerTitle', () => {
     expect(cornerTitle('alpha', 'alpha-two/fix', 'abcdef0123')).toBe('#alpha/alpha-two/fix');
   });
 
-  it('degrades to #<corner> while the parent name is unknown', () => {
-    expect(cornerTitle(undefined, 'fix-auth', 'abcdef0123')).toBe('#fix-auth');
-    expect(cornerTitle(null, 'fix-auth', 'abcdef0123')).toBe('#fix-auth');
-    expect(cornerTitle('   ', 'fix-auth', 'abcdef0123')).toBe('#fix-auth');
+  it('degrades to the bare corner name while the parent name is unknown', () => {
+    expect(cornerTitle(undefined, 'fix-auth', 'abcdef0123')).toBe('fix-auth');
+    expect(cornerTitle(null, 'fix-auth', 'abcdef0123')).toBe('fix-auth');
+    expect(cornerTitle('   ', 'fix-auth', 'abcdef0123')).toBe('fix-auth');
   });
 
   it('falls back to the id slug for an empty or generated name', () => {
@@ -115,7 +115,7 @@ describe('cutTitle', () => {
     );
     expect(title).toBe('#workspace-oper…/reviewer-wake-checks-a…');
     expect(Array.from(title)).toHaveLength(40);
-    expect(cutCornerTitle(null, 'fix-ledger-drift', 'abc12345', 10, 4)).toBe('#fix-ledg…');
+    expect(cutCornerTitle(null, 'fix-ledger-drift', 'abc12345', 10, 4)).toBe('fix-ledge…');
   });
 });
 

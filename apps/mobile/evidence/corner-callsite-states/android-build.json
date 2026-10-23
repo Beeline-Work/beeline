@@ -1,0 +1,13 @@
+{
+  "platform": "Android API 35 x86_64",
+  "apkSha256": "136f55019156d1e0785c7c844266708971aa9961420e18104f50825407d7d1b4",
+  "proofEntry": "scripts/corner-line-native-proof.tsx",
+  "sourceSha256": {
+    "scripts/corner-line-proof-snapshot.json": "5bf80de93a260393ce0ce2e6ad6af462d2ad4f5f3d9a84f0ee8dc4bf2d969fda",
+    "sources/components/buzz/CornerOpenedMarker.tsx": "6f4c938e821324e21c46626f20f37b2de9a399059ebd81f312c2b6067ac11e98",
+    "sources/components/buzz/PrLifecycleCard.tsx": "f63cef2d27f1a8b248022196205ba418d9eb2858f219c7358fa67dc91e07b0e0"
+  },
+  "heap": "4 GiB",
+  "workers": 2,
+  "scope": "isolated service responses rendered by production native components"
+}

@@ -1235,6 +1235,7 @@ export class MonolithRoomTurnLoop {
       ...this.options.config.agentEnv,
       ...homeOverlay,
       ...cacheEnv,
+      BEELINE_TURN_CONTEXT_FILE: this.commandContext.path,
     };
     // Keep an explicitly configured credential ahead of the repository App.
     // Tokens are not part of a persisted fingerprint or prompt.

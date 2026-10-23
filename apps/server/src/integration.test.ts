@@ -8825,7 +8825,7 @@ describe('monolith integration', () => {
       [WORKSPACE, memberId, ROOM],
     );
     const refusedUnassign = await operation('removeRoomRepository', { roomId: ROOM }, memberToken);
-    expect(refusedUnassign.status).toBe(400);
+    expect(refusedUnassign.status).toBe(403);
 
     const unassigned = await request('/v1/phone/operations/removeRoomRepository', 'POST', {
       roomId: ROOM,

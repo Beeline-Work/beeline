@@ -46,6 +46,7 @@ afterEach(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await db.close();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 function get(query = '', key = 'dashboard-only-secret') {
@@ -256,7 +257,7 @@ describe('private operator dashboard', () => {
     expect(web.downloads).toMatchObject({ state: 'not_measured', count: null });
   });
 
-  it('serves bounded UTC series, deduplicated cohorts, retention and live helper evidence without content', async () => {
+  it('serves bounded Eastern series, deduplicated cohorts, retention and live helper evidence without content', async () => {
     await seed();
     const today = new Date().toISOString().slice(0, 10);
     const human = `a${(1).toString(16).padStart(63, '0')}`;
@@ -279,7 +280,7 @@ describe('private operator dashboard', () => {
     if (value.series.signups?.state !== 'measured' || value.series.dau?.state !== 'measured') throw new Error('Series unavailable');
     expect(value.series.signups.data.daily).toHaveLength(90);
     expect(value.series.signups.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(12);
-    expect(value.series.dau.data.daily.at(-1)?.value).toBe(1);
+    expect(value.series.dau.data.daily.find(p => p.date === new Intl.DateTimeFormat('en-CA', {timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date(today)))?.value).toBe(1);
     expect(value.series.dau.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(2); // older than 90d excluded
     expect(value.retention).toMatchObject({ state: 'measured', data: { cohort: 1, retained: 1, rate: 1 } });
     expect(value.helpers).toMatchObject({ state: 'measured', data: { paired: 12, online: 1, share: 1/12 } });
@@ -721,4 +722,38 @@ it('counts addressed free-agent conversations and confirmed links within the sel
   expect(linked.timeToStepState).toBe('unmeasured');
   await db.query(`UPDATE messages SET deleted_at=now() WHERE id='android-reply'`);
   expect(counts(await steps())).toMatchObject({ free_agent_replied: 0 });
+});
+
+describe('Eastern Usage dates (Reproduction EASTERN-1)', () => {
+  it.each([
+    ['2026-10-23T00:28:00Z', '2026-10-22', '2026-10-22T03:30:00Z', '2026-10-22T04:30:00Z'],
+    ['2026-03-09T00:28:00Z', '2026-03-08', '2026-03-08T04:30:00Z', '2026-03-08T05:30:00Z'],
+    ['2026-11-02T01:28:00Z', '2026-11-01', '2026-11-01T03:30:00Z', '2026-11-01T04:30:00Z'],
+  ])('keeps local midnight and DST boundaries for %s', async (measuredAt, today, before, after) => {
+    await seed();
+    await db.query("UPDATE identities SET created_at='2020-01-01' WHERE kind='human'");
+    const people = [1, 2].map(i => 'a' + i.toString(16).padStart(63, '0'));
+    for (const [index, at] of [before, after].entries()) {
+      await db.query('UPDATE identities SET created_at=$2 WHERE id=$1', [people[index], at]);
+      await db.query("INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'hello',$4)", ['eastern-'+index, room, people[index], at]);
+    }
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(measuredAt));
+    const started = performance.now();
+    const response = await get('?platforms=ios,android');
+    expect(response.status).toBe(200);
+    const result = (await response.json()).overview;
+    console.info('EASTERN-1 endpoint ms', measuredAt, Math.round(performance.now()-started));
+    vi.useRealTimers();
+    for (const metric of ['signups', 'dau']) {
+      const series = result.series[metric];
+      if (series?.state !== 'measured') throw new Error('Unavailable '+metric);
+      expect(series.data.daily.at(-1)).toEqual({date: today, value: 1});
+      expect(series.data.daily.at(-2)?.value).toBe(1);
+    }
+    expect(result.timeZone).toBe('America/New_York');
+    const wau = result.series.wau;
+    if (wau?.state !== 'measured') throw new Error('Unavailable wau');
+    expect(wau.data.daily.at(-1)).toEqual({date: today, value: 2});
+  });
 });

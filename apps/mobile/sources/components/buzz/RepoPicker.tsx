@@ -384,6 +384,8 @@ const styles = StyleSheet.create((theme) => {
     },
     candidateScrollFill: { flex: 1, flexShrink: 1, minHeight: 0 },
     groupHeader: {
+      // This SectionList sticks the whole row, including the trailing count.
+      backgroundColor: groknight.bgHighlight,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',

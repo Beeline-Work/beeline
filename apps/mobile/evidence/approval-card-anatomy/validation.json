@@ -90,5 +90,33 @@
         "native Once/Always scope and Allowed attribution"
       ]
     }
+  },
+  "approvedConnectorStatusCorrection": {
+    "existingTestChange": "connector-offers.test.ts:27 adds denied; pending/connecting/accepted unchanged",
+    "sharedPackages": {
+      "passed": 653,
+      "failed": 0,
+      "feedbackSignals": 6,
+      "nostr": 8,
+      "apiContract": 499,
+      "buzzClient": 140
+    },
+    "mobile": {
+      "filesPassed": 599,
+      "filesSkipped": 4,
+      "passed": 4990,
+      "skipped": 5,
+      "failed": 0
+    },
+    "server": {
+      "files": 212,
+      "passedAfterUnchangedReruns": 3620,
+      "skipped": 19,
+      "parallelPerformanceFailures": 2,
+      "isolatedPerformanceRerunPassed": 7,
+      "integrationCasesPassed": 255,
+      "execution": "All files covered in memory-bounded groups; two performance-budget cases passed unchanged in an isolated single-worker rerun."
+    },
+    "historicalDeniedConnectorCompatibility": "old-client-connector-denied.json"
   }
 }

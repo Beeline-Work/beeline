@@ -1,0 +1,15 @@
+{
+  "case": "OLD-CLIENT-CONNECTOR-DENIED",
+  "clientHead": "7539857263f95edf7b5db4ba34d95db2313571bc",
+  "result": "passed",
+  "pendingCardAccepted": true,
+  "unknownDeniedCardDropped": true,
+  "messagePreserved": true,
+  "textPreserved": true,
+  "approvalControlsAvailable": false,
+  "explanation": "The historical readConnectorOfferCardView rejects the unrecognized status, while readRoomViewMessage omits that nullable card and retains its message. Existing request text remains readable without an active connector approval card.",
+  "source": [
+    "packages/api-contract/src/phone-guards.ts:609",
+    "packages/api-contract/src/phone-guards.ts:1122"
+  ]
+}

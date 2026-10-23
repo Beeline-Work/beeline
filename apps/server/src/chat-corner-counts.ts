@@ -160,7 +160,8 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
-        CASE WHEN report.return_room_id=c.id THEN 'message' ELSE 'report' END FROM corner_report_blockers report
+        CASE WHEN report.return_room_id=c.id AND report.message_id IS NOT NULL THEN 'message'
+          ELSE 'report' END FROM corner_report_blockers report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
       WHERE report.corner_id=c.id

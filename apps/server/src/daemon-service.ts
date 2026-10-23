@@ -1,4 +1,5 @@
 import { squireApprovalAction } from '@beeline/api-contract/phone';
+import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
@@ -2075,11 +2076,11 @@ export class DaemonService {
         reviewer_agent_id: string | null;
         owner_agent_id: string;
       }>(
-        `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id
+        `SELECT ${cornerReviewerSql()} reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
-         WHERE corner.id=$1 AND (parent.reviewer_agent_id IS NULL OR parent.reviewer_agent_id<>$2)
+         WHERE corner.id=$1 AND (${cornerReviewerSql()} IS NULL OR ${cornerReviewerSql()}<>$2)
            AND ${cornerImplementerSql('fact', 'corner')}=$2
            AND fact.lifecycle ? 'pr'`,
         [cornerId, workerAgentId],
@@ -2113,7 +2114,7 @@ export class DaemonService {
           owner_agent_id: string;
           lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         }>(
-          `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,fact.lifecycle
+          `SELECT ${cornerReviewerSql()} reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,fact.lifecycle
            FROM rooms corner
            JOIN rooms parent ON parent.id=corner.parent_id
            JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -3200,11 +3201,39 @@ export class DaemonService {
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
       throw new Error('invalid message offset');
-    let row = (
+    // Private hand-offs expose the command id as their message id. Only the
+    // sender and recipient may reopen that payload, even in a shared Room.
+    const handoff = (await this.database.query<{
+      agent_id: string; author_id: string; body: string; total: number;
+      attachments: DaemonAttachment[]; accessible: boolean;
+    }>(
+      `SELECT command.agent_id,command.private_payload->>'authorId' author_id,
+              substring(command.private_payload->>'text' FROM $3::integer + 1 FOR 4000) body,
+              char_length(command.private_payload->>'text') total,
+              command.private_payload->'attachments' attachments,
+              EXISTS(SELECT 1 FROM effective_memberships member
+                     WHERE member.room_id=CASE WHEN command.agent_id=$2 THEN command.room_id
+                       ELSE NULLIF(command.private_payload->>'fromRoomId','')::uuid END
+                       AND member.identity_id=$2
+                       AND member.removed_at IS NULL) accessible
+       FROM agent_commands command
+       WHERE command.id=$1 AND command.private_payload IS NOT NULL`,
+      [input.messageId, agentId, offset],
+    )).rows[0];
+    if (handoff && (!handoff.accessible ||
+        (handoff.agent_id !== agentId && handoff.author_id !== agentId)))
+      throw new Error('message access denied: private hand-off');
+    let row = handoff ?? (
       await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
-        `SELECT substring(text FROM $3::integer + 1 FOR 4000) body,
-                char_length(text) total, attachments
-         FROM messages WHERE room_id=$1 AND id=$2 AND presentation='message'`,
+        `SELECT substring(CASE WHEN card_type='agent-command' THEN card->>'text' ELSE text END
+                         FROM $3::integer + 1 FOR 4000) body,
+                char_length(CASE WHEN card_type='agent-command' THEN card->>'text' ELSE text END) total, attachments
+         FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms output ON output.id=$1
+         WHERE message.id=$2 AND message.deleted_at IS NULL
+           AND COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
+           AND (presentation='message' OR card_type='agent-command')`,
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
@@ -3224,12 +3253,13 @@ export class DaemonService {
         row = (
           await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
             `WITH ${AUTHORIZED_ROOMS_CTE}
-             SELECT substring(message.text FROM $6::integer + 1 FOR 4000) body,
-                    char_length(message.text) total,message.attachments
+             SELECT substring(CASE WHEN message.card_type='agent-command' THEN message.card->>'text' ELSE message.text END
+                              FROM $6::integer + 1 FOR 4000) body,
+                    char_length(CASE WHEN message.card_type='agent-command' THEN message.card->>'text' ELSE message.text END) total,message.attachments
              FROM messages message
              JOIN authorized_rooms authorized ON authorized.id=message.room_id
              WHERE message.id=$5 AND message.deleted_at IS NULL
-               AND message.presentation='message'`,
+               AND (message.presentation='message' OR message.card_type='agent-command')`,
             [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
               input.messageId, offset],
           )
@@ -3237,14 +3267,13 @@ export class DaemonService {
       }
     }
     if (!row) {
-      // A message that exists elsewhere in this Workspace is a refusal, not a
-      // miss: download_attachment reports `forbidden` instead of `not_found`.
+      // Existing messages outside the readable scope are refusals, not misses:
+      // download_attachment must preserve forbidden rather than not_found.
       const elsewhere = await this.database.query(
         `SELECT 1 FROM messages message
-         JOIN rooms source ON source.id=message.room_id
-         JOIN rooms here ON here.id=$1 AND here.workspace_id=source.workspace_id
-         WHERE message.id=$2 AND message.deleted_at IS NULL AND message.presentation='message'`,
-        [input.roomId, input.messageId],
+         WHERE message.id=$1 AND message.deleted_at IS NULL
+           AND (message.presentation='message' OR message.card_type='agent-command')`,
+        [input.messageId],
       );
       if (elsewhere.rowCount) throw new Error('message access denied from this Room');
       throw new Error('message not found in this Room');
@@ -3611,16 +3640,18 @@ export class DaemonService {
    */
   private async mergeCorner(input: Input<'mergeCorner'>, agentId: string): Promise<Output<'mergeCorner'>> {
     const corner = (
-      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null }>(
+      await this.database.query<{ worker_agent_id: string | null; head_sha: string | null; archived: boolean }>(
         `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-                fact.lifecycle->'pr'->>'headSha' head_sha
+                fact.lifecycle->'pr'->>'headSha' head_sha,
+                corner.archived_at IS NOT NULL archived
          FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL`,
+         WHERE fact.corner_id=$1`,
         [input.cornerId],
       )
     ).rows[0];
     await this.reach(input.cornerId, agentId);
     if (!corner) throw new Error('corner not found');
+    if (corner.archived) return { status: 'blocked', blocker: 'the corner is closed' };
     if (!corner.head_sha) return { status: 'blocked', blocker: 'the corner has no pull request' };
     if (!this.landCorner || !this.prChecksStatus)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
@@ -3673,6 +3704,14 @@ export class DaemonService {
    * corner lifecycle in the same transaction, which wakes the implementer to
    * merge.
    */
+  private async checkReviewerAuthors(db: SqlDatabase, cornerId: string, agentId: string) {
+    const pr = (await db.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1
+      AND lifecycle->'pr'->>'number' IS NOT NULL`, [cornerId])).rowCount;
+    if (!pr) return;
+    if (!this.github) throw new CommandRefusalError('GitHub is required to verify reviewer independence on this PR', 409);
+    await this.github.assertCornerReviewerNotAuthor(cornerId, agentId, db);
+  }
+
   private async approveCornerMerge(input: Input<'approveCornerMerge'>, agentId: string) {
     return this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
@@ -3694,7 +3733,7 @@ export class DaemonService {
         !(await isZeroCheckCommander(db, input.cornerId, agentId))))
         throw new CornerVerdictRejectedError(
           'NOT_CONFIGURED_REVIEWER',
-          "only this corner's configured reviewer or its zero-check commander can record PASS",
+          "only this corner's configured reviewer (or the Room reviewer when unset), or its zero-check commander, can record PASS; set reviewer with revise_corner",
         );
       if (!target.pull_request_number || !target.head_sha)
         throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');
@@ -3703,6 +3742,8 @@ export class DaemonService {
           'STALE_HEAD',
           `pull request head is ${target.head_sha}; review the current head before approving`,
         );
+      await assertIndependentCornerReviewer(db, input.cornerId, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       await recordCornerMergeApproval(db, {
         cornerId: input.cornerId,
         approvedBy: agentId,
@@ -3788,8 +3829,8 @@ export class DaemonService {
                 CASE WHEN workspace.visibility='public' THEN false ELSE a.yolo_mode END yolo_mode,
                 CASE WHEN room.parent_id IS NULL THEN NULL
                      -- A fallback reviewer is told it holds the post itself.
-                     WHEN parent.reviewer_agent_id IS NOT NULL
-                          AND a.agent_id=ANY(parent.reviewer_fallback_ids)
+                     WHEN ${cornerReviewerSql('room')} IS NOT NULL
+                          AND a.agent_id=ANY(${cornerReviewerFallbacksSql('room')})
                           AND a.agent_id<>COALESCE(fact.owner_agent_id,room.created_by)
                      THEN self.handle
                      WHEN reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
@@ -3801,7 +3842,7 @@ export class DaemonService {
          LEFT JOIN rooms parent ON parent.id=room.parent_id
          LEFT JOIN corner_facts fact ON fact.corner_id=room.id
          LEFT JOIN identities reviewer
-           ON reviewer.id=parent.reviewer_agent_id AND reviewer.kind='agent'
+           ON reviewer.id=${cornerReviewerSql('room')} AND reviewer.kind='agent'
          WHERE a.agent_id=$1`,
         [agentId, roomId],
       )
@@ -6099,9 +6140,9 @@ export class DaemonService {
   }
   /** Retitles the corner this agent is working in, through the same write a person's rename uses. */
   private async renameCorner(input: Input<'renameCorner'>, agentId: string) {
-    const refusal = cornerTextRefusal('name', input.name);
+    const refusal = input.name === undefined && input.reviewer !== undefined ? null : cornerTextRefusal('name', input.name);
     if (refusal) throw new Error(refusal);
-    const name = input.name;
+    let name = input.name;
     const objective = input.objective === undefined ? undefined : normalizeCornerText(input.objective);
     if (input.objective !== undefined) {
       const objectiveRefusal = cornerTextRefusal('objective', input.objective);
@@ -6110,9 +6151,10 @@ export class DaemonService {
     if (input.brief) validateCornerBrief(input.brief);
     await this.reach(input.cornerId, agentId);
     await this.database.transaction(async (db) => {
+      await lockCornerLifecycle(db, input.cornerId);
       const corner = (
-        await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string }>(
-          `SELECT room.parent_id,room.archived_at,fact.kind,fact.objective
+        await db.query<{ parent_id: string | null; archived_at: Date | null; kind: string; objective: string; name: string }>(
+          `SELECT room.name,room.parent_id,room.archived_at,fact.kind,fact.objective
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 FOR UPDATE OF room`,
           [input.cornerId],
@@ -6120,6 +6162,9 @@ export class DaemonService {
       ).rows[0];
       if (!corner?.parent_id) throw new Error('corner not found');
       if (corner.archived_at) throw new Error('corner is archived');
+      name ??= corner.name;
+      if (input.reviewer !== undefined) await setCornerReviewer(db, input.cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       const current = corner.kind === 'human'
         ? await currentCornerBrief(db, input.cornerId)
         : null;
@@ -6177,9 +6222,9 @@ export class DaemonService {
           );
         }
       }
-      await writeCornerTitle(db, input.cornerId, name);
+      if (input.name !== undefined) await writeCornerTitle(db, input.cornerId, input.name);
     });
-    return { cornerId: input.cornerId, name };
+    return { cornerId: input.cornerId, name: name! };
   }
   private async targetProposal(input: Input<'postTargetBranchProposal'>, agentId: string) {
     await this.access(input.roomId, agentId);
@@ -7922,6 +7967,7 @@ export class DaemonService {
           name: string;
           objective: string;
           owner_agent_id: string;
+          reviewer_handle: string | null;
           created_by: string;
           request_id: string;
           repository_key: string | null;
@@ -7933,6 +7979,7 @@ export class DaemonService {
         }>(
           `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,child.created_by,
                   fact.request_id,child.repository_key,child.repository_target_branch,
+                  (SELECT handle FROM identities WHERE id=fact.reviewer_agent_id) reviewer_handle,
                   initial.revision brief_revision,
                   initial.revision_hash brief_revision_hash,initial.change brief_change,
                   initial.attachments brief_attachments
@@ -7975,6 +8022,7 @@ export class DaemonService {
         if (
           existing.owner_agent_id !== implementerAgentId ||
           existing.created_by !== agentId ||
+          existing.reviewer_handle !== (input.reviewer ?? null) ||
           existing.request_id !== input.requestId ||
           existing.name !== name ||
           existing.objective !== objective ||
@@ -8053,6 +8101,8 @@ export class DaemonService {
           host?.parent_id ? commandRoomId : null,
         ],
       );
+      if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       if (input.hold === true) {
         if (!commissionedBy) throw new Error('hold requires a human requester');
         await setCornerHold(db, { cornerId }, commissionedBy);
@@ -8246,6 +8296,8 @@ export class DaemonService {
         command.private_payload ? command.id : command.root_source_message_id,
         { cornerId: input.cornerId, agentId },
       );
+      if (input.reviewer !== undefined) await setCornerReviewer(db, input.cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       const revision = input.expectedRevision + 1;
       await db.query(
         `INSERT INTO corner_brief_revisions(
@@ -8400,8 +8452,8 @@ export class DaemonService {
       `SELECT EXISTS(
          SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
          WHERE corner.id=$1 AND (
-           parent.reviewer_agent_id=$2 OR (
-             parent.reviewer_agent_id IS NOT NULL AND $2=ANY(parent.reviewer_fallback_ids)
+           ${cornerReviewerSql('corner')}=$2 OR (
+             ${cornerReviewerSql('corner')} IS NOT NULL AND $2=ANY(${cornerReviewerFallbacksSql('corner')})
              AND EXISTS(SELECT 1 FROM memberships parent_member
                         WHERE parent_member.room_id=parent.id AND parent_member.identity_id=$2
                           AND parent_member.removed_at IS NULL)))

@@ -556,7 +556,8 @@ export type DaemonOperationMap = {
   renameCorner: Operation<
     TurnOutputAuthority & CornerInput & {
       readonly roomId?: string;
-      readonly name: string;
+      readonly name?: string;
+      readonly reviewer?: string;
       readonly objective?: string;
       readonly brief?: CornerBriefDraft;
     },
@@ -1430,6 +1431,7 @@ export type CreateCornerInput = TurnOutputAuthority &
   RoomInput & {
     /** Exact handle, without @, of an agent member of the parent Room; defaults to the caller. */
     readonly implementer?: string;
+    readonly reviewer?: string;
     readonly hold?: boolean;
     /** Target parent Room; the active command may be in a DM or another Room. */
     readonly targetRoomId?: string;
@@ -1502,6 +1504,7 @@ export type CornerBrief = {
 };
 export type ReviseCornerBriefInput = TurnOutputAuthority &
   CornerInput & {
+    readonly reviewer?: string;
     readonly requestId: string;
     readonly roomId?: string;
     readonly expectedRevision: number;

@@ -41,8 +41,9 @@ it('stops renewing the 180-second watchdog when reconcile freezes while the even
   vi.useFakeTimers();
   let lastFeed = Date.now();
   const feed = vi.fn(async () => { lastFeed = Date.now(); });
+  const stalled = vi.fn(() => core.workLoopDiagnostics());
   const stop = startLocalWatchdog({ progress: feed }, () => 'healthy', () => core.requestWorkLoopProgress(),
-    60_000, { WATCHDOG_USEC: '180000000' });
+    60_000, { WATCHDOG_USEC: '180000000' }, undefined, stalled);
   try {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(feed).toHaveBeenCalledTimes(1);
@@ -53,9 +54,12 @@ it('stops renewing the 180-second watchdog when reconcile freezes while the even
     await vi.advanceTimersByTimeAsync(180_000);
     expect(feed).toHaveBeenCalledTimes(1);
     expect(Date.now() - lastFeed).toBe(180_000); // systemd's configured expiry
+    expect(stalled).toHaveBeenCalledTimes(1);
+    expect(stalled.mock.results[0]?.value).toEqual({ stage: 'bootstrap', elapsedMs: 120_000 });
   } finally {
     stop(); controller.abort(); unblock(); await running;
   }
+  expect(core.workLoopDiagnostics().stage).toBe('idle');
 });
 
 it.each([401, 403, 404])('parks a non-retryable %s discovery request while local health keeps progressing', async status => {

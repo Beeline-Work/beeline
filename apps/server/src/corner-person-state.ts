@@ -1,3 +1,4 @@
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -136,7 +137,7 @@ export async function setRoomEventSubscriptions(
 ): Promise<string[]> {
   const result = await database.query<{ event_subscriptions: string[] }>(
     `WITH surface AS (
-      SELECT room.id,room.parent_id,CASE WHEN parent.reviewer_agent_id=$2
+      SELECT room.id,room.parent_id,CASE WHEN ${cornerReviewerSql('room')}=$2
         AND NOT $3::jsonb @> '["check-passed"]'::jsonb
         THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END event_subscriptions
       FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)

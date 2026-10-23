@@ -20,7 +20,7 @@ import {
 
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { ChannelReferenceIndex, ChannelReferenceTarget } from '@/buzz/channel-reference';
-import { agentActivityReplyExcerpt, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
+import { agentActivityReplyExcerpt, canBeginReply, type MessageReplyDisplayTarget } from '@/buzz/message-reply';
 import { resolveAgentDisplayIdentity, resolvePendingAgentDisplay } from '@/buzz/agent-display';
 import { fallbackMemberName } from '@/buzz/member-display';
 import { displayModel } from '@/buzz/model-display';
@@ -823,7 +823,7 @@ function SwipeToReply({
    *  keeps its copy shortcut and reaches the same sheet through its buttons. */
   onActions?(): void;
   onPress?(): void;
-  onReply(): void;
+  onReply?(): void;
   onReact(emoji: MessageReactionEmoji): void;
   onForward(): void;
   onBookmark?(): void;
@@ -837,6 +837,26 @@ function SwipeToReply({
   replyOnly?: boolean;
 }) {
   const swipeableRef = useRef<Swipeable | null>(null);
+  const returnTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelReturn = useCallback(() => {
+    clearTimeout(returnTimer.current);
+    clearTimeout(closeTimer.current);
+  }, []);
+  useEffect(() => cancelReturn, [cancelReturn, messageId]);
+  const commitSwipe = (direction: 'left' | 'right') => {
+    cancelReturn();
+    // WillOpen runs after the swipe commits, even if its opening spring is
+    // interrupted. Wait for Swipeable's rowState update before closing it.
+    closeTimer.current = setTimeout(() => {
+      swipeableRef.current?.close();
+      // A cancelled closing spring must not leave the action panel exposed.
+      returnTimer.current = setTimeout(() => swipeableRef.current?.reset(), 240);
+    }, 0);
+    // Install the quote before a composer update can recycle this row.
+    if (direction === 'right') onReply?.();
+    else onSwipeCorner?.();
+  };
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
   const [desktopRowHovered, setDesktopRowHovered] = useState(false);
   const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
@@ -887,7 +907,7 @@ function SwipeToReply({
           {!replyOnly ? (
             <DesktopMessageAction action="copy" label="Copy message text" tooltip="Copy" onPress={onLongPress} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`copy-button-${messageId}`} />
           ) : null}
-          <DesktopMessageAction action="reply" label="Reply to message" tooltip="Reply" onPress={onReply} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`reply-button-${messageId}`} />
+          {onReply ? <DesktopMessageAction action="reply" label="Reply to message" tooltip="Reply" onPress={onReply} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`reply-button-${messageId}`} /> : null}
           {!replyOnly ? (
             <>
               <DesktopMessageAction action="react" label="React to message" tooltip="React" onPress={() => setReactionPickerVisible((visible) => !visible)} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`react-button-${messageId}`} />
@@ -948,17 +968,13 @@ function SwipeToReply({
       childrenContainerStyle={{ paddingHorizontal: ALIVE_RING_PAD }}
       dragOffsetFromRightEdge={18}
       friction={1.35}
-      onSwipeableOpen={(direction) => {
-        swipeableRef.current?.close();
-        // Swipeable names the side whose actions opened: a swipe left reveals
-        // the right-side reply action, a swipe right the left-side corner one.
-        if (direction === 'right') onReply();
-        else onSwipeCorner?.();
-      }}
+      onSwipeableWillOpen={commitSwipe}
+      onSwipeableOpenStartDrag={cancelReturn}
+      onSwipeableCloseStartDrag={cancelReturn}
       overshootLeft={false}
       overshootRight={false}
       renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
-      renderRightActions={() => (
+      renderRightActions={onReply ? () => (
         <View
           accessibilityLabel="Reply to message"
           style={styles.replySwipeAction}
@@ -967,7 +983,8 @@ function SwipeToReply({
           <Text style={styles.replySwipeGlyph}>↩</Text>
           <Text style={styles.replySwipeLabel}>REPLY</Text>
         </View>
-      )}
+      ) : undefined}
+      enabled={Boolean(onReply || onSwipeCorner)}
       testID={`swipe-reply-${messageId}`}
     >
       {message}
@@ -1164,6 +1181,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   announcementFeed = false,
   desktopLayout = false,
 }: OrdinaryLedgerMessageProps) {
+  const replyAvailable = canBeginReply(message, codeRoomId ?? message.reference?.channelId ?? '');
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
   // A loaded roster entry is the current identity. Historical rows may still
@@ -1335,7 +1353,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           onLongPress={() => onCopy(excerpt)}
           onActions={onMessageActions ? () => onMessageActions(message) : undefined}
           {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
-          onReply={() => onReply(message)}
+          onReply={replyAvailable ? () => onReply(message) : undefined}
           onReact={() => undefined}
           onForward={() => undefined}
           isDesktop={desktopLayout}
@@ -1640,7 +1658,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       onLongPress={() => onCopy(message.text)}
       onActions={onMessageActions ? () => onMessageActions(message) : undefined}
       {...(onTapOutsideComposer ? { onPress: onTapOutsideComposer } : {})}
-      onReply={message.isAgentDraft ? () => undefined : () => onReply(message)}
+      onReply={replyAvailable ? () => onReply(message) : undefined}
       onReact={(emoji) => onReact(message, emoji)}
       onForward={() => onForward(message)}
       onBookmark={() => onBookmark(message)}

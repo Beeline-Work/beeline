@@ -99,6 +99,7 @@
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
+        "scripts/operation-deadline-native-proof.tsx",
         "scripts/unread-dot-clear-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/reply-recovery-proof.mjs",
@@ -138,6 +139,7 @@
         "scripts/transcript-events-native-proof.tsx",
         // Browser bundling and the temporary Metro main select these proof entries by path.
         "scripts/disclosure-rows-{browser,native}-proof.tsx",
+        "scripts/transcript-dividers-{browser,native}-proof.tsx",
         "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",

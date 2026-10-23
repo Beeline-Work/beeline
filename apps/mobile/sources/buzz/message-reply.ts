@@ -79,6 +79,13 @@ export function activityReplyParent(
   );
 }
 
+/** Reply affordances and target installation share the same parent eligibility. */
+export function canBeginReply(message: ChatDisplayMessage, roomId: string): boolean {
+  return !message.isAgentDraft && Boolean(
+    message.isAgentActivity || message.agentCommand || message.reference?.channelId === roomId,
+  );
+}
+
 /**
  * The reply target for a transcript row, or null when the row cannot be a
  * parent in this Room. Activity rows borrow their turn's real parent. An
@@ -92,6 +99,7 @@ export function beginReplyTarget(
   display: MessageReplyDisplayTarget,
   roomId: string,
 ): MessageReplyTarget | null {
+  if (!canBeginReply(message, roomId)) return null;
   if (message.isAgentActivity) return activityMessageReplyTarget(message, messages, display);
   const target: MessageReplyTarget = {
     ...display,

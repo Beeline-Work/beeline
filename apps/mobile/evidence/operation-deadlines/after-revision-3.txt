@@ -1,0 +1,279 @@
+.deadline-auth3.txt
+
+ RUN  v2.1.9 /home/lunchbox/.local/state/beeline/corners/a209d521-544e-417e-b3c6-02c216090c12/apps/auth
+
+ ✓ src/github-manifest.test.ts (12 tests) 18ms
+stdout | src/github.test.ts > Reproduction F1-1: a hung merge aborts within the provider deadline
+Reproduction F1-1: wrong=hung; right=aborted; observed=aborted
+
+ ✓ src/external-fetch.test.ts (3 tests) 1057ms
+   ✓ keeps the signal alive after headers so a stalled body aborts too 1004ms
+ ✓ src/github.test.ts (74 tests) 1194ms
+
+ Test Files  3 passed (3)
+      Tests  89 passed (89)
+   Start at  12:03:47
+   Duration  1.71s (transform 206ms, setup 0ms, collect 332ms, tests 2.27s, environment 1ms, prepare 309ms)
+
+
+
+.deadline-client3.txt
+mponents/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > backdrop dismisses a pending close and ignores its late success
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+stderr | sources/components/buzz/CornerActionsSheet.test.tsx > Reproduction R1: Close corner back while waiting > shows an error and enables retry when the action times out
+The current testing environment is not configured to support act(...)
+
+ ✓ sources/components/buzz/CornerActionsSheet.test.tsx (4 tests) 64ms
+ ✓ sources/sync/transport/monolith-operation.test.ts (133 tests) 99ms
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > header back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+stderr | sources/app/(app)/beeline/human-profile.waiting.test.tsx > Reproduction R1: Profile back while Message waits > system back leaves immediately and a late DM cannot navigate
+The current testing environment is not configured to support act(...)
+
+ ✓ sources/app/(app)/beeline/human-profile.waiting.test.tsx (2 tests) 34ms
+ ✓ sources/sync/transport/monolith-rig-transport.test.ts (26 tests) 116ms
+
+ Test Files  4 passed (4)
+      Tests  165 passed (165)
+   Start at  12:04:01
+   Duration  1.88s (transform 1.16s, setup 461ms, collect 3.74s, tests 312ms, environment 1ms, prepare 466ms)
+
+
+
+.deadline-typecheck.txt
+
+> buzzy@0.0.0 typecheck
+> turbo run typecheck && npm run typecheck --prefix apps/mobile && tsc -p tsconfig.scripts.json
+
+• turbo 2.10.8
+
+   • Packages in scope: @beeline/api-contract, @beeline/auth, @beeline/body, @beeline/buzz-client, @beeline/nostr, @beeline/public-web-tests, @beeline/server, usebeeline
+   • Running typecheck in 8 packages
+   • Remote caching disabled
+
+@beeline/api-contract:typecheck: cache hit, replaying logs d58aec0d52a1c67c
+@beeline/api-contract:typecheck: 
+@beeline/api-contract:typecheck: > @beeline/api-contract@0.0.0 typecheck
+@beeline/api-contract:typecheck: > tsc -p tsconfig.json --noEmit
+@beeline/api-contract:typecheck: 
+@beeline/nostr:build: cache hit, replaying logs 315f3af4d04b4149
+@beeline/nostr:build: 
+@beeline/nostr:build: > @beeline/nostr@0.0.0 build
+@beeline/nostr:build: > tsc -p tsconfig.json
+@beeline/nostr:build: 
+@beeline/nostr:typecheck: cache hit, replaying logs aa8502c13506155d
+@beeline/nostr:typecheck: 
+@beeline/nostr:typecheck: > @beeline/nostr@0.0.0 typecheck
+@beeline/nostr:typecheck: > tsc -p tsconfig.json --noEmit
+@beeline/nostr:typecheck: 
+@beeline/api-contract:build: cache hit, replaying logs 0a756f5bba9dba23
+@beeline/api-contract:build: 
+@beeline/api-contract:build: > @beeline/api-contract@0.0.0 build
+@beeline/api-contract:build: > npm run clean && tsc -p tsconfig.json
+@beeline/api-contract:build: 
+@beeline/api-contract:build: 
+@beeline/api-contract:build: > @beeline/api-contract@0.0.0 clean
+@beeline/api-contract:build: > node ../../scripts/clean-dist.mjs
+@beeline/api-contract:build: 
+@beeline/buzz-client:typecheck: cache hit, replaying logs cdf74fb644066b39
+@beeline/body:typecheck: cache hit, replaying logs f296b83992c6f61f
+@beeline/buzz-client:typecheck: 
+@beeline/buzz-client:typecheck: > @beeline/buzz-client@0.0.0 typecheck
+@beeline/buzz-client:typecheck: > tsc -p tsconfig.json --noEmit
+@beeline/buzz-client:typecheck: 
+@beeline/body:typecheck: 
+@beeline/body:typecheck: > @beeline/body@0.0.0 typecheck
+@beeline/body:typecheck: > tsc -p tsconfig.json --noEmit
+@beeline/body:typecheck: 
+@beeline/buzz-client:build: cache hit, replaying logs d8d28a02ac105c01
+@beeline/buzz-client:build: 
+@beeline/buzz-client:build: > @beeline/buzz-client@0.0.0 build
+@beeline/buzz-client:build: > npm run clean && tsc -p tsconfig.json
+@beeline/buzz-client:build: 
+@beeline/buzz-client:build: 
+@beeline/buzz-client:build: > @beeline/buzz-client@0.0.0 clean
+@beeline/buzz-client:build: > node ../../scripts/clean-dist.mjs
+@beeline/buzz-client:build: 
+@beeline/auth:build: cache hit, replaying logs 73ee32647e6cfb3e
+@beeline/auth:build: 
+@beeline/auth:build: > @beeline/auth@0.0.0 build
+@beeline/auth:build: > npm run clean && tsc -p tsconfig.json
+@beeline/auth:build: 
+@beeline/auth:build: 
+@beeline/auth:build: > @beeline/auth@0.0.0 clean
+@beeline/auth:build: > rm -rf dist
+@beeline/auth:build: 
+@beeline/auth:typecheck: cache miss, executing 1045702f678adb10
+@beeline/server:typecheck: cache miss, executing 06961c13f0f088dc
+@beeline/body:build: cache hit, replaying logs 4dbeb9e7caa10b14
+@beeline/body:build: 
+@beeline/body:build: > @beeline/body@0.0.0 build
+@beeline/body:build: > tsc -p tsconfig.json
+@beeline/body:build: 
+@beeline/body:build: npm notice
+@beeline/body:build: npm notice New major version of npm available! 11.13.0 -> 12.2.1
+@beeline/body:build: npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.1
+@beeline/body:build: npm notice To update run: npm install -g npm@12.2.1
+@beeline/body:build: npm notice
+usebeeline:typecheck: cache hit, replaying logs 67273c5f432416d3
+usebeeline:typecheck: 
+usebeeline:typecheck: > usebeeline@0.0.6 typecheck
+usebeeline:typecheck: > tsc -p tsconfig.json --noEmit
+usebeeline:typecheck: 
+@beeline/server:typecheck: 
+@beeline/server:typecheck: > @beeline/server@0.0.0 typecheck
+@beeline/server:typecheck: > tsc -p tsconfig.json --noEmit
+@beeline/server:typecheck: 
+@beeline/auth:typecheck: 
+@beeline/auth:typecheck: > @beeline/auth@0.0.0 typecheck
+@beeline/auth:typecheck: > tsc -p tsconfig.json --noEmit && tsc -p tsconfig.emulator.json
+@beeline/auth:typecheck: 
+
+ Tasks:    12 successful, 12 total
+Cached:    10 cached, 12 total
+  Time:    10.082s 
+
+
+> @beeline/mobile@0.2.22 typecheck
+> node scripts/generate-typed-routes.cjs && tsc --noEmit
+
+
+
+.deadline-deadcode.txt
+
+> buzzy@0.0.0 predead-code
+> npm run dead-code:prepare
+
+
+> buzzy@0.0.0 dead-code:prepare
+> turbo run build
+
+• turbo 2.10.8
+
+   • Packages in scope: @beeline/api-contract, @beeline/auth, @beeline/body, @beeline/buzz-client, @beeline/nostr, @beeline/public-web-tests, @beeline/server, usebeeline
+   • Running build in 8 packages
+   • Remote caching disabled
+
+@beeline/nostr:build: cache hit, replaying logs 315f3af4d04b4149
+@beeline/nostr:build: 
+@beeline/nostr:build: > @beeline/nostr@0.0.0 build
+@beeline/nostr:build: > tsc -p tsconfig.json
+@beeline/nostr:build: 
+@beeline/api-contract:build: cache hit, replaying logs 0a756f5bba9dba23
+@beeline/api-contract:build: 
+@beeline/api-contract:build: > @beeline/api-contract@0.0.0 build
+@beeline/api-contract:build: > npm run clean && tsc -p tsconfig.json
+@beeline/api-contract:build: 
+@beeline/api-contract:build: 
+@beeline/api-contract:build: > @beeline/api-contract@0.0.0 clean
+@beeline/api-contract:build: > node ../../scripts/clean-dist.mjs
+@beeline/api-contract:build: 
+@beeline/buzz-client:build: cache hit, replaying logs d8d28a02ac105c01
+@beeline/buzz-client:build: 
+@beeline/buzz-client:build: > @beeline/buzz-client@0.0.0 build
+@beeline/buzz-client:build: > npm run clean && tsc -p tsconfig.json
+@beeline/buzz-client:build: 
+@beeline/buzz-client:build: 
+@beeline/buzz-client:build: > @beeline/buzz-client@0.0.0 clean
+@beeline/buzz-client:build: > node ../../scripts/clean-dist.mjs
+@beeline/buzz-client:build: 
+@beeline/auth:build: cache hit, replaying logs 73ee32647e6cfb3e
+@beeline/auth:build: 
+@beeline/auth:build: > @beeline/auth@0.0.0 build
+@beeline/auth:build: > npm run clean && tsc -p tsconfig.json
+@beeline/auth:build: 
+@beeline/auth:build: 
+@beeline/auth:build: > @beeline/auth@0.0.0 clean
+@beeline/auth:build: > rm -rf dist
+@beeline/auth:build: 
+@beeline/body:build: cache hit, replaying logs 4dbeb9e7caa10b14
+@beeline/body:build: 
+@beeline/body:build: > @beeline/body@0.0.0 build
+@beeline/body:build: > tsc -p tsconfig.json
+@beeline/body:build: 
+@beeline/body:build: npm notice
+@beeline/body:build: npm notice New major version of npm available! 11.13.0 -> 12.2.1
+@beeline/body:build: npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.1
+@beeline/body:build: npm notice To update run: npm install -g npm@12.2.1
+@beeline/body:build: npm notice
+usebeeline:build: cache hit, replaying logs 5e07ea983e7cc226
+usebeeline:build: 
+usebeeline:build: > usebeeline@0.0.6 build
+usebeeline:build: > node ../../scripts/build-usebeeline-package.mjs
+usebeeline:build: 
+usebeeline:build: 
+usebeeline:build:   packages/usebeeline/dist/usebeeline.mjs  78.0kb
+usebeeline:build: 
+usebeeline:build: ⚡ Done in 12ms
+@beeline/server:build: cache hit, replaying logs e2b331f07636d2d5
+@beeline/server:build: 
+@beeline/server:build: > @beeline/server@0.0.0 build
+@beeline/server:build: > tsc -p tsconfig.json
+@beeline/server:build: 
+
+ Tasks:    7 successful, 7 total
+Cached:    7 cached, 7 total
+  Time:    731ms >>> FULL TURBO
+
+
+> buzzy@0.0.0 dead-code
+> node scripts/check-dead-code.mjs
+
+Dead-code baseline holds: 4 existing findings, 0 introduced.

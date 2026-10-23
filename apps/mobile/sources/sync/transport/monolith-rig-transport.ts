@@ -17,7 +17,7 @@ import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { RepoCandidate } from '@/buzz/room-repo-picker';
-import { MonolithPhoneOperationError, phoneOperationRequestOptions } from './monolith-operation';
+import { monolithPhoneOperation } from './monolith-operation';
 import { sharedLiveConnection } from './live-connection';
 
 export type LiveWireTrace = {
@@ -272,32 +272,11 @@ export class MonolithRigTransport {
     input: unknown,
     options?: { timeoutMs?: number },
   ): Promise<unknown> {
-    const request = phoneOperationRequestOptions(name, input, options);
-    const response = await monolithSession.fetch(
-      `${this.baseUrl}/v1/phone/operations/${name}`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(input),
-      },
-      ...(request ? [request] : []),
+    return monolithPhoneOperation(
+      name as keyof import('@beeline/api-contract/phone').PhoneOperationMap,
+      input as never,
+      { ...options, baseUrl: this.baseUrl },
     );
-    if (!response.ok) {
-      let code = 'request_failed';
-      try {
-        const body = (await response.json()) as { error?: unknown };
-        if (typeof body.error === 'string' && body.error) code = body.error;
-      } catch {}
-      throw new MonolithPhoneOperationError(
-        name as keyof import('@beeline/api-contract/phone').PhoneOperationMap,
-        response.status,
-        code,
-      );
-    }
-    if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
-      void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
-    if (response.status === 204) return undefined;
-    return response.json();
   }
 
   composeMessage(

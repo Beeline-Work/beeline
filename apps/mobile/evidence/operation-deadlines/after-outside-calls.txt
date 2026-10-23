@@ -1,0 +1,10 @@
+✔ server and authentication outside calls carry deadlines (571.553606ms)
+✔ guard catches raw, multiline, member, and HTTP client calls (0.649081ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 834.232942

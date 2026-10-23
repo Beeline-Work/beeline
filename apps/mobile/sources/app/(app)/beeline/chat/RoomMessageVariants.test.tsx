@@ -24,6 +24,7 @@ import { openArtifactViewer } from '@/components/buzz/ArtifactCard';
 import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { publishViewerConversation, removeViewerConversation } from '@/buzz/viewer-conversation';
 
+const swipeMotion = vi.hoisted(() => ({ close: vi.fn(), reset: vi.fn() }));
 const ledgerEntryRender = vi.hoisted(() => vi.fn());
 const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn() }));
 const pictureActions = vi.hoisted(() => ({ showPictureActions: vi.fn() }));
@@ -93,7 +94,10 @@ vi.mock('react-native', async () => {
 vi.mock('react-native-gesture-handler', async () => {
   const ReactModule = await import('react');
   return {
-    Swipeable: (props: any) => ReactModule.createElement('Swipeable', props, props.children),
+    Swipeable: ReactModule.forwardRef((props: any, ref: any) => {
+      ReactModule.useImperativeHandle(ref, () => swipeMotion);
+      return ReactModule.createElement('Swipeable', props, props.children);
+    }),
   };
 });
 
@@ -239,7 +243,8 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
-  return { id: 'message', text: 'hello', isUser: false, timestamp: 1, ...overrides };
+  return { id: 'message', text: 'hello', isUser: false, timestamp: 1,
+    ...(overrides.agentCommand ? {} : { reference: { channelId: 'room-proof', eventId: overrides.id ?? 'message', rootId: overrides.id ?? 'message' } }), ...overrides };
 }
 
 describe('Event disclosure v2', () => {
@@ -1002,6 +1007,48 @@ describe('Room message variant components', () => {
     },
   );
 
+  it('returns an interrupted reply swipe to rest and installs its quote (Reproduction swipe-stuck)', () => {
+    vi.useFakeTimers();
+    swipeMotion.close.mockClear(); swipeMotion.reset.mockClear();
+    const row = message({ id: 'interrupted' });
+    const targets: unknown[] = [];
+    const props = {
+      message: row, participantsHydrated: true, viewerPubkey: 'viewer',
+      speakerWorking: false, continued: false, participantHandles: [],
+      channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
+      onChannelReference: vi.fn(), onCopy: vi.fn(), onRetry: vi.fn(), onDismiss: vi.fn(),
+      codeRoomId: 'room-proof',
+      onReply: (message: ChatDisplayMessage) => {
+        const target = beginReplyTarget(message, [message], {
+          messageId: message.id, authorName: 'Agent', isAgent: true, preview: message.text,
+        }, 'room-proof');
+        if (target) targets.push(target);
+      },
+    };
+    try {
+      const renderer = render(<OrdinaryLedgerMessage {...props} />);
+      const swipe = renderer.root.findByType('Swipeable');
+      // No Open callback: the native opening spring never finishes.
+      act(() => swipe.props.onSwipeableWillOpen?.('right'));
+      expect(targets).toHaveLength(1);
+      act(() => vi.advanceTimersByTime(0));
+      expect(swipeMotion.close).toHaveBeenCalledOnce();
+      expect(targets).toEqual([expect.objectContaining({ preview: 'hello', reference: row.reference })]);
+      // No Close callback either: a keyboard/layout interruption cancels it.
+      act(() => vi.advanceTimersByTime(240));
+      expect(swipeMotion.reset).toHaveBeenCalledOnce();
+      for (const unavailable of [
+        { ...row, reference: undefined },
+        { ...row, isAgentDraft: true },
+        { ...row, reference: { ...row.reference!, channelId: 'another-room' } },
+      ]) {
+        act(() => renderer.update(<OrdinaryLedgerMessage {...props} message={unavailable} />));
+        expect(renderer.root.findByType('Swipeable').props.renderRightActions).toBeUndefined();
+      }
+      expect(targets).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('uses the phone swipe interaction on compact web', () => {
     const onReply = vi.fn();
     const row = message({ id: 'compact-web-reply' });
@@ -1025,7 +1072,7 @@ describe('Room message variant components', () => {
     );
 
     const swipeable = renderer.root.findByType('Swipeable');
-    act(() => swipeable.props.onSwipeableOpen('right'));
+    act(() => { vi.useFakeTimers(); swipeable.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onReply).toHaveBeenCalledWith(row);
     expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(
       0,
@@ -1064,7 +1111,7 @@ describe('Room message variant components', () => {
     ).toBe('Forward message to a new corner');
     const glyph = leftAction.root.findByType('CornerGlyph' as never);
     expect(glyph.props.color).toBe(beelineThemes.obsidian.accent);
-    act(() => swipeable.props.onSwipeableOpen('left'));
+    act(() => { vi.useFakeTimers(); swipeable.props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onForwardToNewCorner).toHaveBeenCalledWith(row);
     expect(onReply).not.toHaveBeenCalled();
   });
@@ -1091,7 +1138,7 @@ describe('Room message variant components', () => {
 
     const swipeable = renderer.root.findByType('Swipeable');
     expect(swipeable.props.renderLeftActions).toBeUndefined();
-    act(() => swipeable.props.onSwipeableOpen('left'));
+    act(() => { vi.useFakeTimers(); swipeable.props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
   });
 
   it('asks a corner proposal as the lettered choice card without replacing reply swipe', () => {
@@ -1138,7 +1185,7 @@ describe('Room message variant components', () => {
     expect(onDecision).toHaveBeenCalledWith(proposal, 'cancel');
 
     const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
-    act(() => swipe.props.onSwipeableOpen('right'));
+    act(() => { vi.useFakeTimers(); swipe.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onReply).toHaveBeenCalledWith(proposal);
   });
 
@@ -1249,7 +1296,7 @@ describe('Room message variant components', () => {
     const narrationSwipe = narrationRow.root.findByProps({
       testID: 'swipe-reply-corner-narration',
     });
-    act(() => narrationSwipe.props.onSwipeableOpen('right'));
+    act(() => { vi.useFakeTimers(); narrationSwipe.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onNarrationReply).toHaveBeenCalledWith(narration);
 
     const onToolReply = vi.fn();
@@ -1257,7 +1304,7 @@ describe('Room message variant components', () => {
       <OrdinaryLedgerMessage {...props} message={tool} onReply={onToolReply} />,
     );
     const toolSwipe = toolRow.root.findByProps({ testID: 'swipe-reply-corner-tool' });
-    act(() => toolSwipe.props.onSwipeableOpen('right'));
+    act(() => { vi.useFakeTimers(); toolSwipe.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
     expect(onToolReply).toHaveBeenCalledWith(tool);
   });
 
@@ -3338,7 +3385,7 @@ describe('Room message variant components', () => {
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
       />);
-      act(() => renderer.root.findByType('Swipeable').props.onSwipeableOpen('right'));
+      act(() => { vi.useFakeTimers(); renderer.root.findByType('Swipeable').props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
       expect(replyTargets).toHaveLength(1);
       expect(replyTargets[0]).toEqual({
         messageId: `agent-${kind}`,

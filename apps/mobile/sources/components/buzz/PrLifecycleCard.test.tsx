@@ -75,8 +75,8 @@ describe('mock A lifecycle rows', () => {
     expect(get('notification-run-cell-pr')).toBeDefined();
     act(() => get('notification-run-expand-run').props.onPress());
     expect(get('notification-run-cell-pr')).toBeUndefined();
-    // A standalone repository record keeps its own section rule.
-    expect(render().get('notification-run-run').props.style.borderTopWidth).toBe(1);
+    // Standalone corner and PR records share the borderless disclosure rhythm.
+    expect(render().get('notification-run-run').props.style?.borderTopWidth ?? 0).toBe(0);
   });
 
   it('keeps the shared check-event disclosure borderless and at least 44 high', () => {

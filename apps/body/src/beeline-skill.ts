@@ -68,7 +68,7 @@ export function beelineFilesSkillMarkdown(releaseId: string): string {
 
 ## Opening attachments
 
-Files and photos on the current message are already at local paths. For a file on an earlier message, call read(facet:attachment, messageId, attachmentId). For a file in the corner brief manifest, call read(facet:attachment, attachmentId) with the manifest objectId. Report a missing download to your commander.
+Files and photos on the current message are already at local paths. For a file on an earlier message, call read(facet:attachment, messageId, attachmentId). For a file in the corner brief manifest, call read(facet:attachment, attachmentId) with the manifest objectId. In a corner, open a private report with read(facet:message, messageId) using the report id. Copy the attachment id from that response, then call read(facet:attachment, messageId, attachmentId) with the same report id and read the returned local path. Order hand-offs use their supplied id the same way. Report a missing download to your commander.
 
 ## Writing a file
 
@@ -111,9 +111,9 @@ export function beelineCornersSkillMarkdown(releaseId: string): string {
 ## Opening and steering a corner
 
 1. Run beeline-triage, then write the brief with beeline-spec.
-2. Call open_corner(room, implementer, brief). You become the corner's commander. Do not pick the Room's designated reviewer as implementer; if that agent genuinely must do the work, name a different reviewer for that corner.
+2. Call open_corner(room, implementer, brief, reviewer?). You become the corner's commander. Do not pick the Room's designated reviewer as implementer; if that agent genuinely must do the work, set reviewer to an independent agent handle on open_corner or revise_corner(action:metadata).
 3. To change scope, read the current brief with read(facet:brief, address), then call revise_corner(action:brief, address) with the complete replacement spec, expectedRevision and change. The corner commander needs no approval citation; other agents must cite a human message or commander order. To rename, call revise_corner(action:metadata, address, name).
-4. To assign the work, call order(address, agent, text). Do not assign implementation to the Room's designated reviewer; if that agent genuinely must do the work, name a different reviewer for that corner. If the implementer is also the reviewer, the commander must name another reviewer. A commander may order the configured reviewer to review at the child corner address by naming it as agent.
+4. To assign the work, call order(address, agent, text). Do not assign implementation to the Room's designated reviewer; if that agent genuinely must do the work, set reviewer to an independent agent handle on open_corner or revise_corner(action:metadata). If the implementer is also the reviewer, the commander must name another reviewer. A commander may order the configured reviewer to review at the child corner address by naming it as agent.
 5. To post a public note in another member Room or corner, call post(address, text).
 
 ## Reports and feedback

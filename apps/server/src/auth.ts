@@ -1,3 +1,4 @@
+import { externalFetch } from '@beeline/auth/external-fetch';
 import {
   createDecipheriv,
   createHash,
@@ -584,7 +585,7 @@ export function verifierFromEnvironment(inProcess: VerifyGitHubOidc): VerifyGitH
       return { subject: `local-${login}`, login, name: login };
     }
     if (!endpoint) return inProcess(token);
-    const response = await fetch(endpoint, {
+    const response = await externalFetch(endpoint, {
       method: 'POST',
       headers: { accept: 'application/json', 'content-type': 'application/json' },
       body: JSON.stringify({ ticket: token }),

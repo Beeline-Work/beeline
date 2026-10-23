@@ -89,6 +89,8 @@ beforeAll(async () => {
       );
   phone = new PhoneService(db, 'http://test');
   daemon = new DaemonService(db, new LiveHub());
+  // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
+  Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {

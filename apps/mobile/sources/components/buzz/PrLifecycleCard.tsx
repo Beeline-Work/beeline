@@ -40,7 +40,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   if (repositoryRun)
     return (
       <View
-        style={anchored || items.length > 1 ? undefined : styles.run}
+        style={!anchored && items.length === 1 && items[0].kind === 'issue' ? styles.issueRun : undefined}
         testID={testID ?? `notification-run-${message.id}`}
       >
         {items.length > 1 ? (
@@ -255,7 +255,7 @@ export function RepositoryLifecycleRow({
 }
 
 const styles = StyleSheet.create(({ buzz }) => ({
-  run: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
+  issueRun: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
   header: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: buzz.space.sm },
   summary: { ...buzz.type.meta, color: buzz.textSecondary, flex: 1 },
   cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },

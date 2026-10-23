@@ -1,3 +1,4 @@
+import { externalFetch } from '@beeline/auth/external-fetch';
 /**
  * The Coinbase CDP seam: ONE interface every wallet call goes through, plus
  * the real client over `api.cdp.coinbase.com`.
@@ -293,7 +294,7 @@ export class CdpWalletClient implements CdpWalletSource {
   private async devRequest<T>(method: string, path: string, body?: unknown): Promise<T> {
     const fullPath = `${API_BASE}${path}`;
     const jwt = cdpJwt(this.credentials, method, fullPath);
-    const response = await fetch(`https://${CDP_HOST}${fullPath}`, {
+    const response = await externalFetch(`https://${CDP_HOST}${fullPath}`, {
       method,
       headers: { authorization: `Bearer ${jwt}`, 'content-type': 'application/json' },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -321,7 +322,7 @@ export class CdpWalletClient implements CdpWalletSource {
       throw new Error('CDP wallet secret not configured: COINBASE_CDP_WALLET_SECRET is required for user operations');
     }
     const walletJwt = walletAuthJwt(this.walletKey, method, fullPath, body);
-    const response = await fetch(`https://${CDP_HOST}${fullPath}`, {
+    const response = await externalFetch(`https://${CDP_HOST}${fullPath}`, {
       method,
       headers: {
         authorization: `Bearer ${jwt}`,

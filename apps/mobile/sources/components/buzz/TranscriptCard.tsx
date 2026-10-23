@@ -863,7 +863,7 @@ const styles = StyleSheet.create((theme) => {
       marginTop: metric.footerTop,
       paddingVertical: metric.footerVertical,
       paddingHorizontal: metric.side,
-      borderTopWidth: 1,
+      borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: card.border,
       flexDirection: 'row',
       alignItems: 'center',

@@ -70,7 +70,7 @@ function Card({ entry, desktop }: { entry: ChatListItem; desktop: boolean }) {
   if (desktop) return <View testID={`card-${entry.room.id}`}>{row}</View>;
   // channels.tsx rowSurface + roomCell: the card owns the fill, border, and inset.
   return (
-    <View style={{ paddingHorizontal: t.roomCard.inset, paddingBottom: t.roomCard.gap }}>
+    <View style={{ paddingHorizontal: t.roomList.edge, paddingBottom: t.roomCard.gap }}>
       <View
         testID={`card-${entry.room.id}`}
         style={{

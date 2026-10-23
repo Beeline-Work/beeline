@@ -11,6 +11,8 @@ import { chromeStrokeWidth } from './MembersGlyph';
 /** The open box, then the tray's lip: a floor with a dip where things land. */
 const BOX = 'M4.5 5.5h15v13h-15z';
 const LIP = 'M4.5 14h4l2 3h3l2-3h4';
+/** Measured: at the 22 px header size the box's ink ends this far inside its 44 px target. */
+export const HEADER_TRAY_INK_INSET = 14.5;
 
 /**
  * The Room-list tray mark: the one way into Needs you and Saved, sized and

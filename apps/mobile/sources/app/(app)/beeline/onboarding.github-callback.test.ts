@@ -131,7 +131,7 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0 }),
 }));
 vi.mock('react-native-unistyles', () => ({
-  StyleSheet: { create: (factory: any) => factory({ buzz: { type: { sectionHead: {}, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 } }, space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 } }, colors: {} }) },
+  StyleSheet: { create: (factory: any) => factory({ buzz: { type: { sectionHead: {}, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 } }, space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 }, roomList: { edge: 20 } }, colors: {} }) },
   useUnistyles: () => ({ theme: { buzz: { textDisabled: '#777' } } }),
 }));
 vi.mock('react-native', async () => {

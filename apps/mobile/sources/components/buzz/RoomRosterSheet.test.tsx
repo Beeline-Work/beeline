@@ -41,6 +41,7 @@ const theme = vi.hoisted(() => ({
     },
     space: { xs: 4, sm: 8, md: 16, lg: 24 },
     layout: { row: 64, sectionGap: 24 },
+    roomList: { edge: 20 },
   },
 }));
 vi.mock('react-native-unistyles', () => ({

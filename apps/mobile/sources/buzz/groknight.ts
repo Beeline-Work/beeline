@@ -45,9 +45,12 @@ const shared = {
   // the body/meta roles.
   roomCard: {
     cornerRadius: 14,
-    inset: 16,
     gap: 8,
   },
+  // One Room list edge on phone and desktop (approved Room list margins mock):
+  // labels, filters, cards and the ink of the edge icons sit this far from the
+  // screen or sidebar edge. Other screens keep their own insets.
+  roomList: { edge: 20 },
   agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
 } as const;
 

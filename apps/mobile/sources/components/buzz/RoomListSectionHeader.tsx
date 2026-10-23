@@ -33,9 +33,10 @@ export function RoomListSectionHeader({
   title: string;
   /**
    * Content already supplies its own screen inset; `row` aligns with
-   * SettingsRow titles; `sheet` aligns with sheet rows.
+   * SettingsRow titles; `sheet` aligns with sheet rows; `roomList` puts the
+   * label and the + ink on the Room list edge.
    */
-  inset?: 'screen' | 'content' | 'row' | 'sheet';
+  inset?: 'screen' | 'content' | 'row' | 'sheet' | 'roomList';
   /** Flush when the surrounding section already supplies its vertical gap. */
   spacing?: 'section' | 'flush';
   /**
@@ -61,6 +62,7 @@ export function RoomListSectionHeader({
         inset === 'content' && styles.contentInset,
         inset === 'row' && styles.rowInset,
         inset === 'sheet' && styles.sheetInset,
+        inset === 'roomList' && (tapLineHeight ? styles.roomListCompactInset : styles.roomListInset),
         surface === 'sheet' && styles.sheetSurface,
         !tapLineHeight && styles.phoneSpacing,
         onAction && !tapLineHeight && styles.actionSpacing,
@@ -131,6 +133,9 @@ function SectionAddGlyph({ color }: { color: string }) {
 const ACTION_GLYPH = 24;
 const ACTION_STROKE = 2.4;
 const LABEL_LINE = typeRoles.sectionLabel.lineHeight;
+/** Measured: the plus's ink ends this far inside its glyph box. */
+const ACTION_GLYPH_INK_INSET = 3.5;
+const ACTION_INK_INSET = (44 - ACTION_GLYPH) / 2 + ACTION_GLYPH_INK_INSET;
 const ACTION_HIT_SLOP = {
   top: (44 - ACTION_GLYPH) / 2,
   bottom: (44 - ACTION_GLYPH) / 2,
@@ -156,6 +161,14 @@ const styles = StyleSheet.create((theme) => {
     contentInset: { paddingHorizontal: 0 },
     rowInset: { paddingHorizontal: hull.space.sm },
     sheetInset: { paddingHorizontal: HULL_SHEET_INSET },
+    roomListInset: {
+      paddingLeft: hull.roomList.edge,
+      paddingRight: hull.roomList.edge - ACTION_INK_INSET,
+    },
+    roomListCompactInset: {
+      paddingLeft: hull.roomList.edge,
+      paddingRight: hull.roomList.edge - ACTION_GLYPH_INK_INSET,
+    },
     sheetSurface: { paddingTop: hull.space.md, backgroundColor: 'transparent' },
     flushSpacing: { paddingTop: 0 },
     sectionHeaderText: {

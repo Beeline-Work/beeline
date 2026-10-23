@@ -64,9 +64,11 @@ export const DESIGN_BASELINE_REASONS: Readonly<Partial<Record<DesignRule, Readon
   },
   spacing: {
     'app/(app)/beeline/channels.tsx':
-      'The empty Room list clears the 80-point compose button that floats over it.',
+      'The empty Room list clears the 80-point compose button that floats over it; the approved Room list margins mock puts icon ink, not icon targets, on the 20-point Room list edge (theme.buzz.roomList.edge), so the padding is the edge less the measured ink inset of its mark.',
     'app/(app)/beeline/onboarding.tsx':
       'The focused input thickens its border by 1, and the padding gives that 1 back so the text does not move.',
+    'components/buzz/ConversationRow.tsx':
+      'Desktop rows: the approved Room list margins mock puts the status dot ink and the name on the 20-point Room list edge (theme.buzz.roomList.edge), so the padding is the edge less the measured ink inset of its mark, and the 1-point selected rule comes out of the left padding.',
     'components/buzz/CornerOpenedMarker.tsx':
       'Reserves the 36-point Ledger marginalia column the timestamp hangs in (LEDGER_MARGINALIA_WIDTH).',
     'components/buzz/IndexRow.tsx':
@@ -75,6 +77,12 @@ export const DESIGN_BASELINE_REASONS: Readonly<Partial<Record<DesignRule, Readon
       'Reserves the 36-point marginalia column the timestamp hangs in, plus space.sm.',
     'components/buzz/NeedsYouCell.tsx':
       'Clears the absolutely placed 44-point dismiss button and its 4-point inset.',
+    'components/buzz/RoomListSectionHeader.tsx':
+      'Room list inset: the approved Room list margins mock puts icon ink, not icon targets, on the 20-point Room list edge (theme.buzz.roomList.edge), so the padding is the edge less the measured ink inset of its mark.',
+    'components/buzz/RoomListToolbar.tsx':
+      'Room list toolbar: the approved Room list margins mock puts icon ink, not icon targets, on the 20-point Room list edge (theme.buzz.roomList.edge), so the padding is the edge less the measured ink inset of its mark.',
+    'components/SidebarView.tsx':
+      'Desktop workspace header: the approved Room list margins mock puts icon ink, not icon targets, on the 20-point Room list edge (theme.buzz.roomList.edge), so the padding is the edge less the measured ink inset of its mark.',
     'components/buzz/TranscriptScrubber.tsx':
       'Centres the 3-point bar under the 6-point handle: half the width difference.',
     'components/buzz/TurnProgressLine.tsx':

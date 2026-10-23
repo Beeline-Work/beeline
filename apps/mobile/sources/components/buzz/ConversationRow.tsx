@@ -126,6 +126,7 @@ export function ConversationRow({
         style={({ pressed }) => [
           styles.rowPressable,
           desktop && styles.desktopRow,
+          desktop && selected && styles.desktopSelectedRow,
           !desktop && styles.mobileRow,
           item.unread && styles.unreadRow,
           pressed && styles.pressed,
@@ -194,6 +195,10 @@ export function ConversationRow({
   );
 }
 
+/** The 8-point status dot is centred in its 14-point cell. */
+const STATUS_DOT_INK_INSET = (14 - 8) / 2;
+const SELECTED_RULE_WIDTH = 1;
+
 const styles = StyleSheet.create((theme) => ({
   liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   row: {
@@ -207,7 +212,14 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     gap: theme.buzz.space.sm,
   },
-  desktopRow: { minHeight: 62, paddingLeft: theme.buzz.space.lg },
+  // The name sits on the Room list edge and the status dot's ink ends on it.
+  desktopRow: {
+    minHeight: 62,
+    paddingLeft: theme.buzz.roomList.edge,
+    paddingRight: theme.buzz.roomList.edge - STATUS_DOT_INK_INSET,
+  },
+  // The selected accent rule takes its width from the padding, not the name.
+  desktopSelectedRow: { paddingLeft: theme.buzz.roomList.edge - SELECTED_RULE_WIDTH },
   mobileRow: { minHeight: 68, paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm },
   copy: { flex: 1, minWidth: 0 },
   heading: { minHeight: 23, flexDirection: 'row', alignItems: 'center' },
@@ -267,7 +279,7 @@ const styles = StyleSheet.create((theme) => ({
   mobileCornerToggle: { right: 14, bottom: 14 },
   selected: {
     backgroundColor: theme.buzz.bgHighlight,
-    borderLeftWidth: 1,
+    borderLeftWidth: SELECTED_RULE_WIDTH,
     borderLeftColor: theme.buzz.accent,
   },
   pressed: { backgroundColor: theme.buzz.bgPressed },

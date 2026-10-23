@@ -1,6 +1,7 @@
-import { TrayGlyph } from '@/components/buzz/TrayGlyph';
+import { HEADER_TRAY_INK_INSET, TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
+import { InlineRow } from '@/components/buzz/IndexRow';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
@@ -85,9 +86,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.groupped.background,
   },
   desktopWorkspaceHeader: {
-    paddingHorizontal: theme.buzz.space.md,
+    paddingLeft: theme.buzz.roomList.edge,
+    // The tray's ink, not its target, ends on the Room list edge.
+    paddingRight: theme.buzz.roomList.edge - HEADER_TRAY_INK_INSET,
     paddingTop: 8,
     paddingBottom: 8,
+    alignItems: 'center',
+    gap: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.divider,
   },
@@ -140,7 +145,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.divider,
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
-  desktopWorkspaceHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   membersGlyph: { color: theme.buzz.ledgerQuiet },
   trayGlyph: { color: theme.buzz.accent, backgroundColor: theme.buzz.bgBase },
   desktopWorkspaceHeaderActions: {
@@ -484,29 +488,27 @@ export const SidebarView = React.memo(function SidebarView() {
         testID="desktop-navigation-pane"
       >
         {isDesktop ? (
-          <View style={styles.desktopWorkspaceHeader}>
-            <View style={styles.desktopWorkspaceHeaderRow}>
-              <CommunitySwitcherTrigger
-                community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
-                expanded={workspaceSwitcherOpen}
-                onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
-                attention={otherWorkspaceNeedsAttention}
-                pickerTitle={WORKSPACES_LABEL}
-              />
-              <View style={styles.desktopWorkspaceHeaderActions}>
-                {workspaceId && (
-                  <>
-                  <Button label="" iconOnly variant="quiet" accessibilityLabel="Members" testID="workspace-members"
-                    icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
-                    onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
-                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
-                  testID="desktop-tray" needsYouCount={needsYouCount} filled={traySelected}
-                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' } } as never)} />
-                  </>
-                )}
-              </View>
+          <InlineRow style={styles.desktopWorkspaceHeader}>
+            <CommunitySwitcherTrigger
+              community={activeWorkspace ? workspaceRailItem(activeWorkspace) : null}
+              expanded={workspaceSwitcherOpen}
+              onPress={() => setWorkspaceSwitcherOpen((open) => !open)}
+              attention={otherWorkspaceNeedsAttention}
+              pickerTitle={WORKSPACES_LABEL}
+            />
+            <View style={styles.desktopWorkspaceHeaderActions}>
+              {workspaceId && (
+                <>
+                <Button label="" iconOnly variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+                  icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
+                  onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
+              <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
+                testID="desktop-tray" needsYouCount={needsYouCount} filled={traySelected}
+                onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' } } as never)} />
+                </>
+              )}
             </View>
-          </View>
+          </InlineRow>
         ) : (
           <View style={styles.workspaceBlock}>
             <ScrollView
@@ -591,6 +593,7 @@ export const SidebarView = React.memo(function SidebarView() {
                   {!query.trim() && (
                     <RoomListSectionHeader
                       title={section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'}
+                      inset="roomList"
                       tapLineHeight
                       actionTestID={
                         section.kind === 'rooms' ? 'desktop-new-room' : 'desktop-new-direct-message'

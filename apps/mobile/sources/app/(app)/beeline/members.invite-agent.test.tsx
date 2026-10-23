@@ -75,6 +75,7 @@ const unistylesTheme = vi.hoisted(() => ({
       machine: { fontSize: 13 },
     },
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
+    roomList: { edge: 20 },
     layout: { row: 64, sectionGap: 24 },
     radius: 3,
     dialogDanger: '#c4544d',

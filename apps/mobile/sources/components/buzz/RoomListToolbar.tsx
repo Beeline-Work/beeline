@@ -74,7 +74,7 @@ export function RoomListToolbar({
           accessibilityLabel={`${value} conversations`}
           accessibilityState={{ selected: value === filter }}
           onPress={() => onFilter(value)}
-          style={[styles.filter, !desktop && styles.mobileFilter, desktop && styles.desktopFilter]}
+          style={[styles.filter, desktop && styles.desktopFilter]}
           testID={`room-filter-${value}`}
         >
           <Text style={[styles.label, value === filter && styles.selected]}>
@@ -103,7 +103,7 @@ export function RoomListToolbar({
   return (
     <View>
       <InlineRow
-        style={[styles.toolbar, !desktop && styles.mobileToolbar, desktop && styles.desktopToolbar]}
+        style={styles.toolbar}
       >
         {filters}
         {actions}
@@ -113,24 +113,26 @@ export function RoomListToolbar({
   );
 }
 
+/** Measured: the search mark's ink ends this far inside its 44 px target. */
+const SEARCH_INK_INSET = 13.5;
+
 const styles = StyleSheet.create((theme) => ({
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.buzz.space.sm,
+    paddingLeft: theme.buzz.roomList.edge,
+    paddingRight: theme.buzz.roomList.edge - SEARCH_INK_INSET,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },
-  mobileToolbar: { paddingHorizontal: theme.buzz.space.md },
   filters: { flexDirection: 'row', gap: theme.buzz.space.sm, alignItems: 'center' },
-  desktopToolbar: { paddingLeft: theme.buzz.space.md },
   desktopFilters: {
     flex: 1,
     gap: theme.buzz.space.md,
   },
-  filter: { minHeight: 44, minWidth: 32, alignItems: 'center', justifyContent: 'center' },
+  // Labels start on the edge whatever their count width.
+  filter: { minHeight: 44, minWidth: 32, alignItems: 'flex-start', justifyContent: 'center' },
   desktopFilter: { minHeight: 30, position: 'relative' },
-  mobileFilter: { alignItems: 'flex-start' },
   action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   label: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   count: { color: theme.buzz.ledgerQuiet },

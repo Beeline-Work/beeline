@@ -211,7 +211,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomLeftRadius: hull.roomCard.cornerRadius,
       borderBottomRightRadius: hull.roomCard.cornerRadius,
     },
-    roomCell: { paddingHorizontal: hull.roomCard.inset },
+    roomCell: { paddingHorizontal: hull.roomList.edge },
     roomCellLast: { paddingBottom: hull.roomCard.gap },
     chatActions: { flexDirection: 'row', minHeight: ROW_HEIGHT, backgroundColor: hull.bgHighlight },
     swipeAction: {

@@ -31,7 +31,7 @@ const root=createRoot(document.getElementById('root'));
 root.render(<View style={{height:'100vh',backgroundColor:hull.bgTerminal}}>
  <View style={{padding:16}}><Text style={{...hull.type.body,color:hull.textPrimary}}>lunchboxfortwo</Text><Text style={{...hull.type.body,color:hull.textPrimary}}>Open corners for these changes.</Text><CornerOpenedMarkers message={message} onOpenCorner={id=>{document.getElementById('result').textContent=id;}}/></View>
  <View testID="transcript" style={{flex:1,overflow:'hidden'}}>{Array.from({length:100},(_,i)=><Text key={i} style={{...hull.type.body,color:hull.textPrimary}}>Transcript {i} · text remains readable while idle</Text>)}</View>
- <View testID="composer-stack" style={chrome.stack}><TurnBandSlot thinking={state==='working'} testID="hanging-turn-chrome">{state==='working'?<TurnProgressLine label="Ruby thinking…"/>:state==='settled'?<TurnSettledLine line="Ruby finished · 42s"/>:null}</TurnBandSlot><View testID="composer" style={[chrome.composerRow,{height:70}]}><Text style={{...hull.type.body,color:hull.textPrimary}}>Tag an agent with @</Text></View></View>
+ <View testID="composer-stack" style={chrome.stack}><TurnBandSlot testID="hanging-turn-chrome">{state==='working'?<TurnProgressLine label="Ruby thinking…"/>:state==='settled'?<TurnSettledLine line="Ruby finished · 42s"/>:null}</TurnBandSlot><View testID="composer" style={[chrome.composerRow,{height:70}]}><Text style={{...hull.type.body,color:hull.textPrimary}}>Tag an agent with @</Text></View></View>
 </View>);
 `,
 );

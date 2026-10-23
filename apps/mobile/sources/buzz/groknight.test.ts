@@ -195,7 +195,7 @@ describe('Borrowing Calm type roles and spacing', () => {
         ...role('SpaceGrotesk-Medium', 10, 15, 2),
         textTransform: 'uppercase',
       },
-      sectionLabel: role('SpaceGrotesk-Medium', 13, 19, 2),
+      sectionLabel: role('SpaceGrotesk-Medium', 12, 17, 2),
       sectionCount: role('SpaceGrotesk-Regular', 15, 22, 0),
       machine: role('IBMPlexMono-Regular', 13, 19, 0),
     });

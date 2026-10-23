@@ -6583,7 +6583,7 @@ export function BuzzChatSurface({
                 lets the transcript keep every touch the line is not using.
                 Desktop keeps the slot inside inputBar. */}
                 {!desktopExperience && (
-                  <TurnBandSlot thinking={Boolean(composerAck)} testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
+                  <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
                     {composerAck ? (
                       <TurnProgressLine
                         label={composerAck.label}

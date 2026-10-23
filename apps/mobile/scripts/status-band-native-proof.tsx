@@ -73,7 +73,7 @@ function StatusBandScene() {
         onJumpToNewest={() => setJumps(count => count + 1)} />
     </View>
     <View style={chrome.stack}>
-      <TurnBandSlot thinking={Boolean(ack)} testID="hanging-turn-chrome" onTopInset={(height) => { setTopInset(height); console.log("STATUS_PROOF_SLOT", JSON.stringify({state, height, base: chrome.hangingTurnChrome, coverage: chrome.turnChromeCoverage})); }}>
+      <TurnBandSlot testID="hanging-turn-chrome" onTopInset={(height) => { setTopInset(height); console.log("STATUS_PROOF_SLOT", JSON.stringify({state, height, base: chrome.hangingTurnChrome, coverage: chrome.turnChromeCoverage})); }}>
         {ack ? <TurnProgressLine label={ack.label} startedAt={ack.startedAt} /> : null}
         {state === 'settled' ? <TurnSettledLine line="Ruby finished · 42s" /> : null}
       </TurnBandSlot>

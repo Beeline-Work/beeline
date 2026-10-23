@@ -816,6 +816,17 @@ describe('Room deck live path', () => {
     });
   });
 
+  it('heads Rooms and Direct messages without a row count', async () => {
+    const renderer = await mountDeck();
+    const list = renderer.root.find((node: any) => node.type === 'SectionList');
+    for (const [kind, title] of [['rooms', 'Rooms'], ['messages', 'Direct messages']]) {
+      const header = list.props.renderSectionHeader({ section: { kind, title, data: [{}, {}, {}] } });
+      expect(header.props.title).toBe(title);
+      expect(header.props.count).toBeUndefined();
+    }
+    act(() => renderer.unmount());
+  });
+
   it('lists search matches without section heads', async () => {
     const renderer = await mountDeck();
     const list = () => renderer.root.find((node: any) => node.type === 'SectionList');

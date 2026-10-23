@@ -78,6 +78,11 @@ describe('empty corner starter', () => {
       tree = create(<EmptyLedgerState variant="corner" agentHandle={agentHandle} onPress={onPress} />);
     });
     const button = tree.root.findByType('Pressable');
+    const tagLabel = agentHandle ? 'Tag @beebee to start' : 'Tag an agent to start';
+    const visibleText = tree.root.findAll((node: any) => node.type === 'Text').map(textOf);
+    expect(visibleText.filter((text: string) => text === tagLabel)).toHaveLength(1);
+    expect(visibleText).toContain('Nothing in the log yet');
+    expect(textOf(button)).toBe(tagLabel);
     expect(button.props.accessibilityLabel).toBe(
       `${agentHandle ? 'Tag @beebee to start' : 'Tag an agent to start'}. Agents here reply only when tagged.`,
     );

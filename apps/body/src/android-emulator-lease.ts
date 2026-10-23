@@ -114,6 +114,15 @@ export async function runLeasedEmulator(args: string[], env: NodeJS.ProcessEnv =
   const privateRoot = env.BEELINE_ANDROID_INSTANCE_ROOT;
   const baseAvdHome = env.BEELINE_ANDROID_BASE_AVD_HOME;
   const emulator = env.BEELINE_ANDROID_EMULATOR_BINARY;
+  if (emulator && !args.includes('-avd') && args.some((arg) =>
+    arg === '-help' || arg === '--help' || arg.startsWith('-help-') ||
+    arg === '-list-avds' || arg === '-version')) {
+    return new Promise<number>((done, reject) => {
+      const child = spawn(emulator, args, { env, stdio: 'inherit' });
+      child.once('error', reject);
+      child.once('exit', (code, signal) => done(signal ? 1 : (code ?? 1)));
+    });
+  }
   if (!leaseRoot || !privateRoot || !baseAvdHome || !emulator)
     throw new Error('Beeline emulator lease environment is unavailable');
   const avdIndex = args.indexOf('-avd');

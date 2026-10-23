@@ -88,6 +88,23 @@ async function connect(port: number, protocol: string, options: WebSocket.Client
 const machine = (port: number, options?: WebSocket.ClientOptions) =>
   connect(port, MACHINE_SOCKET_PROTOCOL, options);
 
+it('correlates a registration exception without logging the daemon token', async () => {
+  const tokenAuth = auth();
+  vi.mocked(tokenAuth.authenticateDaemon).mockRejectedValue(new Error('database checkout deadline'));
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  try {
+    const { port } = await start({ auth: tokenAuth });
+    const client = await machine(port);
+    client.send({ type: 'register', agentId: AGENT_A, token: 'bdt_private_fixture' });
+    expect(await client.next(frame => frame.type === 'register-refused')).toMatchObject({
+      agentId: AGENT_A, code: 'registration_failed',
+    });
+    const entry = error.mock.calls.find(([label]) => label === '[live] agent registration failed');
+    expect(JSON.parse(String(entry?.[1]))).toMatchObject({ agentId: AGENT_A, stage: 'authentication' });
+    expect(JSON.stringify(entry)).not.toContain('bdt_private_fixture');
+  } finally { error.mockRestore(); }
+});
+
 async function register(
   client: Awaited<ReturnType<typeof machine>>,
   agentId: string,

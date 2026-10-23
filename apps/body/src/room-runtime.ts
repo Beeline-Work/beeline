@@ -576,6 +576,17 @@ export class RoomRuntimeCoordinator {
   private readonly archiveCleanupAbandoned = new Set<string>();
   private preservationFlight?: Promise<void>;
   private reconciliationProgressListener?: () => void | Promise<void>;
+  private reconciliationStage = 'idle';
+  private reconciliationStageAt = Date.now();
+
+  reconciliationDiagnostics() {
+    return { stage: this.reconciliationStage, elapsedMs: Date.now() - this.reconciliationStageAt };
+  }
+
+  private noteReconciliationStage(stage: string): void {
+    this.reconciliationStage = stage;
+    this.reconciliationStageAt = Date.now();
+  }
   private readonly storageMaintenanceRooms = new Set<string>();
   private readonly storageDeferredStarts = new Set<string>();
   private readonly stopStorageAvailable: () => void;
@@ -842,9 +853,18 @@ export class RoomRuntimeCoordinator {
   }
 
   async reconcile(onServing?: () => void | Promise<void>): Promise<WorkspaceMembershipStatus> {
+    try {
+      return await this.reconcileRooms(onServing);
+    } finally {
+      this.noteReconciliationStage('idle');
+    }
+  }
+
+  private async reconcileRooms(onServing?: () => void | Promise<void>): Promise<WorkspaceMembershipStatus> {
     if (this.stopped) return 'member';
     const existingRooms = new Set(this.running.keys());
     this.knownStorageStates = [];
+    this.noteReconciliationStage('bootstrap');
     const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
       agentId: this.agent.publicKey,
     });
@@ -866,6 +886,7 @@ export class RoomRuntimeCoordinator {
     // Their intake runs independently while the rest of this sweep continues.
     const pendingRooms = [...(bootstrap.pendingRooms ?? [])].sort((left, right) =>
       Number(Boolean(left.parentRoomId)) - Number(Boolean(right.parentRoomId)));
+    this.noteReconciliationStage('pending-room-intake');
     await mapWithConcurrency(pendingRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
       if (this.stopped) return;
       // A bootstrap can cover several Workspaces; this core serves only its own.
@@ -882,6 +903,7 @@ export class RoomRuntimeCoordinator {
         console.error(`[thin-core] pending Room ${room.roomId} start failed:`, error);
       }
     });
+    this.noteReconciliationStage('repository-revisions');
     for (const room of topLevelRooms) {
       const revision = room.repositoryRevision;
       if (revision === undefined) continue;
@@ -902,6 +924,7 @@ export class RoomRuntimeCoordinator {
     }
     const desiredTopRooms = topLevelRooms.map((room) => room.roomId);
     const desired = new Set(desiredTopRooms);
+    this.noteReconciliationStage('room-intake');
     await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
       if (this.stopped) return;
       if (this.running.has(roomId)) return;
@@ -918,6 +941,7 @@ export class RoomRuntimeCoordinator {
     });
     const desiredCorners = new Map<string, DesiredCorner>();
     const archivedCorners = new Map<string, { cornerId: string; parentRoomId: string }>();
+    this.noteReconciliationStage('corner-listing');
     await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
       if (this.stopped) return;
       try {
@@ -963,6 +987,7 @@ export class RoomRuntimeCoordinator {
     for (const roomId of desiredTopRooms) this.surfaceHealth.discover(roomId, 'room');
     for (const cornerId of desiredCorners.keys()) this.surfaceHealth.discover(cornerId, 'corner');
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
+    this.noteReconciliationStage('corner-intake');
     await mapWithConcurrency(
       [...desiredCorners.values()],
       ROOM_JOIN_CONCURRENCY,
@@ -974,14 +999,17 @@ export class RoomRuntimeCoordinator {
     // Readiness belongs to durable command intake, never local retention work.
     await onServing?.();
     if (this.stopped) return 'member';
+    this.noteReconciliationStage('corner-reaping');
     await this.retryPendingCornerReaps(desired);
     if (this.stopped) return 'member';
+    this.noteReconciliationStage('archived-corner-storage');
     await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
     if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
     }
+    this.noteReconciliationStage('departed-room-shutdown');
     for (const [channelId, running] of [...this.running]) {
       if (desired.has(channelId)) continue;
       const confirmations = (this.roomRemovalConfirmations.get(channelId) ?? 0) + 1;
@@ -990,6 +1018,7 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
+    this.noteReconciliationStage('room-storage');
     await this.sweepRoomPrivateStorage(bootstrap.storageRooms ?? []);
     if (this.stopped) return 'member';
     // Archived corners are discovered for local cleanup through their exact

@@ -9,6 +9,18 @@ import brand from './brand.json';
  * never for narration or human messages.
  */
 const ROOM_LIST_EDGE = 20;
+// The Room list edge icons share one centre line: the centre of the search
+// mark when its ink ends on the edge. Search is the widest mark, so no ink
+// crosses the edge. Its 21-point Ionicons search-outline glyph inks 44 to 466
+// of its 512-unit advance.
+const SEARCH_SIZE = 21;
+const SEARCH_INK_START = 44;
+const SEARCH_INK_END = 466;
+const ROOM_LIST_ICON_CENTRE =
+  ROOM_LIST_EDGE + (SEARCH_SIZE * (SEARCH_INK_END - SEARCH_INK_START)) / 512 / 2;
+// The tray and + inks are centred in their boxes, so a box's end padding is
+// the centre line less half the box.
+const roomListIconEnd = (box: number) => ROOM_LIST_ICON_CENTRE - box / 2;
 
 const shared = {
   brandMark: brand.mark,
@@ -50,20 +62,21 @@ const shared = {
     gap: 8,
   },
   // One Room list edge on phone and desktop (approved Room list margins mock):
-  // labels, filters, cards and the ink of the edge icons sit this far from the
-  // screen or sidebar edge. Other screens keep their own insets. The *End and
-  // selectedStart paddings put a mark's ink, not its target, on the edge: the
-  // edge less how far the ink sits inside its box (measured).
+  // labels, filters and cards sit this far from the screen or sidebar edge.
+  // Other screens keep their own insets. The tray, search and + share one
+  // centre line (approved Room list icons mock, option A): the *End paddings
+  // put each mark's centre, not its target edge, on that line; dotEnd and
+  // selectedStart put ink on the edge.
   roomList: {
     edge: ROOM_LIST_EDGE,
-    // 22-point tray: its box ink ends 14.5 inside its 44-point target.
-    trayEnd: ROOM_LIST_EDGE - 14.5,
-    // Search mark: its ink ends 13.5 inside its 44-point target.
-    searchEnd: ROOM_LIST_EDGE - 13.5,
-    // Phone +: 10 of target outside the 24-point glyph, then 3.5 inside it.
-    addEnd: ROOM_LIST_EDGE - 13.5,
-    // Desktop +: the glyph box ends on the padding; its ink is 3.5 inside.
-    compactAddEnd: ROOM_LIST_EDGE - 3.5,
+    // Tray and phone +: the mark is centred in a 44-point target.
+    trayEnd: roomListIconEnd(44),
+    addEnd: roomListIconEnd(44),
+    // Search: the glyph is centred in a 44-point target; its ink ends
+    // 46 units inside its advance, on the edge.
+    searchEnd: ROOM_LIST_EDGE - (44 - SEARCH_SIZE) / 2 - (SEARCH_SIZE * (512 - SEARCH_INK_END)) / 512,
+    // Desktop +: the 24-point glyph box, centred on its ink, ends on the padding.
+    compactAddEnd: roomListIconEnd(24),
     // Desktop rows: the 8-point status dot is centred in its 14-point cell.
     dotEnd: ROOM_LIST_EDGE - 3,
     // A selected desktop row's 1-point accent rule comes out of its padding.

@@ -87,7 +87,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   desktopWorkspaceHeader: {
     paddingLeft: theme.buzz.roomList.edge,
-    // The tray's ink, not its target, ends on the Room list edge.
+    // The tray's centre, not its target, sits on the Room list icon line.
     paddingRight: theme.buzz.roomList.trayEnd,
     paddingTop: 8,
     paddingBottom: 8,

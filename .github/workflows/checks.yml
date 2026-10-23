@@ -407,6 +407,7 @@ jobs:
         run: >-
           npm test --prefix apps/mobile -- --run
           sources/buzz/transition-work.test.ts
+          sources/buzz/room-transition-work.test.ts
           sources/buzz/surface-registry.test.ts
           'sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts'
 

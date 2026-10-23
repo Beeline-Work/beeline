@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
+import { SurfaceRegistry } from '@/buzz/surface-registry';
+import { roomTransitionWork } from '@/buzz/room-transition-work';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
-import { visibleLiveOverlays } from '@beeline/buzz-client';
+import { SurfaceResponseCache, visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
@@ -13,6 +16,8 @@ type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
 const controls = vi.hoisted(() => ({
   focused: true,
+  navigationListeners: new Map<string, Set<() => void>>(),
+  interactionTasks: new Set<() => void>(),
   focusListeners: new Set<() => void>(),
   surfaceRenders: 0,
   cached: null as RoomView | null,
@@ -101,8 +106,22 @@ vi.mock('expo-router', () => ({
   router: { replace: vi.fn() },
   useLocalSearchParams: () => ({ channelId: 'room-a' }),
 }));
-const navigation = { isFocused: () => controls.focused, addListener: () => () => undefined };
-vi.mock('@/buzz/room-transition-work', () => ({ roomTransitionWork: { begin: () => () => undefined } }));
+const navigation = {
+  isFocused: () => controls.focused,
+  addListener: (name: string, listener: () => void) => {
+    const listeners = controls.navigationListeners.get(name) ?? new Set<() => void>();
+    listeners.add(listener);
+    controls.navigationListeners.set(name, listeners);
+    return () => { listeners.delete(listener); };
+  },
+};
+vi.mock('@/buzz/room-transition-work', async () => {
+  const { TransitionWork } = await import('@/buzz/transition-work');
+  return { roomTransitionWork: new TransitionWork((work) => {
+    controls.interactionTasks.add(work);
+    return () => { controls.interactionTasks.delete(work); };
+  }) };
+});
 vi.mock('@react-navigation/native', () => ({
   useNavigation: () => navigation,
   useIsFocused: () => React.useSyncExternalStore(
@@ -406,6 +425,8 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   controls.focused = true;
   controls.focusListeners.clear();
+  controls.navigationListeners.clear();
+  controls.interactionTasks.clear();
   controls.surfaceRenders = 0;
   controls.cached = null;
   controls.hotViewer = false;
@@ -478,6 +499,41 @@ describe('reopening a dismissed Room', () => {
 });
 
 describe('useRoomSurfaceSession', () => {
+  it('keeps the heavy Room surface free of its own render-triggering focus subscription', () => {
+    const source = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\buseIsFocused\s*\(/);
+  });
+
+  it('releases Room conversion and saves only after the actual route transition ends', async () => {
+    controls.cached = roomView('room-a');
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
+    await flushEffects();
+    const normalize = vi.fn((value: unknown) => value);
+    const set = vi.fn(async () => {});
+    const guard = vi.fn((value: unknown): value is { count: number } =>
+      typeof value === 'object' && value !== null && 'count' in value);
+    const registry = new SurfaceRegistry(new SurfaceResponseCache({
+      get: async () => null, set, remove: async () => {},
+    }), normalize, undefined, (key, work) => roomTransitionWork.enqueue(key, work));
+    const emit = (name: string) => controls.navigationListeners.get(name)?.forEach(listener => listener());
+    emit('transitionStart');
+    const saved = registry.write({ relayOrigin: 'https://relay.test', viewerPubkey: 'viewer', endpoint: '/room/busy' }, { count: 1 }, guard);
+    controls.interactionTasks.forEach(work => work());
+    expect(normalize).not.toHaveBeenCalled();
+    expect(guard).not.toHaveBeenCalled();
+    expect(set).not.toHaveBeenCalled();
+    emit('transitionEnd');
+    expect(set).not.toHaveBeenCalled();
+    const work = [...controls.interactionTasks];
+    controls.interactionTasks.clear();
+    work.forEach(run => run());
+    await saved;
+    expect(normalize).toHaveBeenCalledTimes(1);
+    expect(set).toHaveBeenCalledTimes(1);
+    await act(async () => renderer.unmount());
+  });
+
   it('does not render the Room surface boundary when pushing and popping a corner', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;

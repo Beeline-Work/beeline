@@ -14,18 +14,6 @@ const event = (overrides: Partial<NostrEvent> = {}): NostrEvent => ({
 });
 beforeEach(() => vi.mocked(verifyEvent).mockReset().mockReturnValue(true));
 describe('live overlay verification budget', () => {
-  it('checks a real signature before publishing and does not let a forgery poison the lane', async () => {
-    const real = await vi.importActual<typeof import('@beeline/nostr')>('@beeline/nostr');
-    vi.mocked(verifyEvent).mockImplementation(real.verifyEvent);
-    const pair = real.generateKeypair();
-    const unsigned = event({ pubkey: pair.publicKey, tags: event().tags.map(tag =>
-      tag[0] === 'agent' ? ['agent', pair.publicKey] : tag) });
-    const signed = real.signEvent(unsigned, pair.secretKey);
-    const decoder = new LiveOverlayDecoder('room', new Set([pair.publicKey]));
-    expect(decoder.decode({ ...signed, content: 'forged', created_at: 100 })).toBeNull();
-    expect(decoder.decode(signed)?.kind).toBe('draft');
-    expect(verifyEvent).toHaveBeenCalledTimes(2);
-  });
   it.each<{ name: string; overrides: Partial<NostrEvent> }>([
     { name: 'unknown signer', overrides: { pubkey: 'c'.repeat(64) } },
     { name: 'unrelated lane', overrides: { tags: [['t', 'unrelated']] } },

@@ -140,8 +140,12 @@ export class SurfaceRegistry {
 
   persist<T>(address: SurfaceCacheAddress, value: T, guard: Guard<T>): Promise<void> {
     const epoch = this.epoch;
-    return this.deferWrite(surfaceCacheKey(address), async () => {
-      if (epoch === this.epoch) await this.durable.write(address, value, guard);
+    const key = surfaceCacheKey(address);
+    const revision = this.revisions.get(key) ?? 0;
+    return this.deferWrite(key, async () => {
+      if (epoch === this.epoch && revision === (this.revisions.get(key) ?? 0)) {
+        await this.durable.write(address, value, guard);
+      }
     });
   }
 
@@ -180,7 +184,7 @@ export class SurfaceRegistry {
         return this.peek(address, guard);
       }
       await this.write(address, value, guard, stamp);
-      return value;
+      return this.peek(address, guard);
     });
     this.fetches.set(key, pending);
     void pending.then(() => {

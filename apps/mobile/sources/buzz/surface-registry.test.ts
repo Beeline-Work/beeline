@@ -23,6 +23,22 @@ function registry() {
 }
 
 describe('shared mobile surface registry', () => {
+  it.each(['write', 'persist'] as const)('does not resurrect a removed Room through deferred %s', async (method) => {
+    const writes = vi.fn(async () => {});
+    let release!: () => Promise<void>;
+    const cache = new SurfaceRegistry(new SurfaceResponseCache({
+      get: async () => null, set: writes, remove: async () => {},
+    }), undefined, undefined, (_key, work) => new Promise<void>((resolve, reject) => {
+      release = () => work().then(resolve, reject);
+    }));
+    const saved = cache[method](address, { count: 1 }, isCount);
+    await cache.remove(address);
+    await release();
+    await saved;
+    expect(writes).not.toHaveBeenCalled();
+    expect(cache.peek(address, isCount)).toBeNull();
+  });
+
   it('defers Room validation, conversion and serialization until navigation completes', async () => {
     const normalize = vi.fn((value: unknown) => value);
     const guard = vi.fn(isCount);

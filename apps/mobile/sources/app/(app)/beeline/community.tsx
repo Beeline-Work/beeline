@@ -1,6 +1,5 @@
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-import { useAutoFitText } from '@/buzz/use-autofit-text';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import * as Crypto from 'expo-crypto';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -24,8 +23,9 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { Typography } from '@/constants/Typography';
 import { Button } from '@/components/buzz/Button';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
-import { CHEVRON_BACK_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
-import { RoomGlyph } from '@/components/buzz/RoomGlyph';
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { PlusGlyph } from '@/components/buzz/MicGlyph';
+import { useAutoFitText } from '@/buzz/use-autofit-text';
 import { MembersAgentsGlyph } from '@/components/buzz/MembersAgentsGlyph';
 
 function first(value: string | string[] | undefined): string | undefined {
@@ -59,7 +59,8 @@ export default function WorkspaceChoice() {
   );
   const hasWorkspaces = communities.length > 0;
   const viewerName = workspaceList?.viewer.name?.trim() ?? '';
-  const welcomeRef = useAutoFitText(viewerName ? `Welcome, ${viewerName}` : 'Welcome');
+  const welcomeText = viewerName ? `Welcome,\n${viewerName}` : 'Welcome';
+  const welcomeRef = useAutoFitText(welcomeText);
   const workspaceName = draftName ?? (viewerName ? `${viewerName}'s team` : 'My team');
   const createWorkspace = async () => {
     if (!identity || creating || !workspaceName.trim()) return;
@@ -141,44 +142,39 @@ export default function WorkspaceChoice() {
       viewerAvatarUrl={workspaceList?.viewer.avatar}
       viewerFace={workspaceList?.viewer.face}
     >
+      <View style={{ paddingTop: insets.top }}>
+        <PageHeader title=""
+          onBack={hasWorkspaces ? () => router.canGoBack() ? router.back() : router.replace('/beeline/channels') : undefined} />
+      </View>
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
-          { paddingTop: insets.top + theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },
+          { paddingTop: theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },
         ]}
         keyboardShouldPersistTaps="handled"
         style={styles.container}
         testID="workspace-choice"
       >
         <View style={styles.column}>
-          {hasWorkspaces ? (
-            <Button label="" variant="quiet"
-              accessibilityLabel="Back"
-              onPress={() =>
-                router.canGoBack() ? router.back() : router.replace('/beeline/channels')
-              }
-             icon={<ChevronGlyph color={theme.buzz.chrome} direction="left" size={CHEVRON_BACK_SIZE} />} />
-          ) : null}
-          <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={1} accessibilityRole="header" style={styles.title} testID="choice-title">
-            {viewerName ? `Welcome, ${viewerName}` : 'Welcome'}
-          </Text>
+          <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={2} accessibilityRole="header" testID="choice-title" style={styles.title}>{welcomeText}</Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}
           </Text>
 
           <View style={styles.choices}>
-            {enabled ? <HullDialogInput accessibilityLabel="Workspace name" testID="choice-workspace-name"
+            {enabled ? <Text style={styles.fieldLabel}>WORKSPACE NAME</Text> : null}
+            {enabled ? <HullDialogInput variant="boxed" accessibilityLabel="Workspace name" testID="choice-workspace-name"
               maxLength={80} editable={!creating} value={workspaceName} onChangeText={setDraftName}
               onSubmitEditing={() => void createWorkspace()} /> : null}
             <ChoiceCard
-              description={enabled ? (creating ? "Creating your Workspace…" : workspaceName) : "New workspace for your team"}
-              glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
+              description={creating ? "Creating your Workspace…" : "Uses the name above"}
+              glyph={<PlusGlyph color={theme.buzz.accent} />}
               onPress={() => enabled ? void createWorkspace() : router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
-              title={`Create a ${WORKSPACE_LABEL}`}
+              title="Create Workspace"
             />
             <ChoiceCard
-              description="Paste the link someone sent you."
+              description="Paste the link someone sent you"
               expanded={joinOpen}
               glyph={<MembersAgentsGlyph color={theme.buzz.accent} size={20} />}
               onPress={() => {
@@ -255,12 +251,13 @@ const styles = StyleSheet.create((theme) => {
     container: { flex: 1, minWidth: 0, backgroundColor: hull.bgTerminal },
     scroll: {
       flexGrow: 1,
-      justifyContent: 'center',
+      justifyContent: 'flex-start',
       paddingHorizontal: hull.space.lg,
       paddingBottom: hull.space.xxl,
     },
     column: { width: '100%', maxWidth: 460, alignSelf: 'center' },
-    title: { ...Typography.default(), ...hull.type.hero, color: hull.textPrimary },
+    title: { ...hull.agentProfileTypography.name, ...Typography.default('semiBold'), color: hull.textPrimary },
+    fieldLabel: { ...theme.buzz.type.meta, color: hull.textSecondary, marginTop: hull.space.lg },
     copy: {
       ...Typography.default(),
       ...hull.type.meta,

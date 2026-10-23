@@ -1,13 +1,12 @@
-vi.mock('expo-router', () => ({ useLocalSearchParams: () => ({}) }));
+vi.mock('expo-router', () => ({ useLocalSearchParams: () => mocks.params, router: { setParams: vi.fn((params) => { Object.assign(mocks.params, params); }) } }));
 vi.mock('@/components/buzz/ErrorBanner', () => ({ErrorBanner:(props:any)=>React.createElement('ErrorBanner',props)}));
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
-const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})) }));
+const mocks = vi.hoisted(() => ({ enabled: true, params: {} as Record<string, string | undefined>, operation: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})) }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('react-native', () => ({ AppState: {}, Platform: { OS: 'android' } }));
 vi.mock('@/components/buzz/TranscriptCard', () => ({ TranscriptCard: (props: any) => React.createElement('TranscriptCard', props) }));
@@ -61,19 +60,29 @@ it('E4/E9: offers Connect GitHub to the Google owner and names that owner for a 
   expect(props.actions).toEqual([]);
   expect(props.body).toBe('Ask @alex.chen to link a repository for this Room');
 });
-it('E7: a failed cold return explains the other account and keeps Connect GitHub available', async () => {
-  mocks.enabled = true;
+it('R-GITHUB-CARD: consumes the return only on its initiating card, once', async () => {
+  mocks.params = { repositoryPicker: card.id, githubConnectionError: 'github_account_already_linked', installed: '0' };
   let renderer: any;
-  await act(async () => { renderer=create(<RepositoryOnboardingCard
-    card={{...card,installationId:undefined,githubLinked:false,state:'install_missing'}} viewerId={H}
-    connectionError="github_account_already_linked" />); });
-  const props=renderer.root.findByType('TranscriptCard').props;
-  expect(renderer.root.findByType(ErrorBanner).props.title).toBe('GitHub account already connected');
-  expect(renderer.root.findByType(ErrorBanner).props.retryVariant).toBe('primary');
-  expect(renderer.root.findByType(ErrorBanner).props.description).toContain('sign out of Beeline');
-  expect(props.actions.map((action:any) => action.label)).toEqual(['Connect GitHub']);
+  await act(async () => { renderer=create(<>
+    <RepositoryOnboardingCard card={card} viewerId={H} />
+    <RepositoryOnboardingCard card={{...card,id:'other'}} viewerId={H} />
+  </>); });
+  const cards = renderer.root.findAllByType('TranscriptCard');
+  expect(cards[0].props.inlineError.description).toContain('linked to a different Beeline account');
+  expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
+  expect(cards[0].props.actions.map((action:any) => action.label)).toEqual(['Dismiss', 'Try again']);
+  expect(cards[0].props.actions[1].primary).toBe(true);
+  expect(cards[0].props.actions[0].labelTone).toBe('quiet');
+  expect(cards[1].props.inlineError).toBeUndefined();
+  expect(mocks.params.githubConnectionError).toBeUndefined();
+  expect(mocks.params.installed).toBe('0');
+  expect(mocks.params.repositoryPicker).toBe(card.id);
+  await act(async () => renderer.unmount());
+  await act(async () => { renderer=create(<RepositoryOnboardingCard card={card} viewerId={H} />); });
+  expect(renderer.root.findByType('TranscriptCard').props.inlineError).toBeUndefined();
+  await act(async () => renderer.unmount());
+  mocks.params = {};
 });
-
 
 it('opens the repository picker for a covered user without opening GitHub', async () => {
   const { runGitHubInstallationSession } = await import('@/auth/github-auth-session');
@@ -103,3 +112,47 @@ for (const result of ['success', 'foreground', 'browser_canceled'] as const) {
     await act(async () => renderer.unmount());
   });
 }
+
+it('R-GITHUB-CARD: keeps an operation failure local and retries the failed action', async () => {
+  mocks.params = {};
+  mocks.operation.mockRejectedValueOnce({ code: 'github_connection_failed' });
+  let renderer: any;
+  await act(async () => { renderer=create(<>
+    <RepositoryOnboardingCard card={card} viewerId={H} />
+    <RepositoryOnboardingCard card={{...card,id:'other'}} viewerId={H} />
+  </>); });
+  await act(async () => renderer.root.findAllByType('TranscriptCard')[0].props.actions[0].onPress());
+  const cards = renderer.root.findAllByType('TranscriptCard');
+  expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
+  expect(cards[0].props.compactBody).toBe(true);
+  expect(cards[0].props.primaryBody).toBe(true);
+  expect(cards[0].props.subline).toBeUndefined();
+  expect(cards[0].props.actions.map((a:any) => a.label)).toEqual(['Dismiss', 'Try again']);
+  expect(cards[1].props.inlineError).toBeUndefined();
+  await act(async () => cards[0].props.actions[1].onPress());
+  expect(mocks.operation).toHaveBeenLastCalledWith('actOnRepositoryCard', expect.objectContaining({action:'create',cardId:card.id}));
+  expect(renderer.root.findAllByType('TranscriptCard')[0].props.inlineError).toBeUndefined();
+  await act(async () => renderer.unmount());
+});
+
+it('collapses a linked repository using its existing name without inventing visibility', async () => {
+  let renderer: any;
+  await act(async () => { renderer=create(<RepositoryOnboardingCard card={{...card,status:'settled'}} viewerId={H} />); });
+  const props=renderer.root.findByType('TranscriptCard').props;
+  expect(props.title).toBe('Repository linked');
+  expect(props.subline).toBe('test/current');
+  expect(props.body).toBeUndefined();
+  expect(props.actions).toEqual([]);
+  expect(props.identity).toBeTruthy();
+  await act(async () => renderer.unmount());
+});
+it('dismisses a failed connect permanently while preserving the installation result', async () => {
+  mocks.params={repositoryPicker:card.id,githubConnectionError:'github_account_already_linked',installed:'1'};
+  let renderer:any;
+  await act(async()=>{renderer=create(<RepositoryOnboardingCard card={card} viewerId={H}/>);});
+  await act(async()=>renderer.root.findByType('TranscriptCard').props.actions[0].onPress());
+  expect(renderer.root.findByType('TranscriptCard').props.inlineError).toBeUndefined();
+  expect(mocks.params.githubConnectionError).toBeUndefined();
+  expect(mocks.params.installed).toBe('1');
+  await act(async()=>renderer.unmount());mocks.params={};
+});

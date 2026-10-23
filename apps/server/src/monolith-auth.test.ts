@@ -429,6 +429,8 @@ describe('mounted monolith auth', () => {
     const corner = await phone.execute('createHumanCorner', {roomId,title:'first-google-owner-work'}, id);
     expect(await phone.readRoom(corner.id,id)).toBeTruthy();
     expect(await githubOperations.roomToken(roomId)).toMatchObject({token:'room-token'});
+    const reconnectSameIdentity = await mountedRequest(callback(await begin()));
+    expect(reconnectSameIdentity.headers.location).toBe('beeline://beeline/github-installation?installed=1');
     githubSubject = '43';
     const mismatch = await mountedRequest(callback(await begin()));
     expect(mismatch.headers.location).toContain('error=github_account_mismatch');

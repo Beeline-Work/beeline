@@ -1,31 +1,37 @@
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { EmptyState } from '@/components/buzz/EmptyState';
 import { githubConnectionErrorNotice } from '@/auth/github-connection-error';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import type { RoomViewIdentity } from '@beeline/api-contract/phone';
-import React, { useState } from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
 import { AppState, Platform } from 'react-native';
 import type { RepositoryOnboardingAction, RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
 import { TranscriptCard, type TranscriptCardAction, type TranscriptCardChoice } from '@/components/buzz/TranscriptCard';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 
 /** Reuses the shared ask-card anatomy; selections remain authoritative on the server. */
-type Props = { card: Card; viewerId: string; author?: RoomViewIdentity; connectionError?: string };
+type Props = { card: Card; viewerId: string; author?: RoomViewIdentity };
 export function RepositoryOnboardingCard(props: Props) {
   const enabled = useRepositoryOnboarding();
   return enabled ? <EnabledRepositoryOnboardingCard {...props} /> : null;
 }
-function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionError }: Props) {
-  const { repositoryPicker } = useLocalSearchParams<{ repositoryPicker?: string }>();
+function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
+  const { repositoryPicker, githubConnectionError } = useLocalSearchParams<{ repositoryPicker?: string; githubConnectionError?: string }>();
+  const connectionError = repositoryPicker === card.id && card.requesterId === viewerId ? githubConnectionError : undefined;
   const [picker, setPicker] = useState(repositoryPicker === card.id);
   const [busy, setBusy] = useState(false);
-  const [errorTitle, setErrorTitle] = useState(connectionError ? githubConnectionErrorNotice(connectionError).title : 'GitHub could not connect');
   const [error, setError] = useState<string | null>(connectionError ? githubConnectionErrorNotice(connectionError).description : null);
+  useEffect(() => {
+    if (!connectionError) return;
+    setError(githubConnectionErrorNotice(connectionError).description);
+    router.setParams({ githubConnectionError: undefined });
+  }, [connectionError]);
+  const lastAction = useRef<{ action: RepositoryOnboardingAction['action']; extra: Partial<RepositoryOnboardingAction> }>({ action: 'install', extra: {} });
   const canAct = card.status === 'open' && card.requesterId === viewerId && !busy;
   const act = async (action: RepositoryOnboardingAction['action'], extra: Partial<RepositoryOnboardingAction> = {}) => {
     if (!canAct) return;
+    lastAction.current = { action, extra };
     setBusy(true);
     setError(null);
     const request = { roomId: card.roomId, cardId: card.id, action, ...extra };
@@ -63,7 +69,6 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
         await clearPendingGitHubInstallation();
       }
       const notice = githubConnectionErrorNotice(code);
-      setErrorTitle(notice.title);
       setError(notice.description);
     } finally { setBusy(false); }
   };
@@ -82,16 +87,27 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author, connectionErr
       { label: 'Add Beeline to an org', disabled: !canAct, onPress: () => void act('organization'), testID: 'repo-card-org' },
     ]),
   ] : [];
-  return <TranscriptCard tier={card.status === 'open' ? 'ask' : 'record'}
+  const linked = card.kind === 'repository' && card.status === 'settled' && Boolean(card.repository);
+  const needsConnection = card.kind === 'repository' && card.githubLinked === false && !card.installationId;
+  const shownActions: TranscriptCardAction[] = linked ? [] : error ? (canAct ? [
+    { label: 'Dismiss', labelTone: 'quiet', onPress: () => { setError(null); setPicker(false); router.setParams({ githubConnectionError: undefined }); }, testID: 'repo-card-dismiss' },
+    { label: 'Try again', primary: true, onPress: () => { router.setParams({ githubConnectionError: undefined }); void act(lastAction.current.action, lastAction.current.extra); }, testID: 'repo-card-retry' },
+  ] : []) : actions;
+  return <TranscriptCard
     identity={<IdentityMark kind="agent" seed={card.agentId} face={author?.face} name={author?.name} size={26} />}
+    tier={linked || card.status !== 'open' ? 'record' : 'ask'}
     testID={`repository-onboarding-${card.kind}`}
-    title={card.kind === 'starters' ? 'Pick a starting task' : card.repository ? 'Switch repository' : !card.canLink ? 'No repository yet' : 'Choose a repository'}
-    subline={card.canLink ? card.repository ?? 'Create a private repo or link one you already own.' : undefined}
-    body={card.kind === 'repository' ? card.canLink ? card.githubLinked === false && !card.installationId ? 'Connect GitHub to pick a repository or create one. You’ll approve it once on github.com, then come back here.' : `New repo: ${card.defaultName}` : card.ownerHandle ? `Ask @${card.ownerHandle} to link a repository for this Room` : 'Ask a Workspace owner or admin to choose a repository for this Room.' : undefined}
-    choices={choices} actions={actions}
-    footerNote={busy ? 'Working…' : card.selected ? `Selected · ${card.selected}` : undefined}>
-    {error ? <ErrorBanner title={errorTitle}
-      description={error} retryLabel="Back to Room" retryVariant="primary" onRetry={() => setError(null)} /> : picker && !card.repositories.length ?
+    title={linked ? 'Repository linked' : card.kind === 'starters' ? 'Pick a starting task' : card.repository ? 'Switch repository' : !card.canLink ? 'No repository yet' : 'Choose a repository'}
+    subline={linked ? card.repository : undefined}
+    compactBody primaryBody footerDivider={false}
+    inlineError={!linked && error ? { title: "GitHub didn't connect", description: error } : undefined}
+    body={linked || error ? undefined : card.kind === 'repository' ? card.canLink ? needsConnection
+      ? 'Connect GitHub to link one you own or create a new private repo. You approve once on github.com, then come back here.'
+      : `New repo: ${card.defaultName}`
+      : card.ownerHandle ? `Ask @${card.ownerHandle} to link a repository for this Room` : 'Ask a Workspace owner or admin to choose a repository for this Room.' : undefined}
+    choices={linked || error ? [] : choices} actions={shownActions}
+    footerNote={!linked && busy ? 'Working…' : undefined}>
+    {!linked && !error && picker && !card.repositories.length ?
       <EmptyState title="No repositories found. Install Beeline, then try again." /> : null}
   </TranscriptCard>;
 }

@@ -15,6 +15,7 @@ describe.skipIf(!existsSync(CHROME))('onboarding account settings', () => {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import {createRoot} from 'react-dom/client';
         import Settings from '@/app/(app)/beeline/settings/identity';
+        import { githubConnectionErrorMessage } from '@/auth/github-connection-error';
         createRoot(document.getElementById('root')).render(<Settings/>);
         setTimeout(async()=>{
           const button=document.querySelector('[data-testid="settings-provider-github"]');
@@ -26,7 +27,7 @@ describe.skipIf(!existsSync(CHROME))('onboarding account settings', () => {
             document.getElementById('result').textContent=JSON.stringify({
               began:window.__began??0, refreshed:window.__refreshed??false,
               recoveryText, error:document.body.textContent.includes('Invalid GitHub installation return path'),
-              conflict:document.body.textContent.includes('belongs to another Beeline account'),
+              conflict:document.body.textContent.includes(githubConnectionErrorMessage('github_account_already_linked')),
               providers:window.__providers,
               overflow:[...document.querySelectorAll('div')].filter(n=>n.clientWidth>0&&n.scrollWidth>n.clientWidth+1).map(n=>({id:n.dataset.testid,client:n.clientWidth,scroll:n.scrollWidth})) });
           },400);

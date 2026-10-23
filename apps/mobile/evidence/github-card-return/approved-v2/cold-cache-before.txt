@@ -1,0 +1,78 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/55e6a72d-fb20-45f6-bd1b-0c838c3207d4/apps/mobile
+
+stderr | sources/app/(app)/beeline/channels.live.test.tsx > R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ sources/app/(app)/beeline/channels.live.test.tsx (29 tests | 1 failed | 28 skipped) 1156ms
+   ↓ Deleted workspace removal > removes a cached deleted workspace on the first read after an offline session
+   ↓ Deleted workspace removal > does not repaint deleted rooms when an older chats read finishes late
+   ↓ Deleted workspace removal > drops a deleted workspace tile and opens the remaining workspace
+   ↓ Deleted workspace removal > clears the last workspace rooms and persisted selection after live deletion
+   ↓ Room list gestures > blocks vertical drags and their late release, then accepts a resting tap without delay
+   ↓ Room list gestures > keeps swipes disabled between fling release and momentum-begin, and until a stop touch ends
+   ↓ Room list gestures > handles drag receipts without velocity and cancels settlement when momentum begins
+   ↓ Room list gestures > blocks a corner long press and toggle during scrolling
+   ↓ Room list gestures > blocks the iOS bounce-stop touch when momentum-end arrives before touch-start
+   ↓ Room list gestures > keeps a coast-stopping touch from opening the Room after momentum ends
+   ↓ Room deck live path > sends an invite parked before sign-in to its own screen instead of the deck
+   ↓ Room deck live path > requests a private repository from the Room creation sheet
+   ↓ Room deck live path > keeps the final lobby card above the bottom safe area
+   ↓ Room deck live path > toggles the Room's corner dropdown on mobile without a selected conversation state
+   ↓ Room deck live path > opens a new corner from a long press on the row corner glyph and lands in it
+   ↓ Room deck live path > shows a long-press corner open as pending, then unreachable with Retry for the same corner
+   ↓ Room deck live path > lists search matches without section heads
+   ↓ Room deck live path > paints a Room delta into the list without a chats read, and ignores drafts
+   ↓ Room deck live path > reads the list when a corner under a Room changes working or waiting state
+   ↓ Room deck live path > keeps the last known unread dot and corners when the server could not read them
+   ↓ Room deck live path > mounts a fresh card frame when a reorder changes its rounded edges
+   ↓ Room deck live path > keeps its live watch when Rooms only change order
+   ↓ Room deck live path > makes the covering read on open even when every cached Room resumes its lane
+   ↓ Room deck live path > reads once when the app returns to the foreground, and never on a timer
+   ↓ Room deck live path > reads nothing while hidden under a Room, then catches up on focus
+   ↓ Room deck live path > reads nothing when the deck comes back with nothing it skipped
+   ↓ Room deck live path > reconnects the socket when a read finds a message the socket never announced
+   ↓ Room deck live path > reconnects the socket when a read finds an unannounced message that landed in the same second
+   × R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot 1155ms
+     → expected "spy" to not be called with arguments: [ '/beeline/community' ]
+
+Received: 
+
+  1st spy call:
+
+Compared values have no visual difference.
+
+
+Number of calls: 1
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/app/(app)/beeline/channels.live.test.tsx > R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a lagging surface snapshot
+AssertionError: expected "spy" to not be called with arguments: [ '/beeline/community' ]
+
+Received: 
+
+  1st spy call:
+
+Compared values have no visual difference.
+
+
+Number of calls: 1
+
+ ❯ sources/app/(app)/beeline/channels.live.test.tsx:1101:32
+    1099|   try {
+    1100|     const renderer = await mountDeck();
+    1101|     expect(router.replace).not.toHaveBeenCalledWith('/beeline/communit…
+       |                                ^
+    1102|     expect(deck.chatsReads).toBeGreaterThan(0);
+    1103|     console.log('R-GITHUB-LANDING cold empty-cache navigation trace:',…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 28 skipped (29)
+   Start at  21:37:59
+   Duration  1.94s (transform 383ms, setup 57ms, collect 561ms, tests 1.16s, environment 0ms, prepare 45ms)
+

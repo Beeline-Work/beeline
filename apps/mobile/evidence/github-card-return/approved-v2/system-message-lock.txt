@@ -1,0 +1,25 @@
+
+ RUN  v2.1.9 /home/lunchbox/.local/state/beeline/corners/55e6a72d-fb20-45f6-bd1b-0c838c3207d4/apps/server
+
+stdout | src/repository-onboarding.test.ts
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+ ✓ src/repository-onboarding.test.ts (11 tests) 2443ms
+stdout | src/system-messages-lock.test.ts > rejects a newly added aliased systemLine producer
+Demonstrated System message freeze: new systemLine fixture rejected
+
+stdout | src/system-messages-lock.test.ts > rejects a changed existing template, including a referenced constant
+Demonstrated System message freeze: changed template fixture rejected
+
+ ✓ src/system-messages-lock.test.ts (74 tests) 10882ms
+   ✓ freezes System message producers and literal templates against the owner-reviewed lock 3856ms
+   ✓ allows access predicate changes in sendMessage, deleteRoomMessage and recordAnswer 6679ms
+
+ Test Files  2 passed (2)
+      Tests  85 passed (85)
+   Start at  22:08:13
+   Duration  11.44s (transform 1.28s, setup 0ms, collect 1.98s, tests 13.33s, environment 0ms, prepare 125ms)
+

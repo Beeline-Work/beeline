@@ -564,7 +564,6 @@ export function BuzzChatSurface({
   const {
     channelId,
     notificationResponseId,
-    githubConnectionError,
     notificationTarget,
     notificationMessageId,
     communityId,
@@ -574,7 +573,6 @@ export function BuzzChatSurface({
   } = useLocalSearchParams<{
     channelId: string;
     notificationResponseId?: string;
-    githubConnectionError?: string;
     notificationTarget?: string;
     notificationMessageId?: string;
     communityId?: string;
@@ -5694,7 +5692,7 @@ export function BuzzChatSurface({
       }
       // The active call lives below the Room header; ended calls use LedgerSystemLine.
       if (item.voiceCall && !item.voiceCall.endedAt) return null;
-      if (item.onboarding) return <RepositoryOnboardingCard connectionError={githubConnectionError} card={item.onboarding} viewerId={cacheViewerPubkey} author={item.authorIdentity} />;
+      if (item.onboarding) return <RepositoryOnboardingCard card={item.onboarding} viewerId={cacheViewerPubkey} author={item.authorIdentity} />;
       if (item.choice) {
         return (
           <ChoiceCard

@@ -20,6 +20,7 @@ import { Button, type ButtonProps } from './Button';
 import { HullSurface } from './MonoHull';
 
 export type HullDialogAction = {
+  labelTone?: ButtonProps['labelTone'];
   accessibilityLabel?: string;
   accessibilityRole?: ButtonProps['accessibilityRole'];
   description?: React.ReactNode;
@@ -395,6 +396,7 @@ export function HullDialogActions({
           <Button
             {...(action.accessibilityRole ? { accessibilityRole: action.accessibilityRole } : {})}
             label={action.label}
+            labelTone={action.labelTone}
             variant={action.variant ?? 'quiet'}
             accessibilityLabel={action.accessibilityLabel ?? action.label}
             accessibilityState={{ busy: action.busy === true }}

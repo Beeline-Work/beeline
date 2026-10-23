@@ -9,8 +9,10 @@
   // Only proof adapters: bundlers supply these exports through runtime aliases.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
-    // Metro and the web bundler select this platform export for the shared hook.
+    // Metro selects the fitted web title implementation through this platform export.
     "apps/mobile/sources/buzz/use-autofit-text.web.ts": ["exports"],
+    // The local GitHub card proof resolves these exports through temporary Metro aliases.
+    "apps/mobile/scripts/github-card-proof-{adapters.tsx,metro.cjs}": ["exports"],
     // Metro injects these disposable server/router adapters into the native proof.
     "apps/mobile/scripts/search-cell-proof/mocks.tsx": ["exports"],
     // Selected as the temporary Metro configuration described in the proof runbook.
@@ -77,6 +79,9 @@
       "expo": false,
       "entry": [
         "index.ts",
+        // The approved GitHub card proof uses temporary native/web entry and resolver overrides.
+        "scripts/github-card-proof.tsx",
+        "scripts/github-card-proof-metro.cjs",
         "app.config.js",
         "sources/app/**/*.{ts,tsx}",
         "sources/**/*.{ios,android,windows,web,native,default}.{js,jsx,ts,tsx}",

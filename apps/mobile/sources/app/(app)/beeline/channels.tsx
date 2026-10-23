@@ -183,7 +183,7 @@ export default function BuzzChannels() {
     [identity?.publicKey, relayUrl]);
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
-  const [workspacesConfirmed, setWorkspacesConfirmed] = useState(false);
+  const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   // A covering list read seeds the Needs-you rows behind the badge;
@@ -387,6 +387,7 @@ export default function BuzzChannels() {
 
   useEffect(() => {
     if (deckWorkspaceId === undefined) return;
+    setConfirmedWorkspaceCount(null);
     let cancelled = false;
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
@@ -439,7 +440,7 @@ export default function BuzzChannels() {
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
           deckMissedRef.current.workspaces = false;
-          setWorkspacesConfirmed(true);
+          setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
           }
@@ -781,8 +782,8 @@ export default function BuzzChannels() {
   ]);
 
   const landing = deckLanding({
-    workspaces: workspacesConfirmed
-      ? { status: 'ready', count: workspaceList?.workspaces.length ?? 0 }
+    workspaces: confirmedWorkspaceCount !== null
+      ? { status: 'ready', count: confirmedWorkspaceCount }
       : error
         ? { status: 'failed' }
         : { status: 'pending' },

@@ -1,0 +1,282 @@
+{
+  "before": {
+    "desktop-dark": {
+      "markInk": [
+        492.5,
+        503.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": 136.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 356
+    },
+    "desktop-light": {
+      "markInk": [
+        492.5,
+        503.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": 136.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 356
+    },
+    "phone-dark": {
+      "markInk": [
+        152.5,
+        163.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": 136.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 16
+    },
+    "phone-light": {
+      "markInk": [
+        152.5,
+        159.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": 136.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 16
+    }
+  },
+  "after": {
+    "desktop-dark": {
+      "markInk": [
+        355.5,
+        366.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 378.09375
+    },
+    "desktop-light": {
+      "markInk": [
+        355.5,
+        366.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 378.09375
+    },
+    "phone-dark": {
+      "markInk": [
+        15.5,
+        26.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 38.09375
+    },
+    "phone-light": {
+      "markInk": [
+        15.5,
+        26.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 38.09375
+    }
+  },
+  "after-room": {
+    "desktop-dark": {
+      "markInk": [
+        355.5,
+        366.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 378.09375
+    },
+    "desktop-light": {
+      "markInk": [
+        355.5,
+        366.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 378.09375
+    },
+    "phone-dark": {
+      "markInk": [
+        15.5,
+        26.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 38.09375
+    },
+    "phone-light": {
+      "markInk": [
+        15.5,
+        26.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 38.09375
+    }
+  },
+  "after-corner": {
+    "desktop-dark": {
+      "markInk": [
+        355.5,
+        366.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 378.09375
+    },
+    "desktop-light": {
+      "markInk": [
+        355.5,
+        366.5
+      ],
+      "stopInk": [
+        1221.5,
+        1264.0
+      ],
+      "textEdges": [
+        356,
+        1264
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 378.09375
+    },
+    "phone-dark": {
+      "markInk": [
+        15.5,
+        26.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 38.09375
+    },
+    "phone-light": {
+      "markInk": [
+        15.5,
+        26.5
+      ],
+      "stopInk": [
+        301.5,
+        344.0
+      ],
+      "textEdges": [
+        16,
+        344
+      ],
+      "markLeftDelta": -0.5,
+      "stopRightDelta": 0.0,
+      "nameBoxLeft": 38.09375
+    }
+  }
+}

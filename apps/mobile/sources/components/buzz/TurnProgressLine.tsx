@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { BeelineMarkSpinner, MARK_CELL } from './BeelineMarkSpinner';
+import { ribbon } from '@/buzz/beeline-glyph';
 import { HullLivePulse } from './MonoHull';
 import { SPINNER_STEP_MS, formatWorkingCounter } from '@/buzz/turn-clock';
 import {
@@ -31,8 +32,8 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * that pair to exactly one meaning, an agent is alive and working, which is
  * precisely what a turn in progress is.
  *
- * The line starts with the verb and elapsed counter, followed by the mark,
- * so the agent name shares the transcript text edge. The mark is the Beeline
+ * The mark leads the line at the transcript text edge, followed by the verb
+ * and elapsed counter. The mark is the Beeline
  * icon (`BeelineMarkSpinner`) painting itself and releasing — never a cycling
  * text glyph or a row of dots. A glyph whose advance width changes per frame
  * walks the label's left edge back and forth, so the mark sits in one fixed
@@ -96,6 +97,9 @@ export function TurnProgressLine({
       testID={testID}
     >
       <HullLivePulse style={styles.row}>
+        <View style={[styles.glyphCell, styles.leadingGlyph]} testID={testID ? `${testID}-glyph` : undefined}>
+          <BeelineMarkSpinner live />
+        </View>
         <Text numberOfLines={1} style={styles.label}>
           {label}
         </Text>
@@ -109,9 +113,6 @@ export function TurnProgressLine({
             · received
           </Text>
         )}
-        <View style={styles.glyphCell} testID={testID ? `${testID}-glyph` : undefined}>
-          <BeelineMarkSpinner live />
-        </View>
         {onStop && (
           <Pressable
             accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'}
@@ -237,6 +238,12 @@ const styles = StyleSheet.create((theme) => {
       flexShrink: 0,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    // Remove the SVG's transparent leading inset from layout, keeping the
+    // original gap after its fixed cell and aligning the visible mark to text.
+    leadingGlyph: {
+      width: MARK_CELL - ribbon.cellInkInset,
+      alignItems: 'flex-end',
     },
     label: {
       ...groknight.type.machine,

@@ -1,10 +1,11 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { cornerShortTitle } from '@beeline/api-contract/phone';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
+import { InlineRow } from './IndexRow';
 import { useRoomCornerSummary } from '@/buzz/room-corner-store';
 
 /** The viewer's open corners in one Room: ones they follow (started, posted,
@@ -33,7 +34,7 @@ export function DesktopRoomCorners({
       {corners.map((corner) => {
         const ready = corner.state === 'waiting';
         return (
-          <Pressable
+          <InlineRow
             key={corner.id}
             onPress={() => onOpen(corner.id, corner.name)}
             accessibilityRole="button"
@@ -43,13 +44,12 @@ export function DesktopRoomCorners({
           >
             <CornerGlyph size={CORNER_META_SIZE} testID={`desktop-corner-glyph-${corner.id}`} />
             <Text numberOfLines={1} style={styles.name}>
-              <Text style={styles.sigil}>#</Text>
               {cornerShortTitle(item.room.name, corner.name, corner.id)}
             </Text>
             <CornerWaitingPulse state={corner.state}>
               <Text style={[styles.state, ready && styles.waiting]}>{corner.state}</Text>
             </CornerWaitingPulse>
-          </Pressable>
+          </InlineRow>
         );
       })}
     </View>
@@ -75,8 +75,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomColor: theme.buzz.border,
   },
   name: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, flex: 1 },
-  // The same brass `#` every other corner name carries.
-  sigil: { color: theme.buzz.accent },
   state: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   waiting: { color: theme.buzz.accent },
 }));

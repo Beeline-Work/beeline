@@ -63,7 +63,7 @@ function StatusBandScene() {
     <View style={{ paddingHorizontal: 16 }}>
       <Pressable onPress={() => setMarkerCount(markerCount === 1 ? 3 : 1)}><Text style={{ ...hull.type.machine, color: hull.accent }}>Toggle marker count</Text></Pressable>
       <Text style={{ ...hull.type.body, color: hull.textPrimary }}>Open corners for these changes.</Text>
-      <CornerOpenedMarkers message={message} onOpenCorner={(id) => console.log("CORNER_PROOF_OPEN", id)} />
+      <CornerOpenedMarkers message={message} onOpenUrl={(url) => console.log("CORNER_PROOF_URL", url)} onOpenCorner={(id) => console.log("CORNER_PROOF_OPEN", id)} />
     </View>
     <View style={{ flex: 1 }}>
       <FlatList inverted data={Array.from({ length: 160 }, (_, i) => i)} keyExtractor={String}

@@ -91,7 +91,7 @@ describe('locked event row v2', () => {
     ]);
     expect(rows.map((row) => row.id)).toEqual(['opened']);
     expect(lifecycleSummary(rows[0].notificationLifecycleRun!.items)).toBe(
-      '1 corner opened · 1 PR merged',
+      '1 corner opened · 1 corner merged',
     );
     expect(rows[0].notificationLifecycleRun?.items[1]).toMatchObject({
       cornerId: 'merged',
@@ -168,7 +168,7 @@ it('folds passive payment and wallet records but keeps an insufficient-funds act
   expect(rows[1]).toBe(funds);
 });
 
-it('retains the original opening event when the server settles that card in place', () => {
+it('renders the settled state when the server updates an opening card in place', () => {
   const opened = {
     id: 'opened',
     text: 'Opened a corner',
@@ -187,7 +187,7 @@ it('retains the original opening event when the server settles that card in plac
     },
   };
   expect(foldPrLifecycleRuns([opened])[0].notificationLifecycleRun?.items[0]).toMatchObject({
-    state: 'Opened',
+    state: 'Closed',
     kind: 'corner',
     cornerId: 'corner',
   });

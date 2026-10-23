@@ -48,7 +48,7 @@ export function cornerShortTitle(
 
 /**
  * A corner titled `#<room>/<corner>`. When the parent Room's name is not
- * known yet the corner still gets its own mark, `#<corner>`.
+ * known yet, use the bare corner name.
  */
 export function cornerTitle(
   parentRoomName: string | null | undefined,
@@ -57,7 +57,7 @@ export function cornerTitle(
 ): string {
   const room = bareName(parentRoomName);
   const corner = cornerShortTitle(room, cornerStoredName, cornerId);
-  return room ? `#${room}/${corner}` : `#${corner}`;
+  return room ? `#${room}/${corner}` : corner;
 }
 
 /**
@@ -87,7 +87,7 @@ export function cutCornerTitle(
 ): string {
   const room = roomTitle(parentRoomName);
   const corner = cornerShortTitle(parentRoomName, cornerStoredName, cornerId);
-  if (!room) return cutTitle(`#${corner}`, length);
+  if (!room) return cutTitle(corner, length);
   const roomPart = cutTitle(room, roomLength);
   return `${roomPart}/${cutTitle(corner, length - Array.from(roomPart).length - 1)}`;
 }

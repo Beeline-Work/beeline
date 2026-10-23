@@ -9,17 +9,10 @@ unchanged. No border tokens are added.
 ## Reproduction swipe-stuck
 
 The owner supplied Android evidence of a long agent message remaining translated
-with REPLY exposed, an empty composer, and the keyboard open. A clean leased
-Android emulator was started, but it has no signed-in owner session. Attempts
-to build a standalone native replay were interrupted by repeated environment
-replacement: the emulator and build processes stopped and dependencies and
-temporary files disappeared. The combined intermittent phone failure has not
-been reproduced on the emulator. Native screenshots remain outstanding. A fallback debug shell for app.usebeeline
-version 0.2.22 (versionCode 27) was installed successfully on the leased emulator
-and opened against this branch's Metro server. It reached the development loader
-but had not rendered the proof screen. The final native bundle was built and
-its immediate quote-installation logic was checked; this is not a substitute
-for on-device interaction proof.
+with REPLY exposed, an empty composer, and the keyboard open. The combined intermittent phone failure has not been reproduced on the emulator.
+The permitted component stand-in below remains the swipe-stuck proof.
+A native debug build of app.usebeeline (0.2.22, versionCode 27) now renders the
+provided divider replay successfully on a Beeline-leased API 36 Android emulator.
 
 The permitted stand-in is the component regression named
 “returns an interrupted reply swipe to rest and installs its quote” in
@@ -51,13 +44,18 @@ component replays, not screenshots of a signed-in production Room.
 
 | Surface | Bone | Obsidian |
 | --- | --- | --- |
+| Android native | [Screenshot](android-bone.png) | [Screenshot](android-obsidian.png) |
 | Phone web | [Screenshot](web-390-bone.png) | [Screenshot](web-390-obsidian.png) |
 | Desktop web | [Screenshot](web-1280-bone.png) | [Screenshot](web-1280-obsidian.png) |
 
 The native replay entry is `scripts/transcript-dividers-native-proof.tsx`.
 It includes a reply screen with a long agent row, ongoing rerenders, a keyboard
 input, and a target quote; it can toggle parent proof and invoke the corner
-swipe. This harness is not a claim that native verification has completed.
+swipe. The divider screen was opened, its steps expanded, and both themes captured
+with adb screencap at native resolution (1080 × 2400). The screenshots show
+the normal hairlines inside the card, unchanged outline and step separators,
+and no rule above the corner record. This is a native component replay, not
+a signed-in production Room or native swipe verification.
 
 ## Validation completed
 

@@ -59,7 +59,9 @@ BEGIN
     IF TG_OP='INSERT' AND NEW.status='working' AND NEW.generation_id LIKE 'pending:%' THEN
       UPDATE corner_attention_spans SET last_turn_ended_at=NEW.created_at WHERE corner_id=corner;
     END IF;
-    IF TG_OP='UPDATE' AND OLD.status='working' AND NEW.status<>'working'
+    IF NEW.status='failed' THEN
+      UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=corner;
+    ELSIF TG_OP='UPDATE' AND OLD.status='working' AND NEW.status<>'working'
       AND COALESCE(OLD.generation_id,'') NOT LIKE 'pending:%' THEN
       UPDATE corner_attention_spans SET last_turn_ended_at=CASE
         WHEN EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=corner)

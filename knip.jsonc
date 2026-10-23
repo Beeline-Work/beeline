@@ -34,6 +34,7 @@
         "scripts/prove-agent-usage-refresh.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
+        "scripts/prove-corner-startup.mjs",
         "scripts/check-acp-adapters.mjs",
         "scripts/prove-voice-mode.ts",
         "scripts/prove-voice-call-errors.ts",

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
 import {
@@ -39,6 +39,7 @@ import {
   warmNodeModulesStoreDir,
 } from './warm-node-modules.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
+import { withKernelLock } from './kernel-lock.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
@@ -136,149 +137,154 @@ export async function materializeCornerWorktree(input: {
   const path = resolve(input.supervisorRoot, 'beeline', 'corners', input.cornerId);
   await mkdir(dirname(gitCommonDir), { recursive: true, mode: 0o700 });
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const authEnv = githubGitEnv(input.token);
-  if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
-    await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
-      env: authEnv,
-      maxBuffer: 4 * 1024 * 1024,
-    });
-  }
-  // A bare clone writes no fetch refspec, so `git fetch origin main` only
-  // moves FETCH_HEAD and leaves origin/main stale. Always (re)set the wildcard
-  // refspec: `--replace-all` keeps repeat prepares from stacking duplicate
-  // values and repairs caches cloned before this fix, including ones whose
-  // existing worktree is left in place below. Explicit per-branch fetches still
-  // override it; the refspec only says where a plain fetch lands remote heads.
-  await execFileAsync(
-    'git',
-    [
-      `--git-dir=${gitCommonDir}`,
-      'config',
-      '--replace-all',
-      'remote.origin.fetch',
-      '+refs/heads/*:refs/remotes/origin/*',
-    ],
-    { maxBuffer: 4 * 1024 * 1024 },
-  );
-  await execFileAsync(
-    'git',
-    [
-      `--git-dir=${gitCommonDir}`,
-      'fetch',
-      '--prune',
-      'origin',
-      `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
-    ],
-    { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-  );
-  const restored = await execFileAsync(
-    'git',
-    [
-      `--git-dir=${gitCommonDir}`,
-      'fetch',
-      'origin',
-      `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`,
-    ],
-    { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-  ).then(
-    () => true,
-    (error) => {
-      if (isRemoteRefMissing(error)) return false;
-      throw error;
-    },
-  );
-  if (!existsSync(resolve(path, '.git'))) {
-    await rm(path, { recursive: true, force: true });
+  // Hosted agents share this bare repository. Git's individual ref/config
+  // locks do not serialize the multi-command setup across coordinators.
+  const repositoryKey = resolve(await realpath(dirname(gitCommonDir)), basename(gitCommonDir));
+  return withKernelLock(`corner-repository:${repositoryKey}`, async () => {
+    const authEnv = githubGitEnv(input.token);
+    if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
+      await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
+        env: authEnv,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    }
+    // A bare clone writes no fetch refspec, so `git fetch origin main` only
+    // moves FETCH_HEAD and leaves origin/main stale. Always (re)set the wildcard
+    // refspec: `--replace-all` keeps repeat prepares from stacking duplicate
+    // values and repairs caches cloned before this fix, including ones whose
+    // existing worktree is left in place below. Explicit per-branch fetches still
+    // override it; the refspec only says where a plain fetch lands remote heads.
     await execFileAsync(
       'git',
       [
         `--git-dir=${gitCommonDir}`,
-        'worktree',
-        'add',
-        '-B',
-        input.featureBranch,
-        path,
-        restored
-          ? `refs/remotes/origin/${input.featureBranch}`
-          : `refs/remotes/origin/${input.targetBranch}`,
+        'config',
+        '--replace-all',
+        'remote.origin.fetch',
+        '+refs/heads/*:refs/remotes/origin/*',
+      ],
+      { maxBuffer: 4 * 1024 * 1024 },
+    );
+    await execFileAsync(
+      'git',
+      [
+        `--git-dir=${gitCommonDir}`,
+        'fetch',
+        '--prune',
+        'origin',
+        `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
       ],
       { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
     );
-    // A worktree cut from a bare clone has no `node_modules`, so this is the
-    // one moment a warm tree can be hardlinked in before anything reads it.
-    // Never fatal: a cold store just means the corner installs as before.
-    const seed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
-      worktreePath: path,
-      storeRoot: warmNodeModulesStoreDir(input.supervisorRoot),
-    });
-    if (seed.reason !== 'no-lockfile') {
-      console.log(
-        `[thin-core] corner ${input.cornerId} warm node_modules: ${seed.reason}${
-          seed.detail ? ` (${seed.detail})` : ''
-        }`,
+    const restored = await execFileAsync(
+      'git',
+      [
+        `--git-dir=${gitCommonDir}`,
+        'fetch',
+        'origin',
+        `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`,
+      ],
+      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
+    ).then(
+      () => true,
+      (error) => {
+        if (isRemoteRefMissing(error)) return false;
+        throw error;
+      },
+    );
+    if (!existsSync(resolve(path, '.git'))) {
+      await rm(path, { recursive: true, force: true });
+      await execFileAsync(
+        'git',
+        [
+          `--git-dir=${gitCommonDir}`,
+          'worktree',
+          'add',
+          '-B',
+          input.featureBranch,
+          path,
+          restored
+            ? `refs/remotes/origin/${input.featureBranch}`
+            : `refs/remotes/origin/${input.targetBranch}`,
+        ],
+        { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
       );
-    }
-    // `apps/mobile` is deliberately outside the root workspaces and has its
-    // own lockfile, so its tree is warmed from a second store. Without it a
-    // fresh corner cannot run the mobile vitest suite at all.
-    const mobilePath = resolve(path, 'apps/mobile');
-    if (existsSync(resolve(mobilePath, 'package-lock.json'))) {
-      const mobileSeed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
-        worktreePath: mobilePath,
-        storeRoot: mobileNodeModulesStoreDir(input.supervisorRoot),
+      // A worktree cut from a bare clone has no `node_modules`, so this is the
+      // one moment a warm tree can be hardlinked in before anything reads it.
+      // Never fatal: a cold store just means the corner installs as before.
+      const seed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
+        worktreePath: path,
+        storeRoot: warmNodeModulesStoreDir(input.supervisorRoot),
       });
-      if (mobileSeed.reason !== 'no-lockfile') {
+      if (seed.reason !== 'no-lockfile') {
         console.log(
-          `[thin-core] corner ${input.cornerId} warm mobile node_modules: ${mobileSeed.reason}${
-            mobileSeed.detail ? ` (${mobileSeed.detail})` : ''
+          `[thin-core] corner ${input.cornerId} warm node_modules: ${seed.reason}${
+            seed.detail ? ` (${seed.detail})` : ''
           }`,
         );
       }
+      // `apps/mobile` is deliberately outside the root workspaces and has its
+      // own lockfile, so its tree is warmed from a second store. Without it a
+      // fresh corner cannot run the mobile vitest suite at all.
+      const mobilePath = resolve(path, 'apps/mobile');
+      if (existsSync(resolve(mobilePath, 'package-lock.json'))) {
+        const mobileSeed = input.workspaceId ? { reason: 'no-lockfile' as const } : await seedWarmNodeModules({
+          worktreePath: mobilePath,
+          storeRoot: mobileNodeModulesStoreDir(input.supervisorRoot),
+        });
+        if (mobileSeed.reason !== 'no-lockfile') {
+          console.log(
+            `[thin-core] corner ${input.cornerId} warm mobile node_modules: ${mobileSeed.reason}${
+              mobileSeed.detail ? ` (${mobileSeed.detail})` : ''
+            }`,
+          );
+        }
+      }
     }
-  }
-  await execFileAsync('git', [
-    `--git-dir=${gitCommonDir}`,
-    'config',
-    'extensions.worktreeConfig',
-    'true',
-  ]);
-  // A linked worktree created from a bare canonical clone otherwise inherits
-  // core.bare=true and rejects ordinary `git -C <worktree>` commands.
-  await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
-  await execFileAsync('git', [
-    '-C',
-    path,
-    'config',
-    '--worktree',
-    'credential.https://github.com.helper',
-    '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
-  ]);
-  const identity = agentGitIdentity(input.committer);
-  await execFileAsync('git', [
-    '-C',
-    path,
-    'config',
-    '--worktree',
-    'user.name',
-    identity.name,
-  ]);
-  await execFileAsync('git', [
-    '-C',
-    path,
-    'config',
-    '--worktree',
-    'user.email',
-    identity.email,
-  ]);
-  const top = (
-    await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel'])
-  ).stdout.trim();
-  // git reports the physical path. On macOS /var is /private/var, and a
-  // supervisor root reached through a symlink otherwise looks like an escape.
-  if ((await realpath(top)) !== (await realpath(path))) {
-    throw new Error(`corner worktree escaped its isolated root: ${top}`);
-  }
-  return { path, gitCommonDir };
+    await execFileAsync('git', [
+      `--git-dir=${gitCommonDir}`,
+      'config',
+      'extensions.worktreeConfig',
+      'true',
+    ]);
+    // A linked worktree created from a bare canonical clone otherwise inherits
+    // core.bare=true and rejects ordinary `git -C <worktree>` commands.
+    await execFileAsync('git', ['-C', path, 'config', '--worktree', 'core.bare', 'false']);
+    await execFileAsync('git', [
+      '-C',
+      path,
+      'config',
+      '--worktree',
+      'credential.https://github.com.helper',
+      '!f() { echo username=x-access-token; echo password=$GH_TOKEN; }; f',
+    ]);
+    const identity = agentGitIdentity(input.committer);
+    await execFileAsync('git', [
+      '-C',
+      path,
+      'config',
+      '--worktree',
+      'user.name',
+      identity.name,
+    ]);
+    await execFileAsync('git', [
+      '-C',
+      path,
+      'config',
+      '--worktree',
+      'user.email',
+      identity.email,
+    ]);
+    const top = (
+      await execFileAsync('git', ['-C', path, 'rev-parse', '--show-toplevel'])
+    ).stdout.trim();
+    // git reports the physical path. On macOS /var is /private/var, and a
+    // supervisor root reached through a symlink otherwise looks like an escape.
+    if ((await realpath(top)) !== (await realpath(path))) {
+      throw new Error(`corner worktree escaped its isolated root: ${top}`);
+    }
+    return { path, gitCommonDir };
+  });
 }
 
 export async function mapWithConcurrency<T>(
@@ -1695,7 +1701,9 @@ export class RoomRuntimeCoordinator {
       if (!requests.size) return false;
       const reported = this.reportedCornerStartFailures.get(cornerId) ?? new Set<string>();
       this.reportedCornerStartFailures.set(cornerId, reported);
-      const reason = distillTurnFailureReason(error);
+      const diagnostic = error && typeof error === 'object' && 'stderr' in error &&
+        typeof error.stderr === 'string' && error.stderr.trim() ? error.stderr : error;
+      const reason = distillTurnFailureReason(diagnostic);
       for (const requestId of requests) {
         if (reported.has(requestId)) continue;
         await this.options.daemonApi.execute('postAgentTurnReceipt', {
@@ -1704,7 +1712,7 @@ export class RoomRuntimeCoordinator {
           requestId,
           status: 'failed',
           reason: reason.text,
-          ...(reason.kind ? { reasonKind: reason.kind } : {}),
+          reasonKind: 'workspace-failure',
         });
         reported.add(requestId);
       }

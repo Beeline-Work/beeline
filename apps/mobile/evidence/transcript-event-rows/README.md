@@ -64,6 +64,13 @@ destinations at phone and desktop widths in both themes. Grouping tests also
 cover messages/decisions, issue commented/reopened states, check history,
 passive wallet records, missing metadata, suppressed closure and message anchors.
 
+The disclosure top-edge refinement is documented in
+[disclosure-top-edge](../disclosure-top-edge/README.md): steps, check-event runs
+and grouped GitHub headers have no top rule and retain a 44 px minimum tap
+height. GitHub-only groups now use their own header in
+`NotificationLifecycleCard`; steps and other event runs use `LedgerDisclosure`.
+The older screenshots below predate that refinement.
+
 ## Repeat Android proof
 
 Generate ignored native files with `npx expo prebuild --platform android --no-install`.

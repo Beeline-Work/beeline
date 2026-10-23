@@ -67,6 +67,29 @@ const text = (node: any): string =>
       : text(node?.props?.children ?? []);
 
 describe('mock A lifecycle rows', () => {
+  it('keeps grouped GitHub disclosures borderless with a full-height tap target', () => {
+    const { get } = render([item, issue] as any);
+    expect(get('notification-run-run').props.style?.borderTopWidth ?? 0).toBe(0);
+    expect(get('notification-run-expand-run').props.style.minHeight).toBeGreaterThanOrEqual(44);
+    act(() => get('notification-run-expand-run').props.onPress());
+    expect(get('notification-run-cell-pr')).toBeDefined();
+    act(() => get('notification-run-expand-run').props.onPress());
+    expect(get('notification-run-cell-pr')).toBeUndefined();
+    // A standalone repository record keeps its own section rule.
+    expect(render().get('notification-run-run').props.style.borderTopWidth).toBe(1);
+  });
+
+  it('keeps the shared check-event disclosure borderless and at least 44 high', () => {
+    const { get } = render([{ ...item, kind: 'check', state: 'Checks passed' }] as any);
+    const row = get('notification-run-expand-run');
+    expect(row.props.style.borderTopWidth ?? 0).toBe(0);
+    expect(row.props.style.minHeight).toBeGreaterThanOrEqual(44);
+    act(() => row.props.onPress());
+    expect(get('notification-run-cell-pr')).toBeDefined();
+    act(() => row.props.onPress());
+    expect(get('notification-run-cell-pr')).toBeUndefined();
+  });
+
   it('shows a single row without a header and keeps the two destinations separate', () => {
     const { tree, get, onOpenCorner, onOpenUrl } = render();
     expect(get('notification-run-expand-run')).toBeUndefined();

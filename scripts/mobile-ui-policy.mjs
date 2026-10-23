@@ -31,6 +31,7 @@ export const SHARED_CONTROL_OWNERS = new Set([
   'components/buzz/HullDialog.tsx',
   'components/buzz/HullSwitch.tsx',
   'components/buzz/IndexRow.tsx',
+  'components/buzz/LedgerDisclosure.tsx',
   'components/buzz/PageHeader.tsx',
   'components/buzz/RoomListSectionHeader.tsx',
   'components/buzz/RoomListToolbar.tsx',

@@ -1,0 +1,74 @@
+[
+  {
+    "attempt": "fast-flick",
+    "durationMs": 80,
+    "clip": [
+      53,
+      536,
+      1028,
+      1632
+    ],
+    "body": [
+      64,
+      536,
+      1018,
+      1632
+    ],
+    "bodyOffsetPx": 0.5,
+    "atRest": true
+  },
+  {
+    "attempt": "medium",
+    "durationMs": 300,
+    "clip": [
+      53,
+      536,
+      1028,
+      1632
+    ],
+    "body": [
+      64,
+      536,
+      1018,
+      1632
+    ],
+    "bodyOffsetPx": 0.5,
+    "atRest": true
+  },
+  {
+    "attempt": "slow-drag",
+    "durationMs": 900,
+    "clip": [
+      53,
+      536,
+      1028,
+      1632
+    ],
+    "body": [
+      64,
+      536,
+      1018,
+      1632
+    ],
+    "bodyOffsetPx": 0.5,
+    "atRest": true
+  },
+  {
+    "attempt": "corner-right",
+    "durationMs": 300,
+    "clip": [
+      53,
+      536,
+      1028,
+      1632
+    ],
+    "body": [
+      64,
+      536,
+      1018,
+      1632
+    ],
+    "bodyOffsetPx": 0.5,
+    "atRest": true
+  }
+]

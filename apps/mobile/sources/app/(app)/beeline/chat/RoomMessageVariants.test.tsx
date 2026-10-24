@@ -1057,8 +1057,11 @@ describe('Room message variant components', () => {
       expect(swipeMotion.close).toHaveBeenCalledOnce();
       expect(targets).toEqual([expect.objectContaining({ preview: 'hello', reference: row.reference })]);
       // No Close callback either: a keyboard/layout interruption cancels it.
-      act(() => vi.advanceTimersByTime(240));
-      expect(swipeMotion.reset).toHaveBeenCalledOnce();
+      // A second close repaints the rest frame; reset() would freeze the row
+      // mid-return on Android (Reproduction swipe-1).
+      act(() => vi.advanceTimersByTime(480));
+      expect(swipeMotion.close).toHaveBeenCalledTimes(2);
+      expect(swipeMotion.reset).not.toHaveBeenCalled();
       for (const unavailable of [
         { ...row, reference: undefined },
         { ...row, isAgentDraft: true },
@@ -1068,6 +1071,28 @@ describe('Room message variant components', () => {
         expect(renderer.root.findByType('Swipeable').props.renderRightActions).toBeUndefined();
       }
       expect(targets).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('leaves a settled reply swipe alone once its close spring finishes (Reproduction swipe-1)', () => {
+    vi.useFakeTimers();
+    swipeMotion.close.mockClear(); swipeMotion.reset.mockClear();
+    try {
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={message({ id: 'settled' })} participantsHydrated viewerPubkey="viewer"
+          speakerWorking={false} continued={false} participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
+          onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
+        />,
+      );
+      const swipe = renderer.root.findByType('Swipeable');
+      act(() => swipe.props.onSwipeableWillOpen('right'));
+      act(() => vi.advanceTimersByTime(0));
+      act(() => swipe.props.onSwipeableClose('right'));
+      act(() => vi.advanceTimersByTime(1000));
+      expect(swipeMotion.close).toHaveBeenCalledOnce();
+      expect(swipeMotion.reset).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
 

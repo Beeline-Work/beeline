@@ -38,6 +38,7 @@ import { beelineThemes } from '@/buzz/groknight';
 import { RoomListToolbar } from './RoomListToolbar';
 import { TrayGlyph } from './TrayGlyph';
 import { MembersAgentsGlyph } from './MembersAgentsGlyph';
+import { RoomListSectionHeader } from './RoomListSectionHeader';
 
 activeTheme.buzz = beelineThemes.obsidian;
 const originalConsoleError = console.error;
@@ -108,14 +109,19 @@ describe.each(['obsidian', 'bone'] as const)('Room list header colour in %s', (n
           <TrayGlyph size={22} color={hull.ledgerQuiet} cutColor={hull.bgBase} onPress={() => undefined}
             testID="workspace-tray" needsYouCount={needsYouCount} />
           <RoomListToolbar filter="all" onFilter={() => undefined} query="" onQuery={() => undefined} />
+          <RoomListSectionHeader title="Rooms" inset="roomList" actionTestID="new-room"
+            actionAccessibilityLabel="Create a new Room" onAction={() => undefined} />
         </>,
       );
     });
     return tree;
   }
-  // Every ink colour the glyphs draw; black, white and none only shape the mask.
+  const addGlyph = (tree: ReactTestRenderer) =>
+    tree.root.findByProps({ testID: 'new-room' }).findByType('Svg' as never);
+  // Every ink colour the header glyphs draw; black, white and none only shape the mask.
   const strokes = (tree: ReactTestRenderer) =>
     tree.root.findAllByType('Svg' as never)
+      .filter((node: any) => node !== addGlyph(tree))
       .flatMap((node: any) => [node.props.stroke, node.props.fill])
       .filter((ink: any) => ink && !['none', 'black', 'white'].includes(ink));
 
@@ -125,6 +131,12 @@ describe.each(['obsidian', 'bone'] as const)('Room list header colour in %s', (n
     expect(search.props.color).toBe(hull.ledgerQuiet);
     expect(new Set(strokes(tree))).toEqual(new Set([hull.ledgerQuiet]));
     expect(tree.root.findAllByProps({ testID: 'tray-needs-you-count' })).toHaveLength(0);
+  });
+
+  it('draws the section + in brass beside the grey header icons', () => {
+    const tree = header(0);
+    expect(addGlyph(tree).props.stroke).toBe(hull.accent);
+    expect(hull.accent).not.toBe(hull.ledgerQuiet);
   });
 
   it('keeps the tray grey and puts brass only on its count when items wait', () => {

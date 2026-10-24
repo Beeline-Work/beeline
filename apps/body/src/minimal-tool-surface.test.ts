@@ -200,6 +200,9 @@ describe('minimal agent surface', () => {
       change: 'Synthetic correction',
       brief: { spec: 'Synthetic spec', approval: { sourceMessageId: 'synthetic-message' } },
     };
+    expect(tool.inputSchema.anyOf).toBeUndefined();
+    expect(tool.inputSchema.properties).toHaveProperty('address');
+    expect(tool.inputSchema.properties).toHaveProperty('brief');
     expect(Check(tool.inputSchema, input)).toBe(true);
     expect(JSON.parse(await callAgentTool('revise_corner', input, 'R1'))).toEqual({
       ok: true,
@@ -217,6 +220,13 @@ describe('minimal agent surface', () => {
         }),
       }),
     });
+  });
+
+  it('R-REVISE names an invalid nested field before side effects', async () => {
+    await expect(callAgentTool('revise_corner', { action: 'brief', address: 'target',
+      expectedRevision: 1, change: 'Correction', brief: { spec: 42 } }, 'invalid'))
+      .rejects.toThrow('/brief/spec');
+    expect(calls).toEqual([]);
   });
 
   it('posts a public note without dispatching any wake/order/report', async () => {

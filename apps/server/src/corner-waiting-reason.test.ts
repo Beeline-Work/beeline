@@ -54,6 +54,36 @@ it.each(['done:', 'failed:', 'unreachable', 'addressed message'])(
 );
 
 
+it('R1: an agent-commander report is marked, and a human blocker stays visible beside it', async () => {
+  await db.exec(`DELETE FROM corner_owed; DELETE FROM corner_report_blockers; DELETE FROM messages; DELETE FROM identities;
+    INSERT INTO identities VALUES('agent','agent','Ruby'),('person','human','Lunchbox');
+    INSERT INTO messages VALUES('ask','choice');
+    INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','agent','2026-01-01','agent','other');
+    INSERT INTO corner_owed VALUES('corner','ask','person','2026-01-02',true,NULL);`);
+  const oldest = (await db.query<{ item_id: string; agent_commander: boolean; human_blocker: boolean }>(
+    `SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`,
+  )).rows[0]!;
+  expect(oldest).toMatchObject({ item_id: 'report', agent_commander: true, human_blocker: true });
+  await db.exec('DELETE FROM corner_owed');
+  const only = (await db.query<{ item_id: string; agent_commander: boolean; human_blocker: boolean }>(
+    `SELECT blocker.* FROM rooms c ${cornerBlockerSql()}`,
+  )).rows[0]!;
+  expect(only).toMatchObject({ item_id: 'report', agent_commander: true, human_blocker: false });
+  const now = new Date();
+  const pending = {
+    archived_at: null, latest_turn_status: null, blocking: true, ci_started_at: now,
+    waiting_item_id: only.item_id, waiting_reason: 'question' as const, waiting_kind: 'report' as const,
+    lifecycle: { lifecycle: 'in-review', checks: 'pending' as const },
+  };
+  expect(cornerRowState({ ...pending, agent_commander: true, human_blocker: false }).state).toBe('review');
+  expect(cornerRowState({ ...pending, agent_commander: true, human_blocker: true }).state).toBe('waiting');
+  expect(cornerRowState({ ...pending, agent_commander: false, human_blocker: true }).state).toBe('waiting');
+  expect(cornerRowState({
+    ...pending, agent_commander: true, human_blocker: false,
+    lifecycle: { lifecycle: 'working', checks: 'unknown' },
+  }).state).toBe('waiting');
+});
+
 it('R1: holds and messageless reports resolve selection IDs to real source message targets', async () => {
   await db.exec(`DELETE FROM corner_owed; DELETE FROM messages;
     INSERT INTO identities VALUES('person','human','Lunchbox');

@@ -2745,13 +2745,16 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
     const required = tool.inputSchema.required as string[] | undefined;
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));
-    const diagnosticSchema = tool.name === 'wake'
-      ? { ...tool.inputSchema, anyOf: (tool.inputSchema.anyOf as JsonObject[]).filter(schema => {
+    const branches = tool.name === 'revise_corner'
+      ? (tool.inputSchema.allOf as JsonObject[])[0]!.anyOf
+      : tool.inputSchema.anyOf;
+    const diagnosticSchema = tool.name === 'wake' || tool.name === 'revise_corner'
+      ? { ...tool.inputSchema, allOf: undefined, anyOf: (branches as JsonObject[]).filter(schema => {
         const action = asObject(schema.properties).action;
         return !action || Check(action, requestedAction);
       }) }
       : tool.inputSchema;
-    const details = tool.name === 'wake'
+    const details = tool.name === 'wake' || tool.name === 'revise_corner'
       ? Errors(diagnosticSchema, args).filter(error => error.keyword !== 'anyOf')
         .map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
       : '';
@@ -2759,8 +2762,31 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   }
 }
 
-/** Execute only the advertised vocabulary; internal operations retain server authority. */
+// MCP requests may run concurrently. Register artifact work before the first
+// await so an immediately following report cannot overtake its upload/queue.
+let turnArtifacts: { key: string; uploads: Promise<string>[] } | undefined;
+
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+  if (name !== 'post_artifact' && name !== 'report') return executeAgentTool(name, args, toolCallId);
+  const contextFile = process.env.BEELINE_TURN_CONTEXT_FILE;
+  const context = contextFile ? JSON.parse(readFileSync(contextFile, 'utf8')) as Record<string, unknown> : {};
+  const key = JSON.stringify([process.env.BEELINE_DAEMON_BASE_URL, process.env.BEELINE_DAEMON_ROOM_ID,
+    context.roomId, context.requestId, context.generationId]);
+  if (turnArtifacts?.key !== key) turnArtifacts = { key, uploads: [] };
+  const artifacts = turnArtifacts;
+  if (name === 'post_artifact') {
+    const upload = executeAgentTool(name, args, toolCallId);
+    artifacts.uploads.push(upload);
+    // Keep failures for report even when the caller has already observed them.
+    void upload.catch(() => {});
+    return upload;
+  }
+  await Promise.all(artifacts.uploads);
+  return executeAgentTool(name, args, toolCallId);
+}
+
+/** Execute only the advertised vocabulary; internal operations retain server authority. */
+async function executeAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
     throw new Error('turn has ended; further tool calls are refused');
   if (name === 'read' && args.cursor !== undefined &&

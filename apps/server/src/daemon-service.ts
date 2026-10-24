@@ -3236,7 +3236,7 @@ export class DaemonService {
     };
   }
 
-  private async roomMessage(input: Input<'getRoomMessage'>, agentId: string) {
+  private async roomMessage(input: Input<'getRoomMessage'>, agentId: string): Promise<{ messageId: string; body: string; attachments: DaemonAttachment[]; nextOffset?: number }> {
     await this.access(input.roomId, agentId);
     if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
     const offset = input.offset ?? 0;
@@ -3274,12 +3274,41 @@ export class DaemonService {
          JOIN rooms output ON output.id=$1
          WHERE message.id=$2 AND message.deleted_at IS NULL
            AND COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
-           AND (presentation='message' OR card_type='agent-command')`,
+           AND (presentation IN ('message','activity') OR card_type='agent-command')`,
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
+    if (!row) {
+      // A dispatched review lends access to current brief citations only.
+      // Keep this separate from Room access and requester-derived authority.
+      row = (await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
+        `SELECT substring(message.text FROM $4::integer + 1 FOR 4000) body,
+                char_length(message.text) total,message.attachments
+         FROM messages message
+         JOIN rooms corner ON corner.id=$1 AND corner.archived_at IS NULL
+         JOIN rooms source ON source.id=message.room_id AND source.workspace_id=corner.workspace_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN LATERAL (SELECT * FROM corner_brief_revisions
+           WHERE corner_id=corner.id ORDER BY revision DESC LIMIT 1) brief
+           ON brief.source_room_id=message.room_id
+         WHERE message.id=$3 AND message.deleted_at IS NULL AND message.presentation='message'
+           AND (message.id=brief.source_message_id
+             OR message.id=brief.approval_basis->>'sourceMessageId'
+             OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(brief.intent_verbatim,'[]'::jsonb)) intent
+               WHERE intent->>'sourceMessageId'=message.id))
+           AND EXISTS(SELECT 1 FROM agent_commands command
+             WHERE command.room_id=corner.id AND command.agent_id=$2
+               AND command.state IN ('pending','claimed') AND command.review_context IS NOT NULL
+               AND command.review_context->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+               AND command.review_context->'pullRequest'=fact.lifecycle->'pr'->'number'
+               AND command.review_context->>'briefRevision'=brief.revision::text)
+         LIMIT 1`,
+        [input.roomId,agentId,input.messageId,offset],
+      )).rows[0];
+    }
+    let authority: { workspace_id: string; requester_identity_id: string } | undefined;
     if (!row && this.authorizedCommand?.room_id === input.roomId) {
-      const authority = (
+      authority = (
         await this.database.query<{ workspace_id: string; requester_identity_id: string }>(
           `SELECT output.workspace_id,root.author_id requester_identity_id
            FROM rooms output
@@ -3300,7 +3329,7 @@ export class DaemonService {
              FROM messages message
              JOIN authorized_rooms authorized ON authorized.id=message.room_id
              WHERE message.id=$5 AND message.deleted_at IS NULL
-               AND (message.presentation='message' OR message.card_type='agent-command')`,
+               AND (message.presentation IN ('message','activity') OR message.card_type='agent-command')`,
             [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
               input.messageId, offset],
           )
@@ -3308,12 +3337,31 @@ export class DaemonService {
       }
     }
     if (!row) {
+      // Literal prefix comparison avoids treating user-supplied % or _ as wildcards.
+      // Resolve the entire readable scope before selecting a candidate.
+      const candidates = await this.database.query<{ id: string }>(
+        `WITH ${AUTHORIZED_ROOMS_CTE}
+         SELECT message.id FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms output ON output.id=$1
+         WHERE starts_with(message.id,$5) AND message.deleted_at IS NULL
+           AND (message.presentation IN ('message','activity') OR message.card_type='agent-command')
+           AND (COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
+             OR message.room_id IN (SELECT id FROM authorized_rooms))
+         ORDER BY message.id LIMIT 21`,
+        [input.roomId, authority?.requester_identity_id ?? null,
+          authority?.workspace_id ?? null, agentId, input.messageId],
+      );
+      if (candidates.rows.length > 1)
+        throw new Error(`ambiguous message id: ${candidates.rows.slice(0, 20).map(candidate => candidate.id).join(', ')}${candidates.rows.length > 20 ? ' (more matches; use a longer id)' : ''}`);
+      if (candidates.rows.length === 1 && candidates.rows[0]!.id !== input.messageId)
+        return this.roomMessage({ ...input, messageId: candidates.rows[0]!.id }, agentId);
       // Existing messages outside the readable scope are refusals, not misses:
       // download_attachment must preserve forbidden rather than not_found.
       const elsewhere = await this.database.query(
         `SELECT 1 FROM messages message
          WHERE message.id=$1 AND message.deleted_at IS NULL
-           AND (message.presentation='message' OR message.card_type='agent-command')`,
+           AND (message.presentation IN ('message','activity') OR message.card_type='agent-command')`,
         [input.messageId],
       );
       if (elsewhere.rowCount) throw new Error('message access denied from this Room');
@@ -7566,7 +7614,7 @@ export class DaemonService {
       throw new CommandRefusalError('App id or key is required', 400);
     const selector = appId.trim();
     const isId = /^[0-9a-f-]{36}$/i.test(selector);
-    const rows = (await this.database.query<{ id: string; app_key: string;
+    const candidates = (await this.database.query<{ id: string; app_key: string;
       display_name: string; domain: string | null; transport: AppTransport;
       owner_identity_id: string; composio_account_id: string | null;
       composio_link_expires_at: Date | null;
@@ -7586,6 +7634,10 @@ export class DaemonService {
        ORDER BY app.id`,
       [isId ? selector : selector.replace(/^app:/, ''), roomId, agentId],
     )).rows;
+    // connect status advertises the agent owner's active apps, across Workspaces.
+    // Resolve those keys before considering apps shared by other Room members.
+    const owned = candidates.filter(row => row.owner_identity_id === row.agent_owner_id);
+    const rows = !isId && owned.length ? owned : candidates;
     if (rows.length > 1)
       throw new CommandRefusalError(`Connected app key is ambiguous; use an exact app id: ${rows.map(row => row.id).join(', ')}`, 400);
     const row = rows[0];
@@ -8287,13 +8339,9 @@ export class DaemonService {
           [parentCommand.source_message_id, commandRoomId],
         )
       ).rows[0];
-      const destinations = [
-        { roomId, sourceMessageId: commandRoomId === roomId ? source?.id : undefined },
-        ...(source && commandRoomId !== roomId
-          ? [{ roomId: commandRoomId, sourceMessageId: source.id }] : []),
-      ];
-      // The parent record never carries a private origin. Only that origin's
-      // own transcript receives its source id, with no second lifecycle wake.
+      // A real dispatching message owns the opening. Without one, the parent
+      // Room is the call site. Do not write a duplicate before the source row.
+      const destinations = [{ roomId: source ? commandRoomId : roomId, sourceMessageId: source?.id }];
       for (const destination of destinations) {
         await systemLine(db, {
           roomId: destination.roomId,
@@ -8353,7 +8401,6 @@ export class DaemonService {
       await this.reach(input.cornerId, agentId, db).catch(() => {
         throw new CommandRefusalError('corner brief revision denied', 403);
       });
-      if (corner.created_by === agentId) draft = { ...draft, approval: undefined };
       validateCornerBrief(draft);
       const commandRoomId = input.roomId ?? input.cornerId;
       const command = await authorizeCommandOutput(

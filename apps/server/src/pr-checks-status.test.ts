@@ -40,6 +40,9 @@ let registeredCount: number;
 let onWorkflowRead: (() => Promise<void>) | undefined;
 let workflowStatus: string;
 let suiteStatus: string;
+let suiteRuns: number | undefined;
+let associatedPulls: Record<string, unknown>[];
+let requiredContexts: string[] | null;
 let requests: string[];
 let server: Server | undefined;
 
@@ -105,6 +108,9 @@ beforeEach(async () => {
   onWorkflowRead = undefined;
   workflowStatus = 'completed';
   suiteStatus = 'completed';
+  suiteRuns = undefined;
+  associatedPulls = [];
+  requiredContexts = null;
   requests = [];
   app = new GitHubAppClient({
     appId: '1',
@@ -126,8 +132,22 @@ beforeEach(async () => {
       await onWorkflowRead?.();
       return Response.json({ total_count: workflowCount });
     }
+    if (url.includes('/commits/') && url.includes('/pulls')) return Response.json(associatedPulls);
+    if (url.includes('/protection/required_status_checks')) {
+      if (requiredContexts === null) return new Response('not protected', { status: 404 });
+      return Response.json({
+        contexts: requiredContexts,
+        checks: requiredContexts.map((context) => ({ context, app_id: 15368 })),
+      });
+    }
     if (url.includes('per_page=100')) return Response.json(url.includes('/check-suites?')
-      ? { total_count: 1, check_suites: [{ status: suiteStatus }] }
+      ? {
+          total_count: 1,
+          check_suites: [{
+            status: suiteStatus,
+            ...(suiteRuns === undefined ? {} : { latest_check_runs_count: suiteRuns }),
+          }],
+        }
       : { total_count: 1, workflow_runs: [{ status: workflowStatus }] });
     if (url.includes('/check-suites?') || url.includes('/actions/runs?')) {
       if (registeredCount) rollupState = 'PENDING';
@@ -240,17 +260,113 @@ describe('PR-scoped check gate', () => {
     expect(await gate()).toMatchObject({ checks: 'passed', stage: 'waiting_for_yes' });
   });
 
-  it('Reproduction CHECK-HEAD-1: a queued suite keeps the live gate pending', async () => {
+  it('Reproduction CHECK-HEAD-1: a queued suite with a check run keeps the live gate pending', async () => {
     suiteStatus = 'queued';
+    suiteRuns = 1;
     expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
     suiteStatus = 'completed';
     expect(await gate()).toMatchObject({ checks: 'passed' });
   });
 
+  it('Reproduction EMPTY-SUITE-1: empty queued third-party suites let a green head pass and wake the reviewer', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      [AUTHOR],
+    );
+    suiteStatus = 'queued';
+    suiteRuns = 0;
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['TYPECHECK', 'test'];
+    rollupContexts = {
+      totalCount: 2,
+      nodes: [
+        { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', checkSuite: { app: { databaseId: 15368 } } },
+        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
+      ],
+    };
+    await operations.processWebhook('check_run', {
+      action: 'completed',
+      installation: { id: 77 },
+      repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name: 'test',
+        status: 'completed',
+        conclusion: 'success',
+        head_sha: SHA,
+        check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA },
+      },
+    });
+    const stored = (await db.query<{ checks: string }>(
+      `SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,
+      [AUTHOR],
+    )).rows[0]?.checks;
+    const commands = (await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands;
+    console.info(
+      `Reproduction EMPTY-SUITE-1: wrong=checks pending and no reviewer wake; observed checks=${stored} reviewerCommands=${commands.length}`,
+    );
+    expect(stored).toBe('passing');
+    expect(commands).toHaveLength(1);
+    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', stage: 'waiting_for_yes' });
+  });
+
+  it('Reproduction EMPTY-SUITE-1: a deploy re-read wakes the reviewer when only empty suites were queued', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      [AUTHOR],
+    );
+    suiteStatus = 'queued';
+    suiteRuns = 0;
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['TYPECHECK'];
+    rollupContexts = {
+      totalCount: 1,
+      nodes: [
+        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
+      ],
+    };
+    await operations.refreshOpenPendingChecks();
+    expect((await db.query<{ checks: string }>(
+      `SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,
+      [AUTHOR],
+    )).rows[0]?.checks).toBe('passing');
+    expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(1);
+  });
+
+  it('Reproduction EMPTY-SUITE-1: a same-name success from another app leaves the required check pending', async () => {
+    suiteStatus = 'queued';
+    suiteRuns = 0;
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['lint'];
+    rollupContexts = {
+      totalCount: 1,
+      nodes: [{
+        __typename: 'CheckRun',
+        name: 'lint',
+        status: 'COMPLETED',
+        conclusion: 'SUCCESS',
+        checkSuite: { app: { databaseId: 999 } },
+      }],
+    };
+    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
+  });
+
+  it('Reproduction EMPTY-SUITE-1: a missing required check stays pending', async () => {
+    suiteStatus = 'queued';
+    suiteRuns = 0;
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['TYPECHECK'];
+    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
+  });
+
   it.each(['workflow', 'suite'])('CHECK-HEAD-1: a completed job webhook cannot dispatch review with a queued %s', async registration => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
-    if (registration === 'workflow') workflowStatus = 'queued'; else suiteStatus = 'queued';
+    if (registration === 'workflow') workflowStatus = 'queued';
+    else { suiteStatus = 'queued'; suiteRuns = 1; }
     await operations.processWebhook('check_run', { action: 'completed', installation: { id: 77 },
       repository: { full_name: 'owner/widgets' }, check_run: { name: 'test', status: 'completed',
         conclusion: 'success', head_sha: SHA, check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA } } });

@@ -23,16 +23,16 @@ describe('observed corner states', () => {
     ['worker queued alone', { workerQueued: true }, 'idle'],
     ['reviewer running', { reviewerActive: true }, 'review'],
     ['queued for merge', { lifecycle: { ...pushed, checks: 'passing', mergeQueue: { headSha: pushed.pr.headSha } } }, 'idle'],
-    ['checks running', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }, 'waiting'],
+    ['checks running', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }, 'review'],
     [
       'pushed head before checks report',
       { lifecycle: { ...pushed, checksSummary: { ...emptySummary } } },
-      'waiting',
+      'review',
     ],
     [
       'pushed head with pending checks',
       { lifecycle: { ...pushed, checks: 'pending', checksSummary: { ...emptySummary, status: 'pending' } } },
-      'waiting',
+      'review',
     ],
     [
       'fetch found no checks configured',
@@ -55,6 +55,7 @@ describe('observed corner states', () => {
       { lifecycle: { lifecycle: 'in-review', checks: 'failing' } },
       'idle',
     ],
+    ['human merge yes', { owed: true, lifecycle: { ...pushed, checks: 'passing' } }, 'waiting'],
     ['unanswered human request', { owed: true }, 'waiting'],
     ['legacy ask stage alone', { run: { state: 'ask_human' } }, 'idle'],
     ['failed turn alone', { run: { state: 'implement', outcome: 'failed' } }, 'idle'],

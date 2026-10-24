@@ -35,6 +35,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ### ACP startup
 
+- **Failed activation owns its harness cleanup.** Room and corner loops stop an unusable prior client before replacement, and discard the new client if cold activation fails, including after session creation. Native resume failure still falls back on the same client. The explicit ACP `-32000 Authentication required` refusal produces a terminal `not-signed-in` receipt; provider refresh races retain bounded hiccup retries. Regression and real subprocess proof: `monolith-activation-failure.test.ts`.
+
 - **ACP scopes bind to the helper's lifetime without ordering after its readiness.** `AcpResourceScope` (`apps/body/src/acp-resource-scope.ts`) keeps `BindsTo` without `After`: the notify helper can initialize ACP before READY, so ordering its scope after readiness can deadlock startup (`acp-resource-scope.startup.test.ts`).
 - **Intake precedes retention work.** `room-runtime.ts` starts Room command loops and corner subscriptions, then reports serving before archived cleanup. Cleanup still yields watchdog progress and preserves unpublished work (`room-runtime.startup.test.ts`, `workloop-watchdog.test.ts`).
 - **Native conversation memory survives helper restarts.** Codex/Grok Room and corner loops load the matching harness session and its delivered row IDs from private `agent-home/warm-transcript.json`. Configuration/checkout changes, failed native loads and the unchanged 30-minute idle boundary start cold; unsupported harnesses retain bounded transcript replay. Open Room storage preserves the resume record; archive removes it with the private home (`monolith-native-resume.test.ts`, `warm-transcript.test.ts`, `storage-bloat.regression.test.ts`).

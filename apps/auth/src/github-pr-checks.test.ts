@@ -16,6 +16,14 @@ const response = (state: string, nodes: Record<string, unknown>[], totalCount = 
     },
   },
 });
+const rollupFetch = (body: unknown) => async (input: string) => {
+  const url = String(input);
+  if (url.endsWith('/graphql')) return Response.json(body);
+  if (url.includes('/check-suites?')) return Response.json({ total_count: 0, check_suites: [] });
+  if (url.includes('/actions/runs?')) return Response.json({ total_count: 0, workflow_runs: [] });
+  if (url.includes('/commits/') && url.includes('/pulls')) return Response.json([]);
+  return new Response(`unexpected ${url}`, { status: 500 });
+};
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
@@ -63,30 +71,27 @@ describe('GitHub PR check reads', () => {
   });
 
   it("uses GitHub's combined rollup instead of reconstructing a verdict", async () => {
-    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
-      Response.json(
-        response('SUCCESS', [
-          {
-            __typename: 'CheckRun',
-            name: 'test',
-            status: 'COMPLETED',
-            conclusion: 'SUCCESS',
-            detailsUrl: 'https://github.com/owner/widgets/actions/runs/1',
-          },
-          {
-            __typename: 'StatusContext',
-            context: 'deploy',
-            state: 'SUCCESS',
-            description: 'deployed',
-            targetUrl: 'https://example.test/deploy',
-          },
-        ]),
-      ),
-    );
+    const fetchMock = vi.fn(rollupFetch(response('SUCCESS', [
+      {
+        __typename: 'CheckRun',
+        name: 'test',
+        status: 'COMPLETED',
+        conclusion: 'SUCCESS',
+        detailsUrl: 'https://github.com/owner/widgets/actions/runs/1',
+      },
+      {
+        __typename: 'StatusContext',
+        context: 'deploy',
+        state: 'SUCCESS',
+        description: 'deployed',
+        targetUrl: 'https://example.test/deploy',
+      },
+    ])));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).resolves.toEqual({
       state: 'passed',
+      pendingRegistrations: false,
       total: 2,
       failing: [],
       checks: [
@@ -104,7 +109,6 @@ describe('GitHub PR check reads', () => {
         },
       ],
     });
-    expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]![0]).toBe('https://api.github.test/graphql');
     expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({
       variables: { owner: 'owner', name: 'widgets', expression: sha },
@@ -117,18 +121,14 @@ describe('GitHub PR check reads', () => {
     ['FAILURE', 'failed'],
     ['ERROR', 'failed'],
   ] as const)('maps GitHub rollup %s to %s', async (githubState, state) => {
-    vi.stubGlobal('fetch', async () =>
-      Response.json(
-        response(githubState, [
-          {
-            __typename: 'CheckRun',
-            name: 'build',
-            status: githubState === 'PENDING' ? 'IN_PROGRESS' : 'COMPLETED',
-            conclusion: githubState === 'FAILURE' ? 'FAILURE' : null,
-          },
-        ]),
-      ),
-    );
+    vi.stubGlobal('fetch', rollupFetch(response(githubState, [
+      {
+        __typename: 'CheckRun',
+        name: 'build',
+        status: githubState === 'PENDING' ? 'IN_PROGRESS' : 'COMPLETED',
+        conclusion: githubState === 'FAILURE' ? 'FAILURE' : null,
+      },
+    ])));
     expect(await app().readCommitCheckRollup('token', 'owner/widgets', sha)).toMatchObject({
       state,
     });
@@ -138,18 +138,14 @@ describe('GitHub PR check reads', () => {
     // A job cancelled before a runner picked it up has no code verdict. The
     // combined rollup GitHub returns is still FAILURE, but the run itself is
     // reported as cancelled and must not read as a repair-waking failure.
-    vi.stubGlobal('fetch', async () =>
-      Response.json(
-        response('FAILURE', [
-          {
-            __typename: 'CheckRun',
-            name: 'Deploy',
-            status: 'COMPLETED',
-            conclusion: 'CANCELLED',
-          },
-        ]),
-      ),
-    );
+    vi.stubGlobal('fetch', rollupFetch(response('FAILURE', [
+      {
+        __typename: 'CheckRun',
+        name: 'Deploy',
+        status: 'COMPLETED',
+        conclusion: 'CANCELLED',
+      },
+    ])));
     await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).resolves.toMatchObject({
       state: 'failed',
       checks: [{ name: 'Deploy', status: 'cancelled', conclusion: 'CANCELLED' }],
@@ -158,11 +154,10 @@ describe('GitHub PR check reads', () => {
   });
 
   it('treats a head with no rollup as pending rather than passing', async () => {
-    vi.stubGlobal('fetch', async () =>
-      Response.json({ data: { repository: { object: { oid: sha, statusCheckRollup: null } } } }),
-    );
+    vi.stubGlobal('fetch', rollupFetch({ data: { repository: { object: { oid: sha, statusCheckRollup: null } } } }));
     await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).resolves.toEqual({
       state: 'pending',
+      pendingRegistrations: false,
       total: 0,
       failing: [],
       checks: [],

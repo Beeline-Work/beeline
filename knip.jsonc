@@ -133,6 +133,8 @@
         "scripts/beeline-mark-proof.tsx",
         "scripts/identity-mark-system-proof.tsx",
         "scripts/system-lines-proof.tsx",
+        // The repository subscription screenshot runner bundles this entry by path.
+        "scripts/repository-subscription-proof.tsx",
         "scripts/harness-start-failure-proof.tsx",
         "scripts/pr-accordion-proof.tsx",
         // Gradle bundles this native screenshot fixture through its entryFile override.

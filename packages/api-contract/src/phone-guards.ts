@@ -1253,9 +1253,12 @@ function readWorkspace(value: unknown): ChatListWorkspace | null {
 function readLatest(value: unknown): NonNullable<ChatListItem['latestMessage']> | null {
   const item = record(value);
   const author = readIdentity(item?.author);
+  // Not hex64: an automatic failure report is stored as `failure:<command>:<attempt>`
+  // and a handoff card as a UUID. Dropping the preview made an active Room read
+  // "No messages yet".
   if (
     !item ||
-    !hex64(item.id) ||
+    !nonempty(item.id) ||
     typeof item.text !== 'string' ||
     !integer(item.createdAt) ||
     !author

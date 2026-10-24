@@ -62,10 +62,18 @@ it('wakes only the named agent at a Room address, by handle, @handle or id', asy
   console.info('Demonstrated room-broadcast: agent=@candy woke Candy only; agent=<Baby id> woke Baby only; Earth never woken');
 });
 
-it('refuses a Room order naming a non-member, a human or the sender', async () => {
-  for (const agent of ['nobody', 'owner', 'jellybean', ' '])
+it('refuses a Room order naming a non-member or a human', async () => {
+  for (const agent of ['nobody', 'owner', ' '])
     await expect(daemon.execute('order', { ...authority(), address: ROOM, agent, text: 'Do it' }, JELLYBEAN)).rejects.toThrow('agent');
   expect(await orderWakes()).toEqual([]);
+});
+
+it('Reproduction SELF-1: accepts a self-order from the DM into the Room', async () => {
+  await daemon.execute('order', { ...authority(), address: ROOM, agent: 'jellybean', text: 'Continue in the Room' }, JELLYBEAN);
+  expect(await orderWakes()).toEqual([{ agent_id: JELLYBEAN, room_id: ROOM }]);
+  await expect(daemon.execute('order', { ...authority(), address: DM, agent: 'jellybean', text: 'Repeat here' }, JELLYBEAN))
+    .rejects.toThrow('itself');
+  expect(await orderWakes()).toEqual([{ agent_id: JELLYBEAN, room_id: ROOM }]);
 });
 
 it('allows named corner peers and preserves agent DM orders', async () => {

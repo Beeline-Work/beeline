@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { normalizeLegacyWorkflowRuns, saveUnsavedWorkflowRunStatus } from './migrations/workflow-cleanup.js';
 import { workflowRunIsLiveSql, workflowRunStatusUnsavedSql } from './workflow-run-saved-status.js';
@@ -1003,8 +1004,10 @@ describe('handoff', () => {
 
   it.each([false, true])('demonstrates tray-choice-clarity with readable workflow choices and unchanged routing (legacy: %s)', async legacy => {
     const command = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
-    const contract = { ...FEEDBACK_TRIAGE_CONTRACT, name: 'tray-proof', start: 'approve',
-      handoffs: Object.fromEntries(Object.entries(FEEDBACK_TRIAGE_CONTRACT.handoffs)
+    // Pinned runs retain their original gate even after the current seed changes.
+    const legacyTriage = JSON.parse(readFileSync(new URL('../../../packages/api-contract/test-fixtures/legacy-feedback-triage.json', import.meta.url), 'utf8'));
+    const contract = { ...legacyTriage, name: 'tray-proof', start: 'approve',
+      handoffs: Object.fromEntries(Object.entries(legacyTriage.handoffs)
         .filter(([name]) => ['approve', 'dispatch', 'done', 'failed'].includes(name))),
     };
     await saveWorkflow(database, command, { contract });

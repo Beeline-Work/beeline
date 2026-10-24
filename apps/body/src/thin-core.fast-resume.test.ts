@@ -63,3 +63,106 @@ it('claims and answers in a pending Room while eighty other Room listings reconc
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it.each(['room', 'host'] as const)(
+  'resumes every Room after restart during %s storage maintenance without waiting for archived cleanup', async lease => {
+    const { SessionScheduler } = await import('./session-scheduler.js');
+    const root = await mkdtemp(resolve(process.cwd(), '.restart-resume-'));
+    const agent = identityFromKey('21'.repeat(32), 'Bee');
+    const runtime = {
+      agent: { publicKey: agent.publicKey, secretKeyHex: '21'.repeat(32), name: 'Bee' },
+      rooms: [], communityId: 'workspace', supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'http://127.0.0.1', daemonToken: 'isolated-fixture' },
+    } as unknown as AgentRuntimeRecord;
+    const pending = new Map<string, AgentCommand>();
+    const listeners = new Map<string, (commands: readonly AgentCommand[]) => void>();
+    const answered: string[] = [];
+    const claimed: string[] = [];
+    const errors: unknown[] = [];
+    const execute = vi.fn(async (name: string, input: { roomId?: string; commandId?: string }) => {
+      if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'],
+        rooms: [{ roomId: 'beeline' }, { roomId: 'other' }] };
+      if (name === 'listRoomCorners') return { corners: [] };
+      if (name === 'getAgentCommands') return { commandProtocol: 1,
+        commands: [...pending.values()].filter(c => c.roomId === input.roomId) };
+      if (name === 'claimAgentCommand') {
+        claimed.push(input.commandId!); pending.delete(input.commandId!); return { id: input.commandId };
+      }
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const api = { execute, liveSubscribe: (roomId: string, _cursor: unknown, _items: unknown,
+      _state: unknown, _presence: unknown, notify: (commands: readonly AgentCommand[]) => void) => {
+      listeners.set(roomId, notify); return () => { listeners.delete(roomId); };
+    } } as unknown as DaemonApiClient;
+    vi.spyOn(MonolithRoomTurnLoop.prototype as unknown as { prompt(active: { item: { id: string } }): Promise<void> }, 'prompt')
+      .mockImplementation(async function (this: { busy: boolean }, active) { answered.push(active.item.id); this.busy = false; });
+    const send = (id: string, roomId = 'beeline', action: 'input' | 'restart' = 'input') => {
+      const command: AgentCommand = { id, roomId, agentId: agent.publicKey,
+        sourceMessageId: id, turnRequestId: id, rootCommandId: id, rootSourceMessageId: id,
+        action, reason: action === 'restart' ? 'tagged_lifecycle_restart' : 'human_tag', agentDepth: 0,
+        source: { id, authorId: 'owner', body: 'Are you back?', attachments: [], createdAt: 1, type: 'message' } };
+      pending.set(id, command); listeners.get(roomId)?.([command]);
+    };
+    const create = (onRestartRequested = () => undefined) => new ThinDaemonCore(runtime,
+      resolve(root, 'agent.json'), { workspaceRoot: root } as never, { daemonApi: api, onRestartRequested });
+    const first = create();
+    const firstAbort = new AbortController();
+    const firstRun = first.run({ signal: firstAbort.signal });
+    await vi.waitFor(() => expect(listeners.size).toBe(2));
+    await vi.waitFor(() => expect(first.workLoopDiagnostics().stage).toBe('idle'));
+    send('before-update');
+    await vi.waitFor(() => expect(claimed).toContain('before-update'));
+    await vi.waitFor(() => expect(answered).toContain('before-update'));
+    firstAbort.abort(); await firstRun;
+
+    let releaseStorage!: () => void;
+    const storageHold = new Promise<void>(done => { releaseStorage = done; });
+    const maintenance = lease === 'room'
+      ? SessionScheduler.withIdleHostRoom('beeline', () => storageHold)
+      : SessionScheduler.withIdleHostStorage(() => storageHold);
+    const restarted = vi.fn();
+    const second = create(restarted);
+    const internal = second as unknown as { roomRuntime: {
+      retryPendingCornerReaps(): Promise<void>;
+    } };
+    let releaseCleanup!: () => void;
+    const cleanupHold = new Promise<void>(done => { releaseCleanup = done; });
+    const cleanup = vi.spyOn(internal.roomRuntime, 'retryPendingCornerReaps').mockReturnValue(cleanupHold);
+    const secondAbort = new AbortController();
+    const secondRun = second.run({ signal: secondAbort.signal, onProgress: (_status, fault) => {
+      if (fault) errors.push(fault);
+    } });
+    try {
+      await vi.waitFor(() => expect(cleanup).toHaveBeenCalled());
+      send('after-update');
+      send('other-room', 'other');
+      // Intake is live even during maintenance; a turn cannot claim its storage lease yet.
+      expect(second.activeRoomIds()).toEqual(['beeline', 'other']);
+      expect(claimed).not.toContain('after-update');
+      releaseStorage(); expect(await maintenance).toBe(true);
+      await vi.waitFor(() => expect(answered.slice().sort()).toEqual(['before-update', 'after-update', 'other-room'].sort()));
+      // A second lease release must wake the same intake again.
+      let releaseAgain!: () => void;
+      const again = SessionScheduler.withIdleHostRoom('beeline', () => new Promise<void>(done => { releaseAgain = done; }));
+      send('second-maintenance');
+      expect(claimed).not.toContain('second-maintenance');
+      releaseAgain(); await again;
+      await vi.waitFor(() => expect(answered).toContain('second-maintenance'));
+      // Lifecycle control bypasses storage and queued input; no model turn is live.
+      let releaseLast!: () => void;
+      const last = SessionScheduler.withIdleHostRoom('beeline', () => new Promise<void>(done => { releaseLast = done; }));
+      try {
+        send('still-pending'); send('owner-restart', 'beeline', 'restart');
+        await vi.waitFor(() => expect(restarted).toHaveBeenCalledOnce());
+        expect(claimed).toContain('owner-restart');
+        expect(claimed).not.toContain('still-pending');
+        expect(second.activeTurnCount()).toBe(0);
+      } finally { releaseLast(); await last; }
+      expect(errors).toEqual([]);
+    } finally {
+      releaseStorage(); await maintenance;
+      releaseCleanup(); secondAbort.abort(); await secondRun;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

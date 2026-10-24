@@ -506,7 +506,7 @@ function CornerCockpit({
         ) : kind === 'room-update' ? (
           <LedgerRoomUpdate id={item.id} line={item.text} stamp={ledgerStamp(item.timestamp)} />
         ) : kind === 'github' ? (
-          <GitHubEventCard message={item} onOpenUrl={openUrl} />
+          <GitHubEventCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={openUrl} />
         ) : kind === 'daemon' ? (
           <DaemonFactCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={openUrl} />
         ) : kind === 'system' ? (

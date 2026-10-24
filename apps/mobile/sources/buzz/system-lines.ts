@@ -18,6 +18,7 @@ export type SystemLineMessage = {
   deleted?: boolean;
   systemEvent?: SystemEvent;
   githubEvent?: {
+    cornerId?: string;
     type: string;
     action: string;
     actor: string;

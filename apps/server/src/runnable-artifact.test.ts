@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { runnableOrigin, RUNNABLE_CSP, serveRunnableArtifact } from './runnable-artifact.js';
 import type { ObjectService } from './object-service.js';
 
 describe('runnable artifact host', () => {
+  it('keeps the production listener reachable by the games edge over Fly private IPv6', () => {
+    const config = readFileSync(new URL('../../../fly.beeline-server.toml', import.meta.url), 'utf8');
+    const env = config.split(/^\[env\]\s*$/m)[1]?.split(/^\[/m)[0];
+    // The games edge resolves beeline-server.internal to IPv6-only 6PN addresses.
+    expect(env).toMatch(/^\s*HOST\s*=\s*"::"\s*$/m);
+  });
   it('requires a separate registrable HTTPS site, including private suffixes', () => {
     for (const origin of [
       'https://usebeeline.app',
@@ -57,9 +64,9 @@ describe('runnable artifact host', () => {
       expect(shell).toContain("event.data !== 'beeline-start-game'");
       expect((await fetch(`${base}/v1/phone/identity`)).status).toBe(404);
       expect(calls).toBe(2);
-      expect(
-        (await fetch(`${base}/play/11111111-1111-4111-8111-111111111111?token=bad`)).status,
-      ).toBe(404);
+      const unavailable = await fetch(`${base}/play/11111111-1111-4111-8111-111111111111?token=bad`);
+      expect(unavailable.status).toBe(404);
+      expect(await unavailable.text()).toBe('This interactive link is unavailable. Close and reopen the artifact.');
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

@@ -193,9 +193,15 @@ export function roomNeedsYouSql(room: string): string {
 
 /** A Room or any open corner under it has a working turn. */
 export function roomWorkingSql(room: string): string {
-  return `EXISTS(SELECT 1 FROM agent_turns t
-    WHERE t.status='working' AND (t.room_id=${room}.id OR t.room_id IN
-      (SELECT id FROM rooms WHERE parent_id=${room}.id AND archived_at IS NULL)))`;
+  // Bound each turn lookup by Room before testing status. The OR/IN form
+  // otherwise chooses a full turn-table scan once per visible Room.
+  return `EXISTS(SELECT 1 FROM (
+    SELECT ${room}.id UNION ALL
+    SELECT id FROM rooms WHERE parent_id=${room}.id AND archived_at IS NULL
+  ) scope(id) CROSS JOIN LATERAL (
+    SELECT 1 FROM agent_turns t WHERE t.room_id=scope.id AND t.status='working'
+    LIMIT 1 OFFSET 0
+  ) working)`;
 }
 
 /** The agent named on the newest pending permission card in a Room or its corners. */

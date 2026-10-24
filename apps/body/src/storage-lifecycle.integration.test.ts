@@ -155,7 +155,7 @@ it('reclaims whole unused ignored build directories while preserving tracked fil
   expect(await readFile(resolve(checkout, 'source'), 'utf8')).toBe('keep source');
 });
 
-it('wakes discovery when storage maintenance deferred a newly assigned Room', async () => {
+it('subscribes a newly assigned Room during storage maintenance without another discovery sweep', async () => {
   const { RoomRuntimeCoordinator } = await import('./room-runtime.js');
   const { SessionScheduler } = await import('./session-scheduler.js');
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-storage-start-resume-')); roots.push(root);
@@ -166,6 +166,7 @@ it('wakes discovery when storage maintenance deferred a newly assigned Room', as
   const execute = vi.fn(async (operation: string) => {
     if (operation === 'getDaemonBootstrap') return { workspaceIds: ['workspace'], rooms: [{ roomId: 'new-room', archived: false }] };
     if (operation === 'listRoomCorners') return { corners: [] };
+    if (operation === 'getAgentCommands') return { commandProtocol: 1, commands: [] };
     throw new Error(`unexpected ${operation}`);
   });
   const coordinator = new RoomRuntimeCoordinator(staged.runtime, staged.configPath,
@@ -176,9 +177,9 @@ it('wakes discovery when storage maintenance deferred a newly assigned Room', as
   const maintenance = SessionScheduler.withIdleHostStorage(async () => hold);
   try {
     expect(await coordinator.reconcile()).toBe('member');
-    expect(coordinator.activeRoomIds()).toEqual([]);
+    expect(coordinator.activeRoomIds()).toEqual(['new-room']);
     expect(wake).not.toHaveBeenCalled();
     release(); await maintenance;
-    expect(wake).toHaveBeenCalledOnce();
+    expect(wake).not.toHaveBeenCalled();
   } finally { release(); await maintenance; await coordinator.shutdown(); }
 });

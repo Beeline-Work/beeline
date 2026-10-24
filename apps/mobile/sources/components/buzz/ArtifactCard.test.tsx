@@ -205,6 +205,16 @@ async function flush(): Promise<void> {
 }
 
 describe('the artifact card is the preview (mock 1b)', () => {
+  it('calls the runnable file type Interactive in the card caption', async () => {
+    mocks.probeArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
+    const renderer = render(<ArtifactCard attachment={artifactAttachment({
+      mimeType: 'application/vnd.beeline.game+html', title: 'After midnight',
+    })} />);
+    await flush();
+    expect(textOf(renderer)).toContain('@hoots · Interactive · 2.0 KB');
+    act(() => renderer.unmount());
+  });
+
   it('renders an HTML artifact as caption (title, author, size) with the two footer actions and no status label', async () => {
     mocks.probeArtifactPreview.mockResolvedValue('file:///cache/artifact-preview-x.png');
     const renderer = render(

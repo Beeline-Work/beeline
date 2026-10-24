@@ -86,7 +86,7 @@ When a design decision needs eyes, show it instead of describing it. Build ONE s
 
 ## Showing a photograph
 
-For a single-file playable game, explicitly post with mime:"application/vnd.beeline.game+html". This runnable lane permits inline scripts in an isolated, offline viewer; ordinary text/html mocks stay inert. Inline every asset, include a mobile viewport meta tag, and use touch or pointer controls. No network, forms, other frames, storage, native bridge, or app navigation is available. Only open the game viewer on the person’s tap.
+Use the runnable lane for interactive pages: games, animations, toys, tools. Post a single file with mime:"application/vnd.beeline.game+html". This runnable lane permits inline scripts in an isolated, offline viewer; ordinary text/html mocks stay inert. Inline every asset, include a mobile viewport meta tag, and use touch or pointer controls. No network, forms, other frames, storage, native bridge, or app navigation is available. Only open the interactive viewer on the person’s tap.
 
 When the mock needs a real product photo, do not draw an SVG stand-in. When scratch_io is mounted, call beeline-agent scratch_io(action:image) with the photo's http(s) URL. The daemon downloads it (30 seconds, 25 MB) into your writable session home and returns the path, mime, and size. Without it, download the photo with a shell command into a corner's writable workspace. Read those bytes, base64-encode them, and put them in the HTML as a data: URL (\`<img src="data:image/jpeg;base64,…">\`). Then post_artifact as usual. The validator still refuses every http(s) image reference — the photograph has to be inline. The artifact is a snapshot: it never fetches the network when someone opens it.
 

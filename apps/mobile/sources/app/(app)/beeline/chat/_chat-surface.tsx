@@ -1187,7 +1187,7 @@ export function BuzzChatSurface({
   const githubAccess = useGitHubAccess(githubScope);
   const roomRepoCandidates = githubAccess?.candidates ?? [];
   const githubInstallations = githubAccess?.installations ?? [];
-  const workspaceChatList = useChatList(chatListKey);
+  const workspaceChatList = useChatList(chatListKey, { transcriptRoomId: decodedId });
   const workspaceChats = useMemo<readonly ChatListItem[]>(
     () => workspaceChatList?.chats ?? [],
     [workspaceChatList],
@@ -5844,7 +5844,7 @@ export function BuzzChatSurface({
 
 
       if (item.githubEvent) {
-        return <GitHubEventCard message={item} onOpenUrl={handleOpenGitHubEvent} />;
+        return <GitHubEventCard message={item} onOpenCorner={openCorner} onOpenUrl={handleOpenGitHubEvent} />;
       }
 
       if (item.daemonFact) {

@@ -447,7 +447,10 @@ describe('corner message attribution', () => {
     // Keep the database stand-in tied to the actual background-cycle wiring.
     const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(index.includes('reconciledCornerReviewers')).toBe(false);
-    expect(index).toContain("await backgroundJobs.run('corner-reviewers', () =>\n        reconcileConfiguredCornerReviewers(jobsDatabase));");
+    const repairStart = index.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
+    expect(repairStart).toBeGreaterThan(-1);
+    const repair = index.slice(repairStart, index.indexOf('const leader = new BackgroundLeader', repairStart));
+    expect(repair.replace(/\s+/g, ' ')).toContain("await backgroundJobs.run('corner-reviewers', () => reconcileConfiguredCornerReviewers(jobsDatabase));");
     const cycle = () => reconcileConfiguredCornerReviewers(db);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(61, '6'.repeat(40));

@@ -11,6 +11,8 @@ import { readAgentCommands } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { LiveHub } from './live.js';
+import { PhoneService } from './phone-service.js';
+import { readRoomView } from '@beeline/api-contract/phone';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { transformSync } from 'esbuild';
@@ -93,6 +95,34 @@ describe('GitHub phone operations', () => {
         check_suite: { head_branch: 'feature/checks-1', head_sha: headSha } } };
     return { room, corners, headSha, app, payload };
   }
+
+  it('CONFLICT-STATUS-1: check refresh projects a live conflict over a stored clean verdict and clears it when resolved', async () => {
+    const { corners, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1`, [
+      '22222222-2222-4222-8222-222222222222', HUMAN]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role)
+      VALUES('11111111-1111-4111-8111-111111111111',$1,'owner')`, [HUMAN]);
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
+      '{pr,title}','"Fix checks"'),'{pr,targetBranch}','"main"') WHERE corner_id=$1`, [corner]);
+    const phone = new PhoneService(database, 'http://local.test');
+    const readLine = async () => {
+      const view = readRoomView(await phone.readRoom(corner, HUMAN));
+      expect(view?.cornerLifecycle?.pr?.headSha).toBe(payload.check_run.head_sha);
+      return checkStatusLine(view!.cornerLifecycle);
+    };
+    expect(await readLine()).toBe('PR #1 · no tests configured');
+    const clean = await app.readPullRequest('room-token', 'owner/widgets', 1);
+    app.readPullRequest.mockResolvedValue({ ...clean, mergeability: 'dirty' });
+    await operations.processWebhook('check_run', payload);
+    expect(await readLine()).toBe('PR #1 · merge conflict');
+    app.readPullRequest.mockResolvedValue(clean);
+    await operations.refreshStaleMergeability(corner);
+    expect(await readLine()).toBe('PR #1 · all 1 test passed');
+  });
 
   it('CLOSED-1: archived corners cannot merge even with passing checks and a current yes', async () => {
     const { corners, headSha, app } = await checksFixture();
@@ -644,10 +674,12 @@ describe('GitHub phone operations', () => {
       return { state: 'failed', total: 1, failing: ['lint'], checks: [] };
     });
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    // Another server can move the head while this instance awaits GitHub.
+    const otherServer = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     const delivery = operations.processWebhook('check_run', payload);
     await fetching;
     try {
-      if (kind === 'moved') await operations.processWebhook('push', {
+      if (kind === 'moved') await otherServer.processWebhook('push', {
         installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
         ref: 'refs/heads/feature/checks-1', after: '2'.repeat(40), commits: [],
       });
@@ -721,7 +753,7 @@ describe('GitHub phone operations', () => {
     )).rows[0]!;
     expect(fact.feature_branch).toBe(branch);
     expect(fact.lifecycle).toMatchObject({ checks: 'passing', pr: { number: 4, headSha } });
-    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(1);
     await database.query(
       `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
       [corner],
@@ -923,7 +955,6 @@ describe('GitHub phone operations', () => {
        ORDER BY card_type`,
       [room, corner],
     )).rows).toEqual([
-      { card_type: 'daemon-fact', author_id: worker },
       { card_type: 'github-corner-note', author_id: worker },
     ]);
   });
@@ -1472,7 +1503,9 @@ describe('GitHub phone operations', () => {
           [room],
         )
       ).rowCount,
-    ).toBe(1);
+    ).toBe(0);
+    expect((await database.query(`SELECT card FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rows)
+      .toEqual([expect.objectContaining({ card: expect.objectContaining({ action: 'merged', cornerId: corner }) })]);
     expect(app.deleteBranch).toHaveBeenCalledTimes(1);
     // A merge no longer queues a hidden memory-review job.
     expect(
@@ -2051,7 +2084,9 @@ describe('GitHub phone operations', () => {
     await firstStarted;
     // The aggregate turns green on another delivery for the same check. The
     // first delivery already used its ordinary GitHub note's deterministic ID.
-    const second = operations.processWebhook('check_run', payload('lint', 'completed'));
+    // Local admission is serial; independent servers still overlap their fetches.
+    const otherServer = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const second = otherServer.processWebhook('check_run', payload('lint', 'completed'));
     try {
       await second;
       expect(readCommitCheckRollup).toHaveBeenCalledTimes(2);
@@ -2297,7 +2332,8 @@ describe('GitHub phone operations', () => {
     ).toBe('other');
     const readsAfterSettlement = readPullRequest.mock.calls.length;
     await operations.refreshStaleMergeability(corner);
-    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
+    // An addressed refresh also rechecks a settled verdict against live GitHub.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 1);
     await operations.processWebhook('pull_request', {
       ...unknown,
       pull_request: {
@@ -2315,8 +2351,9 @@ describe('GitHub phone operations', () => {
       ).rows[0]?.lifecycle.pr.mergeability,
     ).toBe('other');
     // The synchronize webhook verifies its check verdict against the live PR
-    // even though the mergeability verdict was already settled.
-    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 1);
+    // even though the mergeability verdict was already settled, in addition
+    // to the explicit addressed refresh above.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 2);
     const newBaseSha = '4'.repeat(40);
     readPullRequest.mockResolvedValueOnce({
       number: 1,
@@ -2486,7 +2523,7 @@ describe('GitHub phone operations', () => {
     });
     const firstPush = operations.processWebhook('push', { ...basePush, after: olderCandidate });
     await olderRead;
-    await operations.processWebhook('push', { ...basePush, after: newerCandidate });
+    await otherServer.processWebhook('push', { ...basePush, after: newerCandidate });
     releaseOlderRead();
     await firstPush;
     expect(

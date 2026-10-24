@@ -15,6 +15,7 @@ import {
   classifyTurnSilence,
   hiccupAttemptLimit,
   escalateExhaustedHiccup,
+  isRepositoryCacheDamagedFault,
   phraseTurnSilence,
   shouldRestartHiccup,
   type TurnSilenceKind,
@@ -24,6 +25,7 @@ import type { LiveHub } from './live.js';
 import { restateSystemLine, systemLine, type SystemPhrase } from './system-line.js';
 import { reassignFailedWorkflowRole } from './workflow-runs.js';
 import { reassignFailedCornerReviewer } from './corner-lifecycle.js';
+import { reportAgentFeedback } from './feedback.js';
 
 export const TURN_FAILURE_REASON_MAX = 200;
 
@@ -366,6 +368,17 @@ async function inscribeSilence(
         afterMessageId: input.requestId,
       });
     }
+  }
+
+  // A repo cache the helper could not repair blocks every corner on that
+  // machine until its owner acts, so it is also filed for the owner's triage.
+  if (command && isRepositoryCacheDamagedFault(reason)) {
+    await reportAgentFeedback(database, command, input.agentId, {
+      roomId: input.roomId,
+      category: 'bug',
+      summary: 'A helper repo cache is damaged and automatic repair failed',
+      detail: reason,
+    }).catch((error) => console.warn('[silence] repo cache feedback was not filed', error));
   }
 
   let hiccupRestart = false;

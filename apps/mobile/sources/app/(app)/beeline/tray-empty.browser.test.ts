@@ -25,11 +25,14 @@ function dataShims(
       replace: (href) => { window.__replaced = href; },
     });`,
     '@/sync/transport/monolith-operation': withBookmark
-      ? `export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
+      // Anchor before mount, so response timing cannot move the two-minute fixture
+      // ahead of the clock the screen captured at the start of its read.
+      ? `const fixtureNow = Math.floor(Date.now() / 1000);
+        export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
           messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'corner-1',
           roomName: 'Fix fixture', roomKind: 'corner',
-          messageCreatedAt: Math.floor(Date.now() / 1000) - 7200,
-          bookmarkedAt: Math.floor(Date.now() / 1000) - 120,
+          messageCreatedAt: fixtureNow - 7200,
+          bookmarkedAt: fixtureNow - 120,
           available: true, author: { name: 'Avery' }, text: 'The bookmarked line.'
         }] } } : { bookmarks: [] };`
       : `export const monolithPhoneOperation = async (name) =>

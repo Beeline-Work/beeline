@@ -83,6 +83,6 @@ export async function serveRunnableArtifact(
       ? url.searchParams.get('embed') === '1'
         ? embeddedDocument(result)
         : result
-      : 'This game link is unavailable. Close and reopen the artifact.',
+      : 'This interactive link is unavailable. Close and reopen the artifact.',
   );
 }

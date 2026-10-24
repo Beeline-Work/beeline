@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -40,6 +40,11 @@ import {
 } from './warm-node-modules.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { withKernelLock } from './kernel-lock.js';
+import {
+  checkRepositoryCachesOnce,
+  CRASH_SAFE_CLONE_ARGS,
+  fetchRepositoryCache,
+} from './repository-cache-repair.js';
 import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
@@ -102,6 +107,11 @@ export function cornerRepositoryCacheDir(supervisorRoot: string, remote: string)
   return resolve(supervisorRoot, 'beeline', 'repositories', `${repositoryHash}.git`);
 }
 
+/** How a plain failure line names a corner repo cache: `repositories/<hash>.git`. */
+function repositoryCacheLabel(gitCommonDir: string): string {
+  return `${basename(dirname(gitCommonDir))}/${basename(gitCommonDir)}`;
+}
+
 export function isStandingCornerStartFault(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return isStandingWorkspaceConfigurationFault(text);
@@ -143,7 +153,7 @@ export async function materializeCornerWorktree(input: {
   return withKernelLock(`corner-repository:${repositoryKey}`, async () => {
     const authEnv = githubGitEnv(input.token);
     if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
-      await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
+      await execFileAsync('git', ['clone', '--bare', ...CRASH_SAFE_CLONE_ARGS, remote, gitCommonDir], {
         env: authEnv,
         maxBuffer: 4 * 1024 * 1024,
       });
@@ -165,27 +175,23 @@ export async function materializeCornerWorktree(input: {
       ],
       { maxBuffer: 4 * 1024 * 1024 },
     );
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
+    const label = repositoryCacheLabel(gitCommonDir);
+    await fetchRepositoryCache({
+      gitDir: gitCommonDir,
+      label,
+      args: [
         '--prune',
         'origin',
         `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
       ],
-      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-    );
-    const restored = await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
-        'origin',
-        `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`,
-      ],
-      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-    ).then(
+      env: authEnv,
+    });
+    const restored = await fetchRepositoryCache({
+      gitDir: gitCommonDir,
+      label,
+      args: ['origin', `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`],
+      env: authEnv,
+    }).then(
       () => true,
       (error) => {
         if (isRemoteRefMissing(error)) return false;
@@ -515,17 +521,12 @@ async function assertPublishedOnOrigin(
 ): Promise<void> {
   let published = await originContains(gitCommonDir, head);
   if (!published) {
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
-        '--prune',
-        'origin',
-        '+refs/heads/*:refs/remotes/origin/*',
-      ],
-      { env: githubGitEnv(token), maxBuffer: 4 * 1024 * 1024 },
-    );
+    await fetchRepositoryCache({
+      gitDir: gitCommonDir,
+      label: repositoryCacheLabel(gitCommonDir),
+      args: ['--prune', 'origin', '+refs/heads/*:refs/remotes/origin/*'],
+      env: githubGitEnv(token),
+    });
     published = await originContains(gitCommonDir, head);
   }
   if (!published) throw new Error(`corner ${cornerId} has unpushed commits`);
@@ -718,7 +719,12 @@ export class RoomRuntimeCoordinator {
       reserveInteractiveSlot: true,
     });
     this.stopStorageAvailable = SessionScheduler.onStorageAvailable(key => {
-      if (this.stopped || !this.storageDeferredStarts.size) return;
+      if (this.stopped) return;
+      // Command intake stays subscribed while storage owns the session paths.
+      // Wake it directly: the discovery sweep may still be reaping old checkouts.
+      for (const [roomId, running] of this.running)
+        if (!key || key === roomId) running.body.requestReconciliation();
+      if (!this.storageDeferredStarts.size) return;
       if (key && !this.storageDeferredStarts.delete(key)) return;
       if (!key) this.storageDeferredStarts.clear();
       // Re-read membership/commands after the lease, rather than starting
@@ -886,6 +892,9 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
+    // A reboot can leave empty objects in a shared repo cache; repair them
+    // (and turn on crash-safe writes) before any Room or corner fetches.
+    await checkRepositoryCachesOnce(this.runtime.supervisorRoot);
     await this.yieldReconciliation();
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
     // Bind waiting surfaces before any fan-out, cleanup or corner listing.
@@ -1147,21 +1156,9 @@ export class RoomRuntimeCoordinator {
     return this.roomRecord(roomId)?.root ?? resolve(dirname(this.configPath), 'rooms', roomId);
   }
 
-  private roomAgentHomeRoot(workspaceRoot: string, required = false): string | undefined {
-    const home = resolve(workspaceRoot, 'agent-home');
-    if (!required && !existsSync(home) && existsSync(workspaceRoot))
-      return undefined;
-    try {
-      mkdirSync(home, { recursive: true, mode: 0o700 });
-      return home;
-    } catch (error) {
-      console.error(`[thin-core] per-room agent home unavailable at ${home}:`, error);
-      return undefined;
-    }
-  }
-
   private roomConfig(roomId: string, workspaceRoot = this.roomRoot(roomId)): BodyConfig {
-    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot, true);
+    // CommandExecutionContext.enter creates this only after a permitted claim.
+    const agentHomeRoot = resolve(workspaceRoot, 'agent-home');
     return {
       ...this.baseConfig,
       workspaceRoot,
@@ -1170,7 +1167,7 @@ export class RoomRuntimeCoordinator {
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),
       turnTraceDir: turnTraceDirectory(dirname(this.configPath)),
-      ...(agentHomeRoot ? { agentHomeRoot } : {}),
+      agentHomeRoot,
     };
   }
 
@@ -1185,10 +1182,8 @@ export class RoomRuntimeCoordinator {
   private async startRoom(roomId: string): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
-    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(roomId) || this.storageMaintenanceRooms.has(roomId)) {
-      this.storageDeferredStarts.add(roomId);
-      return;
-    }
+    // Subscribing does not activate a harness or write its private storage.
+    // Keep control commands reachable even while a storage lease blocks turns.
     this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
@@ -1223,7 +1218,8 @@ export class RoomRuntimeCoordinator {
       onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
       onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
       onRestartRequested: () => this.requestLifecycleRestart(),
-      canStartTurn: () => !this.restartRequested && !this.storageMaintenanceRooms.has(roomId),
+      canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
+        !SessionScheduler.roomStoragePaused(roomId) && !this.storageMaintenanceRooms.has(roomId),
       supervisor: this.supervisor,
     });
     const promise = loop
@@ -1278,23 +1274,17 @@ export class RoomRuntimeCoordinator {
       : undefined;
     const env = token ? githubGitEnv(token.token) : process.env;
     if (!existsSync(resolve(path, '.git'))) {
-      await execFileAsync('git', ['clone', '--no-checkout', remote, path], {
+      await execFileAsync('git', ['clone', '--no-checkout', ...CRASH_SAFE_CLONE_ARGS, remote, path], {
         env,
         maxBuffer: 4 * 1024 * 1024,
       });
     }
-    const fetched = await execFileAsync(
-      'git',
-      [
-        '-C',
-        path,
-        'fetch',
-        '--prune',
-        'origin',
-        `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`,
-      ],
-      { env, maxBuffer: 4 * 1024 * 1024 },
-    ).then(
+    const fetched = await fetchRepositoryCache({
+      gitDir: resolve(path, '.git'),
+      label: `room-checkouts/${checkoutId}`,
+      args: ['--prune', 'origin', `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      env,
+    }).then(
       () => true,
       (error) => {
         if (isRemoteRefMissing(error)) return false;
@@ -1456,7 +1446,8 @@ export class RoomRuntimeCoordinator {
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
         onRestartRequested: () => this.requestLifecycleRestart(),
-        canStartTurn: () => !this.restartRequested && !this.storageMaintenanceRooms.has(corner.cornerId),
+        canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
+          !SessionScheduler.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
         supervisor: this.supervisor,
       });
       const promise = loop

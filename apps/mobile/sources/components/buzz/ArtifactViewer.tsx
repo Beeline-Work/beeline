@@ -21,6 +21,7 @@ import { copyPicture, sharePicture } from '@/buzz/picture-actions';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import { ViewerConversationDock } from '@/components/buzz/ViewerConversationDock';
 import { RunnableArtifact } from './RunnableArtifact';
+import { PageHeaderTitle } from './PageHeader';
 
 /**
  * The full-screen artifact viewer (mock 1c): the whole page, still guarded —
@@ -90,9 +91,9 @@ export function ArtifactViewerScreen({
   return (
     <View style={styles.screen} testID="artifact-viewer">
       <View style={[styles.header, { paddingTop: insets.top + theme.buzz.space.md }]}>
-        <Text numberOfLines={1} style={styles.headerTitle}>
-          {format === 'game' ? `Game · ${title}` : title}
-        </Text>
+        <PageHeaderTitle numberOfLines={1} style={styles.headerTitle}>
+          {format === 'game' ? `Interactive · ${title}` : title}
+        </PageHeaderTitle>
         {format === 'code' && document ? (
           <Button
             accessibilityLabel="Copy code"

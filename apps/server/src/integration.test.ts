@@ -3248,9 +3248,8 @@ describe('monolith integration', () => {
     const parent = (await (
       await request(`/v1/phone/rooms/${ROOM}`, 'GET', undefined, aliceToken)
     ).json()) as RoomView;
-    // A source-free opening has no requesting message to anchor a line to.
-    // Its absence from the transcript must not affect inherited corner access.
-    expect(parent.messages).not.toContainEqual(
+    // A source-free opening is visible at its open time through inherited access.
+    expect(parent.messages).toContainEqual(
       expect.objectContaining({
         daemonFact: expect.objectContaining({ type: 'corner-open', cornerId }),
       }),
@@ -6416,7 +6415,7 @@ describe('monolith integration', () => {
     const parent = await phone.readRoom(ROOM, HUMAN);
     expect(
       parent?.messages.find((message) => message.daemonFact?.cornerId === cornerId)?.daemonFact,
-    ).toBeUndefined();
+    ).toMatchObject({ type: 'corner-open', cornerId });
   });
 
   it('creates a human corner that inherits only Room-level subscriptions from a stale parent row', async () => {
@@ -6540,7 +6539,7 @@ describe('monolith integration', () => {
     ).toBe(true);
   });
 
-  it('marks the message a human corner was opened from, and follows its rename', async () => {
+  it('marks the message a human corner was opened from and keeps the opening historical', async () => {
     const sourceId = '7'.repeat(64);
     expect(
       (
@@ -6570,7 +6569,7 @@ describe('monolith integration', () => {
         type: 'corner-open',
         cornerId,
         name: 'quiet-amber-corner',
-        objective: '',
+        objective: 'quiet-amber-corner',
         sourceMessageId: sourceId,
       },
     });
@@ -6589,11 +6588,11 @@ describe('monolith integration', () => {
       (await operation('updateRoom', { roomId: cornerId, name: 'bright-river-corner' })).status,
     ).toBe(204);
     expect((await markerFor(HUMAN))?.daemonFact).toMatchObject({
-      name: 'bright-river-corner',
+      name: 'quiet-amber-corner',
       sourceMessageId: sourceId,
     });
 
-    // A source that is not a message in this Room opens the corner unmarked.
+    // A missing source leaves an unanchored opening at the current position.
     const unmarked = await operation('createHumanCorner', {
       roomId: ROOM,
       title: 'stray-corner',
@@ -6606,7 +6605,7 @@ describe('monolith integration', () => {
       (await phone.readRoom(ROOM, HUMAN))?.messages.some(
         (message) => message.daemonFact?.cornerId === unmarkedId,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('forwards a message into a human corner and starts someone else’s yolo agent without a grant', async () => {
@@ -7234,7 +7233,6 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([
-      { card_type: 'daemon-fact', author_id: AGENT },
       { card_type: 'github-corner-note', author_id: AGENT },
     ]);
     expect(
@@ -7396,6 +7394,9 @@ describe('monolith integration', () => {
         actor: 'octocat',
         title: 'Handle narrow screens',
       }),
+      expect.objectContaining({
+        type: 'pull-request', action: 'opened', branch: 'fm/widget', cornerId,
+      }),
     ]);
     // Room-level repository activity: issues and pull requests only. A
     // raw push and mainline CI never become a Room card.
@@ -7431,6 +7432,7 @@ describe('monolith integration', () => {
       expect.objectContaining({ type: 'issue', action: 'opened' }),
       expect.objectContaining({ type: 'pull-request', action: 'opened' }),
       expect.objectContaining({ type: 'issue', action: 'closed' }),
+      expect.objectContaining({ type: 'pull-request', action: 'opened', cornerId }),
     ]);
     // A push or mainline CI result on the default branch posted no card.
     expect(mainlineCards.rows.some((row) => row.card.type === 'push')).toBe(false);
@@ -7460,6 +7462,7 @@ describe('monolith integration', () => {
         headSha: '1'.repeat(40),
         headRef: 'fm/widget',
         merged: false,
+        mergeability: 'clean',
       })),
     });
     githubRollupState = 'failed';
@@ -7737,8 +7740,7 @@ describe('monolith integration', () => {
     expect(
       (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
     ).toBe(202);
-    // Attention does not push an unaddressed lifecycle card. The landing stays
-    // visible in the parent Room, however many times GitHub retries the webhook.
+    // The normal PR event reports the landing once, even when GitHub retries.
     expect(await pushes.runOnce()).toBe(0);
     expect(send).not.toHaveBeenCalled();
     expect(await pushes.runOnce()).toBe(0);
@@ -7750,9 +7752,8 @@ describe('monolith integration', () => {
           [ROOM],
         )
       ).rows[0]?.count,
-    ).toBe(1);
-    // The merge card announces the landing; the opener, which never
-    // subscribed to `merged`, gets no turn from it.
+    ).toBe(0);
+    // The opener never subscribed to merged and gets no turn from it.
     expect(
       (
         await database.query(
@@ -7773,7 +7774,7 @@ describe('monolith integration', () => {
           [ROOM],
         )
       ).rows[0]?.count,
-    ).toBe(0);
+    ).toBe(1);
     const close = await daemonOperation('getCornerCloseRequests', { cornerId });
     expect(close.status).toBe(200);
     expect(await close.json()).toMatchObject({ closeRequested: true });
@@ -7795,33 +7796,14 @@ describe('monolith integration', () => {
         };
       }>;
     };
-    expect(parent.messages).toContainEqual(
-      expect.objectContaining({
-        presentation: 'card',
-        // The card keeps its component; its header sentence is the one grammar.
-        text: '@owner merged Ship the widget',
-        systemEvent: {
-          subject: { kind: 'github', name: '@owner' },
-          verb: 'merged',
-          kind: 'merged',
-          object: { text: 'Ship the widget', url: 'https://github.com/owner/widgets/pull/42' },
-        },
-        daemonFact: expect.objectContaining({
-          type: 'corner-complete',
-          cornerId,
-          name: 'Ship-widget',
-          objective: 'Ship widget',
-          outcome: 'landed',
-          pullRequest: expect.objectContaining({
-            number: 42,
-            title: 'Ship the widget',
-            url: 'https://github.com/owner/widgets/pull/42',
-            targetBranch: 'main',
-            mergeCommitSha: 'f'.repeat(40),
-          }),
-        }),
-      }),
-    );
+    expect(parent.messages.filter((message) => message.daemonFact?.cornerId === cornerId)).toEqual([
+      expect.objectContaining({ daemonFact: expect.objectContaining({
+        type: 'corner-open', cornerId, name: 'Ship-widget', objective: 'Ship-widget',
+      }) }),
+    ]);
+    expect(parent.messages).toContainEqual(expect.objectContaining({
+      githubEvent: expect.objectContaining({ type: 'pull-request', action: 'merged', cornerId }),
+    }));
     const listed = (await (await request(`/v1/phone/rooms/${ROOM}/corners`)).json()) as {
       corners: Array<{ corner: { id: string; about?: string }; state: string }>;
     };
@@ -9199,7 +9181,7 @@ describe('monolith integration', () => {
       type: 'corner-open',
       cornerId,
       name: 'Ship-the-widget',
-      objective: 'Ship the widget end to end',
+      objective: 'Ship-the-widget',
     });
     // The NAME titles the corner; the objective stays the statement of work.
     const corner = await database.query<{
@@ -10430,7 +10412,7 @@ describe('monolith integration', () => {
     });
   });
 
-  it('renders a legacy corner card with its current stored title and objective', async () => {
+  it('renders a legacy Room opening with its name and without private objective or DM text', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-legacy-card',
@@ -10441,7 +10423,7 @@ describe('monolith integration', () => {
     const { cornerId } = (await created.json()) as { cornerId: string };
     // A card written before the name existed carries only the objective.
     await database.query(
-      `UPDATE messages SET card=(card-'name')||'{"sourceMessageId":"legacy-request"}'::jsonb
+      `UPDATE messages SET card=(card-'name')||'{"sourceMessageId":"legacy-request","objective":"Private DM request: Rework the room list so every corner row carries a state mark"}'::jsonb
        WHERE room_id=$1 AND card->>'cornerId'=$2`,
       [ROOM, cornerId],
     );
@@ -10449,8 +10431,11 @@ describe('monolith integration', () => {
     const card = room.messages.find((message) => message.daemonFact?.cornerId === cornerId);
     expect(card?.daemonFact).toMatchObject({
       name: 'Legacy-corner',
-      objective: 'Rework the room list so every corner row carries a state mark',
+      objective: 'Legacy-corner',
+      type: 'corner-open',
     });
+    expect(JSON.stringify(card)).not.toContain('Rework the room list');
+    expect(JSON.stringify(card)).not.toContain('Private DM request');
     expect(
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,

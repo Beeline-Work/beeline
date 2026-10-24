@@ -523,6 +523,65 @@ describe('a read that cannot say unread', () => {
 });
 
 describe('the Room screen reads the live list', () => {
+  it('BACK-BURST-1: unrelated message previews do not render the transcript consumer', async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    server.chats = async () => listOf([row('room-a', 10), row('room-b', 9)]);
+    let renders = 0;
+    function Transcript() {
+      renders += 1;
+      const list = useChatList(key, { transcriptRoomId: 'room-a' });
+      return React.createElement('Text', null, list?.chats.find(item => item.room.id === 'room-b')?.room.name);
+    }
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(React.createElement(Transcript)); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(liveChatList(key)?.chats).toHaveLength(2);
+    renders = 0;
+    for (let index = 0; index < 25; index += 1) {
+      await act(async () => emit({ monolithLive: { type: 'message-delta', roomId: 'room-b',
+        message: { id: `message-${index}`, text: 'Unrelated message', createdAt: 20 + index,
+          author: agent, reactions: [], presentation: 'message' } } }));
+    }
+    expect(renders).toBe(0);
+    expect(liveChatList(key)?.chats.find(item => item.room.id === 'room-b')?.latestMessage?.id).toBe('message-24');
+    await act(async () => {
+      server.chats = async () => listOf([row('room-a', 10), { ...row('room-b', 45), room: { ...row('room-b', 45).room, name: 'Renamed Room' } }]);
+      const handle = acquireChatList(key, { visible: () => true });
+      handle.force();
+      await vi.advanceTimersByTimeAsync(10);
+      handle.release();
+    });
+    expect(tree.root.findByType('Text').props.children).toBe('Renamed Room');
+    await act(async () => tree.unmount());
+  });
+
+  it('keeps transcript DM presence, Room names and live calls current', async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    let view = listOf([row('room-a', 10, { directMessage: { peer: agent,
+      presence: { status: 'offline', observedAt: 1 } } })]);
+    server.chats = async () => view;
+    function Header() {
+      const current = useChatList(key, { transcriptRoomId: 'room-a' })?.chats[0];
+      return React.createElement('Text', null, [current?.room.name,
+        current?.directMessage?.presence?.status, current?.agentState ?? 'idle',
+        current?.voiceCall?.id ?? 'none'].join(':'));
+    }
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(React.createElement(Header)); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(tree.root.findByType('Text').props.children).toBe('room-a:offline:idle:none');
+    const handle = acquireChatList(key, { visible: () => true });
+    view = listOf([row('room-a', 11, { room: { ...view.chats[0]!.room, name: 'Renamed' },
+      directMessage: { peer: agent, presence: { status: 'online', observedAt: 2 } },
+      agentState: 'working', voiceCall: { id: 'call-1', roomId: 'room-a', startedAt: 2, participants: [agent] } })]);
+    await act(async () => { handle.force(); await vi.advanceTimersByTimeAsync(10); });
+    expect(tree.root.findByType('Text').props.children).toBe('Renamed:online:working:call-1');
+    view = listOf([{ ...view.chats[0]!, voiceCall: undefined }]);
+    await act(async () => { handle.force(); await vi.advanceTimersByTimeAsync(10); });
+    expect(tree.root.findByType('Text').props.children).toBe('Renamed:online:working:none');
+    await act(async () => { tree.unmount(); handle.release(); });
+  });
+
   it('warns on a repository change after a corner opens live, and Cancel blocks the write', async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 0 })]));

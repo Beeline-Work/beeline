@@ -47,13 +47,13 @@ export function DesktopArtifactPane({
   const format = artifactFormat(attachment.mimeType);
   const title = attachment.title ?? attachment.name;
   const { showCopied, showCopyFailed, toast } = useCopiedToast('desktop-artifact-copied');
-  const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${format} · ${formatAttachmentSize(attachment.size)}`;
+  const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${format === 'game' ? 'Interactive' : format} · ${formatAttachmentSize(attachment.size)}`;
   return (
     <View style={styles.screen} testID="desktop-artifact-pane">
       <View style={styles.header}>
         <View style={styles.caption}>
           <Text numberOfLines={1} style={styles.title} testID="desktop-artifact-title">
-            {format === 'game' ? `Game · ${title}` : title}
+            {format === 'game' ? `Interactive · ${title}` : title}
           </Text>
           <Text numberOfLines={1} style={styles.kindLine} testID="desktop-artifact-kind-line">
             {kindLine}

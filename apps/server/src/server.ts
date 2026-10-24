@@ -579,7 +579,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
         if (!response.headersSent) response.writeHead(503, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
-        response.end('Game unavailable');
+        response.end('Unavailable');
       });
       return;
     }

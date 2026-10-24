@@ -12,9 +12,9 @@ export class WorkflowAuthorizationError extends Error {
 }
 
 /**
- * A human Room or Workspace admin, room-scoped or workspace-wide: the gate for
+ * A human Workspace owner or admin of the Room's Workspace: the gate for
  * attributing a directly-started run or an edited room schedule to the
- * calling human rather than an agent.
+ * calling human rather than an agent. A Room role never changes it.
  */
 export async function humanRoomAdmin(
   db: SqlDatabase,
@@ -28,8 +28,35 @@ export async function humanRoomAdmin(
         `SELECT 1 FROM rooms room
     JOIN identities actor ON actor.id=$2 AND actor.kind='human'
     JOIN memberships member ON member.identity_id=actor.id AND member.workspace_id=room.workspace_id
-      AND (member.room_id=room.id OR member.room_id IS NULL)
-      AND member.removed_at IS NULL AND member.role IN ('owner','admin') WHERE room.id=$1`,
+      AND member.room_id IS NULL AND member.removed_at IS NULL AND member.role IN ('owner','admin') WHERE room.id=$1`,
+        [roomId, actorId],
+      )
+    ).rowCount,
+  );
+}
+
+/**
+ * A human who is a current member of the Room, corner or DM and not a
+ * Workspace spectator: the gate for starting or cancelling a workflow run.
+ * A Room role never changes it.
+ */
+export async function humanRoomMember(
+  db: SqlDatabase,
+  roomId: string,
+  actorId: string,
+): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
+  return Boolean(
+    (
+      await db.query(
+        `SELECT 1 FROM rooms room
+    JOIN identities actor ON actor.id=$2 AND actor.kind='human'
+    JOIN memberships room_member ON room_member.room_id=room.id AND room_member.identity_id=actor.id
+      AND room_member.removed_at IS NULL
+    WHERE room.id=$1 AND room.archived_at IS NULL AND NOT EXISTS (
+      SELECT 1 FROM memberships spectator WHERE spectator.identity_id=actor.id
+        AND spectator.workspace_id=room.workspace_id AND spectator.room_id IS NULL
+        AND spectator.removed_at IS NULL AND spectator.role='spectator')`,
         [roomId, actorId],
       )
     ).rowCount,

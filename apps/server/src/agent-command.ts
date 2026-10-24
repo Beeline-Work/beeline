@@ -554,8 +554,6 @@ type LifecycleTarget = {
   harness: string | null;
   handle: string | null;
   name: string;
-  room_role: string;
-  access_policy: unknown;
   lifecycle_id: string | null;
   release_version: string | null;
   source_sha: string | null;
@@ -588,7 +586,6 @@ async function routeTaggedLifecycleCommand(
   const target = (
     await db.query<LifecycleTarget>(
       `SELECT agent.agent_id,agent.owner_id,agent.harness,identity.handle,identity.name,
-         sender.role room_role,agent.access_policy,
          presence.body->>'lifecycleId' lifecycle_id,
          presence.body->>'releaseVersion' release_version,
          presence.body->>'sourceSha' source_sha,
@@ -614,13 +611,11 @@ async function routeTaggedLifecycleCommand(
   const action = parseTaggedAgentLifecycleCommand(source.text, target.handle);
   if (!action) return false;
 
-  const manager = target.room_role === 'owner' || target.room_role === 'admin';
+  // Restart, stop, retry and debug are open to anyone in the Room: they only
+  // interrupt the agent and debug reports this Room's turn alone. A Room, corner
+  // or DM role never changes that, and neither does the agent's access policy,
+  // which decides only who may give it work. Sign-in stays with the agent's owner.
   const ownsAgent = target.owner_id === source.author_id;
-  const mayAddress = senderMayAddressAgent(
-    parseAgentAccessPolicy(target.access_policy),
-    source.author_id,
-    target.owner_id,
-  );
   const loginHarness = isAgentSignInHarness(target.harness) ? target.harness : undefined;
   const deniedVerb =
     action !== 'login'
@@ -643,14 +638,6 @@ async function routeTaggedLifecycleCommand(
       afterMessageId: sourceId,
     });
   };
-  if (!mayAddress) {
-    await deny('the sender may not address this agent');
-    return true;
-  }
-  if ((action === 'restart' || action === 'debug') && !ownsAgent && !manager) {
-    await deny('only its owner or a Room manager may use that command');
-    return true;
-  }
   if (action === 'login') {
     // Claude Code's own `/login`, at the call site, for every harness: the
     // card carries what the machine answers (a link, a device code, or a key
@@ -754,10 +741,6 @@ async function routeTaggedLifecycleCommand(
       await line('has nothing to stop');
       return true;
     }
-    if (!ownsAgent && !manager && active.requested_by !== source.author_id) {
-      await deny('only the requester, its owner, or a Room manager may stop that turn');
-      return true;
-    }
     await lockAgentCommandQueue(db, source.room_id, target.agent_id);
     const parent = (
       await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 FOR UPDATE`, [
@@ -804,15 +787,6 @@ async function routeTaggedLifecycleCommand(
     ).rows[0];
     if (!failed) {
       await line('has no failed turn to retry');
-      return true;
-    }
-    const requester = (
-      await db.query<{ author_id: string }>(`SELECT author_id FROM messages WHERE id=$1`, [
-        failed.root_source_message_id,
-      ])
-    ).rows[0]?.author_id;
-    if (!ownsAgent && !manager && requester !== source.author_id) {
-      await deny('only the requester, its owner, or a Room manager may retry that turn');
       return true;
     }
     await createAgentCommand(db, {
@@ -987,18 +961,22 @@ async function setCornerImplementer(
 
 export async function routeAgentResult(
   db: SqlDatabase,
-  parent: CommandRow,
+  parent: CommandRow | undefined,
   sourceId: string,
+  speaker?: { roomId: string; agentId: string },
 ) {
+  const roomId = parent?.room_id ?? speaker?.roomId;
+  const agentId = parent?.agent_id ?? speaker?.agentId;
+  const woken: string[] = [];
+  const notWoken: { handle: string; reason: string }[] = [];
+  if (!roomId || !agentId) return { woken, notWoken };
   const source = (await db.query<{ text: string }>(
     `SELECT text FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3
        AND presentation='message' AND deleted_at IS NULL`,
-    [sourceId, parent.room_id, parent.agent_id],
+    [sourceId, roomId, agentId],
   )).rows[0];
-  const woken: string[] = [];
-  const notWoken: { handle: string; reason: string }[] = [];
   if (!source) return { woken, notWoken };
-  const mentions = await resolveCurrentMemberMentions(db, parent.room_id, source.text, parent.agent_id);
+  const mentions = await resolveCurrentMemberMentions(db, roomId, source.text, agentId);
   for (const handle of typedMentionHandles(source.text)) {
     if (isChannelMentionToken(handle)) continue;
     if (!mentions.some(mention => mention.handle === handle))
@@ -1011,7 +989,7 @@ export async function routeAgentResult(
     }
     // Tags are conversation, never a delegation or an implementer change.
     const dispatched = await createAgentCommand(db, {
-      roomId: parent.room_id,
+      roomId,
       agentId: mention.id,
       sourceMessageId: sourceId,
       parent,
@@ -1019,7 +997,7 @@ export async function routeAgentResult(
       inheritPrivatePayload: false,
     });
     if (dispatched) woken.push(mention.handle);
-    else notWoken.push({ handle: mention.handle, reason: nextAgentDepth(parent.agent_depth) === undefined
+    else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
   }
   return { woken, notWoken };

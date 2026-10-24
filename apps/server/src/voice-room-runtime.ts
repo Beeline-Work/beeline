@@ -31,6 +31,10 @@ export function confirmedVoiceSpeech(event: FluxEvent): boolean {
     words[words.length - 1]!.end - words[0]!.start >= 0.12;
 }
 
+// Deliberately short: other one-word answers (such as "definitely") are ignored.
+const SINGLE_WORD_REPLIES = new Set(['yes', 'no', 'yeah', 'yep', 'yup', 'nope', 'sure',
+  'okay', 'ok', 'stop', 'wait', 'cancel', 'pause', 'continue', 'thanks']);
+
 const BACKCHANNEL = /^(uh|um|uhm|er|erm|ah|oh|ha|haha|hah|hm|hmm|mm|mhm|mmhmm|uhhuh|huh|yeah|yes|yep|yup|ok|okay|right|sure|cool|nice|wow)$/;
 
 /** In a call with several humans, any of them may interrupt an agent, but noise and
@@ -325,14 +329,20 @@ export class VoiceRoomRuntime {
       // Retain a turn's echo context through its final, even after playout
       // ends. Missing confidence must not make a short playback noise valid.
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
-      // Finished requests keep all recognized words, except unconfirmed lone fillers.
-      // Reject those before they can become continuations of an unfinished request.
-      const filler = /^(hey|yeah|yes|yep|ok|okay|uh|um|huh|hmm|mm)$/.test(speechWords(event.transcript).join(' '));
-      if (event.event === 'EndOfTurn' && speechWords(event.transcript).length && !confirmedVoiceSpeech(event))
+      const words = speechWords(event.transcript);
+      const strayWord = words.length === 1 && !SINGLE_WORD_REPLIES.has(words[0]!) &&
+        !agents.some(agent => [agent.name, agent.handle].some(alias =>
+          speechWords(alias).join(' ') === words[0]));
+      // Filter partials too: a confident stray word must never pause or barge in.
+      // Final rejection consumes the turn before it can enter request assembly.
+      if (strayWord) {
+        if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
+        return;
+      }
+      if (event.event === 'EndOfTurn' && words.length && !confirmedVoiceSpeech(event))
         console.info('[voice-speech-shadow]', JSON.stringify({ callId: this.callId, turnIndex: event.turn_index,
           transcript: event.transcript, words: event.words ?? [] }));
-      const recognized = event.event === 'EndOfTurn'
-        ? speechWords(event.transcript).length > 0 && (!filler || confirmedVoiceSpeech(event)) : confirmedVoiceSpeech(event);
+      const recognized = event.event === 'EndOfTurn' ? words.length > 0 : confirmedVoiceSpeech(event);
       if (!recognized || voicePlaybackEcho(event.transcript, context) ||
           (context && acknowledgment && !event.words?.length)) {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
@@ -618,15 +628,19 @@ export class VoiceRoomRuntime {
     const completions: Promise<void>[] = [];
     let answerToRecord: { agentId: string; text: string } | undefined;
     let answerRecorded = false;
-    const recordSpoken = (agentId: string, text: string) => {
-      const write = this.spokenWrites.then(() => this.service.recordAnswer(this.roomId, agentId, text));
+    let committedSourceId: string | undefined;
+    let finalRoutesMentions = true;
+    const recordSpoken = (agentId: string, text: string, final = false) => {
+      const write = this.spokenWrites.then(() => this.service.recordAnswer(this.roomId, agentId, text, {
+        replyId: final ? request.id : undefined, sourceId: final ? committedSourceId : undefined, routeMentions: final && finalRoutesMentions,
+      }));
       this.spokenWrites = write.catch(() => {});
       completions.push(write);
     };
     const recordAnswer = () => {
       if (answerToRecord && !answerRecorded) {
         answerRecorded = true;
-        recordSpoken(answerToRecord.agentId, answerToRecord.text);
+        recordSpoken(answerToRecord.agentId, answerToRecord.text, true);
       }
     };
     try {
@@ -668,6 +682,7 @@ export class VoiceRoomRuntime {
         else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
         resolveSource(sourceId);
       }
+      committedSourceId = sourceId;
       timing('human_committed');
       if (generation.signal.aborted || this.closed || !sourceId) return;
       const history = await context;
@@ -684,6 +699,7 @@ export class VoiceRoomRuntime {
       let firstAudio = false;
       const reply = retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
         await this.service.config.brain.answer(agent, brainHistory, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal, {
+          agents: agents.map(({ name, handle }) => ({ name, handle })),
           search: (search, signal) => {
             console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: search.name }));
             return this.service.search(this.callId, sourceId, agent.id, search, signal);
@@ -711,6 +727,7 @@ export class VoiceRoomRuntime {
             }
           },
         });
+      finalRoutesMentions = !reply.order;
       timing('brain_complete');
       console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: reply.order ? 'order' : 'answer' }));
       if (generation.signal.aborted || this.closed) return;

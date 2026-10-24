@@ -76,15 +76,18 @@ async function turn(actor: string, agent = SAVER, roomId = ROOM) {
 async function savedWorkflow(actor = REQUESTER) {
   const context = await turn(actor);
   const name = `proof-${randomUUID()}`;
-  const contract = { version: 1, name, description: 'Workflow permissions proof', summary: 'Check workflow control authority',
+  const saved = await call(SAVER, 'saveWorkflow', { ...context, contract: proofContract(name) });
+  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+  return { context, name };
+}
+
+function proofContract(name: string, description = 'Workflow permissions proof') {
+  return { version: 1, name, description, summary: 'Check workflow control authority',
     roles: ['worker'], start: 'work', handoffs: {
       work: { role: 'worker', does: 'Perform the work', timeoutSeconds: 3600, requires: [], on: { done: 'done', timeout: 'failed' } },
       done: { kind: 'terminal', status: 'done', does: 'Finish the run' },
       failed: { kind: 'terminal', status: 'failed', does: 'End an expired run' },
     } };
-  const saved = await call(SAVER, 'saveWorkflow', { ...context, contract });
-  expect(saved.status, JSON.stringify(saved.body)).toBe(200);
-  return { context, name };
 }
 
 async function runSnapshot(runId: string) {
@@ -116,7 +119,7 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
     expect(nextStart.status, JSON.stringify(nextStart.body)).toBe(200);
   });
 
-  it.each([['requester', REQUESTER], ['role owner', ROLE_OWNER], ['Room admin', ROOM_ADMIN], ['Workspace admin', WORKSPACE_ADMIN]])(
+  it.each([['requester', REQUESTER], ['role owner', ROLE_OWNER], ['Workspace admin', WORKSPACE_ADMIN]])(
     'allows %s to reassign through a different agent', async (_label, actor) => {
       const { context, name } = await savedWorkflow();
       const started = await call(SAVER, 'startWorkflow', { ...context, name, roleBindings: { worker: WORKER } });
@@ -128,7 +131,17 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
       expect(latest.roleBindings).toEqual({ worker: SAVER });
     });
 
-  it.each([['saved requester', REQUESTER], ['saving agent', SAVER], ['saving agent owner', ROLE_OWNER], ['Room admin', ROOM_ADMIN], ['Workspace admin', WORKSPACE_ADMIN]])(
+  // Archiving deletes a saved workflow for the Workspace: who saved it grants nothing.
+  it.each([['saved requester', REQUESTER], ['saving agent', SAVER], ['saving agent owner', ROLE_OWNER]])(
+    'refuses %s, who is not a Workspace admin, to archive', async (_label, actor) => {
+      const { name } = await savedWorkflow(actor === ROLE_OWNER || actor === SAVER ? SAVER : REQUESTER);
+      const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(actor, DELEGATE), name });
+      expect(archived.status).toBe(403);
+      expect(JSON.stringify(archived.body)).toContain('workspace admins only');
+      expect((await db.query(`SELECT state FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.state).toBe('active');
+    });
+
+  it.each([['Workspace admin', WORKSPACE_ADMIN]])(
     'allows %s to archive through a different agent', async (_label, actor) => {
       const { name } = await savedWorkflow(actor === ROLE_OWNER || actor === SAVER ? SAVER : REQUESTER);
       const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(actor, DELEGATE), name });
@@ -140,6 +153,83 @@ describe('workflow control through authenticated daemon HTTP operations', () => 
       expect(unavailable.status).toBeGreaterThanOrEqual(400);
       expect(JSON.stringify(unavailable.body)).toContain('workflow is unavailable');
     });
+
+  it('refuses a Room admin who is only a Workspace member to reassign or archive', async () => {
+    const { context, name } = await savedWorkflow();
+    const started = await call(SAVER, 'startWorkflow', { ...context, name, roleBindings: { worker: WORKER } });
+    expect(started.status).toBe(200);
+    const assigned = await call(DELEGATE, 'assignWorkflowRole', { ...await turn(ROOM_ADMIN, DELEGATE),
+      runId: started.body.runId, role: 'worker', targetAgentId: SAVER });
+    expect(assigned.status).toBe(403);
+    const archived = await call(DELEGATE, 'archiveWorkflow', { ...await turn(ROOM_ADMIN, DELEGATE), name });
+    expect(archived.status).toBe(403);
+    expect((await db.query(`SELECT state FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.state).toBe('active');
+  });
+
+  it('lets only a Workspace admin change a saved workflow through the authenticated save path', async () => {
+    const { name } = await savedWorkflow();
+    const version = async () => (await db.query<{ current_version: number }>(
+      `SELECT current_version FROM workspace_skills WHERE slug=$1`, [name])).rows[0]?.current_version;
+    const snapshot = async () => (await db.query(
+      `SELECT skill.current_version,skill.revision,skill.source_room_id,skill.state,
+         (SELECT jsonb_agg(jsonb_build_object('version',v.version,'sources',v.source_message_ids) ORDER BY v.version)
+          FROM workspace_skill_versions v WHERE v.skill_id=skill.id) versions
+       FROM workspace_skills skill WHERE skill.slug=$1`, [name])).rows[0];
+    const before = await snapshot();
+    for (const actor of [REQUESTER, ROLE_OWNER, ROOM_ADMIN]) {
+      const refused = await call(SAVER, 'saveWorkflow', { ...await turn(actor), contract: proofContract(name, `Edited by ${actor.slice(0, 4)}`) });
+      expect(refused.status).toBe(403);
+      expect(JSON.stringify(refused.body)).toContain('workspace admins only');
+      expect(await version()).toBe(1);
+    }
+    // Saving it unchanged, even from another Room, is a no-op: version,
+    // revision, source Room and provenance all stay as they were.
+    const unchanged = await call(DELEGATE, 'saveWorkflow', { ...await turn(OUTSIDER, DELEGATE, OTHER_ROOM), contract: proofContract(name) });
+    expect(unchanged.status, JSON.stringify(unchanged.body)).toBe(200);
+    expect(unchanged.body).toEqual({ slug: name, version: 1 });
+    expect(await snapshot()).toEqual(before);
+    const edited = await call(SAVER, 'saveWorkflow', { ...await turn(WORKSPACE_ADMIN), contract: proofContract(name, 'Edited by an admin') });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect(edited.body).toMatchObject({ slug: name });
+    expect(await version()).toBeGreaterThan(1);
+  });
+
+  it('lets concurrent saves of a new name create it once and refuses the non-admin change', async () => {
+    const name = `proof-${randomUUID()}`;
+    const [first, second] = await Promise.all([
+      call(SAVER, 'saveWorkflow', { ...await turn(REQUESTER), contract: proofContract(name, 'First') }),
+      call(SAVER, 'saveWorkflow', { ...await turn(OUTSIDER), contract: proofContract(name, 'Second') }),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses, JSON.stringify([first.body, second.body])).toEqual([200, 403]);
+    const row = (await db.query<{ current_version: number }>(`SELECT current_version FROM workspace_skills WHERE slug=$1`, [name])).rows[0];
+    expect(row?.current_version).toBe(1);
+  });
+
+  it('lets only a Workspace admin edit or delete an agent-made schedule through authenticated daemon HTTP', async () => {
+    const created = await call(SAVER, 'createAgentSchedule', { ...await turn(REQUESTER), title: 'Daily check',
+      prompt: 'Check the Room.', cadence: { kind: 'interval', everyMinutes: 60 } });
+    expect(created.status, JSON.stringify(created.body)).toBe(200);
+    const scheduleId = created.body.scheduleId as string;
+    const row = async () => (await db.query(`SELECT message,cadence FROM agent_schedules WHERE id=$1`, [scheduleId])).rows[0];
+    const before = await row();
+    // The requester, a Room admin who is a Workspace member, and the scheduling
+    // agent's own (non-admin) owner are all refused, and nothing changes.
+    for (const actor of [REQUESTER, ROOM_ADMIN, ROLE_OWNER]) {
+      const edit = await call(SAVER, 'updateAgentSchedule', { ...await turn(actor), scheduleId, prompt: 'Rewritten.' });
+      expect(edit.status).toBe(403);
+      expect(JSON.stringify(edit.body)).toContain('workspace admins only');
+      const remove = await call(SAVER, 'deleteAgentSchedule', { ...await turn(actor), scheduleId });
+      expect(remove.status).toBe(403);
+      expect(await row()).toEqual(before);
+    }
+    const edited = await call(SAVER, 'updateAgentSchedule', { ...await turn(WORKSPACE_ADMIN), scheduleId, prompt: 'Check it twice.' });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    expect((await row())?.message).toBe('Check it twice.');
+    const removed = await call(SAVER, 'deleteAgentSchedule', { ...await turn(WORKSPACE_ADMIN), scheduleId });
+    expect(removed.status, JSON.stringify(removed.body)).toBe(200);
+    expect(await row()).toBeUndefined();
+  });
 
   it('allows the owner of an unselected list member to reassign, just as cancel does', async () => {
     const { context, name } = await savedWorkflow();
@@ -231,8 +321,11 @@ describe('Reproduction run-id-prefix: authenticated run lookup and control', () 
     const uniqueDespiteHidden = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId: prefix });
     expect(uniqueDespiteHidden.status).toBe(200);
     expect(uniqueDespiteHidden.body.runId).toBe(runId);
-    const deniedControl = await call(DELEGATE, 'cancelWorkflowRun', { ...await turn(OUTSIDER, DELEGATE), runId: prefix, reason: 'Not authorized' });
-    expect(deniedControl.status).toBe(403);
+    // Cancelling is open to anyone in the Room, so the unrelated member's
+    // prefix resolves and the run ends.
+    const memberCancel = await call(DELEGATE, 'cancelWorkflowRun', { ...await turn(OUTSIDER, DELEGATE), runId: prefix, reason: 'Anyone in the Room' });
+    expect(memberCancel.status, JSON.stringify(memberCancel.body)).toBe(200);
+    expect(memberCancel.body.status).toBe('abandoned');
     const longer = await call(SAVER, 'getWorkflowRun', { roomId: ROOM, runId: runId.slice(0, 9) });
     expect(longer.status).toBe(200);
     expect(longer.body.runId).toBe(runId);

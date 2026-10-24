@@ -18,7 +18,7 @@ it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings re
       const owner={pubkey:'owner',kind:'human',name:'Owner',handle:'owner'};
       const agent={pubkey:'agent',kind:'agent',name:'Agent',handle:'agent'};
       const offer={offerId:'offer',agent,addressee:owner,connectorType:'trusty-squire',connectorName:'Trusty Squire',reason:'',consequence:'Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.',helper:{machineId:'machine',name:'squire'},status:'connecting',createdAt:1,intent:'reconnect',provider:'google',connectorId:'squire:machine'};
-      root.render(<ConnectorOfferCard message={{id:'card',text:'',timestamp:1,connectorOffer:offer}} viewerIsAgent={false} viewerPubkey='owner' viewerRole='member' actionId={null} onAccept={()=>{}} onOpenWorkbench={()=>{}}
+      root.render(<ConnectorOfferCard message={{id:'card',text:'',timestamp:1,connectorOffer:offer}} viewerIsAgent={false} viewerPubkey='owner' actionId={null} onAccept={()=>{}} onOpenWorkbench={()=>{}}
         onContinue={(offerId,connectorType,pairedConnectorId)=>{
           globalThis.__route=connectorOfferCeremonyRoute({workspaceId:'ws',viewerId:'owner',roomId:'room',offerId,connectorType,pairedConnectorId,directSignIn:true});
           result.cardRoute=globalThis.__route.pathname; root.render(<SignIn />);

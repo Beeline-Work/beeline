@@ -54,7 +54,7 @@ it('seeds once, joins multiple people and default Rooms, and preserves the origi
   });
   await expect(
     phone.execute('createInvite', { workspaceId: workspace }, alice),
-  ).rejects.toThrow('manager');
+  ).rejects.toThrow('workspace admins only');
   // Legacy clients cannot replace a previously shared public link.
   const legacyInput = { workspaceId: workspace, rotate: true };
   expect(await phone.execute('createInvite', legacyInput, owner)).toEqual(first);

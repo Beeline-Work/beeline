@@ -41,7 +41,8 @@ export function approvalCaseElement(caseName: ApprovalCase, onAction: () => void
     const parsed = readRoomViewMessage({ id: 'c'.repeat(64), text: '', createdAt: timestamp,
       author: proofAgent, presentation: 'card', squireApproval: data.squireApproval,
       grantRequest: data.grantRequest, connectorOffer: data.connectorOffer,
-      ...(permission ? { permission: { ...permission, agent: proofAgent, requester: proofOwner } } : {}),
+      ...(permission ? { permission: { ...permission, agent: proofAgent, requester: proofOwner,
+        ...(permission.ownerPubkey ? { ownerId: permission.ownerPubkey } : {}) } } : {}),
       ...(target ? { targetBranch: { ...target, agent: proofAgent, requester: proofOwner } } : {}),
     });
     if (!parsed) throw new Error(`Invalid approval proof payload: ${name}`);
@@ -54,7 +55,7 @@ export function approvalCaseElement(caseName: ApprovalCase, onAction: () => void
       ...(name === 'grant-purpose' ? { purpose: 'Publish the preview build.', touches: 'Preview deployment', capabilities: 'Deploy the preview' } : {}),
       machine: 'squire', status: state ? state === 'always' ? 'approved' : state === 'once' ? 'once' : state === 'denied' ? 'denied' : 'pending' : name === 'grant-allowed' ? 'once' : name === 'grant-always' ? 'approved' : name === 'grant-denied' ? 'denied' : 'pending',
       decidedBy: proofOwner, decidedAt: timestamp + 240, requestedBy: proofOwner, roomId: '11111111-1111-4111-8111-111111111111', createdAt: timestamp, auto: false }],
-  } })} viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerRole="owner" actionId={null} onDecision={onAction} />;
+  } })} viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerCanManageWorkspace actionId={null} onDecision={onAction} />;
   if (name.startsWith('squire-')) {
     const tool = name === 'squire-purchase' ? 'inject_card' : name === 'squire-login' || name === 'squire-passkey' || name === 'squire-vouch' ? 'operate_login' : name === 'squire-edit-key' ? 'edit_credential' : name === 'squire-delete-key' ? 'delete_credential' : name === 'squire-edit-card' ? 'edit_payment_card' : 'fetch_credential';
     const action = tool === 'inject_card' ? 'buy Headphones' : tool === 'operate_login' ? 'sign in to Play Console' : tool === 'edit_credential' ? 'edit a key' : tool === 'delete_credential' ? 'delete a key' : tool === 'edit_payment_card' ? 'edit a card' : 'reveal a key';
@@ -70,14 +71,14 @@ export function approvalCaseElement(caseName: ApprovalCase, onAction: () => void
       ...(state && state !== 'pending' ? { status: state === 'allowed' ? 'approved' as const : state === 'expired' ? 'expired' as const : 'denied' as const, decidedAt: timestamp + 240 } : name === 'squire-allowed' || name === 'squire-denied' || name === 'squire-expired' ? { status: name === 'squire-allowed' ? 'approved' as const : name === 'squire-expired' ? 'expired' as const : 'denied' as const, decidedAt: timestamp + 240 } : {}),
     } })} />;
   }
-  if (name === 'spending' || name === 'edit-corner' || name === 'permission-allowed') return <WritePermissionCard agent={agent} roomName="beeline" viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerRole="owner" actionId={null} targetBranch="main" onDecision={onAction} onOpenCorner={onAction}
+  if (name === 'spending' || name === 'edit-corner' || name === 'permission-allowed') return <WritePermissionCard agent={agent} roomName="beeline" viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerCanManage actionId={null} targetBranch="main" onDecision={onAction} onOpenCorner={onAction}
     message={message({ writePermission: { permissionId: 'proof-permission', requestId: 'proof-request', agentPubkey: proofAgent.pubkey, requesterPubkey: proofOwner.pubkey, requester: proofOwner,
       tool: name === 'spending' ? 'inject_card' : 'edit_file', repository: 'owner/repo', reason: name === 'spending' ? 'Pay for the headphones checkout you asked for.' : 'Update README.md.',
-      ...(name === 'spending' ? { purpose: 'squire-spending' as const } : {}), status: state === 'allowed' || state === 'denied' || state === 'expired' || state === 'failed' ? state : name === 'permission-allowed' ? 'allowed' : 'pending', decider: proofOwner, decidedAt: timestamp + 240 } })} />;
+      ...(name === 'spending' ? { purpose: 'squire-spending' as const, ownerPubkey: proofOwner.pubkey } : {}), status: state === 'allowed' || state === 'denied' || state === 'expired' || state === 'failed' ? state : name === 'permission-allowed' ? 'allowed' : 'pending', decider: proofOwner, decidedAt: timestamp + 240 } })} />;
   if (name.startsWith('target-')) return <TargetBranchProposalCard agent={agent} roomName="beeline" viewerPubkey={proofOwner.pubkey} canManageWorkspace viewerIsAgent={false} currentTargetBranch="main" actionId={null} notice={null} onConfirm={onAction} onDeny={onAction}
     message={message({ targetBranchProposal: { proposalId: 'proof-target', from: 'main', to: 'release', agentPubkey: proofAgent.pubkey, purpose: 'Ship this week’s fixes from release instead of main.',
       ...(state === 'allowed' || state === 'denied' ? { status: state, decidedBy: proofOwner, decidedAt: timestamp + 240 } : name === 'target-denied' ? { status: 'denied' as const, decidedBy: proofOwner, decidedAt: timestamp + 240 } : {}) } })} />;
-  if (name.startsWith('connector-')) return <ConnectorOfferCard agent={agent} viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerRole="owner" actionId={null} onAccept={onAction} onDecline={onAction} onContinue={onAction} onOpenWorkbench={onAction}
+  if (name.startsWith('connector-')) return <ConnectorOfferCard agent={agent} viewerIsAgent={false} viewerPubkey={proofOwner.pubkey} viewerCanManage actionId={null} onAccept={onAction} onDecline={onAction} onContinue={onAction} onOpenWorkbench={onAction}
     message={message({ connectorOffer: { offerId: '22222222-2222-4222-8222-222222222222', agent: proofAgent, addressee: proofOwner, connectorName: 'Trusty Squire', connectorType: 'trusty-squire', reason: 'Provision the API key into its vault.', consequence: 'Sign in to sites · use vault keys', helper: { machineId: 'squire', name: 'squire' },
       status: state ? state === 'allowed' ? 'accepted' : state === 'denied' ? 'denied' : 'pending' : name === 'connector-allowed' ? 'accepted' : name === 'connector-denied' ? 'denied' : name === 'connector-reconnect' ? 'connecting' : 'pending', intent: name === 'connector-switch' ? 'switch' : name === 'connector-reconnect' ? 'reconnect' : 'add', connectorId: 'proof-connector', provider: 'google', createdAt: timestamp, acceptedBy: proofOwner, acceptedAt: timestamp + 240 } })} />;
   const tray = name === 'tray-write'

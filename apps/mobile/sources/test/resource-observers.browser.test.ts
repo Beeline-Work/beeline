@@ -15,7 +15,7 @@ describe('resource observers in the desktop web renderer', () => {
         import { DesktopRoomInspector } from '@/components/DesktopRoomInspector';
         import { CornerObjectiveLine } from '@/components/buzz/CornerObjectiveLine';
         import { useRoomWorkflowRun } from '@/buzz/use-room-workflow-run';
-        const room = { room: { id: 'parent', name: 'Room' }, messages: [], members: [], corners: [], latestAgentTurns: [], viewer: { identity: { pubkey: 'a', name: 'Person' }, role: 'owner', permissions: {} } };
+        const room = { room: { id: 'parent', name: 'Room' }, messages: [], members: [], corners: [], latestAgentTurns: [], viewer: { identity: { pubkey: 'a', name: 'Person' }, role: 'owner', permissions: { send: true } } };
         const client = { corners: async () => ({ corners: [] }), room: async id => {
           if (id === 'broken' && !globalThis.__recover) throw new Error('Selected corner unavailable');
           const detail = { ...room, room: { id, name: 'Original corner', about: 'Original detail', archived: false }, latestAgentTurns: [{ agentPubkey: 'b'.repeat(64), requestId: 'turn', status: 'working', requestedBy: 'a', createdAt: Date.now()/1000 }] };

@@ -7,7 +7,9 @@ import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { callAgentTool, postArtifact } from '../../body/src/read-only-mcp.js';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DaemonService } from './daemon-service.js';
@@ -1202,6 +1204,89 @@ it('Reproduction R-ID: the read tool downloads bytes from a private report hand-
     vi.unstubAllEnvs();
     bridge.closeAllConnections();
     await new Promise<void>((resolve, reject) => bridge.close((error) => error ? reject(error) : resolve()));
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+
+it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits for upload %s before reporting', async (outcome) => {
+  const scratch = await mkdtemp(join(tmpdir(), 'artifact-report-proof-'));
+  await writeFile(join(scratch, 'turn.json'), JSON.stringify(authority(order)));
+  await writeFile(join(scratch, 'evidence.txt'), 'Artifact report evidence');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let started!: () => void;
+  const uploading = new Promise<void>(resolve => { started = resolve; });
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  let reportCalls = 0;
+  const bridge = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks);
+      let result: unknown;
+      if (request.url === '/v1/daemon/artifacts') {
+        started(); await held;
+        if (outcome === 'failure') {
+          response.writeHead(503, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'storage_unavailable' }));
+          return;
+        }
+        result = await objects.uploadArtifact(RUBY, body, 'text/plain', 'evidence.txt');
+      } else if (request.url === '/v1/daemon/operations/postAgentAttachment') {
+        result = await daemon.execute('postAgentAttachment', JSON.parse(body.toString()), RUBY);
+      } else if (request.url === '/v1/daemon/operations/report') {
+        reportCalls++;
+        result = await daemon.execute('report', JSON.parse(body.toString()), RUBY);
+      } else throw new Error('unexpected proof route');
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: String(error) }));
+    }
+  });
+  await new Promise<void>(resolve => bridge.listen(0, '127.0.0.1', resolve));
+  const port = (bridge.address() as { port: number }).port;
+  const child = spawn(process.execPath, [new URL('../../body/dist/read-only-mcp.js', import.meta.url).pathname], {
+    env: { ...process.env, BEELINE_MCP_SURFACE: 'agent', BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${port}`,
+      BEELINE_DAEMON_TOKEN: 'isolated-proof', BEELINE_DAEMON_ROOM_ID: DM, BEELINE_DAEMON_CORNER_ID: '',
+      BEELINE_ATTACH_ROOT: scratch, BEELINE_TURN_CONTEXT_FILE: join(scratch, 'turn.json') },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  type ToolResult = { isError?: boolean; content: { text: string }[] };
+  const pending = new Map<number, (result: ToolResult) => void>();
+  const lines = createInterface({ input: child.stdout });
+  lines.on('line', line => {
+    const response = JSON.parse(line);
+    pending.get(response.id)?.(response.result);
+  });
+  const call = (id: number, name: string, args: object) => new Promise<ToolResult>(resolve => {
+    pending.set(id, resolve);
+    child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
+  });
+  try {
+    const upload = call(1, 'post_artifact', { path: join(scratch, 'evidence.txt') });
+    await uploading;
+    const report = call(2, 'report', { status: 'done', text: 'done: evidence attached' });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const sentEarly = reportCalls > 0;
+    release();
+    const [uploaded, reported] = await Promise.all([upload, report]);
+    expect(sentEarly).toBe(false);
+    if (outcome === 'failure') {
+      expect(uploaded.isError).toBe(true);
+      expect(reported).toMatchObject({ isError: true, content: [{ text: expect.stringContaining('storage_unavailable') }] });
+      expect(reportCalls).toBe(0);
+    } else {
+      expect(uploaded.isError).not.toBe(true);
+      expect(reported.isError).not.toBe(true);
+      const result = JSON.parse(reported.content[0]!.text);
+      const message = await daemon.execute('getRoomMessage', { ...authority(order), messageId: result.id }, RUBY);
+      expect(message).toMatchObject({ body: 'done: evidence attached', attachments: [expect.objectContaining({ name: 'evidence.txt' })] });
+      console.info('Demonstrated ARTIFACT-REPORT: shipped MCP delivered the report with evidence.txt through the daemon service');
+    }
+  } finally {
+    release(); child.kill(); lines.close();
+    bridge.closeAllConnections();
+    await new Promise<void>(resolve => bridge.close(() => resolve()));
     await rm(scratch, { recursive: true, force: true });
   }
 });

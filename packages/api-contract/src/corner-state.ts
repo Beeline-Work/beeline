@@ -42,9 +42,9 @@ export type CornerStateFacts = {
   readonly agentCommanderReport?: boolean;
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
   /**
-   * A worker `blocked:` report on a red head. The reviewer cannot be
-   * dispatched, so the implementer owns the repair window. Pending checks
-   * do not use this flag.
+   * A worker `blocked:` report while the reviewer cannot be dispatched.
+   * Failing checks keep the repair window. Pending or not-yet-reported
+   * checks are idle at once. A needs-decision report does not set this.
    */
   readonly stallReport?: boolean;
 };
@@ -104,15 +104,18 @@ export function cornerRunFromLifecycle(input: {
  * 4. Failing checks with `stallReport`: `working` for 30 minutes from
  *    `ciStartedAt`, otherwise `idle`. A blocked report does not keep a red
  *    head waiting.
- * 5. `waiting` — an unresolved blocker, unless checks are pending on the
+ * 5. Pending or not-yet-reported checks with `stallReport`: `idle`. The
+ *    worker is waiting on a reviewer who cannot start. Ordinary pending CI
+ *    leaves this flag unset.
+ * 6. `waiting` — an unresolved blocker, unless checks are pending on the
  *    current head and every blocker is an agent-commander report. A human
  *    report, grant, connect step, or merge hold stays waiting during CI,
  *    including while checks are failing.
- * 6. Failing checks with no blocker: the same 30-minute repair window, then `idle`.
- * 7. `review` — pending or not-yet-reported checks, with no time cap, until a
+ * 7. Failing checks with no blocker: the same 30-minute repair window, then `idle`.
+ * 8. `review` — pending or not-yet-reported checks, with no time cap, until a
  *    final result or a new push.
- * 8. `working` — the last turn ended within 30 seconds and checks are not failing.
- * 9. `idle`.
+ * 9. `working` — the last turn ended within 30 seconds and checks are not failing.
+ * 10. `idle`.
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
@@ -128,6 +131,7 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.turnRunning) return { state: 'working' };
   if (checks === 'failing' && facts.stallReport === true)
     return repairOpen ? { state: 'working' } : { state: 'idle' };
+  if (facts.stallReport === true && pendingCi) return { state: 'idle' };
   if ((facts.blocker || facts.owed === true) && !(facts.agentCommanderReport && pendingCi))
     return { state: 'waiting', ...facts.blocker };
   if (checks === 'failing') return repairOpen ? { state: 'working' } : { state: 'idle' };

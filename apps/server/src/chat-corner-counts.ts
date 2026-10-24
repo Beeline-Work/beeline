@@ -57,8 +57,18 @@ export function blockedReportSql(corner = 'c'): string {
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {
   const summary = row.lifecycle?.checksSummary;
   const checks = summary?.status ?? row.lifecycle?.checks;
+  const checksUnreported =
+    Boolean(row.lifecycle?.pr) &&
+    summary?.status === 'unknown' &&
+    summary.total === 0 &&
+    summary.fetchStartedAt === undefined;
   const agentCommander = row.agent_commander === true && row.human_blocker !== true;
-  const stallReport = agentCommander && row.blocked_report === true && checks === 'failing';
+  // A blocked report while checks are not green is a reviewer stall. A
+  // needs-decision report leaves `blocked_report` unset and stays review.
+  const stallReport =
+    agentCommander &&
+    row.blocked_report === true &&
+    (checks === 'failing' || checks === 'pending' || checksUnreported);
   return deriveCornerState({
     archived: Boolean(row.archived_at),
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',

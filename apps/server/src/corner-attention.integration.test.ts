@@ -211,9 +211,9 @@ it.each(['pending', 'passing'])(
   },
 );
 it.each([
-  ['agent', 'pending', 'review'],
+  ['agent', 'pending', 'idle'],
   ['human', 'pending', 'waiting'],
-  ['agent', 'unreported', 'review'],
+  ['agent', 'unreported', 'idle'],
   ['human', 'unreported', 'waiting'],
 ] as const)(
   'Reproduction R1: a %s commander blocked report during %s checks is %s',
@@ -236,11 +236,11 @@ it.each([
     ).toBe(expected);
     const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
     expect(deck!.openCorners[0]?.state).toBe(expected);
-    if (expected === 'review') {
+    if (expected === 'waiting') {
+      expect(deck).toMatchObject({ waitingCornerCount: 1 });
+    } else {
       expect(row.blocker).toBeUndefined();
       expect(deck).toMatchObject({ waitingCornerCount: 0 });
-    } else {
-      expect(deck).toMatchObject({ waitingCornerCount: 1 });
     }
     console.info(
       `Demonstrated Reproduction R1: ${kind} commander blocked report during ${checks} checks is ${expected}`,
@@ -667,14 +667,21 @@ it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer whi
   expect(stalls[0]!.source.body).toContain('30 minutes');
 });
 
-it('Reproduction RED-STALL-1: a worker blocked while checks are pending stays review', async () => {
+it('Reproduction RED-STALL-1: a worker blocked on a gated reviewer while checks are pending is idle once', async () => {
   await ci('pending');
+  await runCornerAttention(db);
+  expect(await state()).toBe('review');
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
   const { reportToCommander } = await import('./commander.js');
   await reportToCommander(db, C, WORKER, 'blocked: Waiting on the reviewer until checks are green.');
-  expect(await state()).toBe('review');
+  expect(await state()).toBe('idle');
   await runCornerAttention(db);
   await runCornerAttention(db);
-  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
+  expect(stalls).toHaveLength(1);
+  expect(stalls[0]!.source.body).toBe(
+    'blocked: Corner Corner is idle. The worker is waiting on the reviewer and checks are not green, so that review cannot start.',
+  );
   const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
   expect(reviewer.filter((command) =>
     command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);

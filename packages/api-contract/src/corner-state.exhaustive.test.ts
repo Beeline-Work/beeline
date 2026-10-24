@@ -16,7 +16,8 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  * 4. `waiting` iff there is a blocker and it is not the case that checks are
  *    pending on the current head and every blocker is owed to an agent.
  *    This scan leaves `stallReport` unset, so an agent-commander report on a
- *    red head stays waiting.
+ *    red head stays waiting. A `stallReport` during pending checks is idle
+ *    and is covered outside this scan.
  * 5. Anything else left over is `idle`, including failing checks once the
  *    repair window is missing or older than 30 minutes.
  *

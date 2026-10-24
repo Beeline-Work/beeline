@@ -1,7 +1,7 @@
 # Transcript speed harness
 
 Measurement fixtures and drivers for the real Beeline Room UI. No product speed
-fixes. Native iOS is pending the owner's BrowserStack host-list approval.
+fixes. Native iOS is blocked by exhausted BrowserStack App Automate testing time; the host-list change is approved.
 
 ## Local fixture
 
@@ -145,3 +145,5 @@ leak.
 ## Retained baseline
 
 [Platform tables and measured ranking](results/2026-10-24/BASELINE.md) and [run notes, limitations and native blockers](results/2026-10-24/RUN-NOTES.md). The report command accepts `-` for an explicitly missing platform; this produces an incomplete row, never inferred measurements.
+
+Android stream visibility uses `tesseract` on retained emulator screenshots outside the timing window; accessibility dumps cannot reliably obtain idle state during streaming. The OCR check requires both stream labels (allowing O for zero), and the images remain available for inspection.

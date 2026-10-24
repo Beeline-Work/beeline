@@ -16,9 +16,16 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const open = room => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d',
   `beeline://beeline/chat/${room}?communityId=${workspace}`, 'app.usebeeline/.MainActivity');
 const dump = () => {
-  adb('shell', 'rm', '-f', '/sdcard/transcript.xml');
-  adb('shell', 'uiautomator', 'dump', '/sdcard/transcript.xml');
-  return adb('shell', 'cat', '/sdcard/transcript.xml');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    adb('shell', 'rm', '-f', '/sdcard/transcript.xml');
+    const result = adb('shell', 'uiautomator', 'dump', '/sdcard/transcript.xml');
+    if (result.includes('dumped to:')) return adb('shell', 'cat', '/sdcard/transcript.xml');
+  }
+  throw new Error('Android accessibility dump could not get idle state after three attempts');
+};
+const newestPoint = xml => {
+  const label = [...xml.matchAll(/content-desc="([^"]*)"/g)].map(m => m[1]).find(label => label.endsWith('Jump to newest message'));
+  return label ? pointFor(xml, 'content-desc', label) : null;
 };
 const tap = point => { if (!point) throw new Error('Expected fixture UI control missing'); adb('shell', 'input', 'tap', ...point.map(String)); };
 const control = startControl();
@@ -54,7 +61,7 @@ try {
   open(rooms[0]); await pause(3000); open(rooms[0]); await pause(1500); await control.ready();
   const xml = dump();
   if (!xml.includes('Transcript A')) throw new Error('The fixture Room did not open');
-  const newest = pointFor(xml, 'content-desc', 'Jump to newest message');
+  const newest = newestPoint(xml);
   if (newest) { tap(newest); await pause(2000); }
   for (let repeat = 0; repeat < 3; repeat++) {
     await capture('idle', 2000, async () => {});
@@ -80,7 +87,16 @@ try {
     samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
     if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
     open(rooms[1]); await pause(1200); open(rooms[0]); await pause(1200);
-    const jump = pointFor(dump(), 'content-desc', 'Jump to newest message'); if (jump) tap(jump);
+    let atNewest = false;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const current = dump();
+      const jump = newestPoint(current);
+      if (!jump && (current.includes('Fixture 0999') || current.includes('Incoming fixture') || current.includes('Settlement-'))) { atNewest = true; break; }
+      if (jump) tap(jump);
+      else adb('shell', 'input', 'swipe', '500', '1900', '500', '500', '150');
+      await pause(1500);
+    }
+    if (!atNewest) throw new Error('Android newest-content precondition did not settle');
     let incoming;
     await capture('incoming', 2500, async () => { incoming = await stimulus.incoming(); });
     const incomingXml = dump();
@@ -95,8 +111,11 @@ try {
     // Verify the same live path outside the frame sampling window so the
     // accessibility dump does not distort streaming frame times.
     await stimulus.stream(async () => {
-      const xml = dump();
-      if (!xml.includes('Stream 0:') || !xml.includes('Stream 1:')) throw new Error('Android did not display both live streams');
+      const screenshot = `${output}/streams-${repeat}.png`;
+      await writeFile(screenshot, execFileSync('adb', ['-s', device, 'exec-out', 'screencap', '-p']));
+      const visible = execFileSync('tesseract', [screenshot, 'stdout'], { encoding: 'utf8' });
+      await writeFile(`${output}/streams-${repeat}.txt`, visible);
+      if (!/Stream [0O]:/.test(visible) || !/Stream 1:/.test(visible)) throw new Error('Android screenshot did not show both live streams');
     });
     await capture('concurrent-streams', 5000, async () => { await stimulus.stream(); });
     open(rooms[0]); await pause(2000);

@@ -1,6 +1,6 @@
 # Capture status and reproduction
 
-This is a partial baseline, not completion of the brief. See [platform tables and measured ranking](BASELINE.md). Android remains incomplete; iOS is pending owner approval.
+This is a partial baseline, not completion of the brief. See [platform tables and measured ranking](BASELINE.md). Android remains incomplete; iOS is blocked by exhausted BrowserStack App Automate testing time.
 
 ## Retained evidence
 
@@ -36,4 +36,16 @@ Local fingerprint validation failed on both this branch and clean main (`735d7a8
 
 ## iOS
 
-Pending owner approval of BrowserStack host edit `01M5QSN2JGRMWXHK8G9M0HNW48`. Resume the approved edit and append one native timing run to this same report.
+The owner approved the host change; vault metadata confirms `hub-cloud.browserstack.com` is allowed. The expired approval was not resumed.
+
+The native IPA upload on 2026-10-24 returned HTTP 403:
+
+```text
+[BROWSERSTACK_TESTING_TIME_LIMIT_EXHAUSTED]App Automate testing time has expired. Contact BrowserStack Support at https://www.browserstack.com/contact for extending your Free Trial.
+```
+
+Vault authentication and Expo EAS build discovery succeeded. BrowserStack recent apps returned no results; its plan endpoint reported Free. A hub session availability request returned `POST /v1/vault/use → 504 timeout`. Uploading an existing EAS IPA then established the expired testing-time blocker. No native timing was captured. Restore testing time on the approved account, then capture the fixture run; an existing IPA's availability does not establish that it contains this harness.
+
+## Remaining driver changes
+
+The Android driver retries accessibility snapshots, recognizes prefixed jump-to-newest labels, waits for newest content before incoming-message sampling, and retains screenshots/OCR to verify both streams outside timing windows. These changes still require the full native demonstration; no emulator was attached during the delivery check.

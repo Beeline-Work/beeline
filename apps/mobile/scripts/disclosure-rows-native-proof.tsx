@@ -12,7 +12,7 @@ import {
   obsidianSmallTheme,
   obsidianLargeTheme,
 } from '../sources/theme';
-import { DisclosureRowsProof } from './disclosure-rows-proof';
+import { DisclosureRowsProof, SystemRowsProof } from './disclosure-rows-proof';
 
 StyleSheet.configure({
   themes: {
@@ -48,6 +48,7 @@ function Proof() {
       >
         <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.accent }}>Switch theme</Text>
       </Pressable>
+      <SystemRowsProof />
       <DisclosureRowsProof />
     </ScrollView>
   );

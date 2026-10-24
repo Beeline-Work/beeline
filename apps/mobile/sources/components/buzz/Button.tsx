@@ -1,4 +1,6 @@
 import * as React from 'react';
+import * as Native from 'react-native';
+import type { BeelineThemeTokens } from '@/buzz/groknight';
 import {
   Pressable,
   type PressableProps,
@@ -11,15 +13,20 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import { PixelLoader } from './MonoHull';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'provider' | 'brass' | 'quiet' | 'destructive';
+export type ButtonVariant =
+  'primary' | 'secondary' | 'provider' | 'brass' | 'quiet' | 'destructive' | 'danger';
 
 export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
+  ref?: React.Ref<React.ComponentRef<typeof Pressable>>;
   /** Sentence-case verb shown on the button. */
   label: string;
+  /** Provider-free recovery when the styling runtime itself failed. */
+  emergencyTheme?: BeelineThemeTokens;
   /** Existing drawn glyph for an icon-only control, with an accessibility label. */
   icon?: React.ReactNode;
   /** Fixed 44-point target without label padding. */
   iconOnly?: boolean;
+  iconPosition?: 'start' | 'end';
   /**
    * `primary`: the filled action (one per surface).
    * `secondary`: outlined in `borderStrong`, for the alternative action.
@@ -33,6 +40,11 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   loading?: boolean;
   /** Stretch across the parent's cross axis. */
   fullWidth?: boolean;
+  /** Preserve an existing approved control while moving its behavior into Button. */
+  appearance?: {
+    control?: PressableProps['style'];
+    label?: StyleProp<TextStyle>;
+  };
   /** Outer layout only (margins, alignment, flex). Shape and type are fixed. */
   style?: StyleProp<ViewStyle>;
   /** Label layout only; shape and type remain fixed. */
@@ -44,10 +56,17 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
  * Space Grotesk Medium. Replaces MonoButton, BrassButton, OnboardingButton and
  * RoundButton.
  */
-export function Button({
+export function Button(props: ButtonProps) {
+  return props.emergencyTheme ? <RecoveryButton {...props} /> : <ButtonFrame {...props} />;
+}
+
+/** No styling-runtime hooks run on the recovery path. */
+function RecoveryButton({
   label,
+  emergencyTheme,
   icon,
   iconOnly = false,
+  iconPosition = 'start',
   variant = 'primary',
   labelTone,
   loading = false,
@@ -55,6 +74,71 @@ export function Button({
   disabled,
   style,
   labelStyle,
+  appearance,
+  onPress,
+  accessibilityState,
+  ...props
+}: ButtonProps) {
+  const isDisabled = Boolean(disabled || loading);
+  if (emergencyTheme) {
+    const { Pressable: EmergencyPressable, Text: EmergencyText } = Native;
+    return (
+      <EmergencyPressable
+        {...props}
+        accessibilityRole="button"
+        accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
+        disabled={isDisabled}
+        onPress={onPress}
+        style={(state) =>
+          appearance
+            ? [
+                typeof appearance.control === 'function'
+                  ? appearance.control(state)
+                  : appearance.control,
+                style,
+              ]
+            : [
+                {
+                  minHeight: 44,
+                  minWidth: 44,
+                  paddingHorizontal: emergencyTheme.space.md,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  borderRadius: emergencyTheme.radius,
+                },
+                style,
+              ]
+        }
+      >
+        <EmergencyText
+          style={
+            appearance
+              ? appearance.label
+              : { ...emergencyTheme.type.bodyStrong, color: emergencyTheme.accent }
+          }
+        >
+          {label}
+        </EmergencyText>
+      </EmergencyPressable>
+    );
+  }
+  return null;
+}
+
+function ButtonFrame({
+  label,
+  emergencyTheme,
+  icon,
+  iconOnly = false,
+  iconPosition = 'start',
+  variant = 'primary',
+  labelTone,
+  loading = false,
+  fullWidth = false,
+  disabled,
+  style,
+  labelStyle,
+  appearance,
   onPress,
   accessibilityState,
   ...props
@@ -67,51 +151,73 @@ export function Button({
     <Pressable
       accessibilityRole="button"
       {...props}
-      accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading }}
+      accessibilityState={{
+        ...accessibilityState,
+        disabled: isDisabled,
+        busy: loading || accessibilityState?.busy === true,
+      }}
       disabled={isDisabled}
       onPress={(event) => {
         if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress?.(event);
       }}
-      style={({ pressed }) => [
-        styles.frame,
-        primary ? styles.primary : styles[variant],
-        pressed && !isDisabled && (filled ? styles.primaryPressed : styles.outlinedPressed),
-        isDisabled &&
-          (primary
-            ? styles.primaryDisabled
-            : variant === 'provider'
-              ? styles.providerDisabled
-              : !borderless && styles.outlinedDisabled),
-        fullWidth && styles.fullWidth,
-        iconOnly && styles.iconOnly,
-        style,
-      ]}
+      style={(state) =>
+        appearance
+          ? [
+              typeof appearance.control === 'function'
+                ? appearance.control(state)
+                : appearance.control,
+              style,
+            ]
+          : [
+              styles.frame,
+              primary ? styles.primary : styles[variant],
+              state.pressed &&
+                !isDisabled &&
+                (filled ? styles.primaryPressed : styles.outlinedPressed),
+              isDisabled &&
+                (primary
+                  ? styles.primaryDisabled
+                  : variant === 'provider'
+                    ? styles.providerDisabled
+                    : !borderless && styles.outlinedDisabled),
+              fullWidth && styles.fullWidth,
+              iconOnly && styles.iconOnly,
+              style,
+            ]
+      }
     >
       {loading && <PixelLoader compact />}
-      {icon}
+      {iconPosition === 'start' && icon}
       {label ? (
         <Text
-          numberOfLines={1}
+          numberOfLines={appearance ? undefined : 1}
           style={[
-            styles.label,
-            labelStyle,
-            primary
-              ? styles.primaryLabel
-              : variant === 'provider'
-                ? styles.providerLabel
-              : variant === 'brass'
-                ? styles.brassLabel
-                : variant === 'destructive'
-                  ? styles.destructiveLabel
-                  : styles.secondaryLabel,
-            labelTone === 'quiet' && styles.quietLabel,
-            isDisabled && variant !== 'provider' && styles.disabledLabel,
+            ...(appearance
+              ? [appearance.label]
+              : [
+                  styles.label,
+                  labelStyle,
+                  primary
+                    ? styles.primaryLabel
+                    : variant === 'provider'
+                      ? styles.providerLabel
+                      : variant === 'brass'
+                        ? styles.brassLabel
+                        : variant === 'danger'
+                          ? styles.dangerLabel
+                          : variant === 'destructive'
+                            ? styles.destructiveLabel
+                            : styles.secondaryLabel,
+                  labelTone === 'quiet' && styles.quietLabel,
+                  isDisabled && variant !== 'provider' && styles.disabledLabel,
+                ]),
           ]}
         >
           {label}
         </Text>
       ) : null}
+      {iconPosition === 'end' && icon}
     </Pressable>
   );
 }
@@ -138,6 +244,8 @@ const styles = StyleSheet.create((theme) => {
     brass: { backgroundColor: 'transparent', borderColor: buzz.accent },
     quiet: { backgroundColor: 'transparent', borderColor: 'transparent' },
     destructive: { backgroundColor: 'transparent', borderColor: 'transparent' },
+    danger: { backgroundColor: 'transparent', borderColor: buzz.dialogDanger },
+    dangerLabel: { color: buzz.textPrimary },
     destructiveLabel: { color: buzz.dialogDanger },
     primaryPressed: { opacity: 0.85 },
     outlinedPressed: { backgroundColor: buzz.bgPressed },

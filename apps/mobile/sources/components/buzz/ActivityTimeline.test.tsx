@@ -174,19 +174,14 @@ describe('one-line tool ledger', () => {
     ).toBeUndefined();
   });
 
-  it('spends colour in exactly two places: the brass cross, the dim tick (design 2026-08-24)', () => {
+  it('names failed steps in brass and omits settled verdict glyphs', () => {
     const renderer = render(<ActivityTimeline active={false} items={TOOLS} />);
     expandRun(renderer, 'read');
-    const passed = renderer.root.findByProps({ testID: 'activity-verdict-read' });
-    expect(passed.props.children).toBe('✓');
-    expect(passed.props.style).toContainEqual(
-      expect.objectContaining({ color: groknight.ledgerGhost }),
-    );
-    const failed = renderer.root.findByProps({ testID: 'activity-verdict-failure' });
-    expect(failed.props.children).toBe('✗');
+    expect(renderedText(renderer)).toContain('Failed');
+    expect(renderedText(renderer)).not.toContain('✗');
+    expect(renderedText(renderer)).not.toContain('✓');
+    const failed = renderer.root.findAllByType('Text').find((node: any) => node.props.children === 'Failed');
     expect(failed.props.style).toContainEqual(expect.objectContaining({ color: groknight.accent }));
-    // No red in the new rendering — the design's brass supersedes C88's diff red.
-    expect(renderedText(renderer)).not.toContain(groknight.diffRemoved);
   });
 
   it('the live turn’s last step carries the spinner, not a verdict glyph', () => {
@@ -224,11 +219,9 @@ describe('one-line tool ledger', () => {
     expandRun(renderer, 'read');
     for (const id of ['read', 'bare']) {
       const [row] = hostNodes(renderer, new RegExp(`^tool-ledger-line-${id}$`));
-      expect(row.props.style).toEqual(expect.objectContaining({ minHeight: 44 }));
+      expect(row.findAllByType('View').some((node: any) => JSON.stringify(node.props.style)?.includes('44'))).toBe(true);
     }
-    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).props.onPress).toBeTypeOf(
-      'function',
-    );
+    expect(renderer.root.findByProps({ testID: 'tool-ledger-line-read' }).findByType('Pressable').props.accessibilityRole).toBe('button');
     expect(
       renderer.root.findByProps({ testID: 'tool-ledger-line-bare' }).props.onPress,
     ).toBeUndefined();
@@ -308,6 +301,8 @@ describe('grouping consecutive steps', () => {
       <ActivityTimeline active={false} items={[call('a'), call('b'), call('c'), call('d')]} />,
     );
     act(() => renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.onPress());
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(2);
+    act(() => renderer.root.findByProps({ testID: 'tool-run-more-a' }).props.onPress());
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(4);
     expect(
       renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.accessibilityState,
@@ -364,6 +359,7 @@ describe('a reply’s steps line', () => {
   it('expands to every note in full, in order, between the tool lines', () => {
     const renderer = render(<TurnStepsLine items={STEPS} />);
     expandRun(renderer, 'n1');
+    act(() => renderer.root.findByProps({ testID: 'tool-run-more-n1' }).props.onPress());
     expect(hostNodes(renderer, /^tool-ledger-line-/).map((node: { props: { testID?: string } }) => node.props.testID)).toEqual([
       'tool-ledger-line-n1',
       'tool-ledger-line-t1',
@@ -378,7 +374,7 @@ describe('a reply’s steps line', () => {
       'I’ll check the corner’s blocker.\n\nThen decide whether it stays parked.',
     );
     expect(hostNodes(renderer, /^activity-verdict-n/)).toHaveLength(0);
-    expect(hostNodes(renderer, /^activity-verdict-t/)).toHaveLength(4);
+    expect(hostNodes(renderer, /^activity-verdict-t/)).toHaveLength(0);
   });
 
   it('joins a long run split across continuing notes back into one note', () => {
@@ -763,9 +759,10 @@ describe('folded historical transcripts', () => {
     ).toBe('6 steps, expandable');
 
     expandRun(renderer, 'tool-1');
+    act(() => renderer.root.findByProps({ testID: 'tool-run-more-tool-1' }).props.onPress());
     expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(6);
     expect(
-      renderer.root.findByProps({ testID: 'tool-ledger-line-tool-8' }).props.onPress,
+      renderer.root.findByProps({ testID: 'tool-ledger-line-tool-8' }).findByType('Pressable').props.onPress,
     ).toBeTypeOf('function');
   });
 
@@ -848,4 +845,39 @@ describe('folded historical transcripts', () => {
       renderer.root.findByProps({ testID: 'tool-run-group-anonymous-0' }).props.accessibilityLabel,
     ).toBe('6 steps · 4 failed, expandable');
   });
+});
+
+
+it('keeps MCP machine labels without duplicating or recasing the tool name', () => {
+  const renderer = render(<TurnStepsLine items={[{
+    kind: 'tool', id: 'mcp-read', title: 'mcp__filesystem__read_file',
+    input: 'example.ts', status: 'completed', output: 'contents',
+  }]} />);
+  expandRun(renderer, 'mcp-read');
+  const row = hostNodes(renderer, /^tool-ledger-line-mcp-read$/)[0];
+  const texts = row.findAll((node: any) => node.type === 'Text')
+    .map((node: any) => node.props.children).filter((value: unknown) => typeof value === 'string');
+  expect(texts).toContain('read_file example.ts');
+  expect(texts).not.toContain('Read_file');
+  expect(texts.filter((text: string) => text.includes('read_file'))).toHaveLength(1);
+});
+
+
+it('retains Failed and a brass cross for a failed named MCP tool', () => {
+  const renderer = render(<TurnStepsLine items={[{
+    kind: 'tool', id: 'mcp-failure', title: 'mcp__example__read_file',
+    command: 'mcp__example__read_file example.ts', input: 'example.ts',
+    output: 'permission denied', status: 'failed',
+  }]} />);
+  expandRun(renderer, 'mcp-failure');
+  const row = hostNodes(renderer, /^tool-ledger-line-mcp-failure$/)[0];
+  const texts = row.findAll((node: any) => node.type === 'Text');
+  expect(texts.map((node: any) => node.props.children)).toContain('read_file example.ts');
+  const failed = texts.find((node: any) => node.props.children === 'Failed');
+  const cross = texts.find((node: any) => node.props.testID === 'activity-verdict-mcp-failure');
+  expect(failed).toBeDefined();
+  expect(failed.props.style).toContainEqual({ color: groknight.accent });
+  expect(cross.props.children).toBe('✗');
+  expect(cross.props.style).toContainEqual({ color: groknight.accent });
+  expect(texts.map((node: any) => node.props.children)).not.toContain('Read_file');
 });

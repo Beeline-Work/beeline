@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -128,22 +129,30 @@ function CornerAppBlockView({
     case 'action': {
       const disabled = busy || !onAction;
       return (
-        <Pressable
+        <Button
           accessibilityLabel={`${block.label}. Sends a prompt to ${block.prompt}`}
           accessibilityRole="button"
           accessibilityState={{ busy, disabled }}
           disabled={disabled}
           onPress={() => onAction?.(block.prompt)}
-          style={({ pressed }) => [
-            styles.action,
-            pressed && styles.actionPressed,
-            disabled && styles.actionBusy,
-          ]}
           testID={`corner-app-action-${block.label}`}
-        >
-          <Text style={styles.actionLabel}>{busy ? 'Sending…' : block.label}</Text>
-          <Text style={styles.actionArrow}>→</Text>
-        </Pressable>
+          label={busy ? 'Sending…' : block.label}
+          variant="quiet"
+          iconPosition="end"
+          icon={
+            <>
+              <Text style={styles.actionArrow}>→</Text>
+            </>
+          }
+          appearance={{
+            control: ({ pressed }) => [
+              styles.action,
+              pressed && styles.actionPressed,
+              disabled && styles.actionBusy,
+            ],
+            label: styles.actionLabel,
+          }}
+        />
       );
     }
   }

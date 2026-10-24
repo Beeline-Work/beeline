@@ -1,3 +1,7 @@
+vi.mock('@/components/buzz/Button', async () => {
+  const React = await import('react');
+  return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
+});
 vi.mock('expo-router', () => ({ useLocalSearchParams: () => mocks.params, router: { setParams: vi.fn((params) => { Object.assign(mocks.params, params); }) } }));
 vi.mock('@/components/buzz/ErrorBanner', () => ({ErrorBanner:(props:any)=>React.createElement('ErrorBanner',props)}));
 vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));

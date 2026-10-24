@@ -260,13 +260,16 @@ function titleObject(step: TurnActivityAction): string {
   return title.replace(TITLE_VERB, '') || title;
 }
 
+/** The action word shown beside a tool's machine text. */
+export function toolCallVerb(step: TurnActivityAction): string {
+  return verbAndObject(step, toolCallOutput(step.output)).verb;
+}
+
 /**
  * The ledger line's label (owner-approved tool-ledger design, 2026-08-24): the
  * call's object — the command, the file, the search pattern with its hit
- * count — cut to the label cap. The leading glyph carries the family
- * (tool-ledger.ts), so a generic verb (`ran`, `read`, `wrote`) is dropped: the
- * design's `>_ npm run typecheck`, not `ran npm run typecheck`. A verb that IS
- * information (an MCP tool's own name, `git`) stays.
+ * count — cut to the label cap. The row displays the generic action separately,
+ * so its label omits that word. Tool-specific names remain part of the label.
  */
 export function toolCallLabel(step: TurnActivityAction): string {
   const output = toolCallOutput(step.output);

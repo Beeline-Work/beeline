@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -222,24 +223,24 @@ export default function WalletScreen() {
                   {address || '—'}
                 </Text>
                 </View>
-                <TouchableOpacity
-                accessibilityLabel="Copy address"
-                accessibilityRole="button"
-                onPress={copyAddress}
-                style={styles.addressAction}
-                testID="wallet-address-copy"
-              >
-                <Text style={styles.addressActionText}>{copied ? 'Copied' : 'Copy'}</Text>
-              </TouchableOpacity>
-                <TouchableOpacity
+                <Button
+                  accessibilityLabel="Copy address"
+                  accessibilityRole="button"
+                  onPress={copyAddress}
+                  testID="wallet-address-copy"
+                  label={copied ? 'Copied' : 'Copy'}
+                  variant="quiet"
+                  appearance={{ control: styles.addressAction, label: styles.addressActionText }}
+                />
+              <Button
                 accessibilityLabel="Show address QR code"
                 accessibilityRole="button"
                 onPress={() => setQrOpen((open) => !open)}
-                style={styles.addressAction}
                 testID="wallet-address-qr-toggle"
-              >
-                <Text style={styles.addressActionText}>QR</Text>
-              </TouchableOpacity>
+                label={'QR'}
+                variant="quiet"
+                appearance={{ control: styles.addressAction, label: styles.addressActionText }}
+              />
               </View>
               {qrOpen ? (
               <View style={styles.qrBlock} testID="wallet-address-qr">
@@ -254,7 +255,7 @@ export default function WalletScreen() {
               <Text style={styles.balanceLabel}>Total balance</Text>
               <View style={styles.balanceActions} testID="wallet-actions">
                 {(['send', 'receive'] as const).map((action) => (
-                  <TouchableOpacity
+                  <Button
                     key={action}
                     accessibilityRole="button"
                     onPress={() =>
@@ -263,13 +264,11 @@ export default function WalletScreen() {
                         params: { workspaceId },
                       } as unknown as Href)
                     }
-                    style={styles.balanceAction}
                     testID={`wallet-action-${action}`}
-                  >
-                    <Text style={styles.balanceActionText}>
-                      {action === 'send' ? 'Send' : 'Receive'}
-                    </Text>
-                  </TouchableOpacity>
+                    label={action === 'send' ? 'Send' : 'Receive'}
+                    variant="quiet"
+                    appearance={{ control: styles.balanceAction, label: styles.balanceActionText }}
+                  />
                 ))}
               </View>
             </View>

@@ -1,3 +1,7 @@
+vi.mock('@/components/buzz/Button', async () => {
+  const React = await import('react');
+  return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
+});
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });

@@ -13,7 +13,6 @@ vi.mock('react-native', () => {
 });
 import { NotificationLifecycleCard } from './PrLifecycleCard';
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
-vi.mock('./LifecycleRow', () => ({ LifecycleRow: () => null }));
 import { LifecycleRecordCard } from './LifecycleCard';
 import { CornerOpenedMarker } from './CornerOpenedMarker';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
@@ -79,15 +78,10 @@ describe('mock A lifecycle rows', () => {
     expect(render().get('notification-run-run').props.style?.borderTopWidth ?? 0).toBe(0);
   });
 
-  it('keeps the shared check-event disclosure borderless and at least 44 high', () => {
+  it('shows a single check as a child row without a group header', () => {
     const { get } = render([{ ...item, kind: 'check', state: 'Checks passed' }] as any);
-    const row = get('notification-run-expand-run');
-    expect(row.props.style.borderTopWidth ?? 0).toBe(0);
-    expect(row.props.style.minHeight).toBeGreaterThanOrEqual(44);
-    act(() => row.props.onPress());
+    expect(get('notification-run-expand-run')).toBeUndefined();
     expect(get('notification-run-cell-pr')).toBeDefined();
-    act(() => row.props.onPress());
-    expect(get('notification-run-cell-pr')).toBeUndefined();
   });
 
   it('opens the corner from a corner PR row without changing its copy', () => {
@@ -107,8 +101,8 @@ describe('mock A lifecycle rows', () => {
     const title = tree.root
       .findAllByType('Text')
       .find((node: any) => node.props.ellipsizeMode === 'tail');
-    expect(title.props.style.fontFamily).toBe(theme.buzz.type.body.fontFamily);
-    expect(title.props.style.color).toBe(theme.buzz.textSecondary);
+    expect(Object.assign({}, ...[title.props.style].flat()).fontFamily).toBe(theme.buzz.type.body.fontFamily);
+    expect(Object.assign({}, ...[title.props.style].flat()).color).toBe(theme.buzz.textSecondary);
     expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
   });
   it('shows issues without a corner arrow and opens their GitHub URL', () => {
@@ -346,4 +340,131 @@ it('keeps each surface’s closed wording in the shared format', () => {
         return [style.fontFamily, style.fontSize, style.fontWeight, style.color];
       });
   expect(runs(line)).toEqual(runs(lines(closed.tree)[0]));
+});
+
+describe('Reproduction R1: preserved repository type roles', () => {
+  const flatten = (style: any): any =>
+    Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
+  const check = (id: string, state: string, title: string, cornerId?: string) => ({
+    id,
+    state,
+    title,
+    kind: 'check' as const,
+    kindLine: 'Check',
+    url: `https://github.com/Beeline-Work/beeline/commit/${'a'.repeat(40)}/checks`,
+    actor: 'github',
+    updatedBy: id,
+    ...(cornerId ? { cornerId } : {}),
+  });
+  const checks = [
+    check('prompt', 'Checks passed', 'PROMPT CASES'),
+    check('mirror', 'Checks passed', 'Mirror CI base images (manual bootstrap)'),
+    check('readme', 'Checks running', 'README PARITY', 'current-corner'),
+  ];
+  const mount = (items: any[], cornerId?: string) => {
+    const onOpenCorner = vi.fn(),
+      onOpenUrl = vi.fn();
+    let tree: any;
+    act(() => {
+      tree = create(
+        <NotificationLifecycleCard
+          message={{ id: 'run', notificationLifecycleRun: { items, subline: '' } } as ChatDisplayMessage}
+          cornerId={cornerId}
+          onOpenCorner={onOpenCorner}
+          onOpenUrl={onOpenUrl}
+        />,
+      );
+    });
+    const header = tree.root.findAll(
+      (node: any) => node.props.testID === 'notification-run-expand-run' && typeof node.type === 'string',
+    )[0];
+    if (header) act(() => header.props.onPress());
+    return { tree, onOpenCorner, onOpenUrl };
+  };
+  // Every run of text in the rows under the summary label, and the label itself.
+  const sizes = (tree: any) => {
+    const texts = tree.root.findAllByType('Text');
+    const label = texts.find((node: any) => node.props.accessibilityLabel === undefined && /\d+ \w+s? \w+/.test(text(node)) && !node.props.ellipsizeMode && node.parent?.type !== 'Text');
+    const rows = texts.filter((node: any) => {
+      for (let parent = node; parent; parent = parent.parent)
+        if (String(parent.props?.testID ?? '').startsWith('notification-run-cell-')) return true;
+      return false;
+    });
+    return { label: flatten(label?.props.style), rows: rows.map((node: any) => flatten(node.props.style)) };
+  };
+
+  it('draws a corner check run as one destination per check, at the label size', () => {
+    const { tree, onOpenCorner, onOpenUrl } = mount(checks, 'current-corner');
+    const words = JSON.stringify(tree.toJSON());
+    for (const label of ['Corner →', 'Check →', '· Check ·']) expect(words).not.toContain(label);
+    expect(
+      tree.root.findAll((node: any) => String(node.props.testID ?? '').startsWith('notification-run-cell-corner-')),
+    ).toHaveLength(0);
+    const row = (id: string) =>
+      tree.root.findAll((node: any) => node.props.testID === `notification-run-cell-${id}` && typeof node.type === 'string')[0];
+    expect(text(row('prompt'))).toBe('Passed PROMPT CASES');
+    expect(text(row('mirror'))).toBe('Passed Mirror CI base images (manual bootstrap)');
+    expect(text(row('readme'))).toBe('Running README PARITY');
+    const target = tree.root.findAll((node: any) => node.props.testID === 'notification-run-cell-url-readme' && typeof node.type === 'string')[0];
+    act(() => target.props.onPress());
+    expect(onOpenUrl).toHaveBeenCalledWith(checks[2].url);
+    expect(onOpenCorner).not.toHaveBeenCalled();
+    const { label, rows } = sizes(tree);
+    expect(label.fontSize).toBe(13);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const style of rows) {
+      expect(style.fontSize).toBe(label.fontSize);
+      expect(style.fontFamily).toMatch(/^SpaceGrotesk-/);
+    }
+  });
+
+  it('keeps the corner chevron on a check row shown outside its corner', () => {
+    const { onOpenCorner, tree } = mount([check('elsewhere', 'Checks failed', 'android-build', 'other-corner')], 'room');
+    const target = tree.root.findAll((node: any) => node.props.testID === 'notification-run-cell-corner-elsewhere' && typeof node.type === 'string')[0];
+    act(() => target.props.onPress());
+    expect(onOpenCorner).toHaveBeenCalledWith('other-corner');
+  });
+
+  it.each([
+    ['PR', [item, { ...item, id: 'pr-2' }]],
+    ['issue', [issue, { ...issue, id: 'issue-2' }]],
+    [
+      'corner',
+      [
+        { ...item, id: 'c1', kind: 'corner', kindLine: 'corner', state: 'Opened', url: undefined },
+        { ...item, id: 'c2', kind: 'corner', kindLine: 'corner', state: 'Opened', url: undefined },
+      ],
+    ],
+  ])('preserves grouped %s child titles, verbs and numbers at body size', (_, items) => {
+    const { tree } = mount(items as any[]);
+    const { label, rows } = sizes(tree);
+    for (const title of tree.root.findAllByType('Text').filter((node: any) => node.props.ellipsizeMode))
+      expect(flatten(title.props.style).marginVertical).toBe(0);
+    expect(label.fontSize).toBe(13);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const style of rows) {
+      expect(style.fontSize).toBe(theme.buzz.type.body.fontSize);
+      expect(style.lineHeight).toBe(theme.buzz.type.body.lineHeight);
+      expect(style.fontFamily).toMatch(/^SpaceGrotesk-/);
+    }
+  });
+
+  it('preserves body typography for a single PR event and the Opened corner line', () => {
+    let standalone: any, marker: any;
+    act(() => {
+      standalone = create(
+        <LifecycleRecordCard item={item} timestamp={1} testID="single" onOpenCorner={() => undefined} onOpenUrl={() => undefined} />,
+      );
+      marker = create(<CornerOpenedMarker title="pin-line-layout" onOpen={() => undefined} />);
+    });
+    for (const tree of [standalone, marker]) {
+      const styles = tree.root.findAllByType('Text').map((node: any) => flatten(node.props.style));
+      expect(styles.length).toBeGreaterThan(0);
+      for (const style of styles) {
+        expect(style.fontSize).toBe(theme.buzz.type.body.fontSize);
+        expect(style.lineHeight).toBe(theme.buzz.type.body.lineHeight);
+        expect(style.fontFamily).toMatch(/^SpaceGrotesk-/);
+      }
+    }
+  });
 });

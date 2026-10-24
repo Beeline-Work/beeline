@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -132,13 +133,15 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             <Text style={styles.rosterModalEyebrow}>In this {ROOM_LABEL}</Text>
             <Text style={styles.rosterModalTitle}>{MEMBERS_LABEL}</Text>
           </View>
-          <TouchableOpacity
+          <Button
             accessibilityLabel={`Close ${ROOM_LABEL} roster`}
             onPress={onClose}
-            style={styles.rosterModalClose}
-          >
-            <Text style={styles.rosterModalCloseText}>×</Text>
-          </TouchableOpacity>
+            label=""
+            icon={<Text style={styles.rosterModalCloseText}>{'×'}</Text>}
+            variant="quiet"
+            iconOnly
+            appearance={{ control: styles.rosterModalClose, label: undefined }}
+          />
         </View>
 
         <ScrollView
@@ -215,32 +218,30 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                     testID={`room-roster-${participant.pubkey}-detail`}
                   >
                     {onOpenProfile && (
-                      <TouchableOpacity
+                      <Button
                         accessibilityRole="button"
                         accessibilityLabel={`View ${displayName}'s profile`}
                         onPress={() => {
                           onClose();
                           onOpenProfile(participant);
                         }}
-                        style={styles.rosterRemoveButton}
                         testID={`profile-room-member-${participant.pubkey}`}
-                      >
-                        <Text style={styles.rosterRemoveText}>View profile</Text>
-                      </TouchableOpacity>
+                        label={'View profile'}
+                        variant="quiet"
+                        appearance={{ control: styles.rosterRemoveButton, label: styles.rosterRemoveText }}
+                      />
                     )}
                     {canRemove ? (
-                      <TouchableOpacity
+                      <Button
                         accessibilityLabel={`Remove ${displayName} from this ${ROOM_LABEL}`}
                         accessibilityRole="button"
                         disabled={Boolean(membershipActionPubkey)}
                         onPress={() => onRemove(participant)}
-                        style={styles.rosterRemoveButton}
                         testID={`remove-room-member-${participant.pubkey}`}
-                      >
-                        <Text style={styles.rosterRemoveText}>
-                          {removing ? 'Removing…' : `Remove from this ${ROOM_LABEL}`}
-                        </Text>
-                      </TouchableOpacity>
+                        label={removing ? 'Removing…' : `Remove from this ${ROOM_LABEL}`}
+                        variant="quiet"
+                        appearance={{ control: styles.rosterRemoveButton, label: styles.rosterRemoveText }}
+                      />
                     ) : (
                       <Text style={styles.rosterNote}>
                         {rosterRowNote({
@@ -256,20 +257,16 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             );
           })}
           {roster.overflowLabel && (
-            <TouchableOpacity
+            <Button
+              label={roster.overflowLabel}
+              variant="quiet"
               accessibilityLabel={`Show the rest: ${roster.overflowLabel}`}
-              accessibilityRole="button"
               onPress={() => setExpanded(true)}
-              style={styles.rosterMore}
               testID="room-roster-more"
-            >
-              <Text style={styles.rosterMoreLabel}>{roster.overflowLabel}</Text>
-              <ChevronGlyph
-                color={styles.chevron.color}
-                direction="right"
-                size={CHEVRON_ROW_SIZE}
-              />
-            </TouchableOpacity>
+              iconPosition="end"
+              icon={<ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />}
+              appearance={{ control: styles.rosterMore, label: styles.rosterMoreLabel }}
+            />
           )}
           {members.length === 0 && <Text style={styles.rosterEmpty}>No visible members</Text>}
         </ScrollView>

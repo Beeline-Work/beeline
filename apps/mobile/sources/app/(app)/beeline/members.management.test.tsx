@@ -1718,7 +1718,7 @@ describe('Members workspace management', () => {
     // An agent is removed, never banned: its owner could pair it back as a new agent.
     const remove = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(remove.props.accessibilityLabel).toBe('Remove from Workspace');
-    expect(remove.findAllByType('Text')[0].props.children).toBe('Remove from Workspace');
+    expect(remove.props.label).toBe('Remove from Workspace');
 
     await press(renderer, 'remove-agent');
     expect(modal.confirm).toHaveBeenCalledWith('Remove Clara?', expect.any(String), {
@@ -1854,10 +1854,9 @@ describe('Members workspace management', () => {
     ).toContain('viewer');
     const control = renderer.root.findByProps({ testID: 'remove-agent' });
     expect(control.props.accessibilityLabel).toBe('Remove from Workspace');
-    const word = control.findAllByType('Text')[0];
-    expect(word.props.children).toBe('Remove from Workspace');
-    // One full-width destructive button, its words centred like a button.
-    expect(word.props.style).toEqual(expect.objectContaining({ textAlign: 'center' }));
+    expect(control.props.label).toBe('Remove from Workspace');
+    expect(control.props.variant).toBe('danger');
+    expect(control.props.fullWidth).toBe(true);
 
     await press(renderer, 'remove-agent');
 

@@ -1,3 +1,7 @@
+vi.mock('@/components/buzz/Button', async () => {
+  const React = await import('react');
+  return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
+});
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -116,7 +120,7 @@ function stylesOfType(renderer: ReactTestRenderer, type: string): Record<string,
 }
 
 describe('the ledger — an agent turn', () => {
-  it('renders a Room update as a Space Grotesk italic caption with mono gutter time and a plain digest', () => {
+  it('renders a Room update as a Space Grotesk upright caption with mono gutter time and a plain digest', () => {
     const renderer = render(
       React.createElement(LedgerRoomUpdate, {
         id: 'merged',
@@ -131,7 +135,6 @@ describe('the ledger — an agent turn', () => {
     const digest = renderer.root.findByProps({ testID: 'room-update-digest-merged' });
     expect(line.props.style).toMatchObject({
       fontFamily: 'SpaceGrotesk-Regular',
-      transform: [{ skewX: '-8deg' }],
       fontSize: 13,
       color: '#90909B',
     });
@@ -697,7 +700,7 @@ describe('the ledger — the right gutter', () => {
 });
 
 describe('the ledger — machine noise', () => {
-  it('takes the quiet left-rule mono treatment, clearly not conversation', () => {
+  it('uses the shared disclosure and reveals machine output on demand', () => {
     const dump = 'hint: Updates were rejected\nhint: fetch first\nerror: failed to push';
     const renderer = render(
       React.createElement(LedgerGhostLine, {
@@ -711,17 +714,9 @@ describe('the ledger — machine noise', () => {
       .findAllByProps({ testID: 'chat-machine-noise-msg-1' })
       .find((node: { type: unknown }) => typeof node.type === 'string');
     const block = host.props.style;
-    expect(block.borderLeftWidth).toBe(2);
-    expect(block.paddingLeft).toBe(16);
-
-    const [summary, affordance] = renderer.root.findAllByType('Text');
-    // The summary truncates; the disclosure copy beside it never does — the
-    // affordance is the reason the line exists.
-    expect(summary.props.numberOfLines).toBe(1);
-    expect(affordance.props.numberOfLines).toBeUndefined();
-    expect(affordance.props.style.flexShrink).toBe(0);
-    expect(renderedText(renderer).join('')).toContain('⋯');
-    expect(renderedText(renderer).join('')).toContain('tap to expand');
+    expect(block.borderLeftWidth ?? 0).toBe(0);
+    expect(block.paddingLeft ?? 0).toBe(0);
+    expect(renderedText(renderer).join('')).toContain('3 lines of tool output');
     // Collapsed means collapsed: the dump is not in the tree at all.
     expect(renderedText(renderer).join('')).not.toContain('failed to push');
 
@@ -729,7 +724,7 @@ describe('the ledger — machine noise', () => {
       renderer.root.findByType('Pressable').props.onPress();
     });
     expect(renderedText(renderer).join('')).toContain('failed to push');
-    expect(renderedText(renderer).join('')).toContain('tap to collapse');
+    expect(renderer.root.findByType('Pressable').props.accessibilityState.expanded).toBe(true);
   });
 });
 
@@ -1340,11 +1335,11 @@ describe('expandable system notices', () => {
     expect(control.props.accessibilityRole).toBe('button');
     expect(control.props.accessibilityState).toEqual({ expanded: false });
     expect(control.props.style).toMatchObject({ minHeight: 44, minWidth: 44 });
-    expect(control.findByType('Text').props.style.color).toBe(groknight.accent);
+
     act(() => control.props.onPress());
     expect(body().props.numberOfLines).toBeUndefined();
     expect(body().props.children).toBe(text);
-    expect(renderedText(renderer)).toContain('Less');
+    expect(control.props.accessibilityState).toEqual({ expanded: true });
     act(() => control.props.onPress());
     expect(body().props.numberOfLines).toBe(2);
     act(() => measurement.props.onTextLayout({ nativeEvent: { lines: [{}] } }));

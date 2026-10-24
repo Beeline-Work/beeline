@@ -1,3 +1,5 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
+import { Button } from './Button';
 import React, { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
@@ -13,7 +15,7 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { needsYouExpiryLabel } from '@/buzz/needs-you';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import brand from '@/buzz/brand.json';
-import { HullDialogActions } from './HullDialog';
+import { ButtonRow } from './ButtonRow';
 import { TranscriptCardChoicePlate } from './ChoicePlate';
 
 /** How far a phone swipe travels before the rail it reveals dismisses the cell. */
@@ -99,7 +101,7 @@ export function NeedsYouCell({
     }
   };
   const source = (
-    <Pressable
+    <ContentTarget
       accessibilityHint={
         approval
           ? 'Opens the request in its Room'
@@ -162,22 +164,19 @@ export function NeedsYouCell({
         </Text>
       </View>
       {desktop && hovered ? (
-        <Pressable
+        <Button
+          label="DISMISS ✕"
           accessibilityLabel="Dismiss"
-          accessibilityRole="button"
+          variant="quiet"
           onPress={(event) => {
             event.stopPropagation();
             onDismiss(item);
           }}
           style={styles.dismiss}
           testID={`needs-you-dismiss-${item.messageId}`}
-        >
-          <Text style={styles.dismissText}>
-            DISMISS <Text style={styles.dismissMark}>✕</Text>
-          </Text>
-        </Pressable>
+        />
       ) : null}
-    </Pressable>
+    </ContentTarget>
   );
   const cell = (
     <View>
@@ -216,7 +215,7 @@ export function NeedsYouCell({
             </View>
           ) : null}
           {actions.some((action) => action.kind !== 'choice') ? (
-            <HullDialogActions
+            <ButtonRow
               style={styles.actions}
               actions={actions.map((action, index) => ({ action, index })).sort((a, b) => {
                 const denied = (action: NeedsYouActionView) => (action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny';

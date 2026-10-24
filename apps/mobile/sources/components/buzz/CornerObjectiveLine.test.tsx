@@ -3,7 +3,7 @@ vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impact
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 vi.mock('./Button', async () => {
   const ReactModule = await import('react');
-  return { Button: (props: any) => ReactModule.createElement('Pressable', props, props.label) };
+  return { Button: (props: any) => ReactModule.createElement('Pressable', props, ReactModule.createElement('Text', null, props.label)) };
 });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -81,10 +81,12 @@ const RUN: WorkflowRunSummaryView = {
   updatedAt: 2,
 };
 
-const flatText = (node: any): string =>
-  (Array.isArray(node.props.children) ? node.props.children : [node.props.children])
-    .map((child: any) => (typeof child === 'string' ? child : child?.props ? flatText(child) : ''))
-    .join('');
+const flatText = (node: any): string => {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (typeof node?.props?.label === 'string') return node.props.label;
+  const children = node?.children ?? node?.props?.children ?? [];
+  return (Array.isArray(children) ? children : [children]).map(flatText).join('');
+};
 
 const originalConsoleError = console.error;
 beforeAll(() => {
@@ -194,11 +196,8 @@ describe('CornerObjectiveLine', () => {
       .find((node: any) => node.props.testID === 'corner-objective-line-brief');
     expect(link.props.accessibilityRole).toBe('link');
     expect(link.props.accessibilityLabel).toBe('Read brief');
-    const style = link.props.style({ pressed: false }).find(Boolean);
-    expect(style.minHeight).toBeGreaterThanOrEqual(44);
-    expect(style.minWidth).toBeGreaterThanOrEqual(44);
+    expect(link.props.variant).toBe('quiet');
     expect(link.findByType('Text' as any).props.children).toBe('Read brief');
-    expect(link.findByType('Text' as any).props.style.color).toBe('#c49a52');
     const actions = renderer.root.findAllByType('View' as any)
       .find((view: any) => view.props.style?.flexWrap === 'nowrap');
     expect(actions?.findAllByType('Pressable' as any)).toHaveLength(2);
@@ -280,7 +279,7 @@ describe('CornerObjectiveLine', () => {
     expect(flatText(badge)).toBe('+1 running');
     expect(badge.props.accessibilityRole).toBe('button');
     expect(badge.props.accessibilityLabel).toBe('Show 1 other running workflows');
-    expect(badge.props.style({ pressed: false })[0].minHeight).toBe(44);
+    expect(badge.props.variant).toBe('quiet');
     expect(renderer.root.findAllByType('Sheet')).toHaveLength(0);
     act(() => badge.props.onPress());
     expect(onOpenWorkflow).not.toHaveBeenCalled();

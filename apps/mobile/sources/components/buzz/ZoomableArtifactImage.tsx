@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useEffect, useRef, useState } from 'react';
 import { PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -258,45 +259,49 @@ export function ZoomableArtifactImage({
         </Pressable>
       </View>
       <View style={[styles.zoomControls, { paddingBottom: insets.bottom + 8 }]}>
-        <Pressable
+        <Button
           accessibilityRole="button"
           accessibilityLabel="Zoom out"
           accessibilityState={{ disabled: zoom.scale <= 1 }}
           disabled={zoom.scale <= 1}
           onPress={() => step(1 / 1.5)}
-          style={styles.zoomButton}
           testID={`${testIDPrefix}-zoom-out`}
-        >
-          <Text style={styles.zoomText}>−</Text>
-        </Pressable>
+          label=""
+          icon={<Text style={styles.zoomText}>{'−'}</Text>}
+          variant="quiet"
+          iconOnly
+          appearance={{ control: styles.zoomButton, label: undefined }}
+        />
         <Text
           accessibilityLabel={`Image zoom ${Math.round(zoom.scale * 100)} percent`}
           style={styles.zoomLevel}
         >
           {Math.round(zoom.scale * 100)}%
         </Text>
-        <Pressable
+        <Button
           accessibilityRole="button"
           accessibilityLabel="Zoom in"
           accessibilityState={{ disabled: zoom.scale >= MAX_IMAGE_ZOOM }}
           disabled={zoom.scale >= MAX_IMAGE_ZOOM}
           onPress={() => step(1.5)}
-          style={styles.zoomButton}
           testID={`${testIDPrefix}-zoom-in`}
-        >
-          <Text style={styles.zoomText}>+</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Reset image zoom"
-          accessibilityState={{ disabled: zoom.scale === 1 }}
-          disabled={zoom.scale === 1}
-          onPress={() => setImageZoom({ scale: 1, x: 0, y: 0 })}
-          style={styles.zoomButton}
-          testID={`${testIDPrefix}-zoom-reset`}
-        >
-          <Text style={styles.zoomResetText}>Reset</Text>
-        </Pressable>
+          label=""
+          icon={<Text style={styles.zoomText}>{'+'}</Text>}
+          variant="quiet"
+          iconOnly
+          appearance={{ control: styles.zoomButton, label: undefined }}
+        />
+          <Button
+            accessibilityRole="button"
+            accessibilityLabel="Reset image zoom"
+            accessibilityState={{ disabled: zoom.scale === 1 }}
+            disabled={zoom.scale === 1}
+            onPress={() => setImageZoom({ scale: 1, x: 0, y: 0 })}
+            testID={`${testIDPrefix}-zoom-reset`}
+            label={'Reset'}
+            variant="quiet"
+            appearance={{ control: styles.zoomButton, label: styles.zoomResetText }}
+          />
       </View>
     </View>
   );

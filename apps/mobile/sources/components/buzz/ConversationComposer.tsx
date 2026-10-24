@@ -388,15 +388,17 @@ function ConversationComposerContent({
                   {reply.preview}
                 </Text>
               </View>
-              <TouchableOpacity
+              <Button
                 accessibilityLabel="Cancel reply"
                 accessibilityRole="button"
                 onPress={onCancelReply}
-                style={styles.removeButton}
                 testID="reply-composer-cancel"
-              >
-                <Text style={styles.removeButtonText}>×</Text>
-              </TouchableOpacity>
+                label=""
+                icon={<Text style={styles.removeButtonText}>{'×'}</Text>}
+                variant="quiet"
+                iconOnly
+                appearance={{ control: styles.removeButton, label: undefined }}
+              />
             </View>
           )}
           {visibleAttachments.map((attachment, index) => (
@@ -437,16 +439,18 @@ function ConversationComposerContent({
                   testID={`pending-chat-attachment-retry-${index}`}
                 />
               )}
-              <TouchableOpacity
+              <Button
                 accessibilityLabel={`Remove ${attachment.name}`}
                 accessibilityRole="button"
                 disabled={attachmentsUploading}
                 onPress={() => onRemoveAttachment?.(index)}
-                style={styles.removeButton}
                 testID={`pending-chat-attachment-remove-${index}`}
-              >
-                <Text style={styles.removeButtonText}>×</Text>
-              </TouchableOpacity>
+                label=""
+                icon={<Text style={styles.removeButtonText}>{'×'}</Text>}
+                variant="quiet"
+                iconOnly
+                appearance={{ control: styles.removeButton, label: undefined }}
+              />
             </View>
           ))}
           {hiddenAttachmentCount > 0 && (

@@ -1,8 +1,10 @@
+import { ContentTarget } from '@/components/buzz/IndexRow';
+import { Button } from '@/components/buzz/Button';
 import { Ionicons } from '@expo/vector-icons';
 import { InlineRow, TranscriptFactRow } from './IndexRow';
-import { ShowMoreRow } from './ShowMoreRow';
+import { LedgerDisclosure } from './LedgerDisclosure';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
-import { HullDialogActions } from './HullDialog';
+import { ButtonRow } from './ButtonRow';
 import React, {
   useEffect,
   useLayoutEffect,
@@ -378,7 +380,7 @@ export function TranscriptCard({
       ) : null}
       <Animated.View style={arrivalContentStyle}>
         <View style={[styles.frame, tier === 'ask' && styles.ask]} testID={testID}>
-          <Pressable
+          <ContentTarget
             accessibilityHint={
               onHeaderPress
                 ? headerExpanded
@@ -414,15 +416,18 @@ export function TranscriptCard({
                 </SettlingText>
                 {stamp ? <Text style={styles.stamp}>{stamp}</Text> : null}
                 {onDismiss ? (
-                  <Pressable
+                  <Button
                     accessibilityLabel={dismissLabel}
                     accessibilityRole="button"
                     hitSlop={12}
                     onPress={onDismiss}
                     testID={testID ? `${testID}-dismiss` : undefined}
-                  >
-                    <Text style={styles.dismiss}>✕</Text>
-                  </Pressable>
+                    label=""
+                    icon={<Text style={styles.dismiss}>{'✕'}</Text>}
+                    variant="quiet"
+                    iconOnly
+                    appearance={{ control: undefined, label: undefined }}
+                  />
                 ) : null}
               </View>
               {subline ? (
@@ -439,7 +444,7 @@ export function TranscriptCard({
                 </SettlingText>
               ) : null}
             </View>
-          </Pressable>
+          </ContentTarget>
           {body ? (
             <SettlingText
               active={animateArrival}
@@ -462,13 +467,13 @@ export function TranscriptCard({
           ))}</View> : null}
           {children}
           {foldCode && code !== undefined ? (
-            <View style={styles.detailInset}><ShowMoreRow
-              inset="none"
-              label={codeLabel ? `${codeOpen ? 'Hide' : 'Show'} ${codeLabel}` : codeOpen ? 'Hide script' : `Show script · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}
+            <View style={styles.detailInset}><LedgerDisclosure
               expanded={codeOpen}
-              testID={codeTestID ? `${codeTestID}-toggle` : undefined}
+              rowTestID={codeTestID ? `${codeTestID}-toggle` : undefined}
+              accessibilityLabel={codeLabel ?? 'Script'}
+              accessibilityState={{ expanded: codeOpen }}
               onPress={() => setCodeOpen((open) => !open)}
-            /></View>
+            >{`${codeLabel ?? 'Script'} · ${String(code).replace(/\r?\n$/, '').split('\n').length} lines`}</LedgerDisclosure></View>
           ) : null}
           {code !== undefined && (!foldCode || codeOpen) ? (
             <View style={[styles.code, tier === 'ask' && styles.askCode]} testID={codeTestID}>
@@ -535,7 +540,7 @@ export function TranscriptCard({
               ) : (
                 <View style={styles.footerSpacer} />
               )}
-              <HullDialogActions
+              <ButtonRow
                 style={styles.actions}
                 actions={actions.map((action) => ({
                   label: action.loading ? '…' : action.label,

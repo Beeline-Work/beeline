@@ -215,14 +215,14 @@ export function AgentProfileView({
               {(soul && !editing) || (canEdit && detail) ? (
                 <View style={styles.soulActions}>
                   {soul && !editing && (
-                    <Pressable
+                    <Button
                       accessibilityRole="button"
                       accessibilityState={{ expanded }}
                       onPress={() => setExpanded((value) => !value)}
-                      style={styles.readMore}
-                    >
-                      <Text style={styles.accent}>{expanded ? 'Show less' : 'Read full soul'}</Text>
-                    </Pressable>
+                      label={expanded ? 'Show less' : 'Read full soul'}
+                      variant="quiet"
+                      appearance={{ control: styles.readMore, label: styles.accent }}
+                    />
                   )}
                   {canEdit && detail && (
                     <SoulPortraitControls

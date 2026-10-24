@@ -4,6 +4,7 @@ import {
   Text,
   View,
   type ViewProps,
+  type PressableProps,
   type AccessibilityRole,
   type AccessibilityState,
 } from 'react-native';
@@ -16,6 +17,11 @@ import { Button } from './Button';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 import { HullSwitch } from './HullSwitch';
 import { StateDot } from './StateDot';
+
+/** Shared rich-content target: preserves the content surface's layout and nested actions. */
+export function ContentTarget(props: PressableProps) {
+  return <Pressable {...props} />;
+}
 
 /** A horizontal composition for inline navigation and non-index layout.
  * Unlike an index entry, its children retain their own typography and targets.
@@ -34,6 +40,7 @@ export function TranscriptNavigationRow({
   primary,
   trailing,
   singleDestination = false,
+  divider = false,
   testID,
 }: {
   children: React.ReactNode;
@@ -41,6 +48,7 @@ export function TranscriptNavigationRow({
   primary?: IndexRowTrailingPress;
   trailing?: IndexRowTrailingPress;
   singleDestination?: boolean;
+  divider?: boolean;
   testID?: string;
 }) {
   const chevron = (
@@ -61,7 +69,7 @@ export function TranscriptNavigationRow({
           hitSlop={{ top: 6, bottom: 6 }}
           style={({ pressed }) => [
             navigationStyles.row,
-            !leading && navigationStyles.divider,
+            divider && navigationStyles.divider,
             pressed && navigationStyles.pressed,
           ]}
         >
@@ -72,7 +80,7 @@ export function TranscriptNavigationRow({
       </View>
     );
   return (
-    <View style={[navigationStyles.row, navigationStyles.divider]} testID={testID}>
+    <View style={[navigationStyles.row, divider && navigationStyles.divider]} testID={testID}>
       {primary ? (
         <Pressable accessibilityRole="link" {...primary} style={navigationStyles.copyTarget}>
           {children}
@@ -94,12 +102,8 @@ const navigationStyles = StyleSheet.create(({ buzz }) => ({
   row: { minHeight: 44, flexDirection: 'row', alignItems: 'flex-start', gap: buzz.space.sm },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },
   pressed: { opacity: 0.6 },
-  glyph: {
-    flexShrink: 0,
-    height: buzz.type.body.lineHeight,
-    justifyContent: 'center',
-    marginTop: buzz.space.sm,
-  },
+  // Centred on the first line of meta-size copy.
+  glyph: { flexShrink: 0, height: 44, justifyContent: 'center' },
   copyTarget: { minHeight: 44, minWidth: 44, flex: 1, paddingVertical: buzz.space.sm },
   cornerTarget: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   // The whole row owns the tap target; the mark reserves only its own width.
@@ -109,6 +113,9 @@ const navigationStyles = StyleSheet.create(({ buzz }) => ({
 
 /** Its own 44pt press for a trailing mark the row itself does not own. */
 export type IndexRowTrailingPress = {
+  accessibilityRole?: AccessibilityRole;
+  accessibilityState?: AccessibilityState;
+  accessibilityHint?: string;
   accessibilityLabel?: string;
   disabled?: boolean;
   onPress: () => void;

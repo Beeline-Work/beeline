@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -55,15 +56,17 @@ export function DesktopWorkspaceStrip({
             </View>
           </Pressable>
         ))}
-        <Pressable
+        <Button
           accessibilityLabel="Create or join a Workspace"
           accessibilityRole="button"
           onPress={onAdd}
-          style={styles.tile}
           testID="desktop-strip-add-workspace"
-        >
-          <Text style={styles.add}>+</Text>
-        </Pressable>
+          label=""
+          icon={<Text style={styles.add}>{'+'}</Text>}
+          variant="quiet"
+          iconOnly
+          appearance={{ control: styles.tile, label: undefined }}
+        />
       </ScrollView>
       <Pressable
         accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'}

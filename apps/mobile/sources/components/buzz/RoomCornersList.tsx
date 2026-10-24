@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -376,12 +377,16 @@ export function RoomCornersList({
       }
       ListFooterComponent={
         <View>
-          {moreOpen ? <Button label="MORE OPEN CORNERS" variant="secondary"
-            onPress={onMoreOpen} testID="room-corners-more-open" /> : null}
-          {/* The fold for closed work, standing on every Room. The first
-            open reads the first page; after that it only folds and unfolds.
-            The archived rows hang off the footer rather than joining `data`
-            because the fold has to precede them. */}
+          {moreOpen ? (
+            <Button label="MORE OPEN CORNERS" variant="secondary"
+            onPress={onMoreOpen} testID="room-corners-more-open" />
+          ) : null}
+          {/* Captain 2026-09-20: a corner's name is never truncated. It
+            wraps to as many lines as it needs and the row grows with it;
+            uneven row heights are the accepted cost of printing the name
+            in full. Android's default highQuality break strategy can
+            measure a title at the wrap point as two lines yet draw one,
+            leaving an empty line; simple keeps measure and draw equal. */}
           {desktop
             ? null
             : fold(
@@ -399,20 +404,22 @@ export function RoomCornersList({
           ))}
           {showMoreArchived && archived.status === 'ready' && archived.next ? (
             more?.status === 'error' ? (
-              <View style={styles.more}>
-                <Text style={styles.moreLabel}>{more.reason}</Text>
-                <Button label="Retry" variant="secondary" onPress={onMoreArchived}
-                  testID="room-corners-archived-more" />
-              </View>
+              <ErrorBanner
+                title={more.reason}
+                retryLabel="Retry"
+                onRetry={onMoreArchived}
+                retryTestID="room-corners-archived-more" />
             ) : (
-              <Pressable accessibilityLabel="More archived corners" accessibilityRole="button"
-                disabled={more?.status === 'loading'} onPress={onMoreArchived}
-                style={styles.more} testID="room-corners-archived-more">
-                <Text style={styles.moreLabel}>More</Text>
-                {more?.status === 'loading' ? (
-                  <SurfaceGlyphLoader compact testID="room-corners-archived-more-loading" />
-                ) : null}
-              </Pressable>
+              <Button
+                label="More"
+                accessibilityLabel="More archived corners"
+                disabled={more?.status === 'loading'}
+                loading={more?.status === 'loading'}
+                onPress={onMoreArchived}
+                variant="quiet"
+                testID="room-corners-archived-more"
+                appearance={{ control: styles.more, label: styles.moreLabel }}
+              />
             )
           ) : null}
         </View>

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { beelineThemes } from '@/buzz/groknight';
 
 const source = readFileSync(new URL('./members.tsx', import.meta.url), 'utf8');
+const button = readFileSync(new URL('../../../components/buzz/Button.tsx', import.meta.url), 'utf8');
 const humanProfile = readFileSync(new URL('./human-profile.tsx', import.meta.url), 'utf8');
 const profile = readFileSync(
   new URL('../../../components/buzz/AgentProfileView.tsx', import.meta.url),
@@ -143,7 +144,7 @@ describe('Members page layout contract', () => {
     expect(source).not.toContain('BAN AGENT');
     expect(source).not.toContain('Ban this agent from every Room');
     expect(source).toContain('testID="remove-agent"');
-    expect(source).toContain('style={styles.removeAgentControl}');
+    expect(source).toMatch(/<Button[\s\S]*?testID="remove-agent"[\s\S]*?variant="danger"/);
     expect(profile).toMatch(/<ProfileIdentity\s+identity=\{identity\}/);
     expect(profileIdentity).toContain("handleTestID = 'profile-handle'");
     expect(profile).toContain('ownerHandle={detail.owner?.handle}');
@@ -152,9 +153,9 @@ describe('Members page layout contract', () => {
 
   it('keeps the compact control at the 44pt target and above the contrast floors', () => {
     // Compact is the width and the single word, never a shrunken hit target.
-    expect(styleBlock(source, 'removeAgentControl')).toContain('minHeight: 44');
-    expect(styleBlock(source, 'removeAgentControl')).toContain('borderColor: hull.dialogDanger');
-    expect(styleBlock(source, 'removeAgentText')).toContain('color: hull.textPrimary');
+    expect(styleBlock(button, 'frame')).toContain('minHeight: 44');
+    expect(button).toContain('borderColor: buzz.dialogDanger');
+    expect(button).toContain('dangerLabel: { color: buzz.textPrimary }');
 
     const channel = (hex: string) => {
       const part = parseInt(hex, 16) / 255;

@@ -22,7 +22,8 @@ import {
 } from './Ledger';
 import { MonoMarkdown } from './MonoMarkdown';
 import { StreamingProse } from './StreamingProse';
-import { LedgerDisclosure } from './LedgerDisclosure';
+import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
+import { InlineRow, TranscriptNavigationRow } from './IndexRow';
 
 type ActivityTimelineProps = {
   active?: boolean;
@@ -59,17 +60,17 @@ function lineAccessibilityLabel(line: ToolLedgerLine): string {
 }
 
 /**
- * One ledger line (owner-approved design, 2026-08-24): family glyph, the
- * call's object, a quiet verdict, and a duration only when a receipt carried
- * one. The whole line is the tap target — it opens the full output sheet —
- * when the step has anything to show behind it.
+ * Shared transcript child row: action, machine object and recorded duration.
+ * The whole row opens the output sheet when the call carries detail.
  */
 function ToolLedgerLineRow({
   line,
+  divider = false,
   onPress,
   testID,
 }: {
   line: ToolLedgerLine;
+  divider?: boolean;
   onPress?: () => void;
   testID?: string;
 }) {
@@ -80,79 +81,35 @@ function ToolLedgerLineRow({
     // Text the agent wrote before a later tool call. It is not the reply, but
     // it is the agent's own words, so it is shown whole — never cut to a line.
     return (
-      <View accessibilityLabel={accessibilityLabel} style={styles.noteRow} testID={testID}>
+      <TranscriptNavigationRow divider={divider} testID={testID}>
+      <InlineRow style={styles.noteCopy}>
         <Text accessibilityElementsHidden style={styles.callGlyph}>
           {line.glyph}
         </Text>
         <View style={styles.noteBody}>
           <MonoMarkdown markdown={line.label} textStyle={styles.noteText} />
         </View>
-      </View>
+      </InlineRow>
+      </TranscriptNavigationRow>
     );
   }
-  const row = (
-    <>
-      <Text accessibilityElementsHidden numberOfLines={1} style={styles.callGlyph}>
-        {line.glyph}
-      </Text>
-      {/* Middle, not tail: a command's flags are the half that identifies it,
-          and a narrow screen must cut the same place the data cap does. */}
-      <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>
-        {line.label}
-      </Text>
-      {line.reason ? (
-        <Text numberOfLines={1} style={styles.callReason}>
-          {line.reason}
-        </Text>
-      ) : null}
-      {duration ? (
-        <Text accessibilityElementsHidden style={styles.callDuration}>
-          {duration}
-        </Text>
-      ) : null}
-      {showVerdict ? (
-        line.outcome === 'running' ? (
-          <View
-            pointerEvents="none"
-            style={styles.callVerdict}
-            testID={`activity-verdict-${line.id}`}
-          >
-            <BeelineMarkSpinner live />
-          </View>
-        ) : (
-          <Text
-            accessibilityElementsHidden
-            style={[
-              styles.callVerdictText,
-              line.outcome === 'failure' ? styles.callFailed : styles.callPassed,
-            ]}
-            testID={`activity-verdict-${line.id}`}
-          >
-            {line.outcome === 'failure' ? '✗' : '✓'}
-          </Text>
-        )
-      ) : null}
-    </>
-  );
-  if (!onPress) {
-    return (
-      <View accessibilityLabel={accessibilityLabel} style={styles.ledgerRow} testID={testID}>
-        {row}
-      </View>
-    );
-  }
+  const action = line.verb ?? (line.glyph === '>_' ? 'ran' : line.glyph === '≡' ? 'read' : 'used');
+  const hasNamedAction = line.label.startsWith(`${action} `);
+  const verb = line.outcome === 'failure' ? 'Failed' : line.outcome === 'running' ? 'Running' : action.charAt(0).toUpperCase() + action.slice(1);
   return (
-    <Pressable
-      accessibilityHint="Opens this call’s output"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityRole="button"
-      accessibilityState={{ busy: line.outcome === 'running' }}
-      onPress={onPress}
-      style={styles.ledgerRow}
-      testID={testID}
-    >
-      {row}
-    </Pressable>
+    <TranscriptNavigationRow testID={testID} singleDestination divider={divider}
+      trailing={onPress ? { onPress, accessibilityLabel, accessibilityRole: 'button',
+        accessibilityState: { busy: line.outcome === 'running' },
+        accessibilityHint: 'Opens this call’s output' } : undefined}>
+      <InlineRow style={styles.toolCopy}>
+        {!hasNamedAction || line.outcome === 'failure' ? <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text> : null}
+        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>{line.label}</Text>
+        {line.reason ? <Text numberOfLines={1} style={styles.callReason}>{line.reason}</Text> : null}
+        {duration ? <Text style={styles.callDuration}>{duration}</Text> : null}
+        {showVerdict && hasNamedAction && line.outcome === 'failure' ? <Text accessibilityElementsHidden style={[styles.callVerdictText, styles.groupFailed]} testID={`activity-verdict-${line.id}`}>✗</Text> : null}
+        {showVerdict && line.outcome === 'running' ? <View testID={`activity-verdict-${line.id}`}><BeelineMarkSpinner live /></View> : null}
+      </InlineRow>
+    </TranscriptNavigationRow>
   );
 }
 
@@ -168,12 +125,13 @@ function ToolRunGroupRow({
   onPressLine?: (line: ToolLedgerLine) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const duration = formatToolCallDuration(run.durationMs);
   const summary = toolGroupSummary(run.count, run.failed, run.durationMs, run.notes);
   const steps = run.count > 0 || run.notes === 0;
   return (
-    <View>
-      <LedgerDisclosure expanded={expanded} onPress={() => setExpanded(value => !value)}
+    <LedgerLogGroup testID={`tool-run-container-${run.id}`}>
+      <LedgerDisclosure expanded={expanded} onPress={() => { if (expanded) setShowAll(false); setExpanded(value => !value); }}
         accessibilityLabel={`${summary}, expandable`} accessibilityState={{ expanded }} rowTestID={`tool-run-group-${run.id}`}>
         {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
         {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
@@ -181,16 +139,23 @@ function ToolRunGroupRow({
         {duration ? ` · ${duration}` : null}
       </LedgerDisclosure>
       {expanded
-        ? run.lines.map((line) => (
+        ? (showAll || run.lines.length <= 3 ? run.lines : run.lines.slice(0, 2)).map((line, index) => (
             <ToolLedgerLineRow
               key={line.id}
               line={line}
+              divider={index > 0}
               onPress={line.detail ? () => onPressLine?.(line) : undefined}
               testID={`tool-ledger-line-${line.id}`}
             />
           ))
         : null}
-    </View>
+      {expanded && !showAll && run.lines.length > 3 ? <LedgerDisclosure
+        expanded={false} accessibilityState={{ expanded: false }}
+        accessibilityLabel={`${run.lines.length - 2} more steps`} onPress={() => setShowAll(true)}
+        rowTestID={`tool-run-more-${run.id}`}>
+        {run.lines.length - 2} more
+      </LedgerDisclosure> : null}
+    </LedgerLogGroup>
   );
 }
 
@@ -305,20 +270,10 @@ const styles = StyleSheet.create((theme) => {
     // Spacing only. The face and the tone are the ledger's one provisional
     // definition (`Ledger.provisionalProseStyle`), so a draft and the reply
     // that settles it are the same words in the same column (C98).
+    toolCopy: { flexDirection: 'row', alignItems: 'center', gap: groknight.space.sm },
+    toolVerb: { ...groknight.type.meta, color: groknight.textPrimary },
+    callVerdictText: { ...groknight.type.machine, width: 18, flexShrink: 0, textAlign: 'right' },
     messageDraft: { marginTop: groknight.space.xs },
-    // The whole line is the tap target; 44 keeps every ledger line inside the
-    // comfortable minimum touch size.
-    ledgerRow: {
-      minHeight: 44,
-      minWidth: 0,
-      justifyContent: 'center',
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
-      paddingHorizontal: groknight.space.xs,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: groknight.space.sm,
-    },
     // A fixed glyph column, so every label starts on one line even though
     // `>_` is two characters wide and the rest are one.
     callGlyph: {
@@ -336,7 +291,7 @@ const styles = StyleSheet.create((theme) => {
     // The distilled failure reason, dimmer than the label — a quiet inline
     // sentence, never a chip.
     callReason: {
-      ...groknight.type.machine,
+      ...groknight.type.meta,
       flexShrink: 1,
       minWidth: 0,
       color: groknight.ledgerQuiet,
@@ -347,32 +302,11 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.ledgerGhost,
       fontVariant: ['tabular-nums'],
     },
-    callVerdict: { width: 18, flexShrink: 0, alignItems: 'flex-end' },
     // A note wraps to its full length, so it keeps the ledger line's hairline
     // and gutter but not its fixed one-line height.
-    noteRow: {
-      minHeight: 44,
-      minWidth: 0,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
-      paddingHorizontal: groknight.space.xs,
-      paddingVertical: groknight.space.sm,
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: groknight.space.sm,
-    },
+    noteCopy: { flexDirection: 'row', alignItems: 'flex-start', gap: groknight.space.sm },
     noteBody: { flex: 1, minWidth: 0 },
-    noteText: { ...groknight.type.machine, color: groknight.ledgerBody },
-    callVerdictText: {
-      ...groknight.type.machine,
-      width: 18,
-      flexShrink: 0,
-      textAlign: 'right',
-    },
-    // The two places colour is spent here: brass for needs-attention (the
-    // failure cross), the dimmest chrome for the success tick.
-    callFailed: { color: groknight.accent },
-    callPassed: { color: groknight.ledgerGhost },
+    noteText: { ...groknight.type.meta, color: groknight.ledgerBody },
     groupFailed: { color: groknight.accent },
   };
 });

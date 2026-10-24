@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
@@ -206,10 +207,10 @@ export default function BuzzCorners() {
           onAdd={() => void createCorner()}
         />
         {!!error && (
-          <View style={styles.errorPanel}>
-            <Text style={styles.error}>! {error}</Text>
-            <Button label="Retry" variant="secondary" onPress={() => void corners.refresh()} />
-          </View>
+          <ErrorBanner
+            title={`! ${error}`}
+            retryLabel="Retry"
+            onRetry={() => void corners.refresh()} />
         )}
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList

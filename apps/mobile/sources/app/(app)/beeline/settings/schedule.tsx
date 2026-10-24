@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useState } from 'react';
@@ -61,26 +62,16 @@ export default function PromptSchedule() {
         title={schedule ? scheduleTitle(schedule) : 'Schedule'}
       />
       {stopFailed ? (
-        <View accessibilityRole="alert" style={styles.error} testID="schedule-stop-error">
-          <Text style={styles.errorText}>Could not stop this schedule.</Text>
-          <Button
-            label="Try again"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={() => void stop()}
-            testID="schedule-stop-error-retry"
-          />
-        </View>
+        <ErrorBanner
+          title="Could not stop this schedule."
+          retryLabel="Try again"
+          onRetry={() => void stop()}
+          retryTestID="schedule-stop-error-retry"
+          testID="schedule-stop-error"
+        />
       ) : error ? (
-        <View style={styles.error}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button
-            label="Retry"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={retry}
+        <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
           />
-        </View>
       ) : null}
       {loading && !work ? (
         <View style={styles.loading}>

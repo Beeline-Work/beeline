@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -26,29 +27,34 @@ export function CommunityInviteEntry({
   return (
     <View style={styles.communityEntry} testID="community-invite-entry">
       {showManageAgents && onManageAgents ? (
-        <TouchableOpacity
+        <Button
           accessibilityLabel={`Open members for ${community.name}`}
           accessibilityRole="button"
           onPress={onManageAgents}
-          style={styles.action}
           testID="members-action"
-        >
-          <Text style={styles.actionText}>{MEMBERS_LABEL}</Text>
-        </TouchableOpacity>
+          label={MEMBERS_LABEL}
+          variant="quiet"
+          appearance={{ control: styles.action, label: styles.actionText }}
+        />
       ) : allowPeopleInvites ? (
-        <TouchableOpacity
+        <Button
           accessibilityLabel={`Invite people to ${community.name}`}
           accessibilityRole="button"
           disabled={creatingInvite}
           onPress={onInvitePeople}
-          style={[styles.action, creatingInvite && styles.disabled]}
           testID="invite-people-action"
-        >
-          <Text style={styles.actionIcon}>＋</Text>
-          <Text style={styles.actionText}>
-            {creatingInvite ? 'Opening share…' : 'Invite people'}
-          </Text>
-        </TouchableOpacity>
+          label={creatingInvite ? 'Opening share…' : 'Invite people'}
+          variant="quiet"
+          icon={
+            <>
+              <Text style={styles.actionIcon}>＋</Text>
+            </>
+          }
+          appearance={{
+            control: [styles.action, creatingInvite && styles.disabled],
+            label: styles.actionText,
+          }}
+        />
       ) : null}
     </View>
   );

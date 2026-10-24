@@ -142,7 +142,7 @@ describe('CodeBlock', () => {
       await copyButton.props.onPress();
     });
     expect(copy).toHaveBeenCalledWith(FRAME_JSON);
-    expect(renderer.root.findByProps({ accessibilityLiveRegion: 'polite' }).props.children).toBe(
+    expect(renderer.root.findByProps({ accessibilityLiveRegion: 'polite' }).props.label).toBe(
       'Copied',
     );
   });

@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { Href } from 'expo-router';
@@ -112,31 +113,35 @@ export function CodeBlock({
           <Text numberOfLines={1} style={styles.inscriptionText} testID="code-inscription">
             {inscription}
           </Text>
-          <Pressable
+          <Button
+            accessibilityLiveRegion="polite"
             accessibilityLabel={plainText ? 'Copy all text' : 'Copy all code'}
             accessibilityRole="button"
             hitSlop={8}
             onPress={copyAll}
-            style={({ pressed }) => [styles.verb, pressed && styles.verbPressed]}
-          >
-            <Text accessibilityLiveRegion="polite" style={styles.verbText}>
-              {copyLabel}
-            </Text>
-          </Pressable>
+            label={copyLabel}
+            variant="quiet"
+            appearance={{
+              control: ({ pressed }) => [styles.verb, pressed && styles.verbPressed],
+              label: styles.verbText,
+            }}
+          />
         </View>
       ) : (
         <View style={styles.copySlot} pointerEvents="box-none">
-          <Pressable
+          <Button
+            accessibilityLiveRegion="polite"
             accessibilityLabel={plainText ? 'Copy all text' : 'Copy all code'}
             accessibilityRole="button"
             hitSlop={8}
             onPress={copyAll}
-            style={({ pressed }) => [styles.verb, pressed && styles.verbPressed]}
-          >
-            <Text accessibilityLiveRegion="polite" style={styles.verbText}>
-              {copyLabel}
-            </Text>
-          </Pressable>
+            label={copyLabel}
+            variant="quiet"
+            appearance={{
+              control: ({ pressed }) => [styles.verb, pressed && styles.verbPressed],
+              label: styles.verbText,
+            }}
+          />
         </View>
       )}
       {long && routed ? (

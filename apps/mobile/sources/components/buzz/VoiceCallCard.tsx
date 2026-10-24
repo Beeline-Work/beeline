@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { voiceCallHumanNames } from '@/buzz/voice-call-members';
 import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -15,19 +16,30 @@ export function VoiceCallCard({ call, joined, onJoin, connecting = false, viewer
     return () => clearInterval(timer);
   }, [call.endedAt]);
   if (call.endedAt) return null;
-  return <View style={styles.row} testID="voice-call-header">
+  return (
+    <View style={styles.row} testID="voice-call-header">
     <View style={styles.pill}>
       <View style={styles.dot} />
       <Text style={styles.title} numberOfLines={1}>Call · {voiceDuration(now - call.startedAt)} · {voiceCallHumanNames(call, viewer)}</Text>
-      {!joined && <Pressable onPress={onJoin} disabled={connecting} hitSlop={8}
-        accessibilityState={{ busy: connecting }} accessibilityRole="button" accessibilityLabel="Join call"
-        style={styles.join} testID="voice-call-join">
-        <Text style={styles.joinText}>{connecting ? 'Joining…' : 'Join'}</Text>
-      </Pressable>}
+      {!joined && (
+          <Button
+            onPress={onJoin}
+            disabled={connecting}
+            hitSlop={8}
+            accessibilityState={{ busy: connecting }}
+            accessibilityRole="button"
+            accessibilityLabel="Join call"
+            testID="voice-call-join"
+            label={connecting ? 'Joining…' : 'Join'}
+            variant="quiet"
+            appearance={{ control: styles.join, label: styles.joinText }}
+          />
+        )}
     </View>
-  </View>;
+  </View>
+  );
 }
-const styles = StyleSheet.create(theme => ({
+const styles = StyleSheet.create((theme) => ({
   row: { paddingHorizontal: 16, paddingVertical: 8 },
   pill: { minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 8,
     borderWidth: 1, borderRadius: 10, borderColor: theme.buzz.border, backgroundColor: theme.buzz.bgRaised },

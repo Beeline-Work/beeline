@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -60,50 +61,50 @@ export function DesktopArtifactPane({
         </View>
         {format === 'image' ? (
           <>
-            <Pressable
+            <Button
               accessibilityLabel="Copy image"
               accessibilityRole="button"
               onPress={() =>
                 void copyPicture(attachment).then((copied) =>
-                  copied
-                    ? showCopied('Image copied to clipboard')
-                    : showCopyFailed("Couldn't copy image"),
+                  copied ? showCopied('Image copied to clipboard') : showCopyFailed("Couldn't copy image"),
                 )
               }
-              style={styles.headerAction}
               testID="desktop-artifact-copy"
-            >
-              <Text style={styles.actionText}>Copy</Text>
-            </Pressable>
-            <Pressable
-              accessibilityLabel="Share image"
-              accessibilityRole="button"
-              onPress={() => void sharePicture(attachment)}
-              style={styles.headerAction}
-              testID="desktop-artifact-share"
-            >
-              <Text style={styles.actionText}>Share</Text>
-            </Pressable>
+              label={'Copy'}
+              variant="quiet"
+              appearance={{ control: styles.headerAction, label: styles.actionText }}
+            />
+              <Button
+                accessibilityLabel="Share image"
+                accessibilityRole="button"
+                onPress={() => void sharePicture(attachment)}
+                testID="desktop-artifact-share"
+                label={'Share'}
+                variant="quiet"
+                appearance={{ control: styles.headerAction, label: styles.actionText }}
+              />
           </>
         ) : null}
-        <Pressable
+        <Button
           accessibilityLabel="Open in browser"
           accessibilityRole="link"
           onPress={() => void openArtifactInBrowserOrExplain(attachment)}
-          style={styles.headerAction}
           testID="desktop-artifact-open-browser"
-        >
-          <Text style={styles.openLink}>Open in browser ↗</Text>
-        </Pressable>
-        <Pressable
-          accessibilityLabel="Close artifact pane"
-          accessibilityRole="button"
-          onPress={onClose}
-          style={styles.headerAction}
-          testID="desktop-artifact-close"
-        >
-          <Text style={styles.close}>✕</Text>
-        </Pressable>
+          label={'Open in browser ↗'}
+          variant="quiet"
+          appearance={{ control: styles.headerAction, label: styles.openLink }}
+        />
+          <Button
+            accessibilityLabel="Close artifact pane"
+            accessibilityRole="button"
+            onPress={onClose}
+            testID="desktop-artifact-close"
+            label=""
+            icon={<Text style={styles.close}>{'✕'}</Text>}
+            variant="quiet"
+            iconOnly
+            appearance={{ control: styles.headerAction, label: undefined }}
+          />
       </View>
       {format === 'game' ? (
         <RunnableArtifact attachment={attachment} />

@@ -1,3 +1,4 @@
+import { HullActionSheetRow } from './HullActionSheet';
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -70,28 +71,24 @@ export function RoomMemberPickerActions({
         </Text>
       )}
       {canManage && (
-        <TouchableOpacity
+        <HullActionSheetRow
           accessibilityLabel="Invite a person"
           disabled={busy}
           onPress={onInvitePerson}
-          style={styles.row}
           testID="room-member-picker-invite-person"
-        >
-          <Text style={styles.sigil}>+</Text>
-          <Text style={styles.label}>Invite a person…</Text>
-        </TouchableOpacity>
+          label="Invite a person…"
+          leading={<Text style={styles.sigil}>+</Text>}
+        />
       )}
       {canConnectAgent && kind !== 'person' && (
-        <TouchableOpacity
+        <HullActionSheetRow
           accessibilityLabel="Connect a new agent"
           disabled={busy}
           onPress={onAddAgent}
-          style={styles.row}
           testID="room-member-picker-add-agent"
-        >
-          <Text style={styles.sigil}>+</Text>
-          <Text style={styles.label}>Connect a new agent…</Text>
-        </TouchableOpacity>
+          label="Connect a new agent…"
+          leading={<Text style={styles.sigil}>+</Text>}
+        />
       )}
       {!canManage && !(canConnectAgent && kind !== 'person') && (
         <Text style={styles.quiet} testID="room-member-picker-ask-manager">

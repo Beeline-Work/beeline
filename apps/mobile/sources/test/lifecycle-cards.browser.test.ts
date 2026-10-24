@@ -54,13 +54,8 @@ async function main() {
       assert(destination.startsWith('corner:') || destination.startsWith('https://github.com/'), name + ': wrong destination');
     }
     const headers = [...section.querySelectorAll('[data-testid$="-title"]')];
-    const checks = name === 'corner-checks-failing';
-    assert(headers.length === (checks ? 1 : 0), name + ': only checks retain a header');
-    if (checks) {
-      assert(/^(PR|Corner|Issue|Check|Activity) · /.test(headers[0].textContent), name + ': check header');
-      assert(!headers[0].textContent.includes('@'), name + ': header author');
-    }
-    else assert([...section.querySelectorAll('[data-testid^="notification-run-cell-"] *')].some(node => getComputedStyle(node).fontFamily.includes('SpaceGrotesk')), name + ': sans lifecycle row');
+    assert(headers.length === 0, name + ': standalone records have no header');
+    assert([...section.querySelectorAll('[data-testid^="notification-run-cell-"] *')].some(node => getComputedStyle(node).fontFamily.includes('SpaceGrotesk')), name + ': sans lifecycle row');
     const rows = section.querySelectorAll('[data-testid^="notification-run-cell-"]');
     assert(rows.length >= 1, name + ': row');
     results.push({name, actions: actions.length, header: headers[0]?.textContent ?? null});

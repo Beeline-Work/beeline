@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
@@ -25,14 +25,15 @@ export function LedgerDisclosure({
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={accessibilityState}
+      aria-expanded={expanded}
       onPress={onPress}
       style={styles.row}
       testID={rowTestID}
     >
       <View style={styles.chevron}>
         <ChevronGlyph
-          color={theme.buzz.ledgerGhost}
-          direction={expanded ? 'up' : 'down'}
+          color={theme.buzz.textMuted}
+          direction={expanded ? 'down' : 'right'}
           size={CHEVRON_ROW_SIZE}
         />
       </View>
@@ -40,16 +41,20 @@ export function LedgerDisclosure({
     </Pressable>
   );
 }
+/** Shared container without additional transcript spacing. */
+export function LedgerLogGroup({ style, ...props }: ViewProps) {
+  return <View {...props} style={style} />;
+}
+
 const styles = StyleSheet.create(({ buzz }) => ({
   row: {
     minHeight: 44,
-    minWidth: 0,
+    minWidth: 44,
     justifyContent: 'center',
-    paddingHorizontal: buzz.space.xs,
     flexDirection: 'row',
     alignItems: 'center',
     gap: buzz.space.sm,
   },
-  chevron: { width: 24, flexShrink: 0, justifyContent: 'center' },
-  label: { ...buzz.type.machine, flex: 1, minWidth: 0, color: buzz.ledgerQuiet },
+  chevron: { width: CHEVRON_ROW_SIZE, flexShrink: 0, justifyContent: 'center' },
+  label: { ...buzz.type.meta, flex: 1, minWidth: 0, color: buzz.textSecondary },
 }));

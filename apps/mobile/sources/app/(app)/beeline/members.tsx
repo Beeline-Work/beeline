@@ -1284,18 +1284,17 @@ export default function BuzzMembers({
                 </View>
               )}
               {canRemoveSelectedAgent && (
-                <TouchableOpacity
+                <Button
                   accessibilityLabel="Remove from Workspace"
                   accessibilityRole="button"
                   disabled={busy}
                   onPress={() => void removeSelectedAgent()}
-                  style={styles.removeAgentControl}
                   testID="remove-agent"
-                >
-                  <Text style={styles.removeAgentText}>
-                    {working === 'remove-agent' ? 'Removing…' : 'Remove from Workspace'}
-                  </Text>
-                </TouchableOpacity>
+                  label={working === 'remove-agent' ? 'Removing…' : 'Remove from Workspace'}
+                  variant="danger"
+                  fullWidth
+                  appearance={{ control: styles.removeAgentControl, label: styles.removeAgentText }}
+                />
               )}
             </View>
           ) : null
@@ -1396,15 +1395,15 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <TouchableOpacity
+          <Button
+            label={`! ${displayedError}`}
+            variant="quiet"
             onPress={() => {
               setError(null);
               schedulerRef.current?.force();
             }}
-            style={styles.errorPanel}
-          >
-            <Text style={styles.error}>! {displayedError}</Text>
-          </TouchableOpacity>
+            appearance={{ control: styles.errorPanel, label: styles.error }}
+          />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}
@@ -1445,15 +1444,15 @@ export default function BuzzMembers({
             />
             {people.map((member) => personRow(member))}
             {canLoadMorePeople && (
-              <TouchableOpacity
+              <Button
                 accessibilityRole="button"
                 disabled={busy || rosterLoading}
                 onPress={() => void loadMoreMembers('human')}
-                style={styles.loadMore}
                 testID="members-load-more-people"
-              >
-                <Text style={styles.loadMoreText}>{rosterLoading ? 'Loading…' : 'Show more'}</Text>
-              </TouchableOpacity>
+                label={rosterLoading ? 'Loading…' : 'Show more'}
+                variant="quiet"
+                appearance={{ control: styles.loadMore, label: styles.loadMoreText }}
+              />
             )}
           </View>
           <View style={styles.section} testID="members-agents-section">
@@ -1494,15 +1493,15 @@ export default function BuzzMembers({
               );
             })}
             {canLoadMoreAgents && (
-              <TouchableOpacity
+              <Button
                 accessibilityRole="button"
                 disabled={busy || rosterLoading}
                 onPress={() => void loadMoreMembers('agent')}
-                style={styles.loadMore}
                 testID="members-load-more-agents"
-              >
-                <Text style={styles.loadMoreText}>{rosterLoading ? 'Loading…' : 'Show more'}</Text>
-              </TouchableOpacity>
+                label={rosterLoading ? 'Loading…' : 'Show more'}
+                variant="quiet"
+                appearance={{ control: styles.loadMore, label: styles.loadMoreText }}
+              />
             )}
           </View>
         </KeyboardAwareScrollView>

@@ -1,54 +1,14 @@
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import React, { type ReactNode } from 'react';
-import { Text, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import React from 'react';
+import { View } from 'react-native';
 
-import { RepositoryLifecycleRow, isRepositoryLifecycleItem } from './PrLifecycleCard';
-import { LifecycleRow } from './LifecycleRow';
+import { RepositoryLifecycleRow } from './PrLifecycleCard';
 import { lifecycleCornerTitle, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
-import { ledgerStamp } from '@/buzz/relative-time';
 
-export function lifecycleDisplayState(state: string) {
-  return state
-    .replace(/^PR /, '')
-    .replace(/^Checks /, '')
-    .toLowerCase();
-}
-
-export function lifecycleHeadline(
-  items: readonly (Omit<NotificationLifecycleRun['items'][number], 'state'> & { state: string })[],
-) {
-  const kinds = new Set(
-    items.map((item) =>
-      item.kind === 'corner'
-        ? item.kindLine.includes('PR #') || Boolean(item.url?.match(/\/pull\/\d+/))
-          ? 'PR'
-          : 'Corner'
-        : item.kind === 'pull-request'
-          ? 'PR'
-          : item.kind === 'issue'
-            ? 'Issue'
-            : 'Check',
-    ),
-  );
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const state = lifecycleDisplayState(item.state);
-    counts.set(state, (counts.get(state) ?? 0) + 1);
-  }
-  return `${kinds.size === 1 ? [...kinds][0] : 'Activity'} · ${[...counts]
-    .sort()
-    .map(([state, count]) => `${count} ${state}`)
-    .join(', ')}`;
-}
-
-/** Standalone adapters use the same shell and row as grouped runs. */
+/** Standalone adapters use the same child row as grouped runs. */
 export function LifecycleRecordCard({
   item,
-  timestamp,
   testID,
-  objective,
-  authorPrefix,
   onOpenCorner,
   onOpenUrl,
 }: {
@@ -60,92 +20,12 @@ export function LifecycleRecordCard({
   onOpenCorner(cornerId: string): void;
   onOpenUrl(url: string): void;
 }) {
-  const { theme } = useUnistyles();
-  if (isRepositoryLifecycleItem(item))
-    return (
-      <View testID={testID}>
-        <RepositoryLifecycleRow item={item} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
-      </View>
-    );
-  const state = lifecycleDisplayState(item.state);
-  const color = state.includes('failed')
-    ? theme.buzz.diffRemoved
-    : ['opened', 'running'].includes(state)
-      ? theme.buzz.accent
-      : theme.buzz.ledgerQuiet;
   return (
-    <LifecycleCard title={lifecycleHeadline([item])} stamp={ledgerStamp(timestamp)} testID={testID}>
-      <LifecycleRow
-        item={item}
-        state={state}
-        objective={objective}
-        authorPrefix={authorPrefix}
-        stateColor={{ color }}
-        titleColor={{ color: theme.buzz.textPrimary }}
-        testID={`notification-run-cell-${item.id}`}
-        cornerActionTestID={`${testID}-primary-action`}
-        urlActionTestID={`${testID}-${item.cornerId ? 'secondary' : 'primary'}-action`}
-        onOpenCorner={onOpenCorner}
-        onOpenUrl={onOpenUrl}
-      />
-    </LifecycleCard>
-  );
-}
-
-/** Frame and header shared by standalone and grouped repository lifecycle records. */
-export function LifecycleCard({
-  title,
-  stamp,
-  testID,
-  headerTestID,
-  children,
-}: {
-  title: string;
-  stamp: string;
-  testID: string;
-  headerTestID?: string;
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.shell} testID={testID}>
-      <View style={styles.frame}>
-        <View style={styles.head} testID={headerTestID}>
-          <Text style={styles.title} testID={`${testID}-title`}>
-            {title}
-          </Text>
-          <Text style={styles.stamp}>{stamp}</Text>
-        </View>
-        {children}
-      </View>
+    <View testID={testID}>
+      <RepositoryLifecycleRow item={item} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
     </View>
   );
 }
-const styles = StyleSheet.create(({ buzz }) => ({
-  shell: {
-    minWidth: 0,
-    marginTop: buzz.transcriptCard.marginTop - buzz.space.md,
-    marginRight: -buzz.space.md,
-    marginBottom: buzz.transcriptCard.marginBottom - buzz.space.md,
-    marginLeft: -buzz.space.md,
-    padding: buzz.space.md,
-  },
-  frame: {
-    minWidth: 0,
-    borderWidth: 1,
-    borderColor: buzz.borderStrong,
-    borderRadius: buzz.transcriptCard.cornerRadius,
-    overflow: 'hidden',
-  },
-  head: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: buzz.space.sm,
-    paddingVertical: buzz.space.sm,
-    paddingHorizontal: buzz.transcriptCard.side,
-  },
-  title: { ...buzz.type.bodyStrong, color: buzz.textPrimary, flex: 1, minWidth: 0 },
-  stamp: { ...buzz.type.machine, color: buzz.ledgerQuiet, fontVariant: ['tabular-nums'] },
-}));
 
 export interface GitHubEventCardProps {
   message: ChatDisplayMessage;

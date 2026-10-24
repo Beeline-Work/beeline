@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -51,15 +52,17 @@ export function SlashVerbPicker({
         <Text numberOfLines={1} style={styles.headingText}>
           {heading}
         </Text>
-        <TouchableOpacity
+        <Button
           accessibilityLabel="Dismiss commands"
           accessibilityRole="button"
           onPress={onDismiss}
-          style={styles.dismiss}
           testID="slash-verb-dismiss"
-        >
-          <Text style={styles.dismissText}>×</Text>
-        </TouchableOpacity>
+          label=""
+          icon={<Text style={styles.dismissText}>{'×'}</Text>}
+          variant="quiet"
+          iconOnly
+          appearance={{ control: styles.dismiss, label: undefined }}
+        />
       </View>
       {commandCount > 0 || appCount > 0 || verbs.length > 0 ? (
         <ScrollView

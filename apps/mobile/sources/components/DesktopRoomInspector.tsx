@@ -100,15 +100,17 @@ function HeaderIconControl({
   testID: string;
 }) {
   const control = (
-    <Pressable
+    <Button
       accessibilityLabel={label}
       accessibilityRole="button"
       onPress={onPress}
-      style={styles.headerButton}
       testID={testID}
-    >
-      <Text style={styles.headerGlyph}>{glyph}</Text>
-    </Pressable>
+      label=""
+      icon={<Text style={styles.headerGlyph}>{glyph}</Text>}
+      variant="quiet"
+      iconOnly
+      appearance={{ control: styles.headerButton, label: undefined }}
+    />
   );
   return Platform.OS === 'web'
     ? React.createElement('span', { title: label, style: { display: 'flex' } }, control)

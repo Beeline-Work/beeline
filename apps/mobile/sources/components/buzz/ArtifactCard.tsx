@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -284,25 +285,27 @@ function ArtifactCardShell({
       </View>
       <View style={styles.footer}>
         {actions.includes('browser') ? (
-          <Pressable
+          <Button
             accessibilityLabel="Open in browser"
             accessibilityRole="link"
             onPress={onOpenInBrowser}
             testID="artifact-open-browser"
-          >
-            <Text style={styles.footerQuiet}>Open in browser ↗</Text>
-          </Pressable>
+            label={'Open in browser ↗'}
+            variant="quiet"
+            appearance={{ control: undefined, label: styles.footerQuiet }}
+          />
         ) : null}
         <View style={styles.footerSpacer} />
         {actions.includes('open') ? (
-          <Pressable
+          <Button
             accessibilityLabel="Open artifact"
             accessibilityRole="link"
             onPress={onOpenFull}
             testID="artifact-open"
-          >
-            <Text style={styles.footerPrimary}>Open →</Text>
-          </Pressable>
+            label={'Open →'}
+            variant="quiet"
+            appearance={{ control: undefined, label: styles.footerPrimary }}
+          />
         ) : null}
       </View>
     </View>

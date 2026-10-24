@@ -1,5 +1,5 @@
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
-import { HullDialogActions } from '@/components/buzz/HullDialog';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
@@ -1635,15 +1635,13 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <LedgerUntaggedHint messageId={message.id} />
         ) : null}
         {message.isUser && deliveryFailed ? (
-          <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>
-            <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
-            <HullDialogActions
-              actions={[
-                { label: 'Dismiss', onPress: () => onDismiss(message.id) },
-                { label: 'Retry', variant: 'primary', onPress: () => onRetry(message.id) },
-              ]}
+          <ErrorBanner
+            title="Delivery failed"
+            retryLabel="Retry"
+            onRetry={() => onRetry(message.id)}
+            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}
+            testID={`outbox-delivery-failed-${message.id}`}
             />
-          </View>
         ) : null}
         {message.reactions?.length ? (
           <View style={styles.reactionChips} testID={`reaction-chips-${message.id}`}>
@@ -1708,19 +1706,6 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.mono(),
     ...theme.buzz.type.machine,
     color: theme.buzz.textSecondary,
-  },
-  outboxFailure: {
-    marginTop: 4,
-    marginHorizontal: 8,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: theme.buzz.borderStrong,
-    backgroundColor: theme.buzz.bgHighlight,
-  },
-  outboxFailureText: {
-    ...theme.buzz.type.sectionHead,
-    fontFamily: theme.buzz.monoSemibold,
-    color: theme.buzz.textPrimary,
   },
   replyDesktopRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
   replyDesktopMessage: { flex: 1, minWidth: 0 },

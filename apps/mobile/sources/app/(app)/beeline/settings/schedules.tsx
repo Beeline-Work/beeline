@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
@@ -124,17 +125,8 @@ export default function ScheduledWork() {
         testID="scheduled-work-header"
         title="Schedules and subscriptions"
       />
-      {error && (
-        <View style={styles.error}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button
-            label="Retry"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={retry}
-          />
-        </View>
-      )}
+      {error && <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
+          />}
       {loading ? (
         <View style={styles.loading}>
           <SurfaceGlyphLoader testID="schedules-loader" />

@@ -68,6 +68,11 @@
       "types": "./dist/signin-funnel.d.ts",
       "import": "./dist/signin-funnel.js",
       "default": "./dist/signin-funnel.js"
+    },
+    "./signin-funnel-client": {
+      "types": "./dist/signin-funnel-client.d.ts",
+      "import": "./dist/signin-funnel-client.js",
+      "default": "./dist/signin-funnel-client.js"
     }
   },
   "scripts": {

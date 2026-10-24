@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { createSigninFunnelClient } from './signin-funnel-client';
+import { createSigninFunnelClient } from '../../../../packages/api-contract/src/signin-funnel-client';
 import {
   parseSigninFunnelEvent,
   type SigninFunnelEvent,

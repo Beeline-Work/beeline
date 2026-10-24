@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 import { randomUUID } from 'expo-crypto';
 import { Platform } from 'react-native';
 import type { FunnelScreen, SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { createSigninFunnelClient } from './signin-funnel-client';
+import { createSigninFunnelClient } from '@beeline/api-contract/signin-funnel-client';
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 

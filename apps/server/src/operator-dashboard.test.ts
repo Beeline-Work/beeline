@@ -1,7 +1,7 @@
 import { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { recordSigninFunnelEvent } from './signin-funnel.js';
-import { createSigninFunnelClient } from '../../mobile/sources/auth/signin-funnel-client.js';
+import { createSigninFunnelClient } from '@beeline/api-contract/signin-funnel-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';

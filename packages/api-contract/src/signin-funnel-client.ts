@@ -3,8 +3,8 @@ import {
   FUNNEL_FIRST_SESSION_MS,
   FUNNEL_SCREEN_SEND_CAP,
   FUNNEL_UUID,
-} from '@beeline/api-contract/signin-funnel';
-import type { FunnelScreen, SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
+} from './signin-funnel.js';
+import type { FunnelScreen, SigninFunnelEvent } from './signin-funnel.js';
 
 interface Store {
   getItem(key: string): Promise<string | null>;

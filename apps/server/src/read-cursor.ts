@@ -12,8 +12,9 @@ export function visibleMessageSql(alias: string): string {
   // Keep the source-free Room record only when no other conversation has the
   // call site. Legacy servers may already have settled either opening card.
   return `${hiddenWakeCardSql(alias)}
-      AND NOT (${alias}.card_type IS NOT DISTINCT FROM 'daemon-fact'
-        AND COALESCE(${alias}.card->>'type','') IN ('corner-open','corner-complete')
+      AND NOT ((${alias}.card_type IS NOT DISTINCT FROM 'github-event'
+          OR (${alias}.card_type IS NOT DISTINCT FROM 'daemon-fact'
+            AND COALESCE(${alias}.card->>'type','') IN ('corner-open','corner-complete')))
         AND ${alias}.card->>'sourceMessageId' IS NULL
         AND EXISTS (SELECT 1 FROM rooms opening_corner
           WHERE opening_corner.id::text=${alias}.card->>'cornerId'

@@ -9067,22 +9067,24 @@ export class PhoneService {
     }))];
     if (!cornerIds.length) return messages;
     const rows = await this.database.query<{
-      id: string; name: string;
+      id: string; name: string; message_id: string; opening_name: string | null;
     }>(
-      `SELECT corner.id,corner.name
-       FROM rooms corner
-       WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2`, [cornerIds, roomId],
+      `SELECT corner.id,corner.name,message.id message_id,message.card->>'name' opening_name
+       FROM rooms corner JOIN messages message
+         ON message.room_id=$2 AND message.card->>'cornerId'=corner.id::text
+       WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2 AND message.id=ANY($3::text[])`,
+      [cornerIds, roomId, messages.map(message => message.id)],
     );
-    const current = new Map(rows.rows.map((row) => [row.id, row]));
+    const current = new Map(rows.rows.map((row) => [row.message_id, row]));
     return messages.map((message) => {
       const card = message.daemonFact;
-      const corner = card ? current.get(card.cornerId) : undefined;
+      const corner = card ? current.get(message.id) : undefined;
       if (!corner || !card) return message;
       // The Room's opening record is historical. Older servers settled it in
       // storage; project its original opening state without rewriting the row.
       if (card.type !== 'corner-open' && message.systemEvent?.kind !== 'corner-opened' && !card.sourceMessageId) return message;
       const { outcome: _outcome, pullRequest: _pullRequest, ...opening } = card;
-      return { ...message, daemonFact: { ...opening, objective: opening.name ?? corner.name, type: 'corner-open' as const } };
+      return { ...message, daemonFact: { ...opening, name: corner.opening_name ?? corner.name, objective: corner.opening_name ?? corner.name, type: 'corner-open' as const } };
     });
   }
 

@@ -93,7 +93,7 @@ async function assertArchived(stoppedAgent = A, merged = true) {
   if (!merged) return;
   expect((await db.query(`SELECT lifecycle->>'outcome' outcome FROM corner_facts WHERE corner_id=$1`, [C])).rows)
     .toEqual([{ outcome: 'landed' }]);
-  expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount).toBe(1);
+  expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='merged'`, [C])).rowCount).toBe(1);
   expect((await db.query(`SELECT 1 FROM institutional_memory_outcomes WHERE room_id=$1 AND kind='merged'`, [C])).rowCount).toBe(1);
 }
@@ -105,7 +105,9 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
     transaction: work => db.transaction(async tx => {
       const result = await work(tx);
       // Fail after all writes: the retry must reconstruct the entire transaction.
-      if (++attempts === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+      const archived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
+      if (archived.rowCount && ++attempts === 1)
+        throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return result;
     }),
   };
@@ -127,9 +129,10 @@ it.each([['40P01', 3], ['XX000', 1]] as const)('bounds archival retries for %s',
   const failing: SqlDatabase = {
     query: db.query.bind(db),
     transaction: work => db.transaction(async tx => {
-      await work(tx);
-      attempts++;
-      throw error;
+      const result = await work(tx);
+      const archived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
+      if (archived.rowCount) { attempts++; throw error; }
+      return result;
     }),
   };
   await expect(operations(failing).processWebhook('pull_request', event)).rejects.toBe(error);

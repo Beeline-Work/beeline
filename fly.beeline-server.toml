@@ -5,7 +5,8 @@ primary_region = "iad"
   dockerfile = "apps/server/Dockerfile"
 
 [env]
-  HOST = "0.0.0.0"
+  # The games edge reaches this server over Fly private IPv6; keep IPv4 too.
+  HOST = "::"
   PORT = "8080"
   # Nine helpers can reconnect together; keep one leader slot plus their
   # evidence writes without starving phone/auth requests.

@@ -1187,7 +1187,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "wake",
-    "description": "Manage your own wake sources. List, update and delete your schedules across every Room you belong to by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
+    "description": "Manage your own wake sources. List, update and delete your schedules across every Room you belong to by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. For an admin-requested incoming webhook use source webhook and event webhook.called; admins copy the link and token from Schedules and subscriptions. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1228,7 +1228,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "description": "Delete the schedule automatically after this many runs."
         },
         "scheduleId": {"type": "string", "description": "The scheduleId from wake(action:list)."},
-        "source": {"type": "string", "enum": ["room", "repository", "service"]},
+        "source": {"type": "string", "enum": ["room", "repository", "service", "webhook"]},
         "event": {"type": "string"},
         "repository": {"type": "string", "description": "For repository events, owner/name of a covered repository."},
         "channelId": {

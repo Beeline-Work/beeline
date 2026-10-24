@@ -21,6 +21,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
+- **Incoming subscription webhooks** use the existing subscription wake path with fixed saved actions and quoted outside payloads. Workspace admins create and manage links; tokens are encrypted and only phone reveal/rotate returns them. Ingress and rotation serialize on the subscription. Sender contract and retention: [subscription webhooks](subscription-webhooks.md); proof: `subscription-webhooks.test.ts` and `apps/mobile/evidence/subscription-webhooks/README.md`.
+
 - Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture.
 
 - Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.

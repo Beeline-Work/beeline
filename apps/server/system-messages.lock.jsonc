@@ -1,3 +1,4 @@
+// Webhook receipt System line approved by lunchboxfortwo, message 2f876a4d (option 1), relayed by Ruby; this producer entry only.
 // Repository subscription GitHub item links approved by lunchboxfortwo, message 3a86f53dcb0ae80cb1b8c88c23d8c9a3cfb4efaeb3ff2157735300ef212b20b0 (brief revision 1); repository producer and transitive GitHub service-name literal snapshots only.
 // Workspace bootstrap failure classification approved by lunchboxfortwo, message 763d8e665ec25825aa5d743f9354bf1d85d644695a0868868363e0c8ca1620a1 (yes to dc2b6595424352a29596120be6b9c92ac48797767d42672b19434011da7e3e6c); PR #2842, two inscribeSilence entries only.
 // Approval language alignment approved by lunchboxfortwo, message b4cce318d8678714e46c5f81e7e0bcdc489a94369e6e9aaf09f69a504dfbdf53 (brief revision 4); Squire decision snapshots only.
@@ -5922,6 +5923,19 @@
       "'recent-failure'",
       "'status'",
       "'string'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/subscription-webhooks.ts:ingestSubscriptionWebhook:systemLine:cc7620c0a3f01f2b",
+    "file": "apps/server/src/subscription-webhooks.ts",
+    "kind": "systemLine",
+    "template": "systemLine(tx, { id: messageId, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' }, verb: 'received', object: 'a webhook call',\n    kind: 'subscription-fired', wakes: [row.agent_id],\n    payload: { source: 'webhook', event: 'webhook.called', body: payload },\n    subscriptionPrompt: row.prompt, subscriptionWorkflowSlug: row.workflow_slug ?? undefined })",
+    "literals": [
+      "'Beeline'",
+      "'a webhook call'",
+      "'received'",
+      "'system'"
     ],
     "occurrences": 1
   }

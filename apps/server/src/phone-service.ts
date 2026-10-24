@@ -12,6 +12,7 @@ import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './f
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
+import { webhookDetails, webhookToken, requireWebhookAdmin } from './subscription-webhooks.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -4181,6 +4182,13 @@ export class PhoneService {
       if (spectator.rowCount) throw new Error('spectator access is read-only (access denied)');
     }
     switch (name) {
+      case 'revealWebhookToken':
+      case 'rotateWebhookToken': {
+        const i = input as Input<'revealWebhookToken'>;
+        await this.requireTopLevelRoom(i.roomId);
+        return await webhookToken(this.database, i.roomId, i.subscriptionId, viewerId,
+          name === 'rotateWebhookToken') as Output<Name>;
+      }
       case 'listRoomSubscriptions': {
         const roomId = (input as Input<'listRoomSubscriptions'>).roomId;
         await this.requireTopLevelRoom(roomId);
@@ -4195,6 +4203,8 @@ export class PhoneService {
         const i = input as Input<'deleteRoomSubscription'>;
         await this.requireTopLevelRoom(i.roomId);
         if (!(await humanRoomAdmin(this.database, i.roomId, viewerId))) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
+        const webhook = await this.database.query(`SELECT 1 FROM agent_subscriptions WHERE id::text=$1 AND source='webhook'`, [i.subscriptionId]);
+        if (webhook.rowCount) await requireWebhookAdmin(this.database, i.roomId, viewerId);
         await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId, this.composio);
         return undefined as Output<Name>;
       }
@@ -5107,11 +5117,17 @@ export class PhoneService {
       this.listRoomSchedules(roomId, viewerId),
       listRoomSubscriptions(this.database, roomId),
     ]);
+    let webhookAdmin = false;
+    try { await requireWebhookAdmin(this.database, roomId, viewerId); webhookAdmin = true; } catch { /* No secret metadata for non-admins. */ }
+    const projectedSubscriptions = await Promise.all(subscriptions.subscriptions.map(async (subscription) =>
+      subscription.source === 'webhook' && webhookAdmin
+        ? { ...subscription, ...await webhookDetails(this.database, roomId, subscription.id, viewerId, this.publicOrigin) }
+        : subscription));
     return {
       roomName: room.rows[0]?.name ?? null,
       agentNames: room.rows.filter((row) => row.agent_id).map((row) => [row.agent_id, row.agent_name]),
       schedules: schedules.schedules,
-      subscriptions: subscriptions.subscriptions,
+      subscriptions: projectedSubscriptions,
     };
   }
   private async listRoomWorkflowRuns(roomId: string, viewerId: string) {
@@ -10691,6 +10707,8 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'decideApprovalCard',
   'decideWritePermission',
   'decideAgentGrant',
+  'revealWebhookToken',
+  'rotateWebhookToken',
   'listRoomSubscriptions',
   'deleteRoomSubscription',
   'revokeAgentGrant',

@@ -92,6 +92,9 @@
         "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
         "scripts/emoji-clip-proof.tsx",
         "scripts/render-waveform-proof.mjs",
+        // Documented browser proof bundles the real webhook subscription screen.
+        "scripts/render-subscription-webhook-proof.mjs",
+        "scripts/subscription-webhook-proof/*.{mjs,tsx}",
         "scripts/room-viewport-proof.tsx",
         "scripts/viewer-dock-overflow-{proof,native}.tsx",
         "scripts/viewer-dock-keyboard-native.tsx",

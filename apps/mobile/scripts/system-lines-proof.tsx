@@ -19,6 +19,7 @@ const messages = ['first', 'second'].map((id, index) => ({
     consequence,
   },
 }));
+const caller = ('**bold** [link](https://example.test) @ruby https://example.test ' + 'x'.repeat(1000)).slice(0, 1000);
 const assert = (ok: boolean, why: string) => {
   if (!ok) throw new Error(why);
 };
@@ -74,11 +75,28 @@ async function measure() {
           onOpenUrl={() => (root.dataset.url = 'job')}
         />
       ))}
+      <LedgerSystemLine id="caller" text="Beeline received a webhook call" stamp="5"
+        event={{ subject: { kind: 'system', name: 'Beeline' }, verb: 'received',
+          object: { text: 'a webhook call' }, kind: 'subscription-fired',
+          payload: { source: 'webhook', body: { message: caller } } }}
+        onOpenIdentity={() => (root.dataset.callerAction = 'identity')}
+        onOpenUrl={() => (root.dataset.callerAction = 'url')} />
       <LedgerSystemLine id="short" text="Ruby joined" stamp="3" />
       <LedgerSystemLine id="legacy" text={'Legacy notice\nSecond line\nThird line'} stamp="4" />
     </>,
   );
   await settle();
+  const callerLabel = get('system-line-caller-label-caller');
+  const callerQuote = get('system-line-caller-message-caller');
+  assert(callerLabel.textContent === "Caller's message:", 'caller label missing');
+  assert(callerLabel.nextElementSibling === callerQuote, 'caller quote is not under its own label');
+  assert(callerQuote.textContent === `“${caller.slice(0, 279)}…”`, 'caller preview is not capped with an ellipsis');
+  assert(Array.from(callerQuote.textContent!.slice(1, -1)).length === 280, 'caller preview exceeds its cap');
+  assert(callerQuote.children.length === 0, 'caller words were parsed as markup or mentions');
+  assert(!callerQuote.querySelector('a,button,[role="link"]'), 'caller URL or mention became an action');
+  callerQuote.click();
+  assert(!root.dataset.callerAction, 'caller text activated an identity or URL');
+  assert(row('caller').textContent === 'Beeline received a webhook call', 'caller text became Beeline wording');
   checkCollapsed('first');
   checkCollapsed('second');
   checkCollapsed('legacy');
@@ -136,6 +154,6 @@ async function measure() {
   await settle();
   get('system-line-second').scrollIntoView();
   document.getElementById('result')!.textContent =
-    'PASS: two-line previews, brass More/Less, full original text, short and legacy messages, independent expansion, accessible controls, stamps and links';
+    'PASS: two-line previews, brass More/Less, full original text, short and legacy messages, independent expansion, accessible controls, stamps and links; caller words labelled, capped at 280 characters and rendered as inert plain text';
 }
 measure().catch((error) => (document.getElementById('result')!.textContent = String(error)));

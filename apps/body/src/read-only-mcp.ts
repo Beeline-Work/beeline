@@ -3592,8 +3592,8 @@ async function executeAgentOperation(
       const source = stringArg(args, 'source');
       const event = stringArg(args, 'event');
       const prompt = stringArg(args, 'prompt');
-      if (source !== 'room' && source !== 'repository' && source !== 'service')
-        throw new Error('source must be room, repository, or service');
+      if (source !== 'room' && source !== 'repository' && source !== 'service' && source !== 'webhook')
+        throw new Error('source must be room, repository, service, or webhook');
       if (!event) throw new Error('event is required');
       if (!prompt) throw new Error('prompt is required');
       const result = await daemonExecute('createAgentSubscription', {

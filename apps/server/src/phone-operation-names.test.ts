@@ -83,6 +83,8 @@ const ALL_PHONE_OPERATION_NAMES = {
   readIdentitySettings: true,
   readAgentProfile: true,
   readScheduledWork: true,
+  revealWebhookToken: true,
+  rotateWebhookToken: true,
   readConnectApp: true,
   searchWorkbenchApps: true,
   readConnectorInstall: true,

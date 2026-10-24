@@ -502,6 +502,80 @@ it('Reproduction RED-STALL-1: four pushes, a blocked stop, and red checks wake t
   expect(await state()).toBe('idle');
 });
 
+it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer while five shards are still pending', async () => {
+  const heads = [1, 2, 3, 4].map((n) => n.toString(16).padStart(40, '0'));
+  for (const sha of heads) await checksHead(sha, 'pending');
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(
+    db,
+    C,
+    WORKER,
+    'blocked: Four pushes without PASS. The reviewer cannot start until checks are green.',
+  );
+  const sha = heads[3]!;
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    C,
+    JSON.stringify({
+      lifecycle: 'in-review',
+      checks: 'failing',
+      pr: { number: 2890, url: 'https://github.com/o/r/pull/2890', headSha: sha },
+      checksSummary: {
+        status: 'failing',
+        total: 8,
+        updatedAt: Date.now() / 1000,
+        failing: ['MOBILE SUITE', 'FRAME-BUDGET', 'STATE-UPGRADE'],
+        checks: [
+          { name: 'MOBILE SUITE', status: 'failed' },
+          { name: 'FRAME-BUDGET', status: 'failed' },
+          { name: 'STATE-UPGRADE', status: 'failed' },
+          { name: 'SERVER SUITE SHARD 1', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 2', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 3', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 4', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 5', status: 'pending' },
+        ],
+      },
+    }),
+  ]);
+  await systemLine(db, {
+    roomId: C,
+    authorId: WORKER,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'found failing checks on',
+    kind: 'check-failed',
+    object: { text: 'MOBILE SUITE, FRAME-BUDGET, STATE-UPGRADE', headSha: sha },
+    payload: { runInProgress: true },
+  });
+  const worker = (await readAgentCommands(db, C, WORKER)).commands;
+  const repair = worker.find((command) => command.reason === 'corner_check');
+  expect(repair?.source.body).toContain('MOBILE SUITE');
+  expect(repair?.source.body).toContain('FRAME-BUDGET');
+  expect(repair?.source.body).toContain('STATE-UPGRADE');
+  expect(repair?.source.body).toContain('Fix them and push now');
+  expect(repair?.source.body).toContain('still running');
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+  await daemon.execute('claimAgentCommand', {
+    roomId: C, commandId: repair!.id, generationId: 'partial-red',
+  }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', {
+    roomId: C, requestId: repair!.turnRequestId, generationId: 'partial-red', status: 'complete',
+  }, WORKER);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'));
+  expect(stalls).toHaveLength(1);
+  expect(stalls[0]!.source.body).toContain('30 minutes');
+});
+
 it('Reproduction RED-STALL-1: a worker blocked while checks are pending is idle and wakes the commander once', async () => {
   await ci('pending');
   const { reportToCommander } = await import('./commander.js');

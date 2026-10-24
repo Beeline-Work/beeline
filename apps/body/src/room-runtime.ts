@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -719,7 +719,12 @@ export class RoomRuntimeCoordinator {
       reserveInteractiveSlot: true,
     });
     this.stopStorageAvailable = SessionScheduler.onStorageAvailable(key => {
-      if (this.stopped || !this.storageDeferredStarts.size) return;
+      if (this.stopped) return;
+      // Command intake stays subscribed while storage owns the session paths.
+      // Wake it directly: the discovery sweep may still be reaping old checkouts.
+      for (const [roomId, running] of this.running)
+        if (!key || key === roomId) running.body.requestReconciliation();
+      if (!this.storageDeferredStarts.size) return;
       if (key && !this.storageDeferredStarts.delete(key)) return;
       if (!key) this.storageDeferredStarts.clear();
       // Re-read membership/commands after the lease, rather than starting
@@ -1151,21 +1156,9 @@ export class RoomRuntimeCoordinator {
     return this.roomRecord(roomId)?.root ?? resolve(dirname(this.configPath), 'rooms', roomId);
   }
 
-  private roomAgentHomeRoot(workspaceRoot: string, required = false): string | undefined {
-    const home = resolve(workspaceRoot, 'agent-home');
-    if (!required && !existsSync(home) && existsSync(workspaceRoot))
-      return undefined;
-    try {
-      mkdirSync(home, { recursive: true, mode: 0o700 });
-      return home;
-    } catch (error) {
-      console.error(`[thin-core] per-room agent home unavailable at ${home}:`, error);
-      return undefined;
-    }
-  }
-
   private roomConfig(roomId: string, workspaceRoot = this.roomRoot(roomId)): BodyConfig {
-    const agentHomeRoot = this.roomAgentHomeRoot(workspaceRoot, true);
+    // CommandExecutionContext.enter creates this only after a permitted claim.
+    const agentHomeRoot = resolve(workspaceRoot, 'agent-home');
     return {
       ...this.baseConfig,
       workspaceRoot,
@@ -1174,7 +1167,7 @@ export class RoomRuntimeCoordinator {
       agentMemoryRoot: resolve(dirname(this.configPath), 'memory'),
       openRouterRoutingCacheDir: openRouterRoutingCacheDir(dirname(this.configPath)),
       turnTraceDir: turnTraceDirectory(dirname(this.configPath)),
-      ...(agentHomeRoot ? { agentHomeRoot } : {}),
+      agentHomeRoot,
     };
   }
 
@@ -1189,10 +1182,8 @@ export class RoomRuntimeCoordinator {
   private async startRoom(roomId: string): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
-    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(roomId) || this.storageMaintenanceRooms.has(roomId)) {
-      this.storageDeferredStarts.add(roomId);
-      return;
-    }
+    // Subscribing does not activate a harness or write its private storage.
+    // Keep control commands reachable even while a storage lease blocks turns.
     this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
@@ -1227,7 +1218,8 @@ export class RoomRuntimeCoordinator {
       onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
       onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
       onRestartRequested: () => this.requestLifecycleRestart(),
-      canStartTurn: () => !this.restartRequested && !this.storageMaintenanceRooms.has(roomId),
+      canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
+        !SessionScheduler.roomStoragePaused(roomId) && !this.storageMaintenanceRooms.has(roomId),
       supervisor: this.supervisor,
     });
     const promise = loop
@@ -1454,7 +1446,8 @@ export class RoomRuntimeCoordinator {
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
         onRestartRequested: () => this.requestLifecycleRestart(),
-        canStartTurn: () => !this.restartRequested && !this.storageMaintenanceRooms.has(corner.cornerId),
+        canStartTurn: () => !this.restartRequested && !SessionScheduler.hostStoragePaused &&
+          !SessionScheduler.roomStoragePaused(corner.cornerId) && !this.storageMaintenanceRooms.has(corner.cornerId),
         supervisor: this.supervisor,
       });
       const promise = loop

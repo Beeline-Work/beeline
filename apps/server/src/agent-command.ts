@@ -709,6 +709,9 @@ async function routeTaggedLifecycleCommand(
          AND command.action IN ('input','resume')
        JOIN messages root ON root.id=command.root_source_message_id
        WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
+         AND command.state='claimed' AND command.lease_expires_at>now()
+         AND command.generation_id=turn.generation_id
+         AND turn.generation_id NOT LIKE 'pending:%'
        ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1`,
       [source.room_id, target.agent_id],
     )

@@ -3216,7 +3216,7 @@ export class DaemonService {
     };
   }
 
-  private async roomMessage(input: Input<'getRoomMessage'>, agentId: string) {
+  private async roomMessage(input: Input<'getRoomMessage'>, agentId: string): Promise<{ messageId: string; body: string; attachments: DaemonAttachment[]; nextOffset?: number }> {
     await this.access(input.roomId, agentId);
     if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
     const offset = input.offset ?? 0;
@@ -3254,12 +3254,13 @@ export class DaemonService {
          JOIN rooms output ON output.id=$1
          WHERE message.id=$2 AND message.deleted_at IS NULL
            AND COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
-           AND (presentation='message' OR card_type='agent-command')`,
+           AND (presentation IN ('message','activity') OR card_type='agent-command')`,
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
+    let authority: { workspace_id: string; requester_identity_id: string } | undefined;
     if (!row && this.authorizedCommand?.room_id === input.roomId) {
-      const authority = (
+      authority = (
         await this.database.query<{ workspace_id: string; requester_identity_id: string }>(
           `SELECT output.workspace_id,root.author_id requester_identity_id
            FROM rooms output
@@ -3280,7 +3281,7 @@ export class DaemonService {
              FROM messages message
              JOIN authorized_rooms authorized ON authorized.id=message.room_id
              WHERE message.id=$5 AND message.deleted_at IS NULL
-               AND (message.presentation='message' OR message.card_type='agent-command')`,
+               AND (message.presentation IN ('message','activity') OR message.card_type='agent-command')`,
             [input.roomId, authority.requester_identity_id, authority.workspace_id, agentId,
               input.messageId, offset],
           )
@@ -3288,12 +3289,31 @@ export class DaemonService {
       }
     }
     if (!row) {
+      // Literal prefix comparison avoids treating user-supplied % or _ as wildcards.
+      // Resolve the entire readable scope before selecting a candidate.
+      const candidates = await this.database.query<{ id: string }>(
+        `WITH ${AUTHORIZED_ROOMS_CTE}
+         SELECT message.id FROM messages message
+         JOIN rooms source ON source.id=message.room_id
+         JOIN rooms output ON output.id=$1
+         WHERE starts_with(message.id,$5) AND message.deleted_at IS NULL
+           AND (message.presentation IN ('message','activity') OR message.card_type='agent-command')
+           AND (COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
+             OR message.room_id IN (SELECT id FROM authorized_rooms))
+         ORDER BY message.id LIMIT 21`,
+        [input.roomId, authority?.requester_identity_id ?? null,
+          authority?.workspace_id ?? null, agentId, input.messageId],
+      );
+      if (candidates.rows.length > 1)
+        throw new Error(`ambiguous message id: ${candidates.rows.slice(0, 20).map(candidate => candidate.id).join(', ')}${candidates.rows.length > 20 ? ' (more matches; use a longer id)' : ''}`);
+      if (candidates.rows.length === 1 && candidates.rows[0]!.id !== input.messageId)
+        return this.roomMessage({ ...input, messageId: candidates.rows[0]!.id }, agentId);
       // Existing messages outside the readable scope are refusals, not misses:
       // download_attachment must preserve forbidden rather than not_found.
       const elsewhere = await this.database.query(
         `SELECT 1 FROM messages message
          WHERE message.id=$1 AND message.deleted_at IS NULL
-           AND (message.presentation='message' OR message.card_type='agent-command')`,
+           AND (message.presentation IN ('message','activity') OR message.card_type='agent-command')`,
         [input.messageId],
       );
       if (elsewhere.rowCount) throw new Error('message access denied from this Room');

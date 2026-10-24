@@ -1,7 +1,7 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
-import { rooms, workspace, corner } from './fixture.mjs';
+import { rooms, workspace, corner, fixtureFingerprint } from './fixture.mjs';
 import { fixtureStimulus } from './stimulus.mjs';
 import { summarize, percentile } from './metrics.mjs';
 
@@ -15,6 +15,12 @@ try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.addInitScript(() => {
     globalThis.__keyPaintEvents = [];
+    globalThis.__keyPaintBounds = [];
+    addEventListener('keydown', event => {
+      if (!event.isTrusted || event.key.length !== 1) return;
+      const startTime = performance.now();
+      requestAnimationFrame(() => requestAnimationFrame(() => globalThis.__keyPaintBounds.push({ startTime, duration: performance.now() - startTime })));
+    }, true);
     globalThis.__eventTimingSupported = PerformanceObserver.supportedEntryTypes.includes('event');
     if (globalThis.__eventTimingSupported) new PerformanceObserver(list => {
       for (const event of list.getEntries()) if (event.name === 'keydown')
@@ -45,6 +51,8 @@ try {
     await page.waitForTimeout(500);
     const raw = await page.evaluate(() => globalThis.__transcriptSpeed.end());
     results.push({ repeat, ...summarize(raw, refreshHz), raw });
+    await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'running', samples: results }, null, 2));
+    console.log(name, repeat);
   };
   for (let repeat = 0; repeat < 3; repeat++) {
     const input = page.getByRole('textbox', { name: 'Message', exact: true });
@@ -59,9 +67,11 @@ try {
       const sample = await page.evaluate(() => globalThis.__transcriptSpeed.end());
       results.push({ repeat, ...summarize(sample, refreshHz), raw: sample,
         keyPaintEvents: await page.evaluate(start => globalThis.__keyPaintEvents.filter(event => event.startTime >= start), eventStart),
+        keyPaintUpperBounds: await page.evaluate(start => globalThis.__keyPaintBounds.filter(event => event.startTime >= start), eventStart),
         keyPaintMethod: 'Chrome Event Timing keydown-to-next-paint, 8ms quantization; unreported events censored below 16ms' });
     }
     await input.fill('');
+    const scrollBefore = await page.evaluate(() => Array.from(document.querySelectorAll('*')).filter(e => e.scrollHeight > e.clientHeight).map(e => e.scrollTop));
     await page.evaluate(() => globalThis.__transcriptSpeed.begin('scroll'));
     await page.mouse.move(190, 400);
     for (let i = 0; i < 10; i++) {
@@ -71,6 +81,32 @@ try {
     await page.waitForTimeout(500);
     const sample = await page.evaluate(() => globalThis.__transcriptSpeed.end());
     results.push({ repeat, ...summarize(sample, refreshHz), raw: sample });
+    const scrollAfter = await page.evaluate(() => Array.from(document.querySelectorAll('*')).filter(e => e.scrollHeight > e.clientHeight).map(e => e.scrollTop));
+    results.at(-1).scrollChanged = JSON.stringify(scrollBefore) !== JSON.stringify(scrollAfter);
+    await capture('fling', repeat, async () => {
+      await page.mouse.move(190, 400);
+      for (const delta of [-2400, -1600, -900, -400, -100]) {
+        await page.mouse.wheel(0, delta); await page.waitForTimeout(30);
+      }
+      await page.waitForTimeout(1200);
+    });
+    const oldest = () => page.evaluate(() => Math.min(...Array.from(document.body.innerText.matchAll(/Fixture (\d{4})/g), m => Number(m[1]))));
+    const oldestBefore = await oldest();
+    await capture('history-prepend', repeat, async () => {
+      // RN Web wheel events do not establish native drag intent. Use the
+      // visible scrubber, whose public gesture explicitly requests history.
+      await page.mouse.wheel(0, 400); await page.waitForTimeout(100);
+      const grab = await page.getByTestId('transcript-scrubber-grab').boundingBox();
+      const rail = await page.getByTestId('transcript-scrubber').boundingBox();
+      if (!grab || !rail) throw new Error('Visible history scrubber missing');
+      await page.mouse.move(grab.x + grab.width / 2, Math.max(rail.y + 2, grab.y + grab.height / 2));
+      await page.mouse.down();
+      await page.mouse.move(grab.x + grab.width / 2, rail.y - 40, { steps: 12 });
+      for (let i = 0; i < 60 && await oldest() >= oldestBefore; i++) await page.waitForTimeout(100);
+      await page.mouse.up();
+    });
+    results.at(-1).history = { oldestBefore, oldestAfter: await oldest() };
+    if (!(results.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Web history gesture did not reveal an older fixture row');
     await open(rooms[0]);
     let incoming;
     await capture('incoming', repeat, async () => {
@@ -94,8 +130,9 @@ try {
     });
     results.at(-1).serverSettled = await stimulus.settled(sent);
   }
+  for (let repeat = 0; repeat < 3; repeat++) {
   const memoryBeforeSwitches = (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value;
-  await capture('warm-room-switches', 0, async () => {
+  await capture('warm-room-switches', repeat, async () => {
     for (let i = 0; i < 20; i++) {
       const desktopRow = page.getByTestId(`desktop-room-${rooms[i % 2]}`);
       if (await desktopRow.count()) await desktopRow.click();
@@ -110,9 +147,12 @@ try {
   const metrics = (await cdp.send('Performance.getMetrics')).metrics;
   results.at(-1).memory = { switches: 20, beforeBytes: memoryBeforeSwitches,
     afterBytes: metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value };
+  }
+  const metrics = (await cdp.send('Performance.getMetrics')).metrics;
   const record = {
     status: 'partial',
-    buildSha: null, // The loaded export has no build manifest yet.
+    fixtureFingerprint,
+    buildSha: results.find(sample => sample.raw.build)?.raw.build.checkoutSha ?? null,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     dirty: execFileSync('git', ['diff', '--stat'], { encoding: 'utf8' }).trim(),
     runtime: await browser.version(), platform: 'narrow-web', viewport: { width: 390, height: 844 },

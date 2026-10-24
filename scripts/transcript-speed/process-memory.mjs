@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 export function desktopMemory() {
   const rows = execFileSync('ps', ['-eo', 'pid=,ppid=,args='], { encoding: 'utf8' }).split('\n')
     .flatMap(line => { const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/); return m ? [{ pid: +m[1], parent: +m[2], args: m[3] }] : []; });
-  const root = rows.find(row => row.args === '/tmp/transcript-desktop-package/usr/bin/beeline-desktop');
+  const root = rows.find(row => row.args === (process.env.TRANSCRIPT_DESKTOP_BINARY ?? '/tmp/transcript-desktop-package/usr/bin/beeline-desktop'));
   if (!root) throw new Error('Expected packaged fixture process is not running');
   const pids = new Set([root.pid]);
   let changed = true;

@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { startControl } from './control.mjs';
+import { androidArtifact } from './android-artifact.mjs';
 import { pointFor } from '../latency-rig/capture-ui.mjs';
 import { rooms, workspace } from './fixture.mjs';
 const device = process.env.LATENCY_RIG_DEVICE;
@@ -8,6 +10,7 @@ if (!/^emulator-\d+$/.test(device ?? '')) throw new Error('Select a leased fixtu
 const output = process.argv[2] ?? '/tmp/transcript-keypaint-results';
 await mkdir(output, { recursive: true });
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 16e6 });
+const artifact = androidArtifact(adb);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d',
   `beeline://beeline/chat/${rooms[0]}?communityId=${workspace}`, 'app.usebeeline/.MainActivity');
@@ -18,8 +21,9 @@ const point = pointFor(adb('shell', 'cat', '/sdcard/transcript-key.xml'), 'conte
 if (!point) throw new Error('Visible fixture composer missing');
 adb('shell', 'input', 'tap', ...point.map(String)); await pause(500);
 const samples = [];
+const run = async () => {
 for (let repeat = 0; repeat < 21; repeat++) {
-  const needle = randomBytes(8).toString('hex');
+  const needle = createHash('sha256').update(`transcript-keypaint-${repeat}`).digest('hex').slice(0, 16);
   adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
   adb('shell', 'input', 'keyevent', 'KEYCODE_DEL');
   adb('shell', 'input', 'text', needle.slice(0, -1)); await pause(250);
@@ -38,4 +42,13 @@ for (let repeat = 0; repeat < 21; repeat++) {
   samples.push(result ? { ...result, latencyMs: result.paintMs - result.startMs } : { timedOut: true });
   console.log(repeat, samples.at(-1));
 }
-await writeFile(`${output}/capture.json`, JSON.stringify({ device, method: 'Activity key-down dispatch to hardware frame commit containing the complete composer text; excludes adb transport and physical panel scanout', samples }, null, 2));
+};
+let jsSample = null;
+if (process.env.TRANSCRIPT_CAPTURE_JS === '1') {
+  const control = startControl();
+  try { await control.ready(); jsSample = await control.capture('keypaint-overhead', 45000, run, process.env.TRANSCRIPT_SAMPLER !== 'off'); }
+  finally { control.close(); }
+} else await run();
+await writeFile(`${output}/capture.json`, JSON.stringify({ device,
+  ...artifact,
+  jsSample, method: 'Activity key-down dispatch to hardware frame commit containing the complete composer text; excludes adb transport and physical panel scanout', samples }, null, 2));

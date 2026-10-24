@@ -38,9 +38,9 @@ export function startControl(port = 19886) {
   };
   return {
     async ready() { await wait(() => clientSeen > 0); },
-    async capture(name, durationMs, action) {
+    async capture(name, durationMs, action, enabled = true) {
       const id = `${Date.now()}-${name}`;
-      pending.push({ id, name, durationMs });
+      pending.push({ id, name, durationMs, enabled });
       await wait(() => started.has(id));
       await action();
       await wait(() => results.has(id), durationMs + 10000);

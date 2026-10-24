@@ -27,7 +27,8 @@ globalThis.__transcriptSpeed = {
   end() {
     if (!sample) throw new Error('No transcript measurement running');
     cancelAnimationFrame(frame);
-    const result = { ...sample, endMs: performance.now(), build: globalThis.__transcriptBuild };
+    const result = { ...sample, endMs: performance.now(), build: globalThis.__transcriptBuild,
+      runtime: { hermes: !!globalThis.HermesInternal, fabric: !!globalThis.nativeFabricUIManager } };
     sample = null;
     return result;
   },
@@ -46,9 +47,13 @@ if (control && /^http:\/\/(127\.0\.0\.1|10\.0\.2\.2):19886$/.test(control)) {
       if (command && typeof command.id === 'string' && typeof command.name === 'string' &&
           command.durationMs >= 500 && command.durationMs <= 60000) {
         await post('started', { id: command.id });
-        globalThis.__transcriptSpeed.begin(command.name);
+        const enabled = command.enabled !== false;
+        const startMs = performance.now();
+        if (enabled) globalThis.__transcriptSpeed.begin(command.name);
         await new Promise(resolve => setTimeout(resolve, command.durationMs));
-        const result = globalThis.__transcriptSpeed.end();
+        const result = enabled ? globalThis.__transcriptSpeed.end()
+          : { name: command.name, startMs, endMs: performance.now(), commits: [], jsFrameIntervalsMs: [], build: globalThis.__transcriptBuild };
+        result.samplingEnabled = enabled;
         await post('result', { id: command.id, sample: result });
       }
     } catch { /* The fixture driver may not be running yet. */ }

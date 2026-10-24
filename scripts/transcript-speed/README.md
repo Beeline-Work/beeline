@@ -1,94 +1,143 @@
-# Transcript speed measurement (work in progress)
+# Transcript speed harness
 
-This is an unfinished measurement harness, not a baseline or a performance fix.
-It uses the real production Room route with a disposable local server. Never
-point the seed script at a production or staging database containing user data.
+Measurement fixtures and drivers for the real Beeline Room UI. No product speed
+fixes. Native iOS is pending the owner's BrowserStack host-list approval.
+
+## Local fixture
 
 Run `npm run corner:prepare`, then follow `../latency-rig/README.md` to start the
-local server with a freshly created `beeline_latency_rig_transcript_*` database.
-For web, include `http://127.0.0.1:19882` in `BEELINE_WEB_APP_ORIGINS`.
+local monolith and proxy with a fresh `beeline_latency_rig_transcript_*` database.
+Set `LATENCY_RIG_DATABASE_URL` to that database, proxy port `19881`, backend port
+`19880`, and local review secret `transcript-fixture-local-only-36bbb7b4`.
+Allow `http://127.0.0.1:19882`, `http://tauri.localhost` and `tauri://localhost` in
+`BEELINE_WEB_APP_ORIGINS`. Never point these scripts at user data.
 
 ```sh
 node scripts/transcript-speed/seed.mjs
+node scripts/transcript-speed/reset.mjs
 node --test scripts/transcript-speed/measurement.test.mjs
 ```
 
-The seed requires `LATENCY_RIG_DATABASE_URL`. It creates two deterministic
-Rooms with 1,000 messages each: plain text, markdown, code, delayed images,
-reactions, replies, and agent answers. Corner cards and active turns are still
-to be added. `TRANSCRIPT_IMAGE_ORIGIN` defaults to the local web server below;
-native runs need their emulator-reachable image origin.
+Two Rooms and their streaming corner have deterministic mixed transcripts
+(1,000 messages each). `reset.mjs` removes only scenario traffic from these
+fixture Rooms. Text, markdown, code, replies, reactions and agent answers are
+seeded; the corner appears through real corner facts. The image fixture is a
+small placeholder with a delayed response (250 ms), not a photo-decoding stress
+test. Streaming writes local `agent_turns`/`live_outputs` records so the normal
+Postgres live bridge and application subscription handle both agents.
 
-Export from `apps/mobile` with `BEELINE_TRANSCRIPT_MEASURE=1`,
-`EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:19881`, and
+## Repeat a complete platform suite
+
+After preparing the fixture and the matching build below, run one command:
+
+```sh
+node scripts/transcript-speed/capture-suite.mjs web scripts/latency-rig/.local/transcript-run/web
+node scripts/transcript-speed/capture-suite.mjs android scripts/latency-rig/.local/transcript-run/android
+node scripts/transcript-speed/capture-suite.mjs desktop scripts/latency-rig/.local/transcript-run/desktop
+```
+
+Run these serially, with builds stopped. Set `LATENCY_RIG_DATABASE_URL` for all
+three, `LATENCY_RIG_DEVICE` for Android, and `TRANSCRIPT_WEBDRIVER_SESSION` for
+Tauri. `TRANSCRIPT_DESKTOP_BINARY` selects an extracted packaged binary when it
+is not at the default path below. Keep output and Gradle caches in persistent
+storage: the agent's temporary directory and processes can disappear on a wake.
+The suite resets only generated traffic in the fixture Rooms, then runs repeated
+interactions, Room opens, and browser sampling-overhead pairs. It fails when an
+older page, both streams, or a settled send cannot be demonstrated.
+
+Generate tables and the measured scenario ranking with:
+
+```sh
+node scripts/transcript-speed/report.mjs \
+  scripts/latency-rig/.local/transcript-run/android \
+  scripts/latency-rig/.local/transcript-run/web \
+  scripts/latency-rig/.local/transcript-run/desktop \
+  scripts/transcript-speed/BASELINE.md
+```
+
+## Builds and captures
+
+Instrumentation is opt-in with `BEELINE_TRANSCRIPT_MEASURE=1`. It adds commit
+probes to the actual Room surface and memoized cells. Ordinary builds neither
+load the Babel measurement plugin nor import its runtime. Always clear Metro
+when changing this flag. Embedded metadata records the actual Metro compiler
+option, engine, checkout SHA and tracked source diff digest.
+
+For web, export from `apps/mobile` with
+`EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://127.0.0.1:19881` and
 `npx expo export --platform web --output-dir transcript-instrumented --max-workers 2 --clear`.
-The clear flag is required when changing instrumentation: Metro may reuse
-transforms across environment changes. Ordinary builds do not load the Babel
-measurement plugin or its runtime. The plugin counts layout-effect commits in
-the actual Room surface and memoized message cells; it does not count abandoned
-renders. These counters are an equivalent commit probe, not React Profiler CPU
-duration measurements.
+Serve it and run:
 
 ```sh
 node scripts/transcript-speed/serve.mjs apps/mobile/transcript-instrumented
-node scripts/transcript-speed/capture-web.mjs /tmp/transcript-capture
+node scripts/transcript-speed/capture-web.mjs /tmp/transcript-web
+node scripts/transcript-speed/capture-browser-opens.mjs /tmp/transcript-web-opens
 ```
 
-The current web driver uses the local-only review fixture secret
-`transcript-fixture-local-only-36bbb7b4`; configure the disposable server with
-that same value. It drives typing and wheel scrolling three times. Override
-`PLAYWRIGHT_CORE_PATH` and `CHROMIUM_PATH` for another machine. No capture is
-valid while other builds or heavy jobs run. The driver records the current checkout
-SHA, dirty tracked diff, browser, CPU, viewport, raw samples and measured rAF
-cadence. The loaded build SHA is unknown and recorded as null. A future build
-manifest must identify the export and hash the fixture and untracked
-instrumentation before these captures can be compared across changes.
+Set `PLAYWRIGHT_CORE_PATH` and `CHROMIUM_PATH` when using another machine.
 
-## Measurement limits and remaining work
+For Android, use the leased disposable emulator and the existing
+`../latency-rig/build-local.sh` with the emulator proxy URL
+`http://10.0.2.2:19881`, `BEELINE_ANDROID_NATIVE_LATENCY_PROBE=1`, and
+`EXPO_PUBLIC_TRANSCRIPT_CONTROL=http://10.0.2.2:19886`. Install its release APK,
+sign in through the local review link, set `LATENCY_RIG_DEVICE` to the leased
+serial, and reverse image traffic with `adb -s <serial> reverse tcp:19882 tcp:19882`.
 
-- rAF intervals measure JS scheduling, **not** native UI frame duration or
-  compositor dropped frames. Missed JS opportunities are explicitly named as
-  estimates. Headless cadence is a virtual display, not a device refresh proof.
-- The report explicitly marks missing UI frames, blank area and key-to-paint
-  measurements as null. It is labelled partial and cannot establish acceptance.
-- Add cold/warm/cache-miss open, switching/memory, incoming, concurrent corner
-  streams, history loading and optimistic settlement scenarios and assertions.
-  Current Room draft policy suppresses provisional agent prose in top-level
-  Rooms; streaming needs a fixture corner through the supported path.
-- Add native Android capture and native iOS timing; package and drive Tauri.
-- Measure instrumentation overhead against an ordinary export/build, verify
-  the generated React Compiler setting, and retain one report table per platform.
-- Generated Android properties in this attempt explicitly contain
-  `hermesEnabled=true` and `newArchEnabled=true`; a completed APK/runtime check
-  is still required. Do not infer React Compiler from missing config.
+```sh
+node scripts/transcript-speed/capture-android.mjs /tmp/transcript-android
+node scripts/transcript-speed/capture-opens.mjs /tmp/transcript-android-opens
+TRANSCRIPT_CAPTURE_JS=1 node scripts/transcript-speed/capture-keypaint.mjs /tmp/transcript-keypaint
+```
 
-## Current attempt (2026-10-24)
+The opens driver clears **the fixture app's data** for cache-miss trials and
+pregrants notification permission on that emulator. It waits for the real Room
+list after signing in. The capture channel binds loopback; the app polls only
+outside sampling windows. Keypaint arms the native probe for the final character
+of a unique composer string, then observes the hardware frame commit.
 
-Base: `735d7a8a5`. Preparation, both web exports, local seed, actual fixture Room
-opening, instrumentation loading, and three measurement-unit tests succeeded.
-Root typecheck, all shared-package tests, and the selected landing, unread-divider,
-scrubber and scroll-follow regression tests passed (59 mobile assertions).
-The local native fingerprint check failed for both platforms. Repeating it with
-the original Babel configuration produced identical computed hashes, so the
-instrumentation switch does not explain the mismatch. Android computed
-`f284f748578f860fd9ad9de838209a1f9bc1a04b`; iOS computed
-`dd2a82afc91da03eff2220ee359aa09055eeaf98`. This remains unresolved; runtime pins
-and the committed fingerprint record are unchanged.
-A diagnostic capture completed (24 samples) while native builds were running;
-it is deliberately excluded from baseline evidence.
+For packaged Tauri, build a Debian bundle with a temporary Tauri config pointing
+`frontendDist` at the instrumented export, an isolated app identifier, and no
+`beforeBuildCommand`. Extract it to `/tmp/transcript-desktop-package`, run
+`tauri-driver` with WebKitWebDriver on port `19885` and display `:91`, create a
+session for the extracted binary, and set `TRANSCRIPT_WEBDRIVER_SESSION`.
 
-Android and Tauri builds were started with two workers. Tauri initially failed
-under Cargo 1.75 (`edition2024` unsupported); retry with the installed Cargo 1.95
-succeeded and produced a Debian package. Packaged-app timing remains outstanding.
-Private Gradle state is `/tmp/transcript-gradle-36bbb7b4`. Logs are
-`/tmp/transcript-android-36bbb7b4.log` and `/tmp/transcript-tauri-36bbb7b4.log`.
-The local server log is `/tmp/transcript-rig-36bbb7b4.log`.
+```sh
+node scripts/transcript-speed/capture-desktop.mjs /tmp/transcript-desktop
+node scripts/transcript-speed/capture-browser-opens.mjs /tmp/transcript-desktop-opens
+```
 
-iOS execution access is blocked: BrowserStack REST plan and recent-app queries
-succeeded, but the Appium endpoint returned `403 host_not_allowed` through the
-vault. The existing BrowserStack browser session is signed in. `connect` repair
-handed off to Squire; adding the official Appium host requires the vault's
-owner-approved metadata edit. EAS project/build queries succeeded, but do not
-provide a running iOS timing target. The owner's online Mac's SSH connection
-timed out. No production data was seeded and no timing numbers are claimed for
-Android, iOS or packaged desktop.
+Use isolated XDG directories. The desktop driver targets the **packaged binary**,
+uses real keyboard/pointer input, and sums process PSS after Room switches.
+
+## Comparability and interpretation
+
+Run platforms serially with builds and other capture drivers stopped. Reset
+scenario traffic between platforms. Keep raw capture files and artifact hashes.
+Android UI statistics are HWUI estimates; JS statistics are rAF intervals, not
+compositor dropped frames. The retained framestats ring is bounded, so full-run
+UI percentiles use HWUI's aggregate histogram. Browser rAF intervals combine
+main-thread scheduling/rendering effects and do not separately prove scanout.
+
+Browser open timing is an external upper bound: observed content followed by two
+rAF callbacks; settling requires unchanged text/image state across five polls.
+Android opens use the existing newest-frame marker and a quiet HWUI draw-count
+window. Keypaint measures native key dispatch to frame commit, excluding adb
+transport and physical panel scanout. Chrome Event Timing is quantized, and
+unreported fast key events are censored below its minimum threshold.
+
+Do not turn missing evidence into zero. Blank-area measurement, unsupported
+browser metrics, and overhead outside the paired typing experiment must remain
+explicit limitations. The local native fingerprint check also fails on a clean main checkout; keep
+the diagnostic logs with the run. This harness does not bump runtime versions
+or change the release pipeline.
+
+Browser cold opens restart the browser/application process with retained local
+storage; they do not flush OS disk caches. Web history uses the visible scrubber
+because wheel events alone do not establish native drag intent in the narrow
+layout. Desktop fling is a decaying native wheel burst. Android streams are
+visually checked with an accessibility snapshot outside the frame sample.
+Browser key-to-render bounds end at the second animation callback, not scanout.
+Paired browser overhead measures active sampling versus inactive sampling with
+the measurement hooks installed in both arms; total hook/build overhead remains
+unquantified. Short memory growth is evidence for investigation, not proof of a
+leak.

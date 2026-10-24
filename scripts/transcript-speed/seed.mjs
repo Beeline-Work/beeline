@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { localDatabase, messages, viewer, workspace, rooms, agents, corner } from './fixture.mjs';
+import { localDatabase, messages, viewer, workspace, rooms, agents, corner, fixtureFingerprint } from './fixture.mjs';
 
 const database = new pg.Client({ connectionString: localDatabase(process.env.LATENCY_RIG_DATABASE_URL) });
 await database.connect();
@@ -23,19 +23,21 @@ try {
         SELECT $1,$2,$3,$4 WHERE NOT EXISTS(SELECT 1 FROM memberships WHERE room_id=$2 AND identity_id=$3 AND removed_at IS NULL)`, [workspace, room, identity, identity === viewer ? 'owner' : 'member']);
     }
     for (const message of messages(room, process.env.TRANSCRIPT_IMAGE_ORIGIN ?? 'http://127.0.0.1:19882')) {
-      await database.query(`INSERT INTO messages(id,room_id,author_id,text,attachments,reactions,reply_to_message_id,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text,attachments,reactions,reply_to_message_id,created_at,presentation,card_type,card,system_event)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(id) DO UPDATE SET
           author_id=EXCLUDED.author_id, text=EXCLUDED.text,
           attachments=EXCLUDED.attachments, reactions=EXCLUDED.reactions,
-          reply_to_message_id=EXCLUDED.reply_to_message_id, created_at=EXCLUDED.created_at`,
-      [message.id, room, message.author, message.text, JSON.stringify(message.attachments), JSON.stringify(message.reactions), message.reply, message.createdAt]);
+          reply_to_message_id=EXCLUDED.reply_to_message_id, created_at=EXCLUDED.created_at,
+          presentation=EXCLUDED.presentation, card_type=EXCLUDED.card_type, card=EXCLUDED.card, system_event=EXCLUDED.system_event`,
+      [message.id, room, message.author, message.text, JSON.stringify(message.attachments), JSON.stringify(message.reactions), message.reply, message.createdAt,
+        message.presentation, message.cardType, message.card ? JSON.stringify(message.card) : null, message.systemEvent ? JSON.stringify(message.systemEvent) : null]);
     }
   }
   await database.query('UPDATE rooms SET parent_id=$1,name=$2 WHERE id=$3', [rooms[0], 'Transcript streaming corner', corner]);
   await database.query(`INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind)
     VALUES($1,$2,'Local concurrent streaming fixture','human') ON CONFLICT DO NOTHING`, [corner, viewer]);
   await database.query('COMMIT');
-  console.log(JSON.stringify({ workspace, rooms, agents, messagesPerRoom: 1000 }));
+  console.log(JSON.stringify({ workspace, rooms, agents, messagesPerRoom: 1000, fixtureFingerprint }));
 } catch (error) {
   await database.query('ROLLBACK');
   throw error;

@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { startControl } from './control.mjs';
+import { androidArtifact } from './android-artifact.mjs';
 import { fixtureStimulus } from './stimulus.mjs';
-import { rooms, workspace, corner } from './fixture.mjs';
+import { rooms, workspace, corner, fixtureFingerprint } from './fixture.mjs';
 import { summarize, percentile } from './metrics.mjs';
 import { pointFor } from '../latency-rig/capture-ui.mjs';
 const device = process.env.LATENCY_RIG_DEVICE;
@@ -11,6 +11,7 @@ if (!/^emulator-\d+$/.test(device ?? '')) throw new Error('Select the leased fix
 const output = process.argv[2] ?? '/tmp/transcript-android-results';
 await mkdir(output, { recursive: true });
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 32e6 });
+const artifact = androidArtifact(adb);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const open = room => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d',
   `beeline://beeline/chat/${room}?communityId=${workspace}`, 'app.usebeeline/.MainActivity');
@@ -50,7 +51,7 @@ async function capture(name, duration, action) {
   console.log(name, result.uiFrames.count, 'UI frames');
 }
 try {
-  open(rooms[0]); await pause(3000); await control.ready();
+  open(rooms[0]); await pause(3000); open(rooms[0]); await pause(1500); await control.ready();
   const xml = dump();
   if (!xml.includes('Transcript A')) throw new Error('The fixture Room did not open');
   const newest = pointFor(xml, 'content-desc', 'Jump to newest message');
@@ -63,20 +64,40 @@ try {
     adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
     adb('shell', 'input', 'keyevent', 'KEYCODE_DEL'); adb('shell', 'input', 'keyevent', '4');
     await pause(500);
-    await capture('fling-and-history', 4000, async () => {
+    await capture('scroll', 4000, async () => {
+      for (let i = 0; i < 3; i++) { adb('shell', 'input', 'swipe', '500', '900', '500', '1500', '500'); await pause(150); }
+    });
+    await capture('fling', 4000, async () => {
       for (let i = 0; i < 4; i++) { adb('shell', 'input', 'swipe', '500', '700', '500', '1850', '120'); await pause(350); }
     });
+    const oldest = xml => Math.min(...Array.from(xml.matchAll(/Fixture (\d{4})/g), m => Number(m[1])));
+    const oldestBefore = Math.min(970, oldest(dump()));
+    await capture('history-prepend', 25000, async () => {
+      for (let i = 0; i < 30; i++) {
+        adb('shell', 'input', 'swipe', '500', '550', '500', '2000', '90'); await pause(100);
+      }
+    });
+    samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
+    if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
     open(rooms[1]); await pause(1200); open(rooms[0]); await pause(1200);
     const jump = pointFor(dump(), 'content-desc', 'Jump to newest message'); if (jump) tap(jump);
     let incoming;
     await capture('incoming', 2500, async () => { incoming = await stimulus.incoming(); });
     const incomingXml = dump();
     samples.at(-1).visible = incomingXml.includes(incoming.text);
-    await capture('warm-room-switches', 8000, async () => {
-      for (let i = 0; i < 6; i++) { open(rooms[i % 2]); await pause(900); }
+    if (!samples.at(-1).visible) throw new Error('Android incoming message did not become visible');
+    const memoryBefore = adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline');
+    await capture('warm-room-switches', 30000, async () => {
+      for (let i = 0; i < 20; i++) { open(rooms[i % 2]); await pause(900); }
     });
-    samples.at(-1).memory = adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline');
+    samples.at(-1).memory = { switches: 20, before: memoryBefore, after: adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline') };
     open(corner); await pause(2000);
+    // Verify the same live path outside the frame sampling window so the
+    // accessibility dump does not distort streaming frame times.
+    await stimulus.stream(async () => {
+      const xml = dump();
+      if (!xml.includes('Stream 0:') || !xml.includes('Stream 1:')) throw new Error('Android did not display both live streams');
+    });
     await capture('concurrent-streams', 5000, async () => { await stimulus.stream(); });
     open(rooms[0]); await pause(2000);
     tap(pointFor(dump(), 'content-desc', 'Message'));
@@ -85,13 +106,12 @@ try {
     const send = pointFor(dump(), 'content-desc', 'Send message');
     await capture('optimistic-send', 3000, async () => { tap(send); });
     samples.at(-1).serverSettled = await stimulus.settled(sent);
+    if (!samples.at(-1).serverSettled) throw new Error('Android optimistic send did not settle on the fixture server');
   }
-  const apk = 'apps/mobile/android/app/build/outputs/apk/release/app-release.apk';
-  await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device,
-    runtime: adb('shell', 'getprop', 'ro.build.fingerprint').trim(),
-    apkSha256: createHash('sha256').update(await readFile(apk)).digest('hex'),
+  await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
+    ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-    refreshHz, refreshEvidence: adb('shell', 'dumpsys', 'display'),
+    refreshHz,
     profilingOverhead: 'not yet compared with ordinary build; polling suspended inside sample',
     blankArea: null, keystrokeToPaint: null, samples }, null, 2));
 } finally { control.close(); await stimulus.close(); }

@@ -1,7 +1,8 @@
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { rooms, workspace, corner } from './fixture.mjs';
+import { rooms, workspace, corner, fixtureFingerprint } from './fixture.mjs';
 import { fixtureStimulus } from './stimulus.mjs';
 import { summarize } from './metrics.mjs';
 import { desktopMemory } from './process-memory.mjs';
@@ -52,20 +53,55 @@ try {
     const input = await element('textarea[aria-label=Message]');
     await call(`element/${input}/click`, {});
     await clear(input);
-    await capture('typing', async () => {
-      for (const character of 'measure') { await call(`element/${input}/value`, { text: character }); await pause(150); }
-    });
+    const eventTimingSupported = await evaluate(`globalThis.__keyPaintEvents=[]; globalThis.__keyPaintBounds=[];
+      if (!globalThis.__keyPaintListener) { globalThis.__keyPaintListener=true;
+        addEventListener('keydown', event=>{if(!event.isTrusted || event.key.length!==1)return;
+          const startTime=performance.now(); requestAnimationFrame(()=>requestAnimationFrame(()=>globalThis.__keyPaintBounds.push({startTime,duration:performance.now()-startTime})));},true); }
+
+      if (!PerformanceObserver.supportedEntryTypes.includes('event')) return false;
+      new PerformanceObserver(list=>{for(const event of list.getEntries()) if(event.name==='keydown')
+        globalThis.__keyPaintEvents.push({duration:event.duration,startTime:event.startTime});
+      }).observe({type:'event',durationThreshold:16}); return true;`);
+    for (const character of 'measure') {
+      await capture('keystroke', async () => { await call(`element/${input}/value`, { text: character }); await pause(150); });
+    }
+    samples.at(-1).keyPaintUpperBounds = await evaluate('return globalThis.__keyPaintBounds');
+    samples.at(-1).keyPaintSupported = eventTimingSupported;
+    samples.at(-1).keyPaintEvents = await evaluate('return globalThis.__keyPaintEvents');
     await clear(input);
-    await capture('wheel-scroll', async () => {
+    const scrollBefore = await evaluate('return Array.from(document.querySelectorAll("*")).filter(e=>e.scrollHeight>e.clientHeight).map(e=>e.scrollTop)');
+    await capture('scroll', async () => {
       execFileSync('xdotool', ['mousemove', '850', '400'], { env: { ...process.env, DISPLAY: ':91' } });
       for (let i = 0; i < 10; i++) {
         execFileSync('xdotool', ['click', '4'], { env: { ...process.env, DISPLAY: ':91' } }); await pause(100);
       }
     });
+    const scrollAfter = await evaluate('return Array.from(document.querySelectorAll("*")).filter(e=>e.scrollHeight>e.clientHeight).map(e=>e.scrollTop)');
+    samples.at(-1).scrollChanged = JSON.stringify(scrollBefore) !== JSON.stringify(scrollAfter);
+    await capture('fling', async () => {
+      // A decaying wheel burst is the repeatable desktop fling equivalent.
+      for (const clicks of [12, 8, 4, 2, 1]) {
+        execFileSync('xdotool', ['click', '--repeat', String(clicks), '--delay', '15', '4'], { env: { ...process.env, DISPLAY: ':91' } });
+      }
+      await pause(1200);
+    });
+    const oldest = async () => Math.min(...Array.from((await text()).matchAll(/Fixture (\d{4})/g), m => Number(m[1])));
+    const oldestBefore = await oldest();
+    await capture('history-prepend', async () => {
+      for (let i = 0; i < 60 && await oldest() >= oldestBefore; i++) {
+        // Native pointer input establishes reader intent before reaching the top.
+        execFileSync('xdotool', ['click', '--repeat', '12', '--delay', '10', '4'], { env: { ...process.env, DISPLAY: ':91' } });
+        await evaluate(`const list=document.querySelector('[data-testid="chat-messages"]'); list.scrollTop=0;`);
+        await pause(200);
+      }
+    });
+    samples.at(-1).history = { oldestBefore, oldestAfter: await oldest() };
+    if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Desktop history gesture did not reveal an older fixture row');
     await open(rooms[0]); await pause(2000);
     let incoming;
     await capture('incoming', async () => { incoming = await stimulus.incoming(); await pause(1500); });
     samples.at(-1).presentInDocument = (await text()).includes(incoming.text);
+    if (!samples.at(-1).presentInDocument) throw new Error('Desktop incoming message did not render');
     await open(corner); await pause(2000);
     let streamObserved = false;
     await capture('concurrent-streams', async () => {
@@ -74,6 +110,7 @@ try {
       await streaming;
     });
     samples.at(-1).bothStreamsObserved = streamObserved;
+    if (!streamObserved) throw new Error('Desktop did not display both streams');
     await open(rooms[0]); await pause(1500);
     const sendInput = await element('textarea[aria-label=Message]');
     await clear(sendInput);
@@ -84,7 +121,9 @@ try {
       await call(`element/${send}/click`, {}); await pause(1500);
     });
     samples.at(-1).serverSettled = await stimulus.settled(sent);
+    if (!samples.at(-1).serverSettled) throw new Error('Desktop optimistic send did not settle');
   }
+  for (let repeat = 0; repeat < 3; repeat++) {
   const memoryBeforeSwitches = desktopMemory();
   await capture('warm-room-switches', async () => {
     for (let i = 0; i < 20; i++) {
@@ -96,13 +135,15 @@ try {
   });
   samples.at(-1).switches = 20;
   samples.at(-1).memory = { before: memoryBeforeSwitches, after: desktopMemory() };
+  }
   const screenshot = await call('screenshot', undefined, 'GET');
   await writeFile(`${output}/screen.png`, Buffer.from(screenshot, 'base64'));
   const artifact = '.beeline-cargo-target/release/bundle/deb/Beeline_0.2.20_amd64.deb';
-  await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', platform: 'packaged-tauri',
+  await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', platform: 'packaged-tauri', fixtureFingerprint,
     artifactSha256: createHash('sha256').update(await readFile(artifact)).digest('hex'),
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     runtime: await evaluate('return navigator.userAgent'), refreshHz: 60,
+    device: `${os.hostname()} ${os.cpus()[0]?.model}`,
     display: 'Xvfb :91 1280x840; software rendering; virtual cadence',
     profilingOverhead: 'unmeasured', uiFrames: null, blankArea: null, keystrokeToPaint: null, samples }, null, 2));
 } finally { await stimulus.close(); }

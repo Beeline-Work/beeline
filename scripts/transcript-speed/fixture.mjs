@@ -29,7 +29,9 @@ export function messages(room, imageOrigin) {
   return Array.from({ length: 1000 }, (_, n) => {
     const kind = n % 8;
     const label = `Fixture ${String(n).padStart(4, '0')}`;
-    const text = kind === 1 ? `## ${label}\n\n${'A long paragraph with **bold**, *emphasis*, and a [local link](http://localhost).\n\n'.repeat(12)}`
+    const isCard = room !== corner && (n === 990 || n % 256 === 6);
+    const text = isCard ? 'Transcript Reader opened a corner Transcript streaming corner'
+      : kind === 1 ? `## ${label}\n\n${'A long paragraph with **bold**, *emphasis*, and a [local link](http://localhost).\n\n'.repeat(12)}`
       : kind === 2 ? `${label}\n\n\`\`\`typescript\n${'const square = (n: number) => n * n;\n'.repeat(18)}\`\`\``
       : kind === 7 ? `${label}: agent answer\n\n${'Measured results need repeatable inputs. '.repeat(30)}`
       : `${label}: a repeatable conversation message.`;
@@ -38,7 +40,13 @@ export function messages(room, imageOrigin) {
       attachments: kind === 3 ? [{ url: `${url.origin}/image.png?row=${n}`, name: 'delayed.png', mimeType: 'image/png', size: 68, width: 320, height: 180 }] : [],
       reactions: kind === 4 ? { '👍': [viewer, agents[0]], '✨': [agents[1]] } : {},
       reply: kind === 5 ? hash(`${room}:${n - 1}`) : null,
+      presentation: isCard ? 'card' : 'message',
+      cardType: isCard ? 'daemon-fact' : null,
+      card: isCard ? { type: 'corner-open', cornerId: corner, name: 'Transcript streaming corner', objective: 'Local concurrent streaming fixture' } : null,
+      systemEvent: isCard ? { subject: { kind: 'person', id: viewer, name: 'Transcript Reader' }, verb: 'opened a corner', object: { text: 'Transcript streaming corner', id: corner } } : null,
       kind,
     };
   });
 }
+
+export const fixtureFingerprint = hash(JSON.stringify([...rooms, corner].map(room => messages(room, 'http://127.0.0.1:19882'))));

@@ -35,7 +35,8 @@ call. It does **not** play uncommitted text or remove the final routing wait.
 | --- | --- | --- | --- |
 | Opening TTS overlap | TTS starts at 200 ms; sound publication at 300 ms | TTS at 40 ms; sound publication at 200 ms | `after.sql`: private prefetch and first voiced publication |
 | Eager brain start | 200 ms brain work after final | 50 ms after final with 150 ms useful eager lead | `after.sql`: first content and voiced publication |
-| Speech tempo | Original PCM duration; first complete frame at 110 ms | Duration / 1.15; first frame still at 110 ms | `after.sql`: first voiced publication; waveform test checks ratio |
+| Speech tempo | Original PCM duration; first complete frame at 110 ms | Voiced duration / 1.15; leading silence unchanged; first frame still at 110 ms | `after.sql`: first voiced publication; waveform test checks ratio |
+| Leading-silence regression (`VOICE-SPEED-ONSET`) | Reviewed tempo: first voiced frame at 80 ms after one silent frame, 140 ms after five | First voiced frame at 40 ms / 120 ms, respectively; equals provider arrival | `after.sql`: first voiced publication |
 
 `VOICE-SPEED-1` uses a 40 ms first sentence, 200 ms final answer, and 100 ms TTS.
 `VOICE-SPEED-2/3/4` cover cancellation, no pre-final audio, dispatch gating and
@@ -44,6 +45,24 @@ with/without a 150 ms speculative lead. The tempo test feeds odd byte fragments
 at 100 and 110 ms; both paths publish their first complete frame at 110 ms.
 The waveform test preserves a 220 Hz tone within 218–222 Hz while producing
 exactly round(input samples / 1.15) output samples for three seconds of input.
+
+### Reproduction VOICE-SPEED-ONSET
+
+The review found that immediate publication of the first PCM frame did not
+guarantee immediate publication of the first voiced frame. With provider frames
+every 20 ms, one initial silent frame followed by a 220 Hz tone reproduced an
+80 ms first voiced publication through `utterance` → `play` → `captureFrame`
+(the tone arrives at 40 ms). Five silent frames reproduced 140 ms instead of
+the 120 ms provider arrival. Both assertions failed before the repair.
+
+The same runtime tests now pass at 40 ms and 120 ms. The transform passes
+initial digital-silence frames unchanged and starts WSOLA with the first
+non-silent frame, which passes immediately. The speed ratio applies to that
+suffix; initial provider padding is preserved. An odd-byte-boundary test checks
+that padding remains exact and the voiced suffix matches the unpadded transform.
+These controlled-provider runtime tests prove publication timing, not a new
+Android sound-output measurement; the Android measurements below predate this
+repair and used a tone without leading silence.
 
 ## Slow tail and request count
 

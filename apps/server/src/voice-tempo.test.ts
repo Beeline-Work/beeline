@@ -26,6 +26,20 @@ it('publishes the first PCM frame without reading ahead or awaiting a timer', as
   await output.return(undefined);
 });
 
+it('preserves leading silence across odd byte boundaries and speeds only the voiced suffix', async () => {
+  const silence = Buffer.alloc(960 * 5);
+  const tone = Buffer.alloc(24000 * 2);
+  for (let i = 0; i < 24000; i++) tone.writeInt16LE(Math.round(12000 * Math.sin(2 * Math.PI * 220 * i / 24000)), i * 2);
+  async function* chunks(pcm: Buffer) {
+    for (let i = 0; i < pcm.length; i += 137) yield pcm.subarray(i, i + 137);
+  }
+  const voiced = Buffer.concat(await Array.fromAsync(voiceTempo(chunks(tone))));
+  const padded = Buffer.concat(await Array.fromAsync(voiceTempo(chunks(Buffer.concat([silence, tone])))));
+  expect(padded.subarray(0, silence.length)).toEqual(silence);
+  expect(padded.length).toBe(silence.length + Math.round(24000 / 1.15) * 2);
+  expect(padded.subarray(silence.length)).toEqual(voiced);
+});
+
 it('adds zero first-frame delay with timed, fragmented provider delivery', async () => {
   vi.useFakeTimers();
   try {

@@ -2740,6 +2740,33 @@ it('VOICE-TAG-1: order acknowledgements leave agent mentions to the heavy final 
   } finally { await runtime.close(); }
 });
 
+it.each([1, 5])('VOICE-SPEED-ONSET: preserves first voiced publication after %s silent provider frames', async silentFrames => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+  const { service, speech } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async () => ({ text: 'Hello there.', order: false }));
+  speech.synthesize.mockImplementation(async function* () {
+    for (let frame = 0; frame < silentFrames + 10; frame++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const pcm = Buffer.alloc(960);
+      if (frame >= silentFrames) for (let i = 0; i < 480; i++)
+        pcm.writeInt16LE(Math.round(12000 * Math.sin(2 * Math.PI * 220 * ((frame - silentFrames) * 480 + i) / 24000)), i * 2);
+      yield pcm;
+    }
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  let firstVoiced = -1;
+  const start = performance.now();
+  state.audio.captureFrame.mockImplementation(async (frame: { data: Int16Array }) => {
+    if (firstVoiced < 0 && frame.data.some(value => Math.abs(value) > 100)) firstVoiced = performance.now() - start;
+  });
+  try {
+    const work = runtime.utterance('human', 'Ruby say hello');
+    await vi.advanceTimersByTimeAsync(500); await work;
+    expect(firstVoiced).toBe((silentFrames + 1) * 20);
+    console.log('VOICE-SPEED-ONSET', { silentFrames, firstVoicedMs: firstVoiced });
+  } finally { await runtime.close(); vi.useRealTimers(); }
+});
+
 it.each([false, true])('VOICE-SPEED-1: overlaps opening synthesis with generation (prefetch=%s)', async prefetch => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
   const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));

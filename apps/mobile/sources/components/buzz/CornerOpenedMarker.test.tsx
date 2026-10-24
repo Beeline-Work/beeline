@@ -19,6 +19,7 @@ vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
 
 import { CORNER_BRANCH_POINTS, CornerBranchGlyph } from './CornerBranchGlyph';
 import { CORNER_EXTENT } from './CornerGlyph';
+import { RepositoryLifecycleRow } from './PrLifecycleCard';
 import { CornerOpenedMarker, CornerOpenedMarkers } from './CornerOpenedMarker';
 import brand from '@/buzz/brand.json';
 import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
@@ -238,3 +239,9 @@ it.each(['Room', 'DM', 'corner'])(
     act(() => renderer.unmount());
   },
 );
+
+it('CALLSITE-GLYPH-1: marks an unanchored opening at its parent Room call site', () => {
+  const tree=render(<RepositoryLifecycleRow item={{id:'automatic',kind:'corner',state:'Opened',title:'automatic-work',kindLine:'corner',cornerId:'automatic',actor:'',updatedBy:''}} onOpenCorner={()=>{}} onOpenUrl={()=>{}} />);
+  expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+  expect(textOf(tree)).toBe('Opened automatic-work');
+});

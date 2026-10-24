@@ -2023,6 +2023,12 @@ export class GitHubOperations {
          ORDER BY membership.joined_at LIMIT 1
        )author ON true
        WHERE room.parent_id IS NULL AND room.archived_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM messages callsite
+           WHERE callsite.card_type='daemon-fact'
+             AND callsite.card->>'cornerId'=destination.corner_id::text
+             AND callsite.card->>'type' IN ('corner-open','corner-complete')
+             AND callsite.card->>'sourceMessageId' IS NOT NULL
+             AND callsite.room_id<>room.id)
          AND room.github_installation_id=$1
          AND COALESCE(room.created_by,author.identity_id) IS NOT NULL
          AND lower(regexp_replace(regexp_replace(
@@ -2856,14 +2862,6 @@ export class GitHubOperations {
           ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
         },
       });
-      // Settle private call sites only; the Room opening is a historical fact.
-      await database.query(
-        `UPDATE messages SET card=card||$2::jsonb
-         WHERE card_type='daemon-fact' AND card->>'cornerId'=$1 AND card->>'type'='corner-open'
-           AND room_id<>$3 AND card->>'sourceMessageId' IS NOT NULL`,
-        [target.corner_id, JSON.stringify({ type: 'corner-complete', outcome: 'landed',
-          pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } }), target.parent_id],
-      );
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
       if (!locked) await advanceCorner(database, target.corner_id, {
         kind: 'merged',

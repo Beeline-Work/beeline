@@ -110,16 +110,6 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
        updated_at=now() WHERE corner_id=$1`,
     [cornerId],
   );
-  // Settle off-Room call sites in the archival transaction. The parent Room
-  // keeps its original opening; private transcripts receive live updates.
-  await database.query(
-    `UPDATE messages
-     SET card=card||'{"type":"corner-complete","outcome":"abandoned"}'::jsonb
-     WHERE card_type='daemon-fact'
-       AND card->>'type'='corner-open' AND card->>'cornerId'=$1
-       AND room_id<>$2`,
-    [cornerId, corner.parent_id],
-  );
   await abandonCornerWorkflowRuns(database, cornerId);
   await deleteCornerWakeSources(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });

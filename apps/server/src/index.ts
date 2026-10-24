@@ -485,7 +485,8 @@ async function main() {
     // Repair lost reviewer wakes on the reconciliation cadence;
     // existing head-scoped dispatch and report keys keep replays quiet.
     await backgroundJobs.run('corner-reviewers', () =>
-      reconcileConfiguredCornerReviewers(jobsDatabase));
+      reconcileConfiguredCornerReviewers(jobsDatabase, undefined,
+        githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
     if (githubJobs) {
       await backgroundJobs.run('corner-branch-cleanup', () => githubJobs.retryBranchDeletions());
       await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());

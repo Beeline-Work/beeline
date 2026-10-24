@@ -96,6 +96,20 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it('REVIEW-HEAD-1: handoff refresh discovers a push before its webhook and clears predecessor checks', async () => {
+    const { corners, app } = await checksFixture();
+    const corner = corners[0]!;
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    const previous = await app.readPullRequest('room-token', 'owner/widgets', 1);
+    app.readPullRequest.mockResolvedValue({ ...previous, headSha: '2'.repeat(40) });
+    await operations.refreshCornerReviewHead(corner);
+    const row = (await database.query<{ lifecycle: { checks: string; pr: { headSha: string } } }>(
+      'SELECT lifecycle FROM corner_facts WHERE corner_id=$1', [corner])).rows[0];
+    expect(row?.lifecycle).toMatchObject({ checks: 'pending', pr: { headSha: '2'.repeat(40) } });
+    expect(app.readPullRequest).toHaveBeenLastCalledWith('room-token', 'owner/widgets', 1);
+  });
+
   it('CONFLICT-STATUS-1: check refresh projects a live conflict over a stored clean verdict and clears it when resolved', async () => {
     const { corners, app, payload } = await checksFixture();
     const corner = corners[0]!;

@@ -637,6 +637,14 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findAllByType('View').some((node: any) => Array.isArray(node.props.style) && node.props.style.some((part: any) => part?.borderBottomColor === '#b08a4a' && !part?.minHeight))).toBe(true);
   });
 
+  it('draws the heading agents, tray and search icons in one quiet grey', () => {
+    const members = tree.root.findAll((node: any) => node.props.testID === 'workspace-members' && node.props.icon)[0]!;
+    const search = control('room-search-toggle').findByType('Ionicons' as never);
+    expect(members.props.icon.props.color).toBe('#777');
+    expect(tree.root.findByType(TrayGlyph).props.color).toBe('#777');
+    expect(search.props.color).toBe('#777');
+  });
+
   it('routes the heading glyphs to Members and Tray, with no Workbench sidebar entry', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-workbench' })).toHaveLength(0);
 

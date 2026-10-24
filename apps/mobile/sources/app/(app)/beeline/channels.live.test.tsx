@@ -817,6 +817,16 @@ describe('Room deck live path', () => {
     });
   });
 
+  it('draws the header agents and tray icons in the search icon grey, brass left to the count', async () => {
+    const renderer = await mountDeck();
+    const members = renderer.root.findByProps({ testID: 'workspace-members' });
+    const tray = renderer.root.findByType('TrayGlyph' as any);
+    const { beelineThemes } = await import('@/buzz/groknight');
+    expect(members.props.icon.props.color).toBe(tray.props.color);
+    expect(Object.values(beelineThemes).map((hull) => hull.ledgerQuiet)).toContain(tray.props.color);
+    act(() => renderer.unmount());
+  });
+
   it('heads Rooms and Direct messages without a row count', async () => {
     const renderer = await mountDeck();
     const list = renderer.root.find((node: any) => node.type === 'SectionList');

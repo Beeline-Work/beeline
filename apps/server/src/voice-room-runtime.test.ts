@@ -2796,6 +2796,10 @@ it.each([false, true])('VOICE-SPEED-2: eager work stays inaudible until final an
       brainGate.resolve();
       await new Promise<void>(resolve => setImmediate(resolve));
       expect(state.audio.captureFrame).not.toHaveBeenCalled();
+      event('EndOfTurn');
+      await vi.waitFor(() => expect(state.audio.captureFrame).toHaveBeenCalled());
+      expect(service.config.brain.answer).toHaveBeenCalledTimes(2);
+      expect(service.recordHuman).toHaveBeenCalledOnce();
     } else {
       brainGate.resolve();
       await new Promise<void>(resolve => setImmediate(resolve));

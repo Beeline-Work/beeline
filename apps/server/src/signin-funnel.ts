@@ -81,8 +81,9 @@ export async function recordSigninFunnelEvent(
     await tx.query(
       `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,occurred_at)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()) ON CONFLICT(install_id,attempt_id,event,provider,screen)
-      DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source
-      WHERE EXCLUDED.source='server' AND signin_funnel_events.source='client'`,
+      DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source,
+        last_seen_at=CASE WHEN EXCLUDED.event='screen_shown' THEN now() ELSE signin_funnel_events.last_seen_at END
+      WHERE (EXCLUDED.source='server' AND signin_funnel_events.source='client') OR EXCLUDED.event='screen_shown'`,
       [
         event.installId,
         event.attemptId,
@@ -388,7 +389,8 @@ export async function dashboardSigninFunnel(
 }
 /**
  * Per Signup cohort day: how many new signups reached each screen in their
- * first 10 minutes, and on which screen each one's first session ended.
+ * first 10 minutes, and on which screen each one's first session ended,
+ * counting revisits.
  * Aggregated counts only. Builds without screen events count as zero.
  * Covers the last 14 UTC days through today; it does not wait for store reports.
  */
@@ -408,7 +410,7 @@ async function dashboardFirstSessionScreens(
       AND s.occurred_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC')
   ), shown AS (
     SELECT c.day,c.install_id,c.attempt_id,e.screen,row_number() OVER (
-      PARTITION BY c.install_id,c.attempt_id ORDER BY e.occurred_at DESC,e.recorded_at DESC) AS recency
+      PARTITION BY c.install_id,c.attempt_id ORDER BY COALESCE(e.last_seen_at,e.occurred_at) DESC,e.recorded_at DESC) AS recency
     FROM cohort c JOIN signin_funnel_events e ON e.install_id=c.install_id AND e.attempt_id=c.attempt_id
       AND e.event='screen_shown' AND e.occurred_at < c.signed_at+$4::int*interval '1 millisecond'
   )`;

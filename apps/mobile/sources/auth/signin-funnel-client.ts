@@ -92,6 +92,8 @@ export function createSigninFunnelClient(input: {
         provider: event.provider!,
         createdAt: value.createdAt as number,
         ...(Number.isFinite(value.signedInAt) ? { signedInAt: value.signedInAt as number } : {}),
+        ...(typeof value.lastScreen === 'string' ? { lastScreen: value.lastScreen as string } : {}),
+        screenSends: Number.isInteger(value.screenSends) ? (value.screenSends as number) : 0,
         // Seven funnel steps plus at most one entry per first-session screen.
         sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 64),
       };
@@ -172,7 +174,10 @@ export function createSigninFunnelClient(input: {
       serial(() => step('callback_result', undefined, outcome, errorCode)),
     signedIn: (authorization: string) =>
       serial(() => step('signed_in', undefined, undefined, undefined, authorization)),
-    /** First visit to each screen in the 10 minutes after sign-in; route pattern only. */
+    /**
+     * Each screen change in the 10 minutes after sign-in, so the server knows
+     * both which screens were reached and which one came last. Route pattern only.
+     */
     screenShown: (screen: FunnelScreen, authorization: () => Promise<string | undefined>) =>
       serial(async () => {
         if (suppressed || input.environment !== 'production') return;
@@ -180,11 +185,11 @@ export function createSigninFunnelClient(input: {
         if (!pending?.signedInAt) return;
         const elapsed = now() - pending.signedInAt;
         if (elapsed < 0 || elapsed >= FUNNEL_FIRST_SESSION_MS) return;
-        const key = `${pending.context.attemptId}:screen_shown:${screen}`;
-        if (pending.sent.includes(key) || pending.sent.length >= 64) return;
+        if (pending.lastScreen === screen || pending.screenSends >= 64) return;
         const token = await authorization().catch(() => undefined);
         if (!token) return;
-        pending.sent.push(key);
+        pending.lastScreen = screen;
+        pending.screenSends += 1;
         await input.storage.setItem(ATTEMPT_KEY, JSON.stringify(pending));
         send(
           {

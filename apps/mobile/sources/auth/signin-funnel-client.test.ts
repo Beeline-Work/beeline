@@ -155,7 +155,7 @@ it('keeps activation attribution after sign-in across a later session and sends 
   expect(milestones.every(event => event.attemptId === attempt?.attemptId)).toBe(true);
 });
 
-it('sends each screen once in the 10 minutes after sign-in, and none after', async () => {
+it('sends each screen change in the 10 minutes after sign-in, including revisits, and none after', async () => {
   const { input, send } = setup();
   let time = Date.now();
   input.now = () => time;
@@ -167,13 +167,16 @@ it('sends each screen once in the 10 minutes after sign-in, and none after', asy
   await timed.signedIn('session');
   send.mockClear();
   await timed.screenShown('beeline/tray', auth);
+  // Re-rendering the same screen is not a change.
   await timed.screenShown('beeline/tray', auth);
   time += 9 * 60_000;
   await createSigninFunnelClient(input).screenShown('beeline/chat/[channelId]', auth);
+  // A revisit after a reload still counts as the latest screen.
   await createSigninFunnelClient(input).screenShown('beeline/tray', auth);
   expect(send.mock.calls.map(([event]) => [event.event, event.screen])).toEqual([
     ['screen_shown', 'beeline/tray'],
     ['screen_shown', 'beeline/chat/[channelId]'],
+    ['screen_shown', 'beeline/tray'],
   ]);
   for (const [event, authorization] of send.mock.calls) {
     expect(parseSigninFunnelEvent(event)).not.toBeNull();
@@ -183,7 +186,18 @@ it('sends each screen once in the 10 minutes after sign-in, and none after', asy
   time += 60_000;
   await timed.screenShown('beeline/settings', auth);
   await createSigninFunnelClient(input).screenShown('beeline/members', auth);
-  expect(send).toHaveBeenCalledTimes(2);
+  expect(send).toHaveBeenCalledTimes(3);
+});
+it('caps screen sends in one first session', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  await client.signedIn('session');
+  send.mockClear();
+  for (let i = 0; i < 40; i++) {
+    await client.screenShown('beeline/tray', async () => 'session');
+    await client.screenShown('beeline/channels', async () => 'session');
+  }
+  expect(send).toHaveBeenCalledTimes(64);
 });
 it('sends no screen event without a session', async () => {
   const { client, send } = setup();

@@ -7,11 +7,23 @@ import { hiddenWakeCardSql } from './room-choice.js';
  */
 export const UNREAD_COUNT_CAP = 99;
 
+/** Shared transcript visibility, including legacy corner completion cards. */
+export function visibleMessageSql(alias: string): string {
+  return `${hiddenWakeCardSql(alias)}
+      AND NOT (${alias}.card_type IS NOT DISTINCT FROM 'daemon-fact'
+        AND ${alias}.card->>'type' IS NOT DISTINCT FROM 'corner-complete'
+        AND COALESCE(${alias}.system_event->>'kind','')<>'corner-opened'
+        AND ${alias}.card->>'sourceMessageId' IS NULL
+        AND EXISTS (SELECT 1 FROM rooms completed_corner
+          WHERE completed_corner.id::text=${alias}.card->>'cornerId'
+            AND completed_corner.parent_id=${alias}.room_id))`;
+}
+
 /** A durable message that can represent activity in the Room list. */
 export function visibleChatMessageSql(alias: string): string {
   return `${alias}.presentation IN ('message','system','card')
       AND ${alias}.deleted_at IS NULL
-      AND ${hiddenWakeCardSql(alias)}`;
+      AND ${visibleMessageSql(alias)}`;
 }
 
 /**

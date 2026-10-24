@@ -1,5 +1,6 @@
 // Webhook receipt System line approved by lunchboxfortwo, message 2f876a4d (option 1), relayed by Ruby; this producer entry only.
 // Repository subscription GitHub item links approved by lunchboxfortwo, message 3a86f53dcb0ae80cb1b8c88c23d8c9a3cfb4efaeb3ff2157735300ef212b20b0 (brief revision 1); repository producer and transitive GitHub service-name literal snapshots only.
+// Static Room openings and ordinary corner PR events approved by lunchboxfortwo, messages d331599d and 810c1361 (go), brief revision 2; opening metadata, PR corner destinations, and replacement of the Room completion producer only. Existing wording unchanged.
 // Workspace bootstrap failure classification approved by lunchboxfortwo, message 763d8e665ec25825aa5d743f9354bf1d85d644695a0868868363e0c8ca1620a1 (yes to dc2b6595424352a29596120be6b9c92ac48797767d42672b19434011da7e3e6c); PR #2842, two inscribeSilence entries only.
 // Approval language alignment approved by lunchboxfortwo, message b4cce318d8678714e46c5f81e7e0bcdc489a94369e6e9aaf09f69a504dfbdf53 (brief revision 4); Squire decision snapshots only.
 // Approval-card anatomy and decisions approved by lunchboxfortwo, message d521a13a (mock 52a31072; brief revision 3); associated card, mutation and wrapper snapshots only.
@@ -2353,10 +2354,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:eaddee1e9532d453",
+    "id": "src/daemon-service.ts:DaemonService.createCorner:systemLine:1fab2b89dd1f630a",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name, objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
+    "template": "systemLine(db, {\n    roomId: destination.roomId,\n    subject: { kind: 'agent', id: agentId, name: opener.name },\n    verb: 'opened a corner',\n    kind: destination.roomId === roomId ? 'corner-opened' : undefined,\n    object: { text: name, id: cornerId },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: { type: 'corner-open', cornerId, name,\n        objective: destination.roomId === roomId ? name : objective,\n        ...(destination.sourceMessageId ? { sourceMessageId: destination.sourceMessageId } : {}) },\n    afterMessageId: destination.sourceMessageId,\n})",
     "literals": [
       "''",
       "'agent'",
@@ -3401,21 +3402,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:a3631ff7edcd4615",
-    "file": "apps/server/src/github-operations.ts",
-    "kind": "systemLine",
-    "template": "systemLine(database, {\n    id: hash(`beeline:${target.parent_id}:${mergeKey}`),\n    roomId: target.parent_id,\n    authorId: target.author_id,\n    ...merged,\n    presentation: 'card',\n    durableFact: 'merge',\n    cardType: 'daemon-fact',\n    card: {\n        type: 'corner-complete',\n        cornerId: target.corner_id,\n        name: target.corner_name,\n        objective: summary,\n        outcome: 'landed',\n        pullRequest: {\n            ...(pullRequest.number ? { number: pullRequest.number } : {}),\n            title: pullRequest.title,\n            url: pullRequest.url,\n            ...(pullRequest.targetBranch ? { targetBranch: pullRequest.targetBranch } : {}),\n            ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),\n        },\n    },\n})",
-    "literals": [
-      "'GitHub'",
-      "'corner-complete'",
-      "'daemon-fact'",
-      "'github'",
-      "'landed'",
-      "'merged'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:df6715728b4bdcf8",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
@@ -3426,6 +3412,17 @@
       "'github-corner-note'",
       "'merged'",
       "`github:pull-request:merged:${pullRequest.url}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/github-operations.ts:GitHubOperations.mergeCorner:wrapper:6ea0024c36b0e2be",
+    "file": "apps/server/src/github-operations.ts",
+    "kind": "wrapper",
+    "template": "this.processRepositoryEvent('pull_request', {\n    action: 'closed', repository: { full_name: pullRequest.repository },\n    ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),\n    pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,\n        head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },\n}, Number(target.installation_id), database)",
+    "literals": [
+      "'closed'",
+      "'pull_request'"
     ],
     "occurrences": 1
   },
@@ -3480,10 +3477,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.processRepositoryEvent:systemLine:75b1dd4adf8b96ab",
+    "id": "src/github-operations.ts:GitHubOperations.processRepositoryEvent:systemLine:1aae9753da7b3556",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
-    "template": "systemLine(this.database, {\n    id: hash(`beeline:${room.room_id}:github-event:${event}:${card.action}:${dedupeKey}`),\n    roomId: room.room_id,\n    authorId: room.author_id,\n    subject: { kind: 'github', name: card.actor },\n    verb: card.action,\n    object: { text: card.title, url: card.url },\n    presentation: 'card',\n    cardType: 'github-event',\n    card,\n})",
+    "template": "systemLine(database, {\n    id: hash(`beeline:${room.room_id}:github-event:${event}:${card.action}:${dedupeKey}`),\n    roomId: room.room_id,\n    authorId: room.author_id,\n    subject: { kind: 'github', name: card.actor },\n    verb: card.action,\n    object: { text: card.title, url: card.url },\n    presentation: 'card',\n    cardType: 'github-event',\n    card: { ...card, ...(room.corner_id ? { cornerId: room.corner_id } : {}) },\n})",
     "literals": [
       "'closed'",
       "'github'",
@@ -3978,10 +3975,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/phone-service.ts:PhoneService.createHumanCorner:systemLine:4afcb8b16c7426de",
+    "id": "src/phone-service.ts:PhoneService.createHumanCorner:systemLine:b455ca5d421362ae",
     "file": "apps/server/src/phone-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),\n    verb: 'opened a corner',\n    object: { text: title, id },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: {\n        type: 'corner-open',\n        cornerId: id,\n        name: title,\n        objective: '',\n        sourceMessageId: input.sourceMessageId,\n    },\n})",
+    "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),\n    verb: 'opened a corner',\n    object: { text: title, id },\n    presentation: 'card',\n    cardType: 'daemon-fact',\n    card: {\n        type: 'corner-open',\n        cornerId: id,\n        name: title,\n        objective: title,\n        ...(source?.rowCount ? { sourceMessageId: input.sourceMessageId } : {}),\n    },\n})",
     "literals": [
       "''",
       "'agent'",

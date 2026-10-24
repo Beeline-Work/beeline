@@ -90,13 +90,13 @@ describe('mock A lifecycle rows', () => {
     expect(get('notification-run-cell-pr')).toBeUndefined();
   });
 
-  it('shows a single row without a header and keeps the two destinations separate', () => {
+  it('opens the corner from a corner PR row without changing its copy', () => {
     const { tree, get, onOpenCorner, onOpenUrl } = render();
     expect(get('notification-run-expand-run')).toBeUndefined();
     expect(text(get('notification-run-cell-pr'))).toBe(`Merged #2742 ${item.title}`);
     act(() => get('notification-run-cell-url-pr').props.onPress());
-    expect(onOpenUrl).toHaveBeenCalledWith(item.url);
-    expect(onOpenCorner).not.toHaveBeenCalled();
+    expect(onOpenUrl).not.toHaveBeenCalled();
+    expect(onOpenCorner).toHaveBeenCalledWith('corner');
     act(() => get('notification-run-cell-corner-pr').props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('corner');
     for (const id of ['url', 'corner'])
@@ -309,8 +309,8 @@ it('opens the corner when the text of a corner row or call-site line is pressed 
   // A PR row keeps its two targets: the title opens GitHub, the chevron the corner.
   const pr = render();
   pressText(pr.tree, `Merged #2742 ${item.title}`);
-  expect(pr.onOpenUrl).toHaveBeenCalledWith(item.url);
-  expect(pr.onOpenCorner).not.toHaveBeenCalled();
+  expect(pr.onOpenUrl).not.toHaveBeenCalled();
+  expect(pr.onOpenCorner).toHaveBeenCalledWith('corner');
   act(() => pr.get('notification-run-cell-corner-pr').props.onPress());
   expect(pr.onOpenCorner).toHaveBeenCalledWith('corner');
 });

@@ -146,7 +146,7 @@ it.each(['dm', 'room', 'parent'] as const)(
     const roomView = await phone.readRoom(R, OUTSIDER);
     expect(
       roomView?.messages.some((message) => message.daemonFact?.cornerId === opened.cornerId),
-    ).toBe(kind === 'room');
+    ).toBe(true);
     if (kind === 'dm') expect(await phone.readRoom(DM, OUTSIDER)).toBeNull();
     if (kind !== 'room')
       snapshots[kind] = { messages: sourceView!.messages, roomMessages: roomView!.messages };
@@ -244,7 +244,7 @@ it('does not treat an automatic workflow card as a dispatching message', async (
   expect((await facts(opened.cornerId))[0].room_id).toBe(R);
 });
 
-it.each(['dm', 'room', 'parent'] as const)('settles the %s call site in place and shows only off-Room merges in the Room', async (kind) => {
+it.each(['dm', 'room', 'parent'] as const)('Reproduction CORNER-ROOM-2: keeps the %s Room opening static and reports the PR once', async (kind) => {
   const sourceRoom = await sourceFor(kind);
   const command = await request(sourceRoom);
   const opened = await open(sourceRoom, command);
@@ -255,6 +255,9 @@ it.each(['dm', 'room', 'parent'] as const)('settles the %s call site in place an
   const opening = await read();
   const marker = opening.messages.find(m => m.daemonFact?.cornerId === opened.cornerId)!;
   expect(marker.daemonFact).toMatchObject({ type: 'corner-open', sourceMessageId: command.sourceMessageId });
+  const roomOpening = opening.roomMessages.find(m => m.daemonFact?.cornerId === opened.cornerId)!;
+  expect(roomOpening.daemonFact?.type).toBe('corner-open');
+  expect(roomOpening.daemonFact?.objective).toBe('requested-work');
   snapshots[`${kind}-opened`] = opening;
   // The real webhook service commits the merge, settles cards and archives the corner.
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
@@ -280,30 +283,99 @@ it.each(['dm', 'room', 'parent'] as const)('settles the %s call site in place an
   const merged = await read();
   const settled = merged.messages.filter(m => m.daemonFact?.cornerId === opened.cornerId);
   expect(settled).toHaveLength(1);
-  expect(settled[0]).toMatchObject({ id: marker.id, createdAt: marker.createdAt,
+  if (kind === 'room') expect(settled[0]).toEqual(marker);
+  else expect(settled[0]).toMatchObject({ id: marker.id, createdAt: marker.createdAt,
     daemonFact: { type: 'corner-complete', outcome: 'landed', name: 'requested-work', sourceMessageId: command.sourceMessageId,
       pullRequest: { number: 2832, url: 'https://github.com/owner/widgets/pull/2832' } } });
   const roomCards = merged.roomMessages.filter(m => m.daemonFact?.cornerId === opened.cornerId);
-  expect(roomCards).toHaveLength(1);
-  expect(roomCards[0].id === marker.id).toBe(kind === 'room');
-  if (kind !== 'room') {
-    expect(roomCards[0].daemonFact?.sourceMessageId).toBeUndefined();
-    expect(roomCards[0].daemonFact?.outcome).toBe('landed');
-    expect(merged.roomMessages.at(-1)?.id).toBe(roomCards[0].id);
-  }
+  expect(roomCards).toEqual([roomOpening]);
+  const prRows = merged.roomMessages.filter(m => m.githubEvent?.url === payload.pull_request.html_url);
+  expect(prRows).toHaveLength(1);
+  expect(prRows[0].githubEvent).toMatchObject({ action: 'merged', cornerId: opened.cornerId });
+  const storedRoomOpening = (await db.query(`SELECT card FROM messages WHERE id=$1`, [roomOpening.id])).rows[0];
+  expect(storedRoomOpening.card.type).toBe('corner-open');
   snapshots[`${kind}-merged`] = merged;
   // Closing an independent corner follows the phone action, with no extra row.
   await db.query(`UPDATE rooms SET repository_remote=NULL,github_installation_id=NULL WHERE id=$1`, [R]);
   const closeCommand = await request(sourceRoom);
   const closing = await open(sourceRoom, closeCommand, 'close-requested-work');
   const beforeClose = await read();
+  const closeRoomMarker = beforeClose.roomMessages.find(m => m.daemonFact?.cornerId === closing.cornerId)!;
   const closeMarker = beforeClose.messages.find(m => m.daemonFact?.cornerId === closing.cornerId)!;
   await phone.execute('requestCornerClose', { roomId: closing.cornerId }, H);
   const closed = await read();
   const closedCards = closed.messages.filter(m => m.daemonFact?.cornerId === closing.cornerId);
   expect(closedCards).toHaveLength(1);
-  expect(closedCards[0]).toMatchObject({ id: closeMarker.id, createdAt: closeMarker.createdAt,
+  if (kind === 'room') expect(closedCards[0]).toEqual(closeMarker);
+  else expect(closedCards[0]).toMatchObject({ id: closeMarker.id, createdAt: closeMarker.createdAt,
     daemonFact: { type: 'corner-complete', outcome: 'abandoned', sourceMessageId: closeCommand.sourceMessageId } });
-  expect(closed.roomMessages.filter(m => m.daemonFact?.cornerId === closing.cornerId)).toHaveLength(kind === 'room' ? 1 : 0);
+  expect(closed.roomMessages.filter(m => m.daemonFact?.cornerId === closing.cornerId)).toEqual([closeRoomMarker]);
   snapshots[`${kind}-closed`] = closed;
+});
+
+it('Reproduction CORNER-ROOM-2: preview, unread, history and live reads share opening visibility', async () => {
+  const command = await request(DM);
+  const opened = await open(DM, command);
+  const view = (await phone.readRoom(R, OUTSIDER))!;
+  const marker = view.messages.find(m => m.daemonFact?.cornerId === opened.cornerId)!;
+  expect(marker.daemonFact?.type).toBe('corner-open');
+  const legacy = 'f'.repeat(64);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+    VALUES($1,$2,$3,'Old completion','card','daemon-fact',$4,now()+interval '1 minute')`,
+    [legacy,R,A,JSON.stringify({ type: 'corner-complete', cornerId: opened.cornerId,
+      objective: 'Private objective', outcome: 'landed' })]);
+  const room = (await phone.readRoom(R, OUTSIDER))!;
+  expect(room.messages.map(m => m.id)).toContain(marker.id);
+  expect(room.messages.map(m => m.id)).not.toContain(legacy);
+  expect(room.viewer.readCursor).toMatchObject({ firstUnreadMessageId: marker.id, unreadCount: 1 });
+  const chat = (await phone.readChats(W, OUTSIDER))!.chats.find(c => c.room.id === R)!;
+  expect(chat.latestMessage?.id).toBe(marker.id);
+  expect(chat.unread).toBe(true);
+  expect((await phone.readHistory(R, OUTSIDER))!.messages.map(m => m.id)).toEqual([marker.id]);
+  expect((await phone.readHistoryAround(R, OUTSIDER, marker.id))!.messages.map(m => m.id)).toEqual([marker.id]);
+  const live = await phone.readLiveDelta(R, OUTSIDER, { type: 'message', messageId: marker.id });
+  expect(live && 'message' in live ? live.message.daemonFact?.type : undefined).toBe('corner-open');
+  expect(await phone.readLiveDelta(R, OUTSIDER, { type: 'message', messageId: legacy })).toBeNull();
+  // Older Room opening rows that were settled still render their original opening.
+  await db.query(`UPDATE messages SET card=card||'{"type":"corner-complete","outcome":"landed"}'::jsonb WHERE id=$1`, [marker.id]);
+  expect((await phone.readRoom(R, OUTSIDER))!.messages.find(m => m.id===marker.id)?.daemonFact).toEqual(marker.daemonFact);
+});
+
+it('Reproduction CORNER-ROOM-2: opened and closed PR events keep an archived corner destination', async () => {
+  const command = await request(DM);
+  const opened = await open(DM, command);
+  const opening = (await phone.readRoom(R, OUTSIDER))!.messages.find(m => m.daemonFact?.cornerId === opened.cornerId)!;
+  await phone.execute('requestCornerClose', { roomId: opened.cornerId }, H);
+  await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+    VALUES(77,$1,'42','owner','User','selected','active') ON CONFLICT DO NOTHING`, [H]);
+  await db.query(`UPDATE rooms SET github_installation_id=77,repository_remote='https://github.com/owner/widgets.git' WHERE id=$1`, [R]);
+  const branch = `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0,12)}`;
+  await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [opened.cornerId, branch]);
+  const operations = new GitHubOperations(db, {} as GitHubOAuthClient, {} as GitHubAppClient, 'fixture-secret');
+  for (const action of ['opened', 'closed']) {
+    const payload = { action, installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      pull_request: { number: 42, title: 'Archived corner PR', html_url: 'https://github.com/owner/widgets/pull/42',
+        head: { ref: branch }, base: { ref: 'main' }, merged: false } };
+    await operations.processWebhook('pull_request', payload);
+    await operations.processWebhook('pull_request', payload);
+  }
+  const messages = (await phone.readRoom(R, OUTSIDER))!.messages;
+  expect(messages.filter(m => m.daemonFact?.cornerId === opened.cornerId)).toEqual([opening]);
+  expect(messages.filter(m => m.githubEvent).map(m => m.githubEvent)).toEqual([
+    expect.objectContaining({ action: 'opened', cornerId: opened.cornerId }),
+    expect.objectContaining({ action: 'closed', cornerId: opened.cornerId }),
+  ]);
+});
+
+it.each([false, true])('keeps a human opening static with a resident source=%s', async (withSource) => {
+  const command = withSource ? await request(R) : undefined;
+  const input = { roomId: R, title: 'human-work', cornerId: randomUUID(),
+    ...(command ? { sourceMessageId: command.sourceMessageId } : {}) };
+  await phone.execute('createHumanCorner', input, H);
+  await phone.execute('createHumanCorner', input, H);
+  const row = (await phone.readRoom(R, OUTSIDER))!.messages.filter(m => m.daemonFact?.cornerId === input.cornerId);
+  expect(row).toHaveLength(1);
+  expect(row[0].daemonFact).toMatchObject({ type: 'corner-open', name: 'human-work' });
+  await phone.execute('requestCornerClose', { roomId: input.cornerId }, H);
+  expect((await phone.readRoom(R, OUTSIDER))!.messages.filter(m => m.daemonFact?.cornerId === input.cornerId)).toEqual(row);
 });

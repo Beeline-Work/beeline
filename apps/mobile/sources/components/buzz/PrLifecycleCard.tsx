@@ -234,8 +234,8 @@ export function RepositoryLifecycleRow({
       primary={
         item.url
           ? {
-              accessibilityLabel: `Open ${item.kindLine}`,
-              onPress: () => onOpenUrl(item.url!),
+              accessibilityLabel: item.cornerId ? `Open corner ${item.title}` : `Open ${item.kindLine}`,
+              onPress: () => item.cornerId ? onOpenCorner(item.cornerId) : onOpenUrl(item.url!),
               testID: `notification-run-cell-url-${item.id}`,
             }
           : undefined

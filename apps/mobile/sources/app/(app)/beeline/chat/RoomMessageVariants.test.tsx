@@ -267,7 +267,8 @@ describe('Event disclosure v2', () => {
     act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-merge' }).props.onPress());
     act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-issue' }).props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('corner-42');
-    expect(onOpenUrl.mock.calls).toEqual([['https://github.com/acme/repo/pull/42'], ['https://github.com/acme/repo/issues/5']]);
+    expect(onOpenUrl.mock.calls).toEqual([['https://github.com/acme/repo/issues/5']]);
+    expect(onOpenCorner).toHaveBeenCalledTimes(2);
     act(() => toggle().props.onPress());
     expect(renderer.root.findAllByProps({ testID: 'notification-run-cell-merge' })).toHaveLength(0);
   });
@@ -4047,4 +4048,15 @@ it('links a corner-local PR notice to the current corner when the note has no co
   expect(renderer.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(0);
   act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-local-pr' }).props.onPress());
   expect(onOpenCorner).toHaveBeenCalledWith('current-corner');
+});
+
+it('opens a standalone corner PR event in its corner', () => {
+  const onOpenCorner = vi.fn(), onOpenUrl = vi.fn();
+  const renderer = render(<GitHubEventCard message={message({ githubEvent: {
+    type: 'pull-request', action: 'merged', actor: 'ruby', title: 'Work',
+    url: 'https://github.com/acme/repo/pull/42', cornerId: 'corner-42',
+  } })} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
+  act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-message' }).props.onPress());
+  expect(onOpenCorner).toHaveBeenCalledWith('corner-42');
+  expect(onOpenUrl).not.toHaveBeenCalled();
 });

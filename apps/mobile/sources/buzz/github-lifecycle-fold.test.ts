@@ -107,3 +107,12 @@ describe('separate lifecycle notifications', () => {
     expect(Array.from(messages)).toEqual(messages);
   });
 });
+
+it('keeps the server corner destination without a completion card in the page', async () => {
+  const { foldPrLifecycleRuns } = await import('./pr-lifecycle');
+  const message = github('pr-42', 'merged', '42');
+  message.githubEvent!.cornerId = 'corner';
+  expect(foldPrLifecycleRuns([message])[0].notificationLifecycleRun?.items[0]).toMatchObject({
+    kind: 'pull-request', cornerId: 'corner', state: 'Merged',
+  });
+});

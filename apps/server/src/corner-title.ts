@@ -13,5 +13,5 @@ export async function writeCornerTitle(
   await database.query(`UPDATE corner_facts SET title_generated=false WHERE corner_id=$1`, [
     cornerId,
   ]);
-  // Opening markers render the current title from rooms; their stored cards stay untouched.
+  // Historical Room opening markers keep their stored title.
 }

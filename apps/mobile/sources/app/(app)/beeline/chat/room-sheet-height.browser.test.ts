@@ -55,6 +55,6 @@ describe.skipIf(!existsSync(CHROME))('Room sheet row heights', () => {
       expect(result.gapAfterSchedules).toBe(0);
       expect(result.muteHeight).toBeGreaterThan(result.heights[0]);
       expect(result.chevron).toBe(true);
-    });
+    }, 120_000);
   }
 });

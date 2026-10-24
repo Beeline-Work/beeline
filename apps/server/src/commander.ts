@@ -156,7 +156,7 @@ export async function sendOrder(
       throw new CommandRefusalError('order must name exactly one agent: pass agent with its handle or id', 400);
     worker = matches[0]!.id;
   }
-  if (worker === agentId && address === command.room_id)
+  if (worker === agentId && target.id === command.room_id)
     throw new CommandRefusalError('an agent cannot order itself in its current place', 400);
   // Self-wakes across places and peer recruitment consume the existing depth
   // budget; handoffs to another implementer retain it.

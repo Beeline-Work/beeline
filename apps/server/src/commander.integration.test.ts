@@ -1703,6 +1703,8 @@ it('Reproduction SELF-1: orders itself in another Room and corner, refuses the c
   await claim(roomTurn);
   await expect(daemon.execute('order', { ...authority(roomTurn), address: ROOM, agent: 'ruby', text: 'Recurse' }, RUBY))
     .rejects.toThrow('current place');
+  await expect(daemon.execute('order', { ...authority(roomTurn), address: ROOM.toUpperCase(), agent: 'ruby', text: 'Recurse uppercase' }, RUBY))
+    .rejects.toThrow('current place');
   const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
     name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
     brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
@@ -1724,6 +1726,7 @@ it('Reproduction SELF-1: cross-place self-tags wake, same-place self-tags do not
   let turn = (await commands(ROOM, RUBY)).find(c => c.reason === 'agent_tag')!;
   await claim(turn);
   expect((await post(turn, ROOM)).woken).toEqual([]);
+  expect((await post(turn, ROOM.toUpperCase())).woken).toEqual([]);
   expect((await post(turn, opened.cornerId)).woken).toEqual(['ruby']);
   turn = (await commands(opened.cornerId, RUBY)).find(c => c.reason === 'agent_tag')!;
   await claim(turn);

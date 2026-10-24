@@ -8592,7 +8592,7 @@ export class DaemonService {
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
-      command.room_id === input.cornerId ? command : undefined);
+      command.room_id === input.cornerId.toLowerCase() ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event)

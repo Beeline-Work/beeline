@@ -131,6 +131,27 @@ it('Reproduction EMPTY-SUITE-1: a required check that has not reported stays pen
   });
 });
 
+it.each(['check-suites', 'actions/runs'])('Reproduction SENTRY-1D: names the refused %s probe and GitHub explanation', async probe => {
+  const fetchMock = vi.fn(async (input: unknown) => {
+    if (String(input).includes(`/${probe}?`))
+      return Response.json({ message: 'Resource not accessible by integration', ignored: 'do not retain' }, {
+        status: 403, headers: { 'x-github-request-id': 'request-1', 'x-accepted-github-permissions': 'actions=read' },
+      });
+    return passingRollupResponse(input);
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  const error = await app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead).catch(error => error);
+  expect(error).toBeInstanceOf(GitHubHttpError);
+  expect(error).toMatchObject({ status: 403, rateLimited: false, message: expect.stringContaining(probe) });
+  expect(error.message).toContain('Resource not accessible by integration');
+  expect(error.message).toContain('request ID: request-1');
+  expect(error.message).toContain('accepted permissions: actions=read');
+  expect(error.message).not.toContain('do not retain');
+  expect(transientGitHubError(error)).toBe(false);
+  expect(fetchMock.mock.calls.filter(([input]) => String(input).includes(`/${probe}?`))).toHaveLength(1);
+});
+
 it('CHECK-HEAD-1: fails closed if workflow registration cannot be read', async () => {
   vi.stubGlobal('fetch', async (input: unknown) => {
     const url = String(input);
@@ -139,6 +160,20 @@ it('CHECK-HEAD-1: fails closed if workflow registration cannot be read', async (
   });
   const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
   await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toMatchObject({ status: 403 });
+});
+
+it.each([false, true])('SENTRY-1D: non-JSON registration refusal retains retry classification (%s)', async rateLimited => {
+  vi.stubGlobal('fetch', async (input: unknown) => {
+    if (String(input).includes('/actions/runs?')) return new Response('<html>forbidden</html>', {
+      status: 403, headers: rateLimited ? { 'retry-after': '120' } : {},
+    });
+    return passingRollupResponse(input);
+  });
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  const error = await app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead).catch(error => error);
+  expect(error).toMatchObject({ status: 403, rateLimited, retryAfter: rateLimited ? '120' : null });
+  expect(transientGitHubError(error)).toBe(rateLimited);
+  expect(error.message).not.toContain('<html>');
 });
 
 it.each([502, 503, 504, 429])('R-GH-RETRY: shared rollup retries HTTP %s then succeeds', async status => {

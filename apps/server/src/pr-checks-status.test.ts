@@ -44,6 +44,7 @@ let suiteRuns: number | undefined;
 let associatedPulls: Record<string, unknown>[];
 let requiredContexts: string[] | null;
 let requests: string[];
+let registrationForbidden: boolean;
 let server: Server | undefined;
 
 beforeEach(async () => {
@@ -112,6 +113,7 @@ beforeEach(async () => {
   associatedPulls = [];
   requiredContexts = null;
   requests = [];
+  registrationForbidden = false;
   app = new GitHubAppClient({
     appId: '1',
     privateKey: 'unused',
@@ -128,6 +130,10 @@ beforeEach(async () => {
     if (!url.startsWith('https://api.github.test/')) return realFetch(input, init);
     requests.push(url);
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer room-token');
+    if (registrationForbidden && url.includes('/actions/runs?')) return Response.json(
+      { message: 'Resource not accessible by integration' },
+      { status: 403, headers: { 'x-github-request-id': 'sentry-1d', 'x-accepted-github-permissions': 'actions=read' } },
+    );
     if (url.endsWith('/actions/workflows?per_page=1')) {
       await onWorkflowRead?.();
       return Response.json({ total_count: workflowCount });
@@ -240,6 +246,14 @@ const gate = (cornerId = C, pullRequest: number | string | undefined = 614) =>
     A,
   );
 const graphqlRequests = () => requests.filter((url) => url.endsWith('/graphql'));
+
+it('Reproduction SENTRY-1D: checks command exposes the workflow refusal instead of a merge verdict', async () => {
+  registrationForbidden = true;
+  rollupState = 'SUCCESS';
+  await expect(gate()).rejects.toThrow(/GitHub PR checks GET .*actions\/runs.*HTTP 403: Resource not accessible by integration/);
+  expect(app.installationToken).toHaveBeenCalledWith(77, { repositoryIds: [101] });
+  expect(requests.filter(url => url.includes('/actions/runs?'))).toHaveLength(1);
+});
 
 async function ownPr() {
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [

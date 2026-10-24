@@ -99,8 +99,9 @@ export class GitHubRequestError extends GitHubHttpError {
     label: string,
     status: number,
     readonly reason?: string,
+    retryAfter?: string | null,
   ) {
-    super(label, status);
+    super(label, status, retryAfter);
     if (reason) this.message = `${this.message}: ${reason}`;
   }
 }
@@ -1085,7 +1086,30 @@ export class GitHubAppClient {
         signal: AbortSignal.timeout(15_000),
       },
     );
-    if (!response.ok) throw new GitHubHttpError('GitHub PR checks', response.status, responseRetryAfter(response));
+    if (!response.ok) {
+      // Only retain bounded diagnostic fields, never the raw response or auth headers.
+      const diagnostic = (value: unknown): string | undefined => typeof value === 'string'
+        ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 500) || undefined
+        : undefined;
+      const details: string[] = [];
+      try {
+        const body: unknown = await response.json();
+        if (body && typeof body === 'object' && !Array.isArray(body)) {
+          const message = diagnostic((body as { message?: unknown }).message);
+          if (message) details.push(message);
+        }
+      } catch {
+        // A non-JSON refusal must still preserve the HTTP status and retry headers.
+      }
+      const requestId = diagnostic(response.headers.get('x-github-request-id'));
+      const permissions = diagnostic(response.headers.get('x-accepted-github-permissions'));
+      if (requestId) details.push(`request ID: ${requestId}`);
+      if (permissions) details.push(`accepted permissions: ${permissions}`);
+      throw new GitHubRequestError(
+        `GitHub PR checks GET /repos/${repositoryPath(fullName)}/${path}`,
+        response.status, details.join('; ') || undefined, responseRetryAfter(response),
+      );
+    }
     return (await response.json()) as Record<string, unknown>;
   }
 

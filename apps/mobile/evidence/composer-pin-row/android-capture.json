@@ -1,0 +1,7 @@
+{
+  "device": "emulator-5554",
+  "size": "1080x2400",
+  "density": 420,
+  "uiAutomator": "unavailable: live waveform prevents idle",
+  "method": "fixture-coordinate taps; inspect captures; Chrome asserts geometry"
+}

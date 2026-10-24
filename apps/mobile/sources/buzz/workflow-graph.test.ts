@@ -17,7 +17,7 @@ import {
 
 const repo = path.resolve(__dirname, '../../../..');
 const feedbackTriage = JSON.parse(
-  readFileSync(path.join(repo, 'docs/workflows/feedback-triage.json'), 'utf8'),
+  readFileSync(path.join(repo, 'packages/api-contract/test-fixtures/legacy-feedback-triage.json'), 'utf8'),
 ) as WorkflowContract;
 
 const candy = { id: 'b'.repeat(64), name: 'Candy', kind: 'agent' as const };
@@ -85,6 +85,14 @@ describe('workflowRunLine execution history', () => {
     expect(stepSeconds(reached[0]!, 500)).toBe(12);
     expect(stepSeconds(reached[2]!, 400)).toBe(188);
     expect(stepSeconds(reached[2]!, 500)).toBe(288);
+  });
+  it('predicts the current triage path ending after presentation without an approval gate', () => {
+    const currentTriage = JSON.parse(readFileSync(path.join(repo, 'docs/workflows/feedback-triage.json'), 'utf8')) as WorkflowContract;
+    const line = workflowRunLine(currentTriage, [{ toState: 'notify', at: 100 }], 'live');
+    expect(rowsOf(line)).toEqual([
+      ['notify', 'current'], ['verify', 'pending'], ['pull', 'pending'],
+      ['adapters', 'pending'], ['present', 'pending'], ['done', 'pending'],
+    ]);
   });
   it('predicts the rest of the path from the current state, stopping at the first predicted terminal', () => {
     const line = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 }], 'live');

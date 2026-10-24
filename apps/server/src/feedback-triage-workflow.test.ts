@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readWorkflowContract, validateSavedWorkflow } from '@beeline/api-contract/daemon';
 import type { CommandRow } from './agent-command.js';
+import type { SqlDatabase } from './database.js';
 import { migrate, migrateData } from './database.js';
 import { workflowBackfillOnce } from './migrations/workflow-cleanup.js';
 import {
@@ -125,6 +126,64 @@ function cornerTurn(messageId: string): CommandRow {
 }
 
 describe('feedback-triage workflow', () => {
+  it('has no approval gate or dispatch state in the seeded contract', () => {
+    expect(Object.values(FEEDBACK_TRIAGE_CONTRACT.handoffs).some(step => step.kind === 'gate')).toBe(false);
+    expect(FEEDBACK_TRIAGE_CONTRACT.handoffs).not.toHaveProperty('approve');
+    expect(FEEDBACK_TRIAGE_CONTRACT.handoffs).not.toHaveProperty('dispatch');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toMatch(/^## (approve|dispatch)$/m);
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('every earlier dispatch handoff');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('do not create a new entry for each dispatched fix');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('at most 10 active experiments');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toContain('New fix entries come from');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toContain('Include signals');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toContain('morning-card dispatch record');
+  });
+
+  it('calculates the next 07:00 in both backfills before and at the boundary in winter and summer', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    for (const backfill of [backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk]) {
+      for (const [now, expected] of [
+        ['2026-01-15T11:59:59Z', '2026-01-15T12:00:00.000Z'],
+        ['2026-01-15T12:00:00Z', '2026-01-16T12:00:00.000Z'],
+        ['2026-07-15T10:59:59Z', '2026-07-15T11:00:00.000Z'],
+        ['2026-07-15T11:00:00Z', '2026-07-16T11:00:00.000Z'],
+      ]) {
+        await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb WHERE id=$1`,
+          [TRIAGE_SCHEDULE, JSON.stringify({...DAILY, expression:'0 10 * * *', timeZone:'America/New_York'})]);
+        // Freeze SQL time while still executing the actual backfill queries in PostgreSQL.
+        const atTime = (db: SqlDatabase): SqlDatabase => ({
+          query: (sql, values) => db.query(sql.replace(/now\(\)/g, `TIMESTAMPTZ '${now}'`), values),
+          transaction: work => db.transaction(tx => work(atTime(tx))),
+        });
+        await backfill(atTime(database));
+        const schedule = (await schedules()).find(row => row.id === TRIAGE_SCHEDULE)!;
+        expect(schedule.cadence).toEqual({kind:'cron', expression:'0 7 * * *', timeZone:'America/New_York'});
+        expect(schedule.next_run_at.toISOString()).toBe(expected);
+        const walks = await database.query<{cadence: unknown}>(
+          `SELECT cadence FROM agent_schedules WHERE workflow_slug='workspace-walk'`);
+        for (const walk of walks.rows)
+          expect(walk.cadence).toEqual({kind:'cron', expression:'0 6 * * *', timeZone:'America/New_York'});
+      }
+    }
+  });
+
+  it.each(['presented', 'nothing_to_build'])('demonstrates the scheduled triage path ending at done after %s without a choice card', async outcome => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('triage-start',$1,$2,'Start triage')`,
+      [TRIAGE_CORNER, CREATOR]);
+    const turn = cornerTurn('triage-start');
+    const {runId} = await startWorkflow(database, turn, {name:'feedback-triage',roleBindings:{triager:TRIAGER}});
+    await handoff(database, turn, {runId, outcome:'notified', contents:{fixedPullRequests:[],skipReason:'none',unnotifiedPullRequests:[]}});
+    await handoff(database, turn, {runId, attempt:1, outcome:'checked', contents:{signalChecks:[]}});
+    await handoff(database, turn, {runId, attempt:2, outcome:'ranked', contents:{problems:[]}});
+    await handoff(database, turn, {runId, attempt:3, outcome:'checked', contents:{adapterFindings:[],adapterResults:[],skipReason:'none'}});
+    await expect(handoff(database, turn, {runId, attempt:4, outcome,
+      contents:{rankedProblems:[],walkRunId:'completed-morning-walk'}})).resolves.toMatchObject({state:'done',status:'done'});
+    expect((await database.query(`SELECT id FROM room_choices WHERE room_id=$1`, [TRIAGE_CORNER])).rows).toEqual([]);
+    const start = (await database.query<{card:{runStatus:string}}>(`SELECT card FROM messages WHERE id=$1`, [runId])).rows[0]!;
+    expect(start.card.runStatus).toBe('done');
+  });
+
   it('demonstrates an uncapped daily walk and rejects missing or empty receipts before completion', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await backfillFeedbackSignalWalk(database);
@@ -280,7 +339,7 @@ describe('feedback-triage workflow', () => {
     for (const row of after) {
       const was = before.find((schedule) => schedule.id === row.id);
       if (!was) continue;
-      expect(row.cadence).toEqual({ ...DAILY, expression:'0 10 * * *', timeZone: 'America/New_York' });
+      expect(row.cadence).toEqual({ ...DAILY, expression:'0 7 * * *', timeZone: 'America/New_York' });
       expect(row.next_run_at.getTime()).toBeGreaterThan(Date.now());
     }
     const versions = (await database.query<{ version: number; markdown: string }>(
@@ -331,6 +390,22 @@ describe('feedback-triage workflow', () => {
     expect(FEEDBACK_TRIAGE_STEPS).toContain('requires\nthe pull request to change that skill');
   });
 
+  it('preserves a team-authored procedure during either backfill', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(`UPDATE workspace_skill_versions SET markdown='Team procedure',
+      content_hash=$2,extractor_version='save-procedure'
+      WHERE skill_id=(SELECT id FROM workspace_skills WHERE workspace_id=$1 AND slug='feedback-triage-steps')`,
+      [WORKSPACE, 'e'.repeat(64)]);
+    await backfillFeedbackTriageWorkflow(database);
+    await backfillFeedbackSignalWalk(database);
+    const steps = await loadWorkspaceSkill(database, cornerTurn('team-procedure'), {
+      agentId:TRIAGER, roomId:TRIAGE_CORNER, slug:'feedback-triage-steps',
+    });
+    expect(steps.markdown).toContain('\nTeam procedure\n');
+    expect(steps.markdown).not.toContain('## present');
+    expect((await skills()).find(skill => skill.slug === 'feedback-triage-steps')!.current_version).toBe(1);
+  });
+
   it('matches the readable copies under docs/workflows and passes the workflow validator', () => {
     const docs = (name: string) =>
       readFileSync(new URL(`../../../docs/workflows/${name}`, import.meta.url), 'utf8');
@@ -343,7 +418,7 @@ describe('feedback-triage workflow', () => {
     expect(validateSavedWorkflow(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
   });
 
-  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, at 10 AM America/New_York', async () => {
+  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, at 7 AM America/New_York', async () => {
     const before = await schedules();
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(6);
     expect(await skills()).toEqual([
@@ -359,25 +434,25 @@ describe('feedback-triage workflow', () => {
         expect(row.cadence).toEqual(was.cadence);
         expect(row.next_run_at).toEqual(was.next_run_at);
       } else {
-        expect(row.cadence).toEqual({ ...DAILY, expression:'0 10 * * *', timeZone: 'America/New_York' });
+        expect(row.cadence).toEqual({ ...DAILY, expression:'0 7 * * *', timeZone: 'America/New_York' });
         const hour = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: 'America/New_York' }).format(row.next_run_at);
-        expect(hour).toBe('10');
+        expect(hour).toBe('07');
       }
     }
     expect(after.find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     expect(after.find((row) => row.id === SWEEP_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     expect(after.find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe('Post the standup summary.');
-    // Every release reruns it; nothing changes twice.
+    // A manual rerun is idempotent; migration startup is completion-marker gated.
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(0);
   });
 
-  it('moves an already-New-York seeded schedule from 2 PM to 10 AM', async () => {
+  it('moves an already-New-York seeded schedule from 2 PM to 7 AM', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb WHERE id=$1`,
       [TRIAGE_SCHEDULE,JSON.stringify({kind:'cron',expression:'0 14 * * *',timeZone:'America/New_York'})]);
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(1);
     expect((await schedules()).find((row) => row.id===TRIAGE_SCHEDULE)!.cadence)
-      .toEqual({kind:'cron',expression:'0 10 * * *',timeZone:'America/New_York'});
+      .toEqual({kind:'cron',expression:'0 7 * * *',timeZone:'America/New_York'});
   });
 
   it('lets the scheduled agent find, read and start it right after install, with no setting', async () => {
@@ -396,7 +471,7 @@ describe('feedback-triage workflow', () => {
       roomId: TRIAGE_CORNER,
       slug: 'feedback-triage-steps',
     });
-    expect(steps.markdown).toContain('## dispatch');
+    expect(steps.markdown).toContain('## Morning-card follow-up (outside this workflow)');
     const started = await startWorkflow(database, turn, {
       name: 'feedback-triage',
       roleBindings: { triager: TRIAGER },

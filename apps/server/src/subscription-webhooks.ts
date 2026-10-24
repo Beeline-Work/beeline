@@ -37,7 +37,7 @@ function secret(): string {
 }
 
 /** Humans manage their own DMs; Rooms retain Workspace admin authority. */
-export async function requireScheduledWorkManager(db: SqlDatabase, roomId: string, viewerId: string, allowCorner = false): Promise<void> {
+export async function requireScheduledWorkManager(db: SqlDatabase, roomId: string, viewerId: string, allowCorner = false, denialMessage = 'workspace admins only'): Promise<void> {
   const room = (await db.query<{ parent_id: string | null; archived_at: Date | null }>(
     'SELECT parent_id,archived_at FROM rooms WHERE id=$1', [roomId])).rows[0];
   if (!room) throw new Error('room not found');
@@ -54,7 +54,7 @@ export async function requireScheduledWorkManager(db: SqlDatabase, roomId: strin
          SELECT 1 FROM memberships member WHERE member.workspace_id=room.workspace_id
            AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL
            AND member.role IN ('owner','admin'))))`, [roomId, viewerId, allowCorner]);
-  if (!allowed.rowCount) throw new Error('Workspace admin required (workspace admins only), or human DM membership required');
+  if (!allowed.rowCount) throw new Error(denialMessage);
 }
 
 /** One authority check for both the commanding human and phone operations. */
@@ -67,7 +67,7 @@ export async function requireWebhookAdmin(db: SqlDatabase, roomId: string, viewe
      ORDER BY command.created_at DESC LIMIT 1`, [roomId, command.agentId, command.requestId],
   )).rows[0]?.author_id : undefined);
   if (!human) throw new Error('Workspace admin required');
-  await requireScheduledWorkManager(db, roomId, human, Boolean(command));
+  await requireScheduledWorkManager(db, roomId, human, Boolean(command), 'Workspace admin required');
   return human!;
 }
 

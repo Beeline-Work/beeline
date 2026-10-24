@@ -75,7 +75,7 @@ for (const [index, directory] of [androidDir, webDir, desktopDir].entries()) {
   }
   md += '\nBlank area during fling: not instrumented; no zero-blank-area claim. Memory growth across this short experiment does not by itself prove a leak.\n\n';
 }
-md += '## Native iOS\n\n| Status | Dependency |\n| --- | --- |\n| Pending | Separate owner follow-up for the single native timing run; excluded from this delivery pass by the commander. BrowserStack testing time must be restored. |\n\n';
+md += '## Native iOS\n\niOS skipped by owner decision; Android is the reference.\n\n';
 md += '## Ranked measured costs\n\nThe ranking uses pooled animation-interval p95 within each platform. It identifies expensive scenarios; it does not assign CPU time to individual functions. Platform hardware and rendering backends differ, so do not read this as a device comparison.\n\n';
 for(const platform of [...new Set(costs.map(c=>c.platform))]) {
   md += `### ${platform}\n\n| Rank | Scenario | p95 interval ms | Missed opportunities % | Median row commits |\n| --- | --- | ---: | ---: | ---: |\n`;

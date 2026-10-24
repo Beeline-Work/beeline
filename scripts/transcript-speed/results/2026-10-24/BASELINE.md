@@ -121,9 +121,7 @@ Blank area during fling: not instrumented; no zero-blank-area claim. Memory grow
 
 ## Native iOS
 
-| Status | Dependency |
-| --- | --- |
-| Pending | Separate owner follow-up for the single native timing run; excluded from this delivery pass by the commander. BrowserStack testing time must be restored. |
+iOS skipped by owner decision; Android is the reference.
 
 ## Ranked measured costs
 

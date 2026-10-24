@@ -1,7 +1,7 @@
 # Transcript speed harness
 
 Measurement fixtures and drivers for the real Beeline Room UI. No product speed
-fixes. The single native iOS timing run is pending separate owner follow-up; it is excluded from this delivery pass by the commander.
+fixes. iOS skipped by owner decision; Android is the reference.
 
 ## Local fixture
 

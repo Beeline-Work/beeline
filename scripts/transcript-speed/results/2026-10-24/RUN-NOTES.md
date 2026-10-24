@@ -1,6 +1,6 @@
 # Capture status and reproduction
 
-Android release, narrow production web and packaged Tauri baselines are captured. See [platform tables and measured ranking](BASELINE.md). Ruby directed that the single native iOS timing run remain pending separate owner follow-up and not block this delivery pass.
+Android release, narrow production web and packaged Tauri baselines are captured. See [platform tables and measured ranking](BASELINE.md). iOS skipped by owner decision; Android is the reference.
 
 ## Retained evidence and repeat command
 
@@ -36,12 +36,6 @@ Blank-area measurements and total hook instrumentation overhead remain unavailab
 
 Local fingerprint validation previously failed on both this branch and clean main (`735d7a8a5`) using the same installed dependencies. Retained `fingerprint-*.txt` files contain exact outputs. Checkout-dependent hashes differ; this demonstrates the local failure also occurs on main, not identical hashes. No runtime pins or release configuration were changed. The original PR head passed hosted native fingerprint checks.
 
-## Native iOS — pending separate follow-up
+## Native iOS
 
-The owner approved the BrowserStack host change, and vault metadata confirms `hub-cloud.browserstack.com` is allowed. The expired approval was not resumed. Vault authentication and Expo EAS build discovery succeeded; recent apps returned no results and the plan endpoint reported Free. Hub session availability returned `POST /v1/vault/use → 504 timeout`. Native IPA upload returned HTTP 403:
-
-```text
-[BROWSERSTACK_TESTING_TIME_LIMIT_EXHAUSTED]App Automate testing time has expired. Contact BrowserStack Support at https://www.browserstack.com/contact for extending your Free Trial.
-```
-
-No native iOS timing is claimed. Ruby owns follow-up with the owner. Restore account testing time before the single fixture run; an existing IPA's availability does not establish that it contains this harness.
+iOS skipped by owner decision; Android is the reference.

@@ -750,7 +750,7 @@ describe('90-second first silence from presence', () => {
       expect(await failureLine(database, requestId)).toBeTruthy();
     });
     expect(await failureLine(database, requestId)).toEqual({
-      text: '@candy could not answer · the turn stalled. Resending your message.',
+      text: expect.stringMatching(/no turn receipt for \d+ seconds; the helper disconnected\. Resending your message\./),
       silence: 'hiccup',
       state: 'failed',
     });
@@ -1031,6 +1031,31 @@ describe('silence detector ownership', () => {
     });
     expect(await failureLine(database, requestId)).toBeUndefined();
     expect(await commandState(database, command.id)).toMatchObject({ state: 'complete', hiccup_attempts: 0 });
+  });
+
+  it.each(['done', 'blocked', 'stale-done', 'later-prose'])('Reproduction reported-stall: preserves only a done report from this generation (%s)', async outcome => {
+    const requestId = '7'.repeat(63) + 'b';
+    const command = await ask(database, requestId);
+    await database.query(`UPDATE agent_commands SET report_outcome=$2,
+      private_payload=$3::jsonb WHERE id=$1`, [command.id, outcome === 'blocked' ? 'blocked' : 'done',
+        JSON.stringify({ reportedGenerationId: outcome === 'stale-done' ? 'old-generation' : 'g1',
+          ...(outcome === 'later-prose' ? { reportedOutcome: null } : {}) })]);
+    await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+      VALUES($1,$2,$3,'working','g1') ON CONFLICT(room_id,request_id,agent_id)
+      DO UPDATE SET status='working',generation_id='g1'`, [ROOM, requestId, AGENT]);
+    await noteFirstSilence(database, new LiveHub(), {
+      roomId: ROOM, requestId, agentId: AGENT, generationId: 'g1',
+      reason: 'no turn receipt for 90 seconds; the helper stopped reporting this turn', reasonKind: 'hiccup', stalled: true,
+    });
+    const turn = (await database.query(`SELECT status FROM agent_turns WHERE request_id=$1`, [requestId])).rows[0];
+    if (outcome === 'done') {
+      expect(turn).toEqual({ status: 'complete' });
+      expect(await commandState(database, command.id)).toMatchObject({ state: 'complete', hiccup_attempts: 0 });
+      expect(await failureLine(database, requestId)).toBeUndefined();
+    } else {
+      expect(turn).toEqual({ status: 'failed' });
+      expect(await commandState(database, command.id)).toMatchObject({ state: 'pending', hiccup_attempts: 1 });
+    }
   });
 
   it('does not reopen a completed command when a stale stall detector finishes', async () => {

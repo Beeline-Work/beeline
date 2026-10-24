@@ -1,6 +1,7 @@
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { AppState } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
+import equal from 'fast-deep-equal';
 import { SurfaceRefreshScheduler, isChatListView, isRoomView, type ChatListView, type SurfaceCacheAddress } from '@beeline/buzz-client';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { subscribeClientReset } from '@/sync/client-reset';
@@ -251,23 +252,48 @@ export function chatListSnapshot(key: ChatListKey): ChatListView | null {
   return mobileSurfaceCache.peek(addressOf(key), isChatListView);
 }
 export function refreshChatList(key: ChatListKey): void { stores.get(idOf(key))?.force(); }
-export type UseChatListOptions = { readonly visible?: () => boolean; readonly onError?: (reason: unknown) => void };
+/** Transcript headers, mentions and forwarding do not display deck previews. */
+function sameTranscriptContext(before: ChatListView | null, after: ChatListView | null, roomId: string): boolean {
+  if (before === after) return true;
+  if (!before || !after || before.chats.length !== after.chats.length ||
+      !equal(before.workspace, after.workspace) || !equal(before.viewer, after.viewer)) return false;
+  const byId = new Map(after.chats.map((item) => [item.room.id, item]));
+  return before.chats.every((item) => {
+    const next = byId.get(item.room.id);
+    return next !== undefined && equal(item.room, next.room) &&
+      item.repositoryName === next.repositoryName && equal(item.directMessage, next.directMessage) &&
+      (item.room.id !== roomId ||
+        (item.agentState === next.agentState && equal(item.voiceCall, next.voiceCall)));
+  });
+}
+
+export type UseChatListOptions = { readonly visible?: () => boolean; readonly onError?: (reason: unknown) => void;
+  readonly transcriptRoomId?: string };
 export function useChatList(key: ChatListKey | null, options: UseChatListOptions = {}): ChatListView | null {
   const [value, setValue] = useState<ChatListView | null>(null);
+  const painted = useRef<ChatListView | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   const id = key ? idOf(key) : null;
   useEffect(() => {
-    if (!key) { setValue(null); return; }
+    if (!key) { painted.current = null; setValue(null); return; }
     const handle = acquireChatList(key, {
       visible: () => optionsRef.current.visible?.() ?? true,
       onError: (reason) => optionsRef.current.onError?.(reason),
     });
-    setValue(handle.current());
-    const stop = handle.subscribe(() => setValue(handle.current()));
+    const paint = () => {
+      const next = handle.current();
+      const roomId = optionsRef.current.transcriptRoomId;
+      if (roomId && sameTranscriptContext(painted.current, next, roomId)) return;
+      painted.current = next;
+      setValue(next);
+    };
+    paint();
+    const stop = handle.subscribe(paint);
     handle.catchUp();
     return () => { stop(); handle.release(); };
   }, [id]);
-  return value;
+  // Other local interactions still read the newest canonical ordering and DTO.
+  return options.transcriptRoomId && key ? liveChatList(key) ?? value : value;
 }
 export const resetChatListStoresForTest = resetStores;

@@ -316,10 +316,15 @@ export function useTrayList(workspaceId: string | null | undefined) {
     bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next };
 }
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
-  const entry = useEntry(workspaceId);
+  useEffect(() => { void resolveViewer(); }, []);
+  // A badge observes its number, not every replacement of the Tray's rows.
+  const count = useSyncExternalStore(subscribe, () => {
+    const entry = workspaceId ? current(workspaceId)?.entry : undefined;
+    return entry ? visibleNeeds(entry)?.length ?? null : null;
+  });
   const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
   useEffect(() => {
-    if (!workspaceId || refreshKey === undefined || entry.needs) return;
+    if (!workspaceId || refreshKey === undefined || count !== null) return;
     let cancelled = false;
     void (async () => {
       const slot = slotFor(await resolveViewer(), workspaceId);
@@ -332,8 +337,8 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
       } catch { /* Keep the previous projection. */ }
     })();
     return () => { cancelled = true; };
-  }, [workspaceId, refreshKey, entry.needs, generation]);
-  return visibleNeeds(entry)?.length ?? 0;
+  }, [workspaceId, refreshKey, count, generation]);
+  return count ?? 0;
 }
 
 /** Called only for viewable question cells in the focused Tray, after paint. */

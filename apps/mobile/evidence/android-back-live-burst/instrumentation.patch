@@ -1,0 +1,55 @@
+diff --git a/apps/mobile/metro.config.js b/apps/mobile/metro.config.js
+index 2791fa74c..4fb653fee 100644
+--- a/apps/mobile/metro.config.js
++++ b/apps/mobile/metro.config.js
+@@ -60,4 +60,5 @@ config.transformer.getTransformOptions = async () => ({
+   },
+ });
+
++config.maxWorkers = 2;
+ module.exports = config;
+diff --git a/apps/mobile/sources/buzz/latency-frame-trace.ts b/apps/mobile/sources/buzz/latency-frame-trace.ts
+index ee26e7d9e..89b513e3c 100644
+--- a/apps/mobile/sources/buzz/latency-frame-trace.ts
++++ b/apps/mobile/sources/buzz/latency-frame-trace.ts
+@@ -51,3 +51,14 @@ export function markLatencyRouteFrame(route: string, phase: 'meaningful-frame' |
+   if (!latencyFrameTraceEnabled) return;
+   requestAnimationFrame(() => mark({ kind: 'route', phase, route }));
+ }
++
++// Local diagnostic instrument; removed after capture.
++if (latencyFrameTraceEnabled) {
++  let previousTick = performance.now();
++  setInterval(() => {
++    const now = performance.now();
++    const elapsed = now - previousTick;
++    previousTick = now;
++    if (elapsed > 65) console.warn('[BACK_JS_GAP] ' + JSON.stringify({at: Date.now(), elapsed, excess: elapsed - 16}));
++  }, 16);
++}
+diff --git a/apps/mobile/sources/sync/transport/live-connection.ts b/apps/mobile/sources/sync/transport/live-connection.ts
+index de003822c..30516d951 100644
+--- a/apps/mobile/sources/sync/transport/live-connection.ts
++++ b/apps/mobile/sources/sync/transport/live-connection.ts
+@@ -471,7 +471,11 @@ export class LiveConnection {
+           return;
+         }
+         noteLiveFrame();
++        const diagnosticStart = performance.now();
++        if (process.env.EXPO_PUBLIC_LATENCY_RIG_TRACE === '1') diagnosticFrames.push({at: Date.now(), type: live.type});
+         this.dispatch(live, next);
++        if (process.env.EXPO_PUBLIC_LATENCY_RIG_TRACE === '1' && performance.now() - diagnosticStart > 8)
++          console.warn('[BACK_EVENT_COST] ' + JSON.stringify({at: Date.now(), type: live.type, elapsed: performance.now() - diagnosticStart}));
+       };
+       next.onclose = () => {
+         clearTimeout(connectTimer);
+@@ -759,3 +763,9 @@ export function resetSharedLiveConnection(): void {
+   shared?.dispose();
+   shared = undefined;
+ }
++
++// Local diagnostic instrument; removed after capture.
++const diagnosticFrames: Array<{at: number; type: string}> = [];
++if (process.env.EXPO_PUBLIC_LATENCY_RIG_TRACE === '1') setInterval(() => {
++  if (diagnosticFrames.length) console.warn('[BACK_EVENT_BATCH] ' + JSON.stringify(diagnosticFrames.splice(0)));
++}, 1000);

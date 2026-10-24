@@ -776,6 +776,35 @@ describe('Needs-you badge and tray', () => {
     expect(pair()).toBe('1:1');
   });
 
+  it('BACK-BURST-1: leaves count badges idle when live rows keep the same count', async () => {
+    serveNeeds({ needs: [] });
+    let badgeRenders = 0;
+    function CountBadge() {
+      badgeRenders += 1;
+      return React.createElement('Text', { testID: 'count-only' }, useNeedsYouCount('ws', 1));
+    }
+    function TrayRows() {
+      const { needs } = useTrayList('ws');
+      return React.createElement('Text', { testID: 'live-rows' }, needs?.map(item => item.text).join('|'));
+    }
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<><CountBadge /><TrayRows /></>); });
+    mountedTrees.push(tree);
+    badgeRenders = 0;
+    for (let index = 0; index < 25; index += 1) {
+      await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 0, items: [] }));
+    }
+    expect(badgeRenders).toBe(0);
+    await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 1,
+      items: [need({ messageId: 'ask-2', roomId: 'room-2', text: 'First question?' })] as never }));
+    expect(tree.root.findByProps({ testID: 'count-only' }).props.children).toBe(1);
+    badgeRenders = 0;
+    await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 1,
+      items: [need({ messageId: 'ask-2', roomId: 'room-2', text: 'Updated question?' })] as never }));
+    expect(badgeRenders).toBe(0);
+    expect(tree.root.findByProps({ testID: 'live-rows' }).props.children).toBe('Updated question?');
+  });
+
   it('shares concurrent badge reads and replays live rows that arrive during the read', async () => {
     let answer!: (value: { items: unknown[] }) => void;
     phoneOperation.mockImplementation((name: string) => {

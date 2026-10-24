@@ -17,32 +17,29 @@ vi.mock('react-native', async () => {
     View: host('View'),
   };
 });
+// Styles resolve against whichever real theme is current, so one render per theme.
+const activeTheme = vi.hoisted(() => ({ buzz: {} as any }));
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     hairlineWidth: 1,
     create: (factory: any) =>
-      factory({
-        buzz: {
-          accent: '#b08a4a',
-          bgBase: '#14091a',
-          border: '#333',
-          ledgerQuiet: '#90909b',
-          textPrimary: '#f0f0f3',
-          textInverted: '#111111',
-          space: { sm: 8, md: 16 },
-          type: { meta: {}, body: {}, sectionHead: {} },
-        },
-      }),
+      new Proxy({}, { get: (_target, key) => factory(activeTheme)[key] }),
   },
 }));
 vi.mock('@expo/vector-icons', async () => {
   const ReactModule = await import('react');
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
 });
-vi.mock('react-native-svg', async () => { const R = await import('react'); const h = (p: any) => R.createElement('Svg', p, p.children); return { default: h, Path: h }; });
+vi.mock('react-native-svg', async () => { const R = await import('react'); const h = (p: any) => R.createElement('Svg', p, p.children); return { default: h, Path: h, Circle: h, Defs: h, Mask: h, Rect: h }; });
 vi.mock('./Button', async () => { const R = await import('react'); return { Button: (p: any) => R.createElement('Button', p, p.icon) }; });
+vi.mock('./IndexRow', async () => { const R = await import('react'); return { InlineRow: (p: any) => R.createElement('View', p, p.children) }; });
+vi.mock('@/components/buzz/HullDialog', async () => { const R = await import('react'); return { HullDialogInput: (p: any) => R.createElement('TextInput', p) }; });
+import { beelineThemes } from '@/buzz/groknight';
+import { RoomListToolbar } from './RoomListToolbar';
 import { TrayGlyph } from './TrayGlyph';
+import { MembersAgentsGlyph } from './MembersAgentsGlyph';
 
+activeTheme.buzz = beelineThemes.obsidian;
 const originalConsoleError = console.error;
 beforeAll(() => {
   (
@@ -91,5 +88,63 @@ describe('TrayGlyph primary-row action', () => {
     const tree = render({ desktop: true, onTray });
     act(() => tree.root.findByProps({ testID: 'desktop-tray' }).props.onPress());
     expect(onTray).toHaveBeenCalledTimes(1);
+  });
+});
+
+const NEEDS_COUNT_SIZE = 17;
+
+function badgeText(tree: ReactTestRenderer) {
+  const text = tree.root.findByProps({ testID: 'tray-needs-you-count' }).findByType('Text' as never);
+  return Object.assign({}, ...[text.props.style].flat());
+}
+
+describe.each(['obsidian', 'bone'] as const)('Room list header colour in %s', (name) => {
+  const hull = beelineThemes[name];
+  beforeAll(() => { activeTheme.buzz = hull; });
+  afterAll(() => { activeTheme.buzz = beelineThemes.obsidian; });
+
+  // The Room list header passes its one quiet icon colour to every glyph.
+  function header(needsYouCount: number) {
+    let tree!: ReactTestRenderer;
+    act(() => {
+      tree = create(
+        <>
+          <MembersAgentsGlyph size={22} color={hull.ledgerQuiet} />
+          <TrayGlyph size={22} color={hull.ledgerQuiet} cutColor={hull.bgBase} onPress={() => undefined}
+            testID="workspace-tray" needsYouCount={needsYouCount} />
+          <RoomListToolbar filter="all" onFilter={() => undefined} query="" onQuery={() => undefined} />
+        </>,
+      );
+    });
+    return tree;
+  }
+  // Every ink colour the glyphs draw; black, white and none only shape the mask.
+  const strokes = (tree: ReactTestRenderer) =>
+    tree.root.findAllByType('Svg' as never)
+      .flatMap((node: any) => [node.props.stroke, node.props.fill])
+      .filter((ink: any) => ink && !['none', 'black', 'white'].includes(ink));
+
+  it('draws the agents, tray and search icons in the same quiet grey with an empty tray', () => {
+    const tree = header(0);
+    const search = tree.root.findByType('Ionicons' as never);
+    expect(search.props.color).toBe(hull.ledgerQuiet);
+    expect(new Set(strokes(tree))).toEqual(new Set([hull.ledgerQuiet]));
+    expect(tree.root.findAllByProps({ testID: 'tray-needs-you-count' })).toHaveLength(0);
+  });
+
+  it('keeps the tray grey and puts brass only on its count when items wait', () => {
+    const tree = header(1);
+    expect(new Set(strokes(tree))).toEqual(new Set([hull.ledgerQuiet]));
+    const circle = Object.assign({}, ...[tree.root.findByProps({ testID: 'tray-needs-you-count' }).props.style].flat());
+    expect(circle.backgroundColor).toBe(hull.accent);
+    expect(circle.height).toBe(NEEDS_COUNT_SIZE);
+  });
+
+  it('centres the count digit in its circle', () => {
+    const text = badgeText(header(1));
+    expect(text.lineHeight).toBe(NEEDS_COUNT_SIZE);
+    expect(text.includeFontPadding).toBe(false);
+    expect(text.textAlignVertical).toBe('center');
+    expect(text.color).toBe(hull.textInverted);
   });
 });

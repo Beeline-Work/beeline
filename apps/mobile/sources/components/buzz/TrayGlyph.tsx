@@ -86,5 +86,11 @@ const styles = StyleSheet.create((theme) => ({
     letterSpacing: 0,
     color: theme.buzz.textInverted,
     fontVariant: ['tabular-nums'],
+    // One line box the height of the circle, with Android's font padding off,
+    // so the digit sits on the circle's centre instead of riding high.
+    lineHeight: NEEDS_COUNT_SIZE,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+    textAlign: 'center',
   },
 }));

@@ -1196,7 +1196,7 @@ const styles = StyleSheet.create((theme) => {
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
     // and they touch, so their centres stay one complete touch target apart.
     membersGlyph: { color: hull.ledgerQuiet },
-    trayGlyph: { color: hull.accent, backgroundColor: hull.bgBase },
+    trayGlyph: { color: hull.ledgerQuiet, backgroundColor: hull.bgBase },
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',

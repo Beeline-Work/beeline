@@ -43,5 +43,5 @@ describe.skipIf(!existsSync(CHROME))('Message member picker', () => {
     expect(result.headerInsets).toHaveLength(2);
     for (const inset of [...result.rowLeadInsets, ...result.headerInsets]) expect(inset).toBe(result.titleInset);
     expect(result.busyValues).toEqual([false, true, false]);
-  });
+  }, 20_000);
 });

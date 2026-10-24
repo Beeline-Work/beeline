@@ -233,3 +233,14 @@ it('Reproduction 1: phone DM token rotation preserves HTTP delivery for a non-ad
     expect((await post()).status).toBe(403);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
 });
+
+it('review reproduction: DM human can rotate and the resulting webhook still fires', async () => {
+ const {db, create, phone} = await fixture();
+ try {
+  const hook=await create();
+  await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [ROOM, JSON.stringify([MEMBER, AGENT])]);
+  const {token}=await phone.execute('rotateWebhookToken', {roomId:ROOM,subscriptionId:hook.id}, MEMBER);
+  const result=await ingestSubscriptionWebhook(db, hook.id, Buffer.from('{}'), {authorization:`Bearer ${token}`});
+  expect(result).toEqual({status:200,outcome:'woke'});
+ } finally {await db.close();}
+});

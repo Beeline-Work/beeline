@@ -575,10 +575,10 @@ export class MonolithRoomTurnLoop {
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
 
-  /** Called by the daemon's one slow workspace reconciliation sweep. */
+  /** Wake the intake after reconciliation or a storage lease release. */
   requestReconciliation(): void {
+    // Intake owns this stable notifier and clears it when it exits.
     this.wakeIntake?.();
-    this.wakeIntake = undefined;
   }
   private client?: AcpClient;
   private claudeLoginWatch?: { close(): void };
@@ -1706,7 +1706,6 @@ export class MonolithRoomTurnLoop {
         if (this.activeTurn === active) {
           this.activeTurn = undefined;
           this.wakeIntake?.();
-          this.wakeIntake = undefined;
         }
       });
   }

@@ -131,7 +131,7 @@ export type PhoneOperationMap = {
   /** One run with its pinned contract and ordered handoff history, for the run page's graph. */
   listWorkflowDefinitions: { input: RoomInput; output: { readonly workflows: readonly { readonly name: string }[] } };
   readWorkflowDefinition: { input: RoomInput & { readonly name: string }; output: { readonly contract: WorkflowReadContract; readonly runs: readonly WorkflowRunSummaryView[] } };
-  /** A human Room/Workspace admin starts a run directly, attributed to that human (`startKind: 'human_admin'`). */
+  /** A human in the Room starts a run directly, attributed to that human (`startKind: 'human_admin'`). */
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };

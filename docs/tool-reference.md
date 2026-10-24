@@ -51,8 +51,8 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 | `fetch_image`                                   | Everywhere        | Download one photograph into scratch for a data: embed        |
 | `download_attachment`                           | Everywhere        | Download one message attachment into scratch by its 📎 id     |
 | `create_schedule`, `list_schedules`             | Everywhere        | Run a prompt again later — interval minutes or a 5-field cron |
-| `update_schedule`, `delete_schedule`            | Everywhere        | Edit or delete any agent-created schedule in the Room         |
-| `request_grant`                                 | Everywhere        | Ask the correct Room manager or resource owner for access     |
+| `update_schedule`, `delete_schedule`            | Everywhere        | Edit or delete an agent schedule; workspace admins only       |
+| `request_grant`                                 | Everywhere        | Ask a workspace admin or the resource owner for access        |
 | `run_granted_command`                           | Everywhere        | Run a command an approved grant covers, outside the sandbox   |
 | `save_memory`, `update_memory`, `delete_memory` | Live memory       | Save, replace, or delete one sourced fact at its version      |
 | `report_memory_used`                            | Live memory       | Report the memory items this turn's answer relied on          |

@@ -414,6 +414,8 @@ describe('readWorkflowRun', () => {
       description: 'A workflow someone named corner',
     };
     await saveWorkflow(database, await command(ROOM, TRIAGER), { contract: describedWorkflow(saved)});
+    // Changing a saved workflow is workspace-admin-only.
+    await database.query(`UPDATE memberships SET role='admin' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, OWNER]);
     await saveWorkflow(database, await command(ROOM, TRIAGER), {
       contract: describedWorkflow({ ...saved, description: 'A workflow someone named corner, again' }),
     });
@@ -771,6 +773,8 @@ describe('visit output through daemon completion and phone GET', () => {
     const held = await wake(runId);
     await final(held, 'Reply before handoff.');
     await handoff(database, await command(CORNER, TRIAGER), { runId, outcome: 'nothing_new', contents: {} });
+    // Changing a saved workflow is workspace-admin-only.
+    await database.query(`UPDATE memberships SET role='admin' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, OWNER]);
     await saveWorkflow(database, await command(CORNER, TRIAGER), { contract: {
       ...(describedWorkflow(TRIAGE) as object), summary: 'A revised overview.',
     } });

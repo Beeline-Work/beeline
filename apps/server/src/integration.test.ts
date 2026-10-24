@@ -679,6 +679,9 @@ describe('monolith integration', () => {
       'offerConnector',
       'askRoomChoice',
       'openRoomPoll',
+      // Schedule edits and deletes are judged by the person behind the turn.
+      'updateAgentSchedule',
+      'deleteAgentSchedule',
     ]);
     const who = await auth.authenticateDaemon(token);
     if (who && typeof input.roomId === 'string' && writes.has(name)) {
@@ -1425,8 +1428,8 @@ describe('monolith integration', () => {
       ['deleteRoom', { roomId: ROOM }],
     ] as const) {
       const response = await operation(name, input, memberToken);
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: 'workspace manager required' });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: 'workspace admins only' });
     }
 
     expect(
@@ -1755,7 +1758,7 @@ describe('monolith integration', () => {
     expect(
       (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, bobToken))
         .status,
-    ).toBe(400);
+    ).toBe(403);
     expect(
       (await operation('updateRoom', { roomId: privateRoom.id, visibility: 'public' }, aliceToken))
         .status,
@@ -2588,7 +2591,7 @@ describe('monolith integration', () => {
     expect(cleared.messages.find((message) => message.id === messageId)?.reactions).toBeUndefined();
   });
 
-  it('lets an author or Room manager delete a message while retaining its transcript record', async () => {
+  it('lets an author or Workspace manager delete a message while retaining its transcript record', async () => {
     const authorMessageId = 'd'.repeat(64);
     await phone.execute(
       'sendRoomMessage',
@@ -8267,7 +8270,7 @@ describe('monolith integration', () => {
   });
 
   it.each(['owner', 'admin'] as const)(
-    'lets a current Room %s stop another requester’s turn',
+    'lets anyone in the Room stop another requester’s turn, whatever their Room role (%s)',
     async (role) => {
       const requestId = 'e'.repeat(64);
       const aliceToken = await phoneToken('alice');
@@ -8310,7 +8313,7 @@ describe('monolith integration', () => {
     },
   );
 
-  it('does not let a demoted Room manager stop another requester’s turn', async () => {
+  it('lets a Workspace admin stop another requester’s turn whatever their Room role', async () => {
     const requestId = 'e'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -8330,10 +8333,10 @@ describe('monolith integration', () => {
     expect(
       (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT }, token))
         .status,
-    ).toBe(403);
+    ).toBe(204);
   });
 
-  it("stops a running turn at the asker's word, and at nobody else's", async () => {
+  it("stops a running turn at a Room member's word, but not a spectator's", async () => {
     const requestId = '9'.repeat(64);
     await operation('sendRoomMessage', {
       roomId: ROOM,
@@ -8343,14 +8346,14 @@ describe('monolith integration', () => {
     });
     await daemonOperation('postAgentTurnReceipt', { roomId: ROOM, requestId, status: 'working' });
 
-    // The running turn names its requester, so the phone can offer the control
-    // to exactly one person without reading the transcript.
+    // The running turn names its requester for the transcript; the stop
+    // control itself is open to anyone who may act in the Room.
     const working = await new PhoneService(database, origin).readRoom(ROOM, HUMAN);
     expect(working!.latestAgentTurns).toContainEqual(
       expect.objectContaining({ requestId, status: 'working', requestedBy: HUMAN }),
     );
 
-    // Anyone but the asker is refused, and the turn keeps running.
+    // A Workspace spectator is refused, and the turn keeps running.
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     await operation('addWorkspaceMember', {
@@ -8359,6 +8362,10 @@ describe('monolith integration', () => {
       role: 'member',
     });
     await operation('addRoomMember', { roomId: ROOM, memberId: aliceId });
+    await database.query(
+      `UPDATE memberships SET role='spectator' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
+      [WORKSPACE, aliceId],
+    );
     const refused = await operation(
       'cancelAgentTurn',
       { roomId: ROOM, requestId, agentId: AGENT },
@@ -8374,7 +8381,7 @@ describe('monolith integration', () => {
       ).rows[0],
     ).toEqual({ status: 'working' });
 
-    // The asker's stop settles all three facts at once.
+    // A Room member's stop settles all three facts at once.
     expect(
       (await operation('cancelAgentTurn', { roomId: ROOM, requestId, agentId: AGENT })).status,
     ).toBe(204);
@@ -8821,7 +8828,7 @@ describe('monolith integration', () => {
       [WORKSPACE, memberId, ROOM],
     );
     const refusedUnassign = await operation('removeRoomRepository', { roomId: ROOM }, memberToken);
-    expect(refusedUnassign.status).toBe(400);
+    expect(refusedUnassign.status).toBe(403);
 
     const unassigned = await request('/v1/phone/operations/removeRoomRepository', 'POST', {
       roomId: ROOM,
@@ -13322,7 +13329,7 @@ describe('monolith integration', () => {
        VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
       [WORKSPACE, memberId, ROOM],
     );
-    expect((await operation('listRoomWorkflows', { roomId: ROOM }, memberToken)).status).toBe(400);
+    expect((await operation('listRoomWorkflows', { roomId: ROOM }, memberToken)).status).toBe(403);
     expect(
       (
         await operation(
@@ -13331,7 +13338,7 @@ describe('monolith integration', () => {
           memberToken,
         )
       ).status,
-    ).toBe(400);
+    ).toBe(403);
 
     // An agent never gains this phone authority, even if corrupt data assigns it an admin role.
     await database.query(
@@ -13340,7 +13347,7 @@ describe('monolith integration', () => {
     );
     await expect(
       phone.execute('dispatchRoomWorkflow', { roomId: ROOM, workflowName: 'Release' }, AGENT),
-    ).rejects.toThrow('room manager required');
+    ).rejects.toThrow('workspace admins only');
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
 

@@ -175,14 +175,11 @@ describe('composer ack presentation', () => {
     ).toEqual({ label: 'Agent thinking…' });
   });
 
-  it('offers the stop only to the person who asked, and never on the sending… bridge', () => {
+  it('offers the stop to anyone who may act in the Room, and never on the sending… bridge', () => {
     const agent = 'aa'.repeat(32);
     const asker = 'bb'.repeat(32);
     const bystander = 'cc'.repeat(32);
     const turn = {
-      // A Corner's channel-local receipt is presented through the same
-      // requester-only control as a Room's; its parent request does not
-      // weaken that authority at the phone boundary.
       isCorner: true,
       activeTurnPubkey: agent,
       activeTurnAgentPubkey: agent,
@@ -192,25 +189,17 @@ describe('composer ack presentation', () => {
       now: NOW,
     } as const;
 
-    expect(selectComposerAckPresentation({ ...turn, viewerPubkey: asker })?.stop).toEqual({
-      agentPubkey: agent,
-      requestId: 'ask-1',
-    });
-    // Everyone else is a spectator, whatever their standing in the Workspace.
+    // Any member who may act here stops anyone's turn, as `cancelAgentTurn` allows.
+    for (const viewerPubkey of [asker, bystander])
+      expect(
+        selectComposerAckPresentation({ ...turn, viewerPubkey, viewerCanSend: true })?.stop,
+      ).toEqual({ agentPubkey: agent, requestId: 'ask-1' });
+    // A spectator, or a viewer the server has not named, gets no control.
     expect(
-      selectComposerAckPresentation({ ...turn, viewerPubkey: bystander })?.stop,
-    ).toBeUndefined();
-    // Both halves must be known: an unattributed turn offers the control to
-    // nobody rather than to everybody.
-    expect(
-      selectComposerAckPresentation({
-        ...turn,
-        activeTurnRequestedBy: undefined,
-        viewerPubkey: asker,
-      })?.stop,
+      selectComposerAckPresentation({ ...turn, viewerPubkey: asker, viewerCanSend: false })?.stop,
     ).toBeUndefined();
     expect(
-      selectComposerAckPresentation({ ...turn, viewerPubkey: undefined })?.stop,
+      selectComposerAckPresentation({ ...turn, viewerPubkey: undefined, viewerCanSend: true })?.stop,
     ).toBeUndefined();
     // The local bridge is not a turn yet: nothing is running to be stopped.
     expect(
@@ -219,6 +208,7 @@ describe('composer ack presentation', () => {
         pendingAckSentAt: NOW,
         now: NOW,
         viewerPubkey: asker,
+        viewerCanSend: true,
       }),
     ).toEqual({ label: 'sending…' });
   });
@@ -253,16 +243,11 @@ describe('composer ack presentation', () => {
     ).toBeUndefined();
   });
 
-  it('names the requester test once, for the phone and the server to agree on', () => {
-    expect(viewerMayStopTurn('aa', 'aa')).toBe(true);
-    expect(viewerMayStopTurn('aa', 'bb')).toBe(false);
-    expect(viewerMayStopTurn('aa', 'bb', 'owner')).toBe(true);
-    expect(viewerMayStopTurn('aa', 'bb', 'admin')).toBe(true);
-    expect(viewerMayStopTurn('aa', 'bb', 'member')).toBe(false);
-    expect(viewerMayStopTurn(undefined, 'bb', 'owner')).toBe(false);
-    expect(viewerMayStopTurn(undefined, 'aa')).toBe(false);
-    expect(viewerMayStopTurn('aa', undefined)).toBe(false);
-    expect(viewerMayStopTurn(undefined, undefined)).toBe(false);
+  it('offers stop to anyone who may act in the Room, as the server allows', () => {
+    expect(viewerMayStopTurn('aa', true)).toBe(true);
+    expect(viewerMayStopTurn('aa', false)).toBe(false);
+    expect(viewerMayStopTurn('aa')).toBe(false);
+    expect(viewerMayStopTurn(undefined, true)).toBe(false);
   });
 
   it('recognizes a terminal receipt for the sent message after the agent has replied', () => {

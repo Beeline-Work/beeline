@@ -3,7 +3,7 @@ import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js'
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
-import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
+import { humanRoomAdmin, humanRoomMember, WorkflowAuthorizationError } from './workflow-admin.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   shortRunId,
@@ -492,7 +492,7 @@ async function resolveRunOwner(
   return root.person ? root.author_id : null;
 }
 
-/** The run owner while they are still in the Room, otherwise the Room's human admins. */
+/** The run owner while they are still in the Room, otherwise the Workspace's human admins. */
 async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: string | null): Promise<string[]> {
     db = new CornerAccessDatabase(db);
   if (ownerId) {
@@ -505,7 +505,7 @@ async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: str
   const admins = await db.query<{ id: string }>(
     `SELECT DISTINCT identity.id FROM rooms room
      JOIN memberships member ON member.workspace_id=room.workspace_id
-       AND (member.room_id=room.id OR member.room_id IS NULL)
+       AND member.room_id IS NULL
        AND member.removed_at IS NULL AND member.role IN ('owner','admin')
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='human'
        AND NOT COALESCE(identity.hidden_from_roster,false)
@@ -1184,9 +1184,17 @@ async function failOver(
 async function authorizeWorkflowControl(
   db: SqlDatabase,
   command: CommandRow,
-  input: { requesterId: string | null; agentIds: string[]; authority: string; action: string },
+  input: {
+    requesterId: string | null;
+    agentIds: string[];
+    authority: string;
+    action: string;
+    /** Any human in the Room may take this action (cancelling a run). */
+    roomMembers?: boolean;
+  },
 ): Promise<string> {
   const actorId = await workflowRequester(db, command);
+  if (input.roomMembers && (await humanRoomMember(db, command.room_id, actorId))) return actorId;
   const roleOwners = await db.query(
     `SELECT 1 FROM agents WHERE agent_id=ANY($1::text[]) AND owner_id=$2`,
     [input.agentIds, actorId],
@@ -1196,7 +1204,7 @@ async function authorizeWorkflowControl(
     !(await humanRoomAdmin(db, command.room_id, actorId))
   ) {
     throw new WorkflowAuthorizationError(
-      `only ${input.authority}, or a human Room admin can ${input.action}`,
+      `only ${input.authority}, or a workspace admin can ${input.action}`,
       403,
     );
   }
@@ -1208,13 +1216,15 @@ async function authorizeRunControl(
   command: CommandRow,
   run: WorkflowRunCard,
   action: string,
+  roomMembers = false,
 ): Promise<string> {
   const start = await loadRunStart(db, command.room_id, run.runId);
   return authorizeWorkflowControl(db, command, {
     requesterId: start.card.requesterId ?? start.authorId,
     agentIds: [...Object.values(run.roleBindings), ...Object.values(start.card.roleAgents ?? {}).flat()],
-    authority: 'the run requester, a bound role owner',
+    authority: roomMembers ? 'a person in this Room, the run requester, a bound role owner' : 'the run requester, a bound role owner',
     action,
+    roomMembers,
   });
 }
 
@@ -1230,7 +1240,7 @@ export async function cancelWorkflowRun(
     const scope = await openRun(db, command.room_id, input.runId);
     input = { ...input, runId: scope.runId };
     const { run } = scope;
-    const actorId = await authorizeRunControl(db, command, run, 'cancel this run');
+    const actorId = await authorizeRunControl(db, command, run, 'cancel this run', true);
     if (scope.ended) throw new Error('this workflow run has already ended');
     const reason = input.reason.trim();
     await closeRun(db, scope, {
@@ -1801,6 +1811,26 @@ export async function saveWorkflow(
     );
     if (!member.rowCount)
       throw new Error('workflow saver must be a current agent member of this Room');
+    // Anyone may save a new workflow. Saving an active one unchanged is a
+    // no-op that writes nothing. Changing or reviving an existing saved
+    // workflow changes it for the whole Workspace, so only a human Workspace
+    // admin may. The revision lock is taken first, so a concurrent creation
+    // cannot slip between this read and the write.
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `workspace-skill:${room.workspace_id}:${contract.name}`,
+    ]);
+    const existing = (await db.query<{ unchanged: boolean; current_version: number }>(
+      `SELECT skill.state='active' AND version.markdown=$3 unchanged,skill.current_version
+       FROM workspace_skills skill
+       LEFT JOIN workspace_skill_versions version ON version.skill_id=skill.id
+         AND version.version=skill.current_version
+       WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
+       FOR UPDATE OF skill`,
+      [room.workspace_id, contract.name, markdown],
+    )).rows[0];
+    if (existing?.unchanged) return { slug: contract.name, version: existing.current_version };
+    if (existing && !(await humanRoomAdmin(db, command.room_id, await workflowRequester(db, command))))
+      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can change this saved workflow', 403);
     const { skillId, version } = await applySkillRevision(
       db,
       {
@@ -2155,23 +2185,18 @@ export async function archiveWorkflow(
       `SELECT workspace_id FROM rooms WHERE id=$1`, [command.room_id],
     )).rows[0];
     if (!room) throw new Error('workflow room not found');
-    // Archive has no run: the current save's source author is its requester;
-    // when that author is an agent, its human owner has the role-owner authority.
-    const skill = (await db.query<{ id: string; requester_id: string | null }>(
-      `SELECT skill.id,source.author_id requester_id FROM workspace_skills skill
-       JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
-       LEFT JOIN messages source ON source.id=version.source_message_ids[1] AND source.deleted_at IS NULL
+    // Archiving deletes a saved workflow for the whole Workspace, so only a
+    // human Workspace admin may do it; who saved it grants nothing.
+    const skill = (await db.query<{ id: string }>(
+      `SELECT skill.id FROM workspace_skills skill
        WHERE skill.workspace_id=$1 AND skill.slug=$2 AND skill.kind='workflow'
        FOR UPDATE OF skill`,
       [room.workspace_id, input.name],
     )).rows[0];
     if (!skill) return { slug: input.name, archived: false };
-    await authorizeWorkflowControl(db, command, {
-      requesterId: skill.requester_id,
-      agentIds: skill.requester_id ? [skill.requester_id] : [],
-      authority: 'the saved workflow requester, its agent owner',
-      action: 'archive this workflow',
-    });
+    const actorId = await workflowRequester(db, command);
+    if (!(await humanRoomAdmin(db, command.room_id, actorId)))
+      throw new WorkflowAuthorizationError('workspace admins only: only a workspace admin can archive this workflow', 403);
     const result = await db.query(
       `UPDATE workspace_skills SET state='stale',updated_at=now() WHERE id=$1 AND state='active'`,
       [skill.id],

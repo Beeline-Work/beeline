@@ -36,7 +36,8 @@ export type TurnProgressInput = {
   activeTurnRequestedBy?: string;
   /** The identity reading this Room. */
   viewerPubkey?: string;
-  viewerRole?: 'owner' | 'admin' | 'member' | 'spectator';
+  /** The server's statement that the viewer may act in this Room (`viewer.permissions.send`). */
+  viewerCanSend?: boolean;
 };
 
 /**
@@ -119,24 +120,15 @@ export type ComposerAckPresentation = {
   /** The server committed a new human command against this running turn. */
   received?: boolean;
   /**
-   * The coordinates a stop request names, present for the requester and
-   * current Room owners/admins. Other members see only the working line.
+   * The coordinates a stop request names, present for anyone who may act in
+   * the Room. Spectators see only the working line.
    */
   stop?: { agentPubkey: string; requestId: string };
 };
 
-/** The requester and current Room owners/admins may stop a running turn. */
-export function viewerMayStopTurn(
-  viewerPubkey: string | undefined,
-  requestedBy: string | undefined,
-  viewerRole?: 'owner' | 'admin' | 'member' | 'spectator',
-): boolean {
-  return Boolean(
-    viewerPubkey &&
-      (viewerRole === 'owner' ||
-        viewerRole === 'admin' ||
-        (requestedBy && viewerPubkey === requestedBy)),
-  );
+/** Anyone who may act in the Room may stop any running turn there (`cancelAgentTurn`). */
+export function viewerMayStopTurn(viewerPubkey: string | undefined, viewerCanSend?: boolean): boolean {
+  return Boolean(viewerPubkey && viewerCanSend);
 }
 
 function agentFromConversationIdentity(
@@ -214,11 +206,7 @@ export function selectComposerAckPresentation(
       // them. The local "sending…" bridge is not a turn yet: there is nothing
       // running to stop, and offering to stop it would be a lie about what the
       // press does.
-      const stoppable = viewerMayStopTurn(
-        input.viewerPubkey,
-        input.activeTurnRequestedBy,
-        input.viewerRole,
-      );
+      const stoppable = viewerMayStopTurn(input.viewerPubkey, input.viewerCanSend);
       return {
         label: `${subject} ${verb.gerund}…`,
         turnKey,

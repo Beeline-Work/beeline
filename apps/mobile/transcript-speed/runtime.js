@@ -27,8 +27,32 @@ globalThis.__transcriptSpeed = {
   end() {
     if (!sample) throw new Error('No transcript measurement running');
     cancelAnimationFrame(frame);
-    const result = { ...sample, endMs: performance.now() };
+    const result = { ...sample, endMs: performance.now(), build: globalThis.__transcriptBuild };
     sample = null;
     return result;
   },
 };
+
+// Explicit fixture build only. Polling stops for the complete measurement
+// window; the start acknowledgement and result upload are outside it.
+const control = process.env.EXPO_PUBLIC_TRANSCRIPT_CONTROL;
+if (control && /^http:\/\/(127\.0\.0\.1|10\.0\.2\.2):19886$/.test(control)) {
+  const post = (path, value) => fetch(`${control}/${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+  });
+  const loop = async () => {
+    try {
+      const command = await (await fetch(`${control}/next`)).json();
+      if (command && typeof command.id === 'string' && typeof command.name === 'string' &&
+          command.durationMs >= 500 && command.durationMs <= 60000) {
+        await post('started', { id: command.id });
+        globalThis.__transcriptSpeed.begin(command.name);
+        await new Promise(resolve => setTimeout(resolve, command.durationMs));
+        const result = globalThis.__transcriptSpeed.end();
+        await post('result', { id: command.id, sample: result });
+      }
+    } catch { /* The fixture driver may not be running yet. */ }
+    setTimeout(loop, 500);
+  };
+  setTimeout(loop, 500);
+}

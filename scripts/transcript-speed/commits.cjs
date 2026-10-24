@@ -6,6 +6,19 @@ module.exports = function ({ types: t }) {
       const target = file.endsWith('/chat/_chat-surface.tsx') ? 'BuzzChatSurface'
         : file.endsWith('/buzz/room-message-cell.tsx') ? 'RoomMessageCell' : null;
       if (!target) return;
+      const caller = state.file.opts.caller;
+      if (caller?.name !== 'metro') throw new Error('Measurement build requires the Metro Babel caller');
+      // Match babel-preset-expo's effective getReactCompiler(caller) decision.
+      const metadata = {
+        reactCompiler: caller.supportsReactCompiler ?? false,
+        platform: caller.platform,
+        engine: caller.engine ?? null,
+        checkoutSha: require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+        sourceDiffSha256: require('node:crypto').createHash('sha256').update(
+          require('node:child_process').execFileSync('git', ['diff', 'HEAD', '--', 'apps/mobile', 'scripts/transcript-speed'])).digest('hex'),
+      };
+      path.pushContainer('body', t.expressionStatement(t.assignmentExpression('=',
+        t.memberExpression(t.identifier('globalThis'), t.identifier('__transcriptBuild')), t.valueToNode(metadata))));
       let found = false;
       path.traverse({ Function(fn) {
         if (fn.node.id?.name !== target) return;

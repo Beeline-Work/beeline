@@ -1,7 +1,8 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
-import { rooms, workspace } from './fixture.mjs';
+import { rooms, workspace, corner } from './fixture.mjs';
+import { fixtureStimulus } from './stimulus.mjs';
 import { summarize, percentile } from './metrics.mjs';
 
 const { chromium } = await import(process.env.PLAYWRIGHT_CORE_PATH ?? '/home/lunchbox/gstack/node_modules/playwright-core/index.mjs');
@@ -9,6 +10,7 @@ const output = process.argv[2] ?? '/tmp/transcript-web-results';
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/home/lunchbox/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome', headless: true, args: ['--no-sandbox'] });
 const results = [];
+const stimulus = await fixtureStimulus();
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
   await page.goto('http://127.0.0.1:19882/review/transcript-fixture-local-only-36bbb7b4');
@@ -24,6 +26,18 @@ try {
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');
+  const open = async room => {
+    await page.goto(`http://127.0.0.1:19882/beeline/chat/${room}?communityId=${workspace}`);
+    await page.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
+    await page.waitForTimeout(1500);
+  };
+  const capture = async (name, repeat, action) => {
+    await page.evaluate(name => globalThis.__transcriptSpeed.begin(name), name);
+    await action();
+    await page.waitForTimeout(500);
+    const raw = await page.evaluate(() => globalThis.__transcriptSpeed.end());
+    results.push({ repeat, ...summarize(raw, refreshHz), raw });
+  };
   for (let repeat = 0; repeat < 3; repeat++) {
     const input = page.getByRole('textbox', { name: 'Message', exact: true });
     await input.fill('');
@@ -46,6 +60,28 @@ try {
     await page.waitForTimeout(500);
     const sample = await page.evaluate(() => globalThis.__transcriptSpeed.end());
     results.push({ repeat, ...summarize(sample, refreshHz), raw: sample });
+    await open(rooms[0]);
+    let incoming;
+    await capture('incoming', repeat, async () => {
+      incoming = await stimulus.incoming();
+      await page.getByText(incoming.text, { exact: true }).waitFor();
+    });
+    results.at(-1).visible = await page.getByText(incoming.text, { exact: true }).isVisible();
+    await open(corner);
+    await capture('concurrent-streams', repeat, async () => {
+      const streaming = stimulus.stream();
+      await page.getByText('Stream 0:', { exact: false }).first().waitFor();
+      await page.getByText('Stream 1:', { exact: false }).first().waitFor();
+      await streaming;
+    });
+    await open(rooms[0]);
+    const sent = `Web-settlement-${repeat}-${Date.now()}`;
+    await input.fill(sent);
+    await capture('optimistic-send', repeat, async () => {
+      await page.getByRole('button', { name: 'Send message', exact: true }).click();
+      await page.getByText(sent, { exact: true }).waitFor();
+    });
+    results.at(-1).serverSettled = await stimulus.settled(sent);
   }
   const metrics = (await cdp.send('Performance.getMetrics')).metrics;
   const record = {
@@ -65,4 +101,4 @@ try {
   await writeFile(`${output}/capture.json`, JSON.stringify(record, null, 2));
   await page.screenshot({ path: `${output}/screen.png` });
   console.log(JSON.stringify({ output, samples: results.length, typingRowCommitsP50: record.typingRowCommitsP50 }));
-} finally { await browser.close(); }
+} finally { await browser.close(); await stimulus.close(); }

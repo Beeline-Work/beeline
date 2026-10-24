@@ -8,6 +8,7 @@ export const uuid = (value) => {
 export const viewer = createHash('sha256').update('beeline:play-review-identity').digest('hex');
 export const workspace = uuid('workspace');
 export const rooms = [uuid('room-a'), uuid('room-b')];
+export const corner = uuid('streaming-corner');
 export const agents = [hash('agent-a'), hash('agent-b')];
 
 /** Reject remote targets and connection parameters that could redirect libpq. */

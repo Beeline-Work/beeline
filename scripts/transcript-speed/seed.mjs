@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { localDatabase, messages, viewer, workspace, rooms, agents } from './fixture.mjs';
+import { localDatabase, messages, viewer, workspace, rooms, agents, corner } from './fixture.mjs';
 
 const database = new pg.Client({ connectionString: localDatabase(process.env.LATENCY_RIG_DATABASE_URL) });
 await database.connect();
@@ -16,7 +16,7 @@ try {
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role)
       SELECT $1,$2,$3 WHERE NOT EXISTS(SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL)`, [workspace, identity, identity === viewer ? 'owner' : 'member']);
   }
-  for (const [index, room] of rooms.entries()) {
+  for (const [index, room] of [...rooms, corner].entries()) {
     await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, [room, workspace, viewer, `Transcript ${index ? 'B' : 'A'}`]);
     for (const identity of [viewer, ...agents]) {
       await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
@@ -31,6 +31,9 @@ try {
       [message.id, room, message.author, message.text, JSON.stringify(message.attachments), JSON.stringify(message.reactions), message.reply, message.createdAt]);
     }
   }
+  await database.query('UPDATE rooms SET parent_id=$1,name=$2 WHERE id=$3', [rooms[0], 'Transcript streaming corner', corner]);
+  await database.query(`INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind)
+    VALUES($1,$2,'Local concurrent streaming fixture','human') ON CONFLICT DO NOTHING`, [corner, viewer]);
   await database.query('COMMIT');
   console.log(JSON.stringify({ workspace, rooms, agents, messagesPerRoom: 1000 }));
 } catch (error) {

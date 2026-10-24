@@ -112,6 +112,7 @@ export function RepositoryLifecycleRow({
           <Text style={[styles.repositoryTitle, styles.cornerName]} numberOfLines={1} ellipsizeMode="tail">
             <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
             {item.title}
+            {state === 'Merged' && number && item.url ? ' ' : null}
           </Text>
           {state === 'Merged' && number && item.url ? (
             <Text

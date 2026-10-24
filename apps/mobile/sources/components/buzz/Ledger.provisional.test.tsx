@@ -25,7 +25,7 @@ vi.mock('react-native-reanimated', async () => {
   return {
     default: { View: (props: any) => ReactModule.createElement('AnimatedView', props, props.children) },
     cancelAnimation: () => undefined,
-    Easing: { out: (fn: unknown) => fn, cubic: () => undefined },
+    Easing: { out: (fn: unknown) => fn, cubic: () => undefined, poly: () => (value: number) => value },
     runOnJS: (fn: (...args: any[]) => void) => fn,
     useAnimatedStyle: (style: () => unknown) => style(),
     useReducedMotion: () => reducedMotion,

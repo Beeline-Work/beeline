@@ -16,7 +16,9 @@ it.skipIf(!existsSync(chrome))(
     const directory = await mkdtemp(path.join(tmpdir(), 'transcript-dates-'));
     const shims: Record<string, string> = {
       'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
-      export const StyleSheet = { create: factory => factory({ buzz: beelineThemes[new URLSearchParams(location.search).get('theme')] }) };`,
+      const theme = { buzz: beelineThemes[new URLSearchParams(location.search).get('theme')] };
+      export const StyleSheet = { create: factory => factory(theme) };
+      export const useUnistyles = () => ({ theme });`,
       // The transcript row now carries the arrival flash, so this bundle
       // needs the animation surface that rides with it: a shared value the
       // effect can write, a style hook that reads it, and the two timing
@@ -35,6 +37,7 @@ it.skipIf(!existsSync(chrome))(
       '@expo/vector-icons': 'export const Ionicons = () => null;',
       'react-native-svg': `import React from 'react';
       export const Path = () => null;
+      export const Polyline = () => null;
       export default props => React.createElement('svg', props);`,
       './IdentityMark': 'export const IdentityMark = () => null;',
       './MonoMarkdown': `import React from 'react'; import { Text } from 'react-native';

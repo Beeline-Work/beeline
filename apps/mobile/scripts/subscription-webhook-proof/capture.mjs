@@ -18,9 +18,12 @@ for (const theme of ['obsidian','bone']) {
 
   await page.getByTestId('webhook-rotate').click();
   await page.getByText('The old token stops working at once.',{exact:true}).waitFor();
+  if (await page.getByTestId('webhook-token').count()) throw Error('Rotation confirmation retained Token row');
   await page.screenshot({path:out+'/'+theme+'-rotate.png',fullPage:true});
   await page.getByTestId('webhook-rotate-cancel').click();
   if (await page.getByTestId('webhook-rotate-confirm').count()) throw Error('Cancel did not restore row');
+  await page.getByTestId('webhook-token').waitFor();
+  if (!(await page.getByTestId('webhook-token').innerText()).includes('bl_whk_')) throw Error('Cancel did not restore revealed token');
   await page.getByTestId('webhook-rotate').click();
   await page.getByTestId('webhook-rotate-confirm').click();
   await page.getByTestId('webhook-rotate').waitFor();

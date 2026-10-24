@@ -128,12 +128,12 @@ export default function Subscription() {
                   descriptionContent={<Text selectable style={styles.webhookValue}>{subscription.webhook.url}</Text>}
                   action={copied === 'link' ? 'Copied' : 'Copy'}
                   onPress={() => void copy('link', subscription.webhook!.url)} testID="webhook-link" />
-                <SettingsRow title="Token"
+                {!confirmRotate ? <SettingsRow title="Token"
                   description={token ?? `Ends in ${subscription.webhook.tokenSuffix} · made by @${creatorName}, ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(subscription.webhook.tokenCreatedAt * 1000))}`}
                   descriptionContent={token ? <Text selectable style={styles.webhookValue}>{token}</Text> : undefined}
                   action={token ? (copied === 'token' ? 'Copied' : 'Copy') : 'Show'}
                   disabled={webhookBusy} onPress={() => token ? void copy('token', token) : void showToken()}
-                  testID="webhook-token" />
+                  testID="webhook-token" /> : null}
                 {confirmRotate ? (
                   <SettingsRow title="Rotate token" description="The old token stops working at once."
                     tone="destructive" action="Cancel" disabled={webhookBusy}

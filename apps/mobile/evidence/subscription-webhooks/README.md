@@ -18,7 +18,7 @@ actions, two-tap confirmation, and danger/quiet tones. Link, token and calls are
 Bone applies the same existing theme tokens.
 
 The capture script also checks own-title rendering, Show/Copy, link copying, rotate,
-Cancel, service calls, hidden Link for non-admins, recoverable errors, and no horizontal
+Cancel restoring the revealed Token row, Token hidden during confirmation, service calls, hidden Link for non-admins, recoverable errors, and no horizontal
 overflow. It captures the screen before exercising extra Copy feedback states.
 
 From the repository root:

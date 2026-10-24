@@ -41,6 +41,11 @@ import {
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { withKernelLock } from './kernel-lock.js';
 import {
+  checkRepositoryCachesOnce,
+  CRASH_SAFE_CLONE_ARGS,
+  fetchRepositoryCache,
+} from './repository-cache-repair.js';
+import {
   DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
   resolvePerRoomLiveSessions,
@@ -102,6 +107,11 @@ export function cornerRepositoryCacheDir(supervisorRoot: string, remote: string)
   return resolve(supervisorRoot, 'beeline', 'repositories', `${repositoryHash}.git`);
 }
 
+/** How a plain failure line names a corner repo cache: `repositories/<hash>.git`. */
+function repositoryCacheLabel(gitCommonDir: string): string {
+  return `${basename(dirname(gitCommonDir))}/${basename(gitCommonDir)}`;
+}
+
 export function isStandingCornerStartFault(error: unknown): boolean {
   const text = error instanceof Error ? error.message : String(error);
   return isStandingWorkspaceConfigurationFault(text);
@@ -143,7 +153,7 @@ export async function materializeCornerWorktree(input: {
   return withKernelLock(`corner-repository:${repositoryKey}`, async () => {
     const authEnv = githubGitEnv(input.token);
     if (!existsSync(resolve(gitCommonDir, 'HEAD'))) {
-      await execFileAsync('git', ['clone', '--bare', remote, gitCommonDir], {
+      await execFileAsync('git', ['clone', '--bare', ...CRASH_SAFE_CLONE_ARGS, remote, gitCommonDir], {
         env: authEnv,
         maxBuffer: 4 * 1024 * 1024,
       });
@@ -165,27 +175,23 @@ export async function materializeCornerWorktree(input: {
       ],
       { maxBuffer: 4 * 1024 * 1024 },
     );
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
+    const label = repositoryCacheLabel(gitCommonDir);
+    await fetchRepositoryCache({
+      gitDir: gitCommonDir,
+      label,
+      args: [
         '--prune',
         'origin',
         `+refs/heads/${input.targetBranch}:refs/remotes/origin/${input.targetBranch}`,
       ],
-      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-    );
-    const restored = await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
-        'origin',
-        `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`,
-      ],
-      { env: authEnv, maxBuffer: 4 * 1024 * 1024 },
-    ).then(
+      env: authEnv,
+    });
+    const restored = await fetchRepositoryCache({
+      gitDir: gitCommonDir,
+      label,
+      args: ['origin', `+refs/heads/${input.featureBranch}:refs/remotes/origin/${input.featureBranch}`],
+      env: authEnv,
+    }).then(
       () => true,
       (error) => {
         if (isRemoteRefMissing(error)) return false;
@@ -515,17 +521,12 @@ async function assertPublishedOnOrigin(
 ): Promise<void> {
   let published = await originContains(gitCommonDir, head);
   if (!published) {
-    await execFileAsync(
-      'git',
-      [
-        `--git-dir=${gitCommonDir}`,
-        'fetch',
-        '--prune',
-        'origin',
-        '+refs/heads/*:refs/remotes/origin/*',
-      ],
-      { env: githubGitEnv(token), maxBuffer: 4 * 1024 * 1024 },
-    );
+    await fetchRepositoryCache({
+      gitDir: gitCommonDir,
+      label: repositoryCacheLabel(gitCommonDir),
+      args: ['--prune', 'origin', '+refs/heads/*:refs/remotes/origin/*'],
+      env: githubGitEnv(token),
+    });
     published = await originContains(gitCommonDir, head);
   }
   if (!published) throw new Error(`corner ${cornerId} has unpushed commits`);
@@ -886,6 +887,9 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
+    // A reboot can leave empty objects in a shared repo cache; repair them
+    // (and turn on crash-safe writes) before any Room or corner fetches.
+    await checkRepositoryCachesOnce(this.runtime.supervisorRoot);
     await this.yieldReconciliation();
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
     // Bind waiting surfaces before any fan-out, cleanup or corner listing.
@@ -1278,23 +1282,17 @@ export class RoomRuntimeCoordinator {
       : undefined;
     const env = token ? githubGitEnv(token.token) : process.env;
     if (!existsSync(resolve(path, '.git'))) {
-      await execFileAsync('git', ['clone', '--no-checkout', remote, path], {
+      await execFileAsync('git', ['clone', '--no-checkout', ...CRASH_SAFE_CLONE_ARGS, remote, path], {
         env,
         maxBuffer: 4 * 1024 * 1024,
       });
     }
-    const fetched = await execFileAsync(
-      'git',
-      [
-        '-C',
-        path,
-        'fetch',
-        '--prune',
-        'origin',
-        `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`,
-      ],
-      { env, maxBuffer: 4 * 1024 * 1024 },
-    ).then(
+    const fetched = await fetchRepositoryCache({
+      gitDir: resolve(path, '.git'),
+      label: `room-checkouts/${checkoutId}`,
+      args: ['--prune', 'origin', `+refs/heads/${targetBranch}:refs/remotes/origin/${targetBranch}`],
+      env,
+    }).then(
       () => true,
       (error) => {
         if (isRemoteRefMissing(error)) return false;

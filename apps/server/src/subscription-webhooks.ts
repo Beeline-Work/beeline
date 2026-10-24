@@ -170,9 +170,16 @@ export async function ingestSubscriptionWebhook(db: SqlDatabase, id: string, raw
        JOIN agents actor ON actor.agent_id=agent.id
        JOIN memberships agent_owner ON agent_owner.workspace_id=room.workspace_id AND agent_owner.room_id IS NULL
          AND agent_owner.identity_id=actor.owner_id AND agent_owner.removed_at IS NULL
-       JOIN memberships owner ON owner.workspace_id=room.workspace_id AND owner.room_id IS NULL
-         AND owner.identity_id=$3 AND owner.removed_at IS NULL AND owner.role IN ('owner','admin')
-       WHERE room.id=$1 AND room.archived_at IS NULL`, [row.room_id, row.agent_id, row.webhook_owner_id]);
+       WHERE room.id=$1 AND room.archived_at IS NULL AND (
+         (room.direct_participants IS NULL AND EXISTS (
+           SELECT 1 FROM memberships owner WHERE owner.workspace_id=room.workspace_id
+             AND owner.room_id IS NULL AND owner.identity_id=$3 AND owner.removed_at IS NULL
+             AND owner.role IN ('owner','admin')))
+         OR (room.direct_participants IS NOT NULL AND room.direct_participants ? $3
+           AND room.direct_participants ? $2 AND EXISTS (
+             SELECT 1 FROM memberships owner JOIN identities person ON person.id=owner.identity_id
+               AND person.kind='human' AND NOT person.hidden_from_roster
+             WHERE owner.room_id=room.id AND owner.identity_id=$3 AND owner.removed_at IS NULL)))`, [row.room_id, row.agent_id, row.webhook_owner_id]);
     if (!current.rowCount) return record('refused', 403, 'Agent, Room or owner is no longer available');
     const delivery = headers['x-beeline-delivery'];
     if (delivery !== undefined && (typeof delivery !== 'string' || !delivery || delivery.length > 200))

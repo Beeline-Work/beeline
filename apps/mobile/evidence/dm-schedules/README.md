@@ -89,3 +89,22 @@ the creation guidance, and the existing Stop action is unchanged.
 - Follow-up checks: root typecheck and UI policy; mobile component/design tests
   (41), rendered browser page tests (19), server tests (27), API contract tests
   (508), all passed.
+
+## Rotation and delivery follow-up
+
+Reproduction 1 also exercises the complete phone rotation → HTTP sender path.
+Before the ingress fix, a non-admin human DM member successfully rotates the
+webhook token, but POST with that valid new token returns refusal (403).
+The regression was run before the fix and failed at the expected success (200).
+
+After the fix, the same phone rotation and HTTP POST returns success (200/woke),
+and the committed call appears in the phone's Recent calls projection. The old
+token returns unauthorized (401). Removing the human membership, removing the
+human from the DM participant list, or removing the agent membership stops
+further delivery (403). The existing Room admin-revocation test still passes.
+The complete webhook/schedule server suites now pass (28 tests); root typecheck
+also passes. No production subscription or token was accessed.
+
+The native screenshots remain component fixtures. A signed-in production Android
+Show/copy/rotate demonstration remains unverified; the isolated phone/HTTP
+regression proves the actual server operations, not a live Android sign-in.

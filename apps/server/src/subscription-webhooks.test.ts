@@ -199,3 +199,37 @@ describe('human DM scheduled-work management', () => {
     } finally { await db.close(); }
   });
 });
+
+
+it('Reproduction 1: phone DM token rotation preserves HTTP delivery for a non-admin human member', async () => {
+  const { db, create, phone } = await fixture();
+  const server = createBeelineServer({ database: db, phone, live: new LiveHub(), auth: {}, daemon: {}, mediaMaximumBytes: 1 } as ServerOptions);
+  try {
+    const hook = await create();
+    await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`,
+      [ROOM, JSON.stringify([MEMBER, AGENT])]);
+    const input = { roomId: ROOM, subscriptionId: hook.id };
+    const original = await phone.execute('revealWebhookToken', input, MEMBER);
+    const rotated = await phone.execute('rotateWebhookToken', input, MEMBER);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/hooks/${hook.id}`;
+    const post = (token = rotated.token) => fetch(endpoint, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, body: '{"result":"done"}',
+    });
+    expect((await post(original.token)).status).toBe(401);
+    const delivered = await post();
+    expect(delivered.status).toBe(200);
+    expect(await delivered.json()).toEqual({ outcome: 'woke' });
+    const view = await phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER);
+    expect(view.subscriptions[0]!.recentCalls?.some(call => call.outcome === 'woke')).toBe(true);
+    // Both the participant list and current membership must continue to authorize the token owner.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+    expect((await post()).status).toBe(403);
+    await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+    await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [ROOM, JSON.stringify([OWNER, AGENT])]);
+    expect((await post()).status).toBe(403);
+    await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [ROOM, JSON.stringify([MEMBER, AGENT])]);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+    expect((await post()).status).toBe(403);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});

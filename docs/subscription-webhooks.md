@@ -8,7 +8,9 @@ returned to that tool or posted in chat.
 Open the Room or DM menu → Schedules and subscriptions → the subscription. Workspace admins
 in Rooms and human members in their own DMs can copy
 the link, Show and copy its token, Rotate it, inspect recent calls, or Stop it. Rotation
-invalidates the old token immediately. Other viewers receive no link or token metadata.
+invalidates the old token immediately. Delivery rechecks the current token owner: Workspace
+admin for a Room, human DM participant with current membership for a DM. Other viewers
+receive no link or token metadata.
 
 Send `POST /hooks/<subscription UUID>` on the server host with
 `Authorization: Bearer <token>`. The token begins `bl_whk_` and contains 32 random bytes.

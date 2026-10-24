@@ -86,6 +86,48 @@ describe('observed corner states', () => {
 it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) => {
   expect(deriveCornerState({...facts,lastTurnEndedAt:1000-Number(age)}).state).toBe(state);
 });
-it.each(['pending','failing'] as const)('CI %s with an expired deadline is idle', checks => {
-  expect(deriveCornerState({...facts,ciStartedAt:1000-1801,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state:'idle'});
+it.each([
+  ['pending', 'review'],
+  ['failing', 'idle'],
+] as const)('CI %s past 30 minutes is %s', (checks, state) => {
+  expect(deriveCornerState({...facts,ciStartedAt:1000-1801,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state});
+});
+
+it('Reproduction R1: an agent-commander report stays review while checks run, and a human blocker stays waiting', () => {
+  const pending = { lifecycle: 'in-review' as const, checks: 'pending' as const };
+  const agentReport = {
+    reason: 'question' as const,
+    blocker: { kind: 'report' as const, personId: 'commander' },
+  };
+  const unreported = { ...pushed, checksSummary: emptySummary };
+  expect(deriveCornerState({
+    ...facts, owed: true, agentCommanderReport: true, lifecycle: pending, blocker: agentReport,
+  })).toEqual({ state: 'review' });
+  expect(deriveCornerState({
+    ...facts, owed: true, agentCommanderReport: true, lifecycle: unreported, blocker: agentReport,
+  })).toEqual({ state: 'review' });
+  expect(deriveCornerState({
+    ...facts, owed: true, lifecycle: pending,
+    blocker: { reason: 'question', blocker: { kind: 'report', personId: 'human' } },
+  })).toEqual({
+    state: 'waiting', reason: 'question', blocker: { kind: 'report', personId: 'human' },
+  });
+  expect(deriveCornerState({
+    ...facts, owed: true, lifecycle: pending,
+    blocker: { reason: 'approve', blocker: { kind: 'merge-hold', personId: 'human' } },
+  })).toEqual({
+    state: 'waiting', reason: 'approve', blocker: { kind: 'merge-hold', personId: 'human' },
+  });
+  expect(deriveCornerState({
+    ...facts, owed: true, agentCommanderReport: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'passing' }, blocker: agentReport,
+  })).toEqual({ state: 'waiting', ...agentReport });
+  expect(deriveCornerState({
+    ...facts, owed: true, agentCommanderReport: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' }, blocker: agentReport,
+  })).toEqual({ state: 'waiting', ...agentReport });
+  expect(deriveCornerState({
+    ...facts, owed: true, agentCommanderReport: true, ciStartedAt: 1000 - 1801,
+    lifecycle: pending, blocker: agentReport,
+  })).toEqual({ state: 'review' });
 });

@@ -27,11 +27,14 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
 }: NotificationLifecycleCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  // Inside a corner a check's corner target is the corner already open, so the
+  // whole check row opens the check instead.
   const items = message.notificationLifecycleRun!.items.map((item) => ({
     ...item,
     cornerId:
-      item.cornerId ??
-      (item.kind === 'pull-request' || item.kind === 'check' ? cornerId : undefined),
+      item.kind === 'check'
+        ? item.cornerId === cornerId ? undefined : item.cornerId
+        : item.cornerId ?? (item.kind === 'pull-request' ? cornerId : undefined),
   }));
   const summary = lifecycleSummary(items);
   return (
@@ -108,7 +111,7 @@ export function RepositoryLifecycleRow({
             : undefined
         }
       >
-        <InlineRow style={styles.cornerCopy}>
+        <InlineRow style={[styles.line, styles.cornerCopy]}>
           <Text style={[styles.repositoryTitle, styles.cornerName]} numberOfLines={1} ellipsizeMode="tail">
             <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
             {item.title}
@@ -132,7 +135,7 @@ export function RepositoryLifecycleRow({
     );
   }
   const copy = (
-    <Text style={styles.repositoryTitle} numberOfLines={2} ellipsizeMode="tail">
+    <Text style={styles.rowTitle} numberOfLines={2} ellipsizeMode="tail">
       <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
       {number && item.url ? <><Text style={styles.number}>#{number}</Text>{' '}</> : null}
       {item.title}
@@ -172,13 +175,21 @@ export function RepositoryLifecycleRow({
 
 const styles = StyleSheet.create(({ buzz }) => ({
   failed: { color: buzz.accent },
+  // System rows are meta size, the size of the label that expands them. The
+  // margin centres one line in the 44px row; a second line grows downward.
+  line: { marginVertical: (44 - 2 * buzz.space.sm - buzz.type.meta.lineHeight) / 2 },
   cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
   cornerName: { flexShrink: 1, minWidth: 0 },
   cornerNumber: { flexShrink: 0, marginLeft: buzz.space.xs },
-  repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
-  verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
+  repositoryTitle: { ...buzz.type.meta, color: buzz.textSecondary },
+  rowTitle: {
+    ...buzz.type.meta,
+    color: buzz.textSecondary,
+    marginVertical: (44 - 2 * buzz.space.sm - buzz.type.meta.lineHeight) / 2,
+  },
+  verb: { ...buzz.type.meta, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
   number: {
-    ...buzz.type.body,
+    ...buzz.type.meta,
     fontFamily: buzz.proseMedium,
     color: buzz.accent,
     textDecorationLine: 'underline',

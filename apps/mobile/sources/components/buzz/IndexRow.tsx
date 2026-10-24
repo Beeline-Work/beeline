@@ -102,12 +102,8 @@ const navigationStyles = StyleSheet.create(({ buzz }) => ({
   row: { minHeight: 44, flexDirection: 'row', alignItems: 'flex-start', gap: buzz.space.sm },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },
   pressed: { opacity: 0.6 },
-  glyph: {
-    flexShrink: 0,
-    height: buzz.type.body.lineHeight,
-    justifyContent: 'center',
-    marginTop: buzz.space.sm,
-  },
+  // Centred on the first line of meta-size copy.
+  glyph: { flexShrink: 0, height: 44, justifyContent: 'center' },
   copyTarget: { minHeight: 44, minWidth: 44, flex: 1, paddingVertical: buzz.space.sm },
   cornerTarget: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
   // The whole row owns the tap target; the mark reserves only its own width.

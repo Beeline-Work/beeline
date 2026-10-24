@@ -169,7 +169,7 @@ const theme = vi.hoisted(() => ({
     ledgerQuiet: '#777',
     roomCard: {},
     space: { xs: 4, sm: 8, md: 16, lg: 24 },
-    type: { body: {}, bodyStrong: {}, hero: {}, machine: {}, meta: {}, sectionHead: {} },
+    type: { body: {}, bodyStrong: {}, hero: {}, machine: {}, meta: { fontSize: 13, lineHeight: 19, fontFamily: 'SpaceGrotesk-Regular' }, sectionHead: {} },
   },
 }));
 vi.mock('react-native-unistyles', async () => {
@@ -858,12 +858,13 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 }));
 
 
-describe('Room list search edge', () => {
-  it.each([false, true])('aligns the native input inset with the filters (desktop=%s)', async (desktop) => {
+describe('Room list search geometry', () => {
+  it.each([false, true])('matches the filter row height, type and inset (desktop=%s)', async (desktop) => {
     const { RoomListToolbar } = await import('./buzz/RoomListToolbar');
     const { StyleSheet } = await import('react-native');
     const { completeTestTheme } = await import('@/test/test-theme');
-    const tokens = completeTestTheme(theme).buzz.roomList;
+    const hull = completeTestTheme(theme).buzz;
+    const tokens = hull.roomList;
     const onQuery = vi.fn();
     let toolbar: ReactTestRenderer;
     act(() => { toolbar = create(<RoomListToolbar desktop={desktop} filter="all" onFilter={() => {}} query="" onQuery={onQuery} />); });
@@ -871,6 +872,15 @@ describe('Room list search edge', () => {
     const input = toolbar!.root.findAllByType('TextInput')[0];
     expect(input.props.testID).toBe(desktop ? 'desktop-room-search' : 'room-search');
     const style = StyleSheet.flatten(input.props.style);
+    let wrapper = input.parent!;
+    while (wrapper.type !== 'View') wrapper = wrapper.parent!;
+    const rule = StyleSheet.flatten(wrapper.props.style);
+    expect(rule.minHeight).toBe(44);
+    expect(rule.borderBottomWidth).toBe(1);
+    expect(style.flexGrow).toBe(1);
+    expect(style.fontSize).toBe(hull.type.meta.fontSize);
+    expect(style.lineHeight).toBe(hull.type.meta.lineHeight);
+    expect(style.fontFamily).toBe(hull.type.meta.fontFamily);
     expect(style.paddingLeft ?? style.paddingHorizontal ?? style.padding ?? 0).toBe(tokens.edge);
     expect(style.paddingRight ?? style.paddingHorizontal ?? style.padding ?? 0).toBe(tokens.searchEnd);
     act(() => input.props.onChangeText('general'));

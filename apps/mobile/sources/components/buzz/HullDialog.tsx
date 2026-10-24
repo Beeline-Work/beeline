@@ -417,8 +417,8 @@ export const HullDialogInput = React.forwardRef<
   TextInputProps & {
     ruleStyle?: StyleProp<ViewStyle>;
     // Search cells share the page or sheet row geometry; dialog fields keep
-    // their original underline.
-    variant?: 'dialog' | 'boxed' | 'search' | 'sheetSearch';
+    // their original underline. Room search matches the compact filter row.
+    variant?: 'dialog' | 'boxed' | 'search' | 'sheetSearch' | 'roomSearch';
     // Read-only tap target, e.g. Connectors search that opens the search sheet.
     onPress?: () => void;
   }
@@ -451,12 +451,13 @@ export const HullDialogInput = React.forwardRef<
     if (key in resolvedStyle) (outerStyle as Record<string, unknown>)[key] = resolvedStyle[key];
     delete innerStyle[key];
   }
-  const searchCell = variant === 'search' || variant === 'sheetSearch';
+  const searchCell = variant === 'search' || variant === 'sheetSearch' || variant === 'roomSearch';
   const boxStyle = [
     styles.inputRule,
     variant === 'boxed' && styles.inputRuleBoxed,
     searchCell && styles.searchCell,
     variant === 'sheetSearch' && styles.sheetSearchCell,
+    variant === 'roomSearch' && styles.roomSearchCell,
     outerStyle,
     ruleStyle,
     focused && (variant === 'boxed' ? styles.inputFocusedBoxed : styles.inputFocused),
@@ -468,6 +469,9 @@ export const HullDialogInput = React.forwardRef<
     searchCell && styles.searchCellInput,
     variant === 'sheetSearch' && styles.sheetSearchCellInput,
     props.multiline && styles.multilineInput,
+    variant === 'roomSearch' && styles.roomSearchCellInput,
+    // Keep the toolbar's text insets after the shared input padding.
+    variant === 'roomSearch' && innerStyle,
   ];
   if (onPress) {
     return (
@@ -619,6 +623,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
     },
     sheetSearchCell: { minHeight: HULL_SHEET_ROW_HEIGHT },
+    roomSearchCell: { minHeight: 44 },
     searchCellInput: {
       minHeight: 0,
       paddingHorizontal: hull.space.sm,
@@ -627,6 +632,11 @@ const styles = StyleSheet.create((theme) => {
     },
     sheetSearchCellInput: {
       paddingHorizontal: HULL_SHEET_INSET,
+    },
+    roomSearchCellInput: {
+      ...hull.type.meta,
+      flexGrow: 1,
+      paddingHorizontal: 0,
     },
     inputFocused: { borderBottomColor: hull.accent },
     inputFocusedBoxed: { borderColor: hull.accent },

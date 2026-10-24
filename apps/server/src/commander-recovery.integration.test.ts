@@ -1133,6 +1133,31 @@ it('Reproduction R-ID: an order card id returns the expanded text and archived s
     .toMatchObject({ body: 'Archived evidence' });
 });
 
+it('Reproduction R-ID2: archived activity and readable prefixes resolve without exposing inaccessible candidates', async () => {
+  const opened = await open();
+  const sibling = await open();
+  const prefix = randomBytes(12).toString('hex');
+  const activity = prefix + 'a'.repeat(40);
+  const person = prefix + 'b'.repeat(40);
+  const hidden = prefix + 'c'.repeat(40);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
+    ($1,$4,$6,'Archived activity','activity'),($2,$4,$7,'Person evidence','message'),
+    ($3,$5,$7,'Private evidence','message')`, [activity, person, hidden, opened.cornerId, DM, WORKER, HUMAN]);
+  await daemon.execute('archiveCorner', { ...authority(order), cornerId: opened.cornerId }, RUBY);
+  const read = (messageId: string) => daemon.execute('getRoomMessage', { roomId: sibling.cornerId, messageId }, WORKER);
+  expect(await read(activity)).toMatchObject({ messageId: activity, body: 'Archived activity' });
+  expect(await read(person.slice(0, 25))).toMatchObject({ messageId: person, body: 'Person evidence' });
+  expect(await daemon.execute('getRoomMessage', { ...authority(order), messageId: activity }, RUBY))
+    .toMatchObject({ messageId: activity, body: 'Archived activity' });
+  expect(await daemon.execute('getRoomMessage', { ...authority(order), messageId: person.slice(0, 25) }, RUBY))
+    .toMatchObject({ messageId: person, body: 'Person evidence' });
+  await expect(read(prefix + '%')).rejects.toThrow('message not found');
+  expect(await read(activity.slice(0, 25))).toMatchObject({ messageId: activity, body: 'Archived activity' });
+  await expect(read(prefix)).rejects.toThrow(`ambiguous message id: ${activity}, ${person}`);
+  await expect(read(hidden)).rejects.toThrow('message access denied');
+  await expect(read(hidden.slice(0, 25))).rejects.toThrow('message not found');
+});
+
 it('Reproduction R-ID: the read tool downloads bytes from a private report hand-off', async () => {
   const opened = await open();
   const turn = await worker(opened.cornerId);

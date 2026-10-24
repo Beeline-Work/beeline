@@ -71,6 +71,8 @@ beforeEach(async () => {
   }) };
   github = new GitHubOperations(db, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'test');
   vi.spyOn(github, 'roomAnchorTarget').mockResolvedValue({ token: 'test', repository: 'test/repo', defaultBranch: 'main' });
+  // Head refresh has separate provider coverage; this fixture isolates reviewer selection.
+  vi.spyOn(github, 'refreshCornerReviewHead').mockResolvedValue(undefined);
   phone = new PhoneService(db, 'http://test');
   daemon = Object.assign(new DaemonService(db, new LiveHub()), { github });
   await phone.execute('sendRoomMessage', { roomId: R, messageId: '9'.repeat(64), text: '@outsider Set the corner reviewer' }, H);

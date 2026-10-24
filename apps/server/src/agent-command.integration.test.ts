@@ -1471,8 +1471,10 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
   });
   expect(await commands(A, C)).toEqual([
     expect.objectContaining({
-      sourceMessageId: source.id,
+      rootSourceMessageId: source.id,
       reason: 'subscribed_event',
+      private: true,
+      source: expect.objectContaining({ body: expect.stringContaining('Current handoff target: PR #17') }),
     }),
   ]);
   await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
@@ -1634,7 +1636,7 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   ).toBe(1);
   // The PASS wakes the implementer to merge, alongside the reviewer's tag.
   expect((await commands(B, C)).map((command) => command.source.body)).toEqual(
-    expect.arrayContaining(['@system handed off review', `@goosy approved ${approvedHead}, merge`]),
+    expect.arrayContaining(['@system handed off review', expect.stringContaining(`@goosy approved ${approvedHead}, merge\nCurrent handoff target: PR #7 at ${approvedHead}`)]),
   );
 });
 // The merge webhook writes the parent card, then reports the landing to the

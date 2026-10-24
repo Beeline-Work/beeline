@@ -1788,6 +1788,45 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_check')).toHaveLength(1);
   });
 
+  it('Reproduction RED-STALL-PARTIAL: a later failed job wakes the implementer while other checks are still pending', async () => {
+    const cornerId = await redWhileRunning();
+    await db.query(
+      `UPDATE agent_commands SET state='complete',completed_at=now()
+       WHERE room_id=$1 AND reason='corner_check'`,
+      [cornerId],
+    );
+    const stillRunning = {
+      state: 'pending' as const,
+      total: 8,
+      failing: ['MOBILE SUITE', 'FRAME-BUDGET', 'STATE-UPGRADE'],
+      checks: [
+        { name: 'MOBILE SUITE', status: 'failed' as const },
+        { name: 'FRAME-BUDGET', status: 'failed' as const },
+        { name: 'STATE-UPGRADE', status: 'failed' as const },
+        { name: 'SERVER SUITE SHARD 1', status: 'pending' as const },
+        { name: 'SERVER SUITE SHARD 2', status: 'pending' as const },
+        { name: 'SERVER SUITE SHARD 3', status: 'pending' as const },
+        { name: 'SERVER SUITE SHARD 4', status: 'pending' as const },
+        { name: 'SERVER SUITE SHARD 5', status: 'pending' as const },
+      ],
+    };
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(stillRunning);
+    await checkRun(cornerId, 'FRAME-BUDGET', 'failure');
+    const repair = (await commands(A, cornerId)).filter((command) => command.reason === 'corner_check');
+    expect(repair).toHaveLength(1);
+    expect(repair[0]!.source.body).toContain('FRAME-BUDGET');
+    expect(repair[0]!.source.body).toContain('STATE-UPGRADE');
+    expect(repair[0]!.source.body).toContain('MOBILE SUITE');
+    expect(repair[0]!.source.body).toContain('Fix them and push now');
+    expect(repair[0]!.source.body).toContain('still running');
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(2);
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce(stillRunning);
+    await checkRun(cornerId, 'STATE-UPGRADE', 'failure');
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(2);
+    expect((await reasons(cornerId, B)).filter((reason) =>
+      reason === 'corner_review_dispatch' || reason === 'subscribed_event')).toHaveLength(0);
+  });
+
   it('wakes again when the run finishes and deduplicates a replay', async () => {
     const cornerId = await redWhileRunning();
     githubApp.readCommitCheckRollup.mockResolvedValueOnce(finished);
@@ -2021,6 +2060,7 @@ describe('Reproduction R1: checks wakes act on stale CI state', () => {
     const [wake] = await cornerCheckWakes(cornerId);
     expect(wake).toBeTruthy();
     expect(wake!.source.body).toContain('still running');
+    expect(wake!.source.body).toContain('Fix them and push now');
   });
 
   it('R1head: a checks wake names the head SHA it reports on', async () => {

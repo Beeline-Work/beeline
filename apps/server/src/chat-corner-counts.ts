@@ -32,6 +32,8 @@ export type CornerStateRow = {
   waiting_reason?: CornerStateReason | null;
   waiting_person_id?: string | null;
   waiting_since?: Date | null;
+  /** A worker `blocked:` report is still open. It is not a question. */
+  blocked_report?: boolean;
   /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
   owed?: boolean | null;
   owed_viewer?: boolean | null;
@@ -39,8 +41,29 @@ export type CornerStateRow = {
   follows_viewer?: boolean | null;
 };
 
-/** The one corner state derivation for the Room list, its live frame and the Corners page. */
+/** Worker stopped with `blocked:` while checks are not green. */
+export function blockedReportSql(corner = 'c'): string {
+  return `EXISTS (
+    SELECT 1 FROM corner_report_blockers report
+    LEFT JOIN agent_commands command ON command.id=report.report_id
+    LEFT JOIN messages report_message ON report_message.id=report.message_id
+    WHERE report.corner_id=${corner}.id
+      AND COALESCE(command.private_payload->>'text', report_message.text, '') LIKE 'blocked:%')`;
+}
+
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {
+  const summary = row.lifecycle?.checksSummary;
+  const checks = summary?.status ?? row.lifecycle?.checks;
+  const unreported = Boolean(
+    row.lifecycle?.pr &&
+      summary?.status === 'unknown' &&
+      summary.total === 0 &&
+      !summary.fetchStartedAt,
+  );
+  const stallReport =
+    row.waiting_kind === 'report' &&
+    row.blocked_report === true &&
+    (checks === 'pending' || checks === 'failing' || unreported);
   return deriveCornerState({
     archived: Boolean(row.archived_at),
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
@@ -53,8 +76,9 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
-    owed: row.blocking ?? false,
-    ...(row.waiting_item_id && row.waiting_reason
+    stallReport,
+    owed: stallReport ? false : (row.blocking ?? false),
+    ...(!stallReport && row.waiting_item_id && row.waiting_reason
       ? {
           blocker: {
             reason: row.waiting_reason,
@@ -105,6 +129,7 @@ export function cornerFactsSql(viewerExpr: string): {
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,
+      ${blockedReportSql('c')} blocked_report,
       turn.status latest_turn_status,turn.created_at latest_turn_created_at,
       lm.created_at latest_created_at,
       ${followsCornerSql('c', viewerExpr)} follows_viewer,

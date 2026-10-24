@@ -28,6 +28,12 @@ export type CornerStateFacts = {
    */
   readonly owed?: boolean;
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
+  /**
+   * The blocking item is a worker `blocked:` report and checks are not green.
+   * That wait is a stall: the reviewer cannot be dispatched, and a red head
+   * still belongs to the implementer.
+   */
+  readonly stallReport?: boolean;
 };
 
 export type DerivedCornerState = {
@@ -82,18 +88,25 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.archived || terminal.state === 'landed' || terminal.state === 'closed' ||
       facts.run?.state === 'landed' || facts.run?.state === 'closed')
     return { state: 'archived' };
-  if (facts.reviewerActive) return { state: 'review' };
-  const now = facts.now ?? Date.now() / 1000;
-  if (facts.turnRunning) return { state: 'working' };
-  if (facts.blocker || facts.owed === true) return { state: 'waiting', ...facts.blocker };
   const lifecycle = facts.lifecycle;
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
+  const now = facts.now ?? Date.now() / 1000;
+  if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
+  if (facts.turnRunning) return { state: 'working' };
+  const stall = facts.stallReport === true;
+  if ((facts.blocker || facts.owed === true) && !stall) return { state: 'waiting', ...facts.blocker };
+  if (checks === 'failing') {
+    const repairStarted = facts.ciStartedAt;
+    if (repairStarted !== undefined && now - repairStarted < 30 * 60) return { state: 'working' };
+    return { state: 'idle' };
+  }
+  if (stall) return { state: 'idle' };
   const started = facts.ciStartedAt ?? lifecycle?.checksSummary?.updatedAt;
-  if (checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle)) &&
+  if ((checks === 'pending' || checksNotReported(lifecycle)) &&
       started !== undefined && now - started < 30 * 60) {
     return { state: 'review' };
   }
-  if (checks !== 'failing' && facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
+  if (facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
     return { state: 'working' };
   return { state: 'idle' };
 }

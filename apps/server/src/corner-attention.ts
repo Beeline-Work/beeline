@@ -129,6 +129,7 @@ function attentionSql() {
     activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
+    blocker.agent_commander,blocker.human_blocker,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id

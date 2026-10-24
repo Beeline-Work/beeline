@@ -27,6 +27,11 @@ export type CornerStateFacts = {
    * A workflow stage or an ordinary tag alone never establishes a blocker.
    */
   readonly owed?: boolean;
+  /**
+   * The only blocker is a blocked or needs-decision report to the agent
+   * commander. Pending checks within the review window stay review.
+   */
+  readonly agentCommanderReport?: boolean;
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
 };
 
@@ -85,14 +90,15 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.reviewerActive) return { state: 'review' };
   const now = facts.now ?? Date.now() / 1000;
   if (facts.turnRunning) return { state: 'working' };
-  if (facts.blocker || facts.owed === true) return { state: 'waiting', ...facts.blocker };
   const lifecycle = facts.lifecycle;
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
   const started = facts.ciStartedAt ?? lifecycle?.checksSummary?.updatedAt;
-  if (checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle)) &&
-      started !== undefined && now - started < 30 * 60) {
-    return { state: 'review' };
-  }
+  const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle)) &&
+    started !== undefined && now - started < 30 * 60;
+  // A report to the agent commander leaves pending checks as review. A human blocker still waits.
+  if ((facts.blocker || facts.owed === true) && !(facts.agentCommanderReport && pendingCi))
+    return { state: 'waiting', ...facts.blocker };
+  if (pendingCi) return { state: 'review' };
   if (checks !== 'failing' && facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
     return { state: 'working' };
   return { state: 'idle' };

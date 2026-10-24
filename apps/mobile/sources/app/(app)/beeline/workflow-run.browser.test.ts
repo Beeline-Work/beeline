@@ -20,7 +20,8 @@ const GATE_OPTIONS = [
 ];
 
 function contractOf(repo: string) {
-  return JSON.parse(readFileSync(path.join(repo, 'docs/workflows/feedback-triage.json'), 'utf8'));
+  // These gate proofs model runs pinned before triage moved approval to the morning card.
+  return JSON.parse(readFileSync(path.join(repo, 'packages/api-contract/test-fixtures/legacy-feedback-triage.json'), 'utf8'));
 }
 
 /** A feedback-triage run as `readWorkflowRun` returns it, in the given state with the given cards. */

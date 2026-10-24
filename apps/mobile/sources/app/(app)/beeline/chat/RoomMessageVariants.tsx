@@ -855,8 +855,12 @@ function SwipeToReply({
     // interrupted. Wait for Swipeable's rowState update before closing it.
     closeTimer.current = setTimeout(() => {
       swipeableRef.current?.close();
-      // A cancelled closing spring must not leave the action panel exposed.
-      returnTimer.current = setTimeout(() => swipeableRef.current?.reset(), 240);
+      // A cancelled or slow closing spring must not leave the row or its action
+      // panel exposed. Close again rather than reset(): on Android's new
+      // architecture, reset()'s setValue stops the native spring without
+      // repainting, freezing the row mid-return with the panel showing. A
+      // fresh close runs a native spring that always paints its rest frame.
+      returnTimer.current = setTimeout(() => swipeableRef.current?.close(), 480);
     }, 0);
     // Install the quote before a composer update can recycle this row.
     if (direction === 'right') onReply?.();
@@ -974,6 +978,7 @@ function SwipeToReply({
       dragOffsetFromRightEdge={18}
       friction={1.35}
       onSwipeableWillOpen={commitSwipe}
+      onSwipeableClose={cancelReturn}
       onSwipeableOpenStartDrag={cancelReturn}
       onSwipeableCloseStartDrag={cancelReturn}
       overshootLeft={false}

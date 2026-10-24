@@ -628,15 +628,19 @@ export class VoiceRoomRuntime {
     const completions: Promise<void>[] = [];
     let answerToRecord: { agentId: string; text: string } | undefined;
     let answerRecorded = false;
-    const recordSpoken = (agentId: string, text: string) => {
-      const write = this.spokenWrites.then(() => this.service.recordAnswer(this.roomId, agentId, text));
+    let committedSourceId: string | undefined;
+    let finalRoutesMentions = true;
+    const recordSpoken = (agentId: string, text: string, final = false) => {
+      const write = this.spokenWrites.then(() => this.service.recordAnswer(this.roomId, agentId, text, {
+        replyId: final ? request.id : undefined, sourceId: final ? committedSourceId : undefined, routeMentions: final && finalRoutesMentions,
+      }));
       this.spokenWrites = write.catch(() => {});
       completions.push(write);
     };
     const recordAnswer = () => {
       if (answerToRecord && !answerRecorded) {
         answerRecorded = true;
-        recordSpoken(answerToRecord.agentId, answerToRecord.text);
+        recordSpoken(answerToRecord.agentId, answerToRecord.text, true);
       }
     };
     try {
@@ -678,6 +682,7 @@ export class VoiceRoomRuntime {
         else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
         resolveSource(sourceId);
       }
+      committedSourceId = sourceId;
       timing('human_committed');
       if (generation.signal.aborted || this.closed || !sourceId) return;
       const history = await context;
@@ -694,6 +699,7 @@ export class VoiceRoomRuntime {
       let firstAudio = false;
       const reply = retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
         await this.service.config.brain.answer(agent, brainHistory, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal, {
+          agents: agents.map(({ name, handle }) => ({ name, handle })),
           search: (search, signal) => {
             console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: search.name }));
             return this.service.search(this.callId, sourceId, agent.id, search, signal);
@@ -721,6 +727,7 @@ export class VoiceRoomRuntime {
             }
           },
         });
+      finalRoutesMentions = !reply.order;
       timing('brain_complete');
       console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: reply.order ? 'order' : 'answer' }));
       if (generation.signal.aborted || this.closed) return;

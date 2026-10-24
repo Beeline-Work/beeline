@@ -1,0 +1,70 @@
+{
+  "bone": {
+    "short": [
+      63,
+      452,
+      1017,
+      523
+    ],
+    "shortText": [
+      63,
+      463,
+      902,
+      513
+    ],
+    "row": [
+      63,
+      565,
+      1017,
+      701
+    ],
+    "control": [
+      63,
+      576,
+      902,
+      692
+    ],
+    "expanded": [
+      63,
+      565,
+      1017,
+      1436
+    ],
+    "nameTapWithoutToggle": true,
+    "expandCollapse": true
+  },
+  "obsidian": {
+    "short": [
+      63,
+      452,
+      1017,
+      523
+    ],
+    "shortText": [
+      63,
+      463,
+      902,
+      513
+    ],
+    "row": [
+      63,
+      565,
+      1017,
+      701
+    ],
+    "control": [
+      63,
+      576,
+      902,
+      692
+    ],
+    "expanded": [
+      63,
+      565,
+      1017,
+      1436
+    ],
+    "nameTapWithoutToggle": true,
+    "expandCollapse": true
+  }
+}

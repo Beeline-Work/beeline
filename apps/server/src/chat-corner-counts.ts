@@ -45,14 +45,13 @@ export type CornerStateRow = {
   follows_viewer?: boolean | null;
 };
 
-/** Worker stopped with `blocked:` while checks are not green. */
+/** Worker `blocked:` report to an agent commander. The body is the command payload, so the chat list does not scan messages. */
 export function blockedReportSql(corner = 'c'): string {
   return `EXISTS (
     SELECT 1 FROM corner_report_blockers report
-    LEFT JOIN agent_commands command ON command.id=report.report_id
-    LEFT JOIN messages report_message ON report_message.id=report.message_id
+    JOIN agent_commands command ON command.id=report.report_id
     WHERE report.corner_id=${corner}.id
-      AND COALESCE(command.private_payload->>'text', report_message.text, '') LIKE 'blocked:%')`;
+      AND command.private_payload->>'text' LIKE 'blocked:%')`;
 }
 
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {

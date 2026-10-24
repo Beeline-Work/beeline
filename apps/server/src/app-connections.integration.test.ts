@@ -1025,12 +1025,26 @@ describe('connect_app', () => {
       expect((await call('listAppTools', { appId: 'github' })).status).toBe(200);
       await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
         VALUES($1,NULL,$2,'member')`, [WORKSPACE, other]);
+      // Status advertises only the agent owner's apps; shared names must not shadow them.
+      for (const app of workbench.body.apps) {
+        expect((await call('listAppTools', { appId: app.appKey })).status).toBe(200);
+        expect(provider.account).toHaveBeenLastCalledWith('account-fixture', OWNER, app.appKey);
+        expect((await call('executeAppTool', { appId: `app:${app.appKey}`,
+          tool: 'SLACK_POST_MESSAGE', arguments: {} })).status).toBe(200);
+      }
+      // With no owner mapping, two accessible shared apps are a genuine tie.
+      const third = 'd'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Third')`, [third]);
+      await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+        VALUES($1,NULL,$2,'member')`, [WORKSPACE, third]);
+      await database.query(`UPDATE workspace_apps SET owner_identity_id=$1 WHERE id=$2`, [third, ids[0]]);
       for (const operation of ['listAppTools', 'executeAppTool']) {
         const ambiguous = await call(operation, { appId: 'github', tool: 'SLACK_POST_MESSAGE', arguments: {} });
         expect(ambiguous.status).toBe(400);
         expect(ambiguous.body).toEqual({ error:
           `Connected app key is ambiguous; use an exact app id: ${duplicate}, ${ids[0]}` });
       }
+      await database.query(`UPDATE workspace_apps SET owner_identity_id=$1 WHERE id=$2`, [OWNER, ids[0]]);
       expect((await call('listAppTools', { appId: ids[0] })).status).toBe(200);
       console.log('Reproduction R-APPKEY: workbench keys github/web discover and execute over HTTP; unknown and ambiguous keys refused');
     } finally {

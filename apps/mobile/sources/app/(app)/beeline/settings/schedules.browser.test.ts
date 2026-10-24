@@ -129,6 +129,15 @@ function shims(mobile: string): Record<string, string> {
           ...row,
         }));
       }
+      if (new URLSearchParams(location.search).has('dm')) {
+        work.isDirectMessage = true;
+        work.roomName = null;
+        work.schedules = work.schedules.map(item => ({ ...item, corner: undefined }));
+        work.subscriptions = work.subscriptions.map(item => ({ ...item, corner: undefined }));
+      }
+      if (new URLSearchParams(location.search).has('empty')) {
+        work.schedules = []; work.subscriptions = [];
+      }
       return { ...work, schedules: work.schedules.filter((item) => !gone.has(item.id)),
         subscriptions: work.subscriptions.filter((item) => !gone.has(item.id)) };
     };`,
@@ -212,6 +221,21 @@ const stopped = (page: Page, operation: string) => {
 };
 
 describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a browser', () => {
+  it('calls the DM a DM in the list, both details, and the creation guidance', async () => {
+    for (const query of [
+      '?page=list&roomId=room-1&workspaceId=workspace-1&dm',
+      '?page=schedule&roomId=room-1&scheduleId=daily&dm',
+      '?page=subscription&roomId=room-1&subscriptionId=sub-1&dm',
+      '?page=list&roomId=room-1&workspaceId=workspace-1&dm&empty',
+    ]) {
+      const page = await proof(query);
+      expect(page.text.join(' ')).not.toContain('this Room');
+      expect(page.text.join(' ')).toContain('this DM');
+      if (query.includes('page=list')) expect(page.text[0]).toBe('DM');
+      if (query.includes('empty')) expect(page.text.join(' ')).toContain('Ask an agent in this DM to add one.');
+    }
+  }, 120_000);
+
   it('lists each entry in one grammar and opens its own page', async () => {
     const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1',
       process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'flat-scheduled-work.png') : undefined);

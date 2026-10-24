@@ -413,6 +413,8 @@ export type RoomScheduleView = {
 };
 export type RoomScheduleListResult = { readonly schedules: readonly RoomScheduleView[] };
 export type ScheduledWorkResult = RoomScheduleListResult & RoomSubscriptionListResult & {
+  /** Absent on older servers; named Rooms and unnamed Rooms remain Rooms. */
+  readonly isDirectMessage?: boolean;
   readonly roomName: string | null;
   readonly agentNames: readonly (readonly [string, string])[];
 };

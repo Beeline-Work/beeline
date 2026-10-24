@@ -21,6 +21,9 @@ function dmSheetBody() {
     const styles = { membershipError: ${style('membershipError')}, membershipErrorText: ${style('membershipErrorText')} };
     export const DmSheetBody = ({ muted, error }) => {
       const pushMuted = muted, pushMuteWorking = false, membershipError = error;
+      const viewerIsAgent = false, roomSurface = { viewer: { permissions: { send: true } } };
+      const decodedId = 'dm-fixture', activeCommunityId = 'workspace-fixture';
+      const router = { push: () => {} };
       const togglePushMute = async () => {}, setDmActionsVisible = () => {};
       return <>${chat.slice(start, end)}</>;
     };`;
@@ -46,6 +49,7 @@ describe.skipIf(!existsSync(CHROME))('DM actions sheet', () => {
       const mutedResult = JSON.parse(muted.result);
       expect(mutedResult.switchOn).toBe(true);
       expect(mutedResult.text).toContain('Mute notifications');
+      expect(mutedResult.text).toContain('Schedules and subscriptions');
       expect(mutedResult.text).not.toContain('Tags and replies still notify you.');
       expect(mutedResult.muteHeight).toBe(52);
       expect(mutedResult.alert).toBeNull();

@@ -36,7 +36,7 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   if (navigationStopped) {
     return (
       <View style={styles.placeholder} testID="runnable-artifact-navigation-stopped">
-        <Text style={styles.text}>This game tried to open another page and was closed</Text>
+        <Text style={styles.text}>This page tried to open another page and was closed.</Text>
         <Button
           label="Reopen"
           onPress={() => setAttempt((value) => value + 1)}
@@ -48,14 +48,14 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   if (failed || (Platform.OS !== 'web' && status === 'unavailable')) {
     return (
       <View style={styles.placeholder}>
-        <Text style={styles.text}>Game stopped. Close and reopen it to try again.</Text>
+        <Text style={styles.text}>Stopped. Close and reopen it to try again.</Text>
       </View>
     );
   }
   if (!url || (Platform.OS !== 'web' && !WebView)) {
     return (
       <View style={styles.placeholder}>
-        <Text style={styles.text}>Opening game…</Text>
+        <Text style={styles.text}>Opening…</Text>
       </View>
     );
   }

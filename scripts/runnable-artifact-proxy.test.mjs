@@ -35,7 +35,9 @@ test('game proxy carries no sessions, strips cookies, and fails closed without C
     assert.equal((await fetch(base + '/v1/phone/identity')).status, 404);
     assert.equal(calls.length, 1);
     sandbox = false;
-    assert.equal((await fetch(base + path)).status, 503);
+    const unavailable = await fetch(base + path);
+    assert.equal(unavailable.status, 503);
+    assert.equal(await unavailable.text(), 'Unavailable. Close and reopen it to try again.');
   } finally {
     await Promise.all(
       [backend, proxy].map((server) => new Promise((resolve) => server.close(resolve))),

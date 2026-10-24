@@ -251,7 +251,7 @@
     "components/buzz/NoMatchingConversationsEmpty.tsx": ["NoMatchingConversationsEmpty"],
     "components/buzz/OverflowGlyph.tsx": ["OverflowGlyph"],
     "components/buzz/OwnerGrantNeededCard.tsx": ["OwnerGrantNeededCard"],
-    "components/buzz/PageHeader.tsx": ["PageHeader"],
+    "components/buzz/PageHeader.tsx": ["PageHeader", "PageHeaderTitle"],
     "components/buzz/PinGlyph.tsx": ["PinGlyph"],
     "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
     "components/buzz/PrLifecycleCard.tsx": [

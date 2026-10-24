@@ -1,4 +1,5 @@
 vi.mock('./Button', () => ({ Button: 'Button' }));
+vi.mock('./RunnableArtifact', () => ({ RunnableArtifact: 'RunnableArtifact' }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -164,6 +165,16 @@ async function flush(): Promise<void> {
 }
 
 describe('the full-screen artifact viewer (mock 1c)', () => {
+  it('labels runnable pages Interactive while keeping the existing game MIME', () => {
+    const renderer = render(<ArtifactViewerScreen
+      attachment={attachment({ mimeType: 'application/vnd.beeline.game+html', title: 'After midnight' })}
+      onClose={mocks.onClose}
+    />);
+    expect(renderer.root.findAllByType('Text' as any).map((node: any) => node.props.children))
+      .toContain('Interactive · After midnight');
+    act(() => renderer.unmount());
+  });
+
   it('renders code in the existing viewer shell and copies the complete document', async () => {
     mocks.copyText.mockClear();
     const document = {

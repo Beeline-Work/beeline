@@ -202,6 +202,8 @@
         "scripts/voice-multi-tips-native-proof.tsx",
         "scripts/multi-human-silence-native-proof.tsx",
         "scripts/runnable-native-proof.tsx",
+        // Selected as Metro's temporary entry by evidence/interactive-label/README.md.
+        "scripts/interactive-label-native-proof.tsx",
         "scripts/call-error-android-proof.tsx",
         // Selected as Expo's main entry for the isolated Hermes cancellation proof.
         "scripts/livekit-abort-native-proof.tsx",

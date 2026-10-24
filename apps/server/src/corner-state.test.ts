@@ -52,7 +52,7 @@ describe('observed corner states', () => {
     ],
     [
       'checks failed without worker',
-      { lifecycle: { lifecycle: 'in-review', checks: 'failing' } },
+      { lifecycle: { lifecycle: 'in-review', checks: 'failing' }, ciStartedAt: undefined },
       'idle',
     ],
     ['human merge yes', { owed: true, lifecycle: { ...pushed, checks: 'passing' } }, 'waiting'],
@@ -88,4 +88,32 @@ it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) =
 });
 it.each(['pending','failing'] as const)('CI %s with an expired deadline is idle', checks => {
   expect(deriveCornerState({...facts,ciStartedAt:1000-1801,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state:'idle'});
+});
+it('a fresh failing repair window is working', () => {
+  expect(deriveCornerState({
+    ...facts,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('working');
+});
+it('a blocked report while checks are pending is idle', () => {
+  expect(deriveCornerState({
+    ...facts,
+    stallReport: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'pending' },
+  }).state).toBe('idle');
+});
+it('a blocked report during a fresh failing repair window stays working', () => {
+  expect(deriveCornerState({
+    ...facts,
+    stallReport: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('working');
+});
+it('a running reviewer does not keep a red head in review', () => {
+  expect(deriveCornerState({
+    ...facts,
+    reviewerActive: true,
+    ciStartedAt: undefined,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('idle');
 });

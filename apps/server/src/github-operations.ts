@@ -1566,7 +1566,9 @@ export class GitHubOperations {
   /**
    * Retry GitHub's asynchronous mergeability calculation for open corner PRs,
    * and re-read a stored 'dirty' PR so a conflict that GitHub has since
-   * cleared stops re-firing the merge-conflict wake.
+   * cleared stops re-firing the merge-conflict wake. An addressed refresh also
+   * checks previously clean verdicts: checks can finish after the base moves
+   * without a pull-request webhook carrying the new conflict.
    */
   async refreshStaleMergeability(cornerId?: string): Promise<void> {
     const rows = await this.database.query<{
@@ -1597,7 +1599,7 @@ export class GitHubOperations {
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
-         AND fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty')
+         AND ($1::uuid IS NOT NULL OR fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty'))
          AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
          AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND ($1::uuid IS NULL OR fact.corner_id=$1)`,
@@ -1634,7 +1636,7 @@ export class GitHubOperations {
             current.pr.number !== row.number ||
             current.pr.headSha !== pr.headSha ||
             (current.pr.baseSha ?? null) !== row.base_sha ||
-            (current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty')
+            (!cornerId && current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty')
           )
             return;
           await this.updateLifecycle(

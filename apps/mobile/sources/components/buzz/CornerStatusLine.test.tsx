@@ -97,6 +97,19 @@ describe('CornerStatusLine', () => {
     expect(onOpenPullRequest).toHaveBeenCalledWith('https://github.com/acme/beeline/pull/840');
   });
 
+  it('CONFLICT-STATUS-1: displays the server conflict and removes it on a resolved response', () => {
+    const renderer = render(<CornerStatusLine archived={false}
+      lifecycle={{ ...lifecycle, pr: { ...lifecycle.pr, mergeability: 'dirty' } }}
+      onOpenPullRequest={() => undefined} />);
+    expect(renderer.root.findByProps({ testID: 'corner-status-copy' }).props.children)
+      .toBe('PR #840 · merge conflict');
+    act(() => renderer.update(<CornerStatusLine archived={false}
+      lifecycle={{ ...lifecycle, pr: { ...lifecycle.pr, mergeability: 'clean' } }}
+      onOpenPullRequest={() => undefined} />));
+    expect(renderer.root.findByProps({ testID: 'corner-status-copy' }).props.children)
+      .toBe('PR #840 · 1/15 tests passed · running');
+  });
+
   it('renders nothing before a pull request exists', () => {
     expect(
       render(

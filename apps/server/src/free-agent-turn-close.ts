@@ -18,9 +18,9 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
   const command = (await database.query<{
     generation_id: string | null; cancellation_reason: string | null;
     completion_kind: string | null; allowance: string | null;
-    private_payload: unknown; passive: boolean;
+    private_payload: unknown; review_context: unknown; passive: boolean;
   }>(`SELECT command.generation_id,command.cancellation_reason,turn.completion_kind,
-      command.private_payload,source.system_event->>'kind'='computer-session-activity' passive,
+      command.private_payload,command.review_context,source.system_event->>'kind'='computer-session-activity' passive,
       (SELECT event.detail->>'limit' FROM free_agent_events event
        WHERE event.agent_id=command.agent_id AND event.kind='allowance_reached'
          AND event.detail->>'roomId'=command.room_id::text
@@ -33,8 +33,8 @@ export async function closeFreeAgentTurn(database: SqlDatabase, input: {
     WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
       AND command.action IN ('input','resume') ORDER BY command.created_at DESC LIMIT 1 FOR UPDATE OF command`,
     [input.roomId,input.agentId,input.requestId])).rows[0];
-  // Private assignments keep the existing commander failure/report path.
-  if (command?.private_payload) return false;
+  // Assignments and dispatched reviews keep the commander failure/report path.
+  if (command?.private_payload || command?.review_context) return false;
   if (!command || (input.generationId != null && command.generation_id !== input.generationId) ||
       (command.cancellation_reason && command.cancellation_reason !== 'free-agent-time-limit') ||
       command.completion_kind === 'no-reply' || command.passive) return true;

@@ -14,7 +14,8 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { isNoReplyDeclaration } from './no-reply.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -564,10 +565,16 @@ export class DaemonService {
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
     ]);
+    // Final text is normally published unconditionally by the helper's stream
+    // settle. Older harnesses express silence as prose instead of the no-reply
+    // tool. Settle that outcome before either public insertion or private routing.
+    const silentFinal = name === 'postRoomMessage' && candidate.presentation !== 'card' &&
+      isNoReplyDeclaration(String(candidate.text ?? ''));
     if (
       !this.commandTransaction &&
       scopedRoom &&
       name === 'postRoomMessage' &&
+      !silentFinal &&
       candidate.relay === undefined &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string' &&
@@ -702,6 +709,8 @@ export class DaemonService {
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
           return this.writeResult() as Output<Name>;
+        if (silentFinal && command.state === 'complete')
+          return this.writeResult() as Output<Name>;
         // Silence is a server-owned terminal outcome, including private return
         // routes. Older helpers may still submit final text after the tool.
         if (name === 'postRoomMessage' && (await db.query(
@@ -724,7 +733,7 @@ export class DaemonService {
         // A corner is the ordered work's own address: its viewers watch the
         // turn's live work and progress there. Urgent terminal prose still
         // reports privately; done uses the explicit guarded report tool.
-        if (command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
+        if (!silentFinal && command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount)) || ([
           'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name) && !(await db.query(
@@ -790,7 +799,19 @@ export class DaemonService {
         scoped.afterCommit = (task) => {
           committedTasks.push(task);
         };
-        const result = await scoped.execute(name, input, authenticatedAgentId);
+        let result: Output<Name>;
+        if (silentFinal) {
+          // Settle through the authorized completion path below. A recursive
+          // execute call unnecessarily adds a generic System producer route.
+          await db.query(`UPDATE agent_turns SET status='complete',completion_kind='no-reply',created_at=now()
+            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
+            [scopedRoom,authenticatedAgentId,requestId]);
+          await db.query(`DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2
+            AND turn_id=$3 AND kind IN ('draft','thought')`, [scopedRoom,authenticatedAgentId,requestId]);
+          await settleTurnFailureLine(db,buffered,scopedRoom, String(requestId),authenticatedAgentId);
+          candidate.status = 'complete';
+          result = this.writeResult() as Output<Name>;
+        } else result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
           await db.query(
             `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
@@ -835,12 +856,12 @@ export class DaemonService {
               [offerId, command.id],
             );
         }
-        if (name === 'postRoomMessage' && candidate.relay === undefined) {
+        if (name === 'postRoomMessage' && candidate.relay === undefined && !silentFinal) {
           // routeAgentResult reads the reply's own text for the agents it hands
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
-        } else if (name === 'postAgentTurnReceipt') {
+        } else if (name === 'postAgentTurnReceipt' || silentFinal) {
           if (candidate.status === 'working')
             await db.query(
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
@@ -914,7 +935,7 @@ export class DaemonService {
           },
         });
       }
-      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner) {
+      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner && !silentFinal) {
         await this.reconcileZeroCheckWorkerCompletion(
           scopedRoom!,
           authenticatedAgentId,
@@ -5933,6 +5954,17 @@ export class DaemonService {
     return this.writeResult();
   }
   private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) {
+    // An informational continuation has no automatic return obligation. An
+    // actual incoming assignment may receive its first result here;
+    // reportToCommander fences that obligation across all later continuations.
+    if (automatic && command.private_payload?.kind !== 'order') {
+      const incoming = await commandOrder(database, command);
+      const ownOrder = incoming.agent_id === agentId && (incoming.private_payload?.kind === 'order' ||
+        (!incoming.private_payload && incoming.source_message_id && (await database.query(
+          `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
+           WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [incoming.source_message_id])).rowCount));
+      if (!ownOrder) return { ...this.writeResult(), delivered: true, skipped: true };
+    }
     const receivedPrefix = text.match(/^([^\s:]{1,64}):/)?.[1];
     const prefix = text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-');
     if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
@@ -5991,7 +6023,7 @@ export class DaemonService {
     });
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
       createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask });
-    if ('delivered' in result && !result.delivered) return result;
+    if (result.skipped || ('delivered' in result && !result.delivered)) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
       [command.room_id, agentId, attachment.id]);

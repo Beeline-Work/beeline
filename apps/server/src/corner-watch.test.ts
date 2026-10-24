@@ -182,7 +182,7 @@ it('Reproduction ST-closed: legacy closed watches receive no wake when the corne
   console.info('Demonstrated ST-closed: close archived corner; legacy watcher got 0 wakes');
 });
 
-it('Reproduction ST-opened: skips the opener but wakes another watcher', async () => {
+it('WAKE-STORM: passive opened watches and subscriptions wake nobody', async () => {
   await watch(['opened']);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [WS,P,W]);
   await db.query(`UPDATE memberships SET event_subscriptions='["corner-opened"]' WHERE room_id=$1 AND identity_id=$2`, [P,W]);
@@ -190,8 +190,8 @@ it('Reproduction ST-opened: skips the opener but wakes another watcher', async (
   expect(await wakes()).toEqual([]);
   expect((await readAgentCommands(db, P, W)).commands).toEqual([]);
   await systemLine(db, { roomId: P, authorId: H, subject: { kind: 'agent', id: H, name: 'Other opener' }, verb: 'opened', kind: 'corner-opened', card: { cornerId: B } });
-  expect(await wakes()).toHaveLength(1);
-  console.info('Demonstrated ST-opened: opener got 0 wakes; other watcher got 1');
+  expect(await wakes()).toHaveLength(0);
+  expect((await readAgentCommands(db, P, W)).commands).toEqual([]);
 });
 
 it('an empty list removes the watch', async () => {

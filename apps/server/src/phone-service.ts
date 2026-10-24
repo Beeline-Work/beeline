@@ -12,7 +12,7 @@ import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './f
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
-import { webhookDetails, webhookToken, requireWebhookAdmin } from './subscription-webhooks.js';
+import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager } from './subscription-webhooks.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -4184,14 +4184,12 @@ export class PhoneService {
       case 'revealWebhookToken':
       case 'rotateWebhookToken': {
         const i = input as Input<'revealWebhookToken'>;
-        await this.requireTopLevelRoom(i.roomId);
         return await webhookToken(this.database, i.roomId, i.subscriptionId, viewerId,
           name === 'rotateWebhookToken') as Output<Name>;
       }
       case 'listRoomSubscriptions': {
         const roomId = (input as Input<'listRoomSubscriptions'>).roomId;
-        await this.requireTopLevelRoom(roomId);
-        if (!(await humanRoomAdmin(this.database, roomId, viewerId))) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
+        await requireScheduledWorkManager(this.database, roomId, viewerId);
         return await listRoomSubscriptions(this.database, roomId) as Output<Name>;
       }
       case 'readScheduledWork':
@@ -4200,8 +4198,7 @@ export class PhoneService {
         )) as Output<Name>;
       case 'deleteRoomSubscription': {
         const i = input as Input<'deleteRoomSubscription'>;
-        await this.requireTopLevelRoom(i.roomId);
-        if (!(await humanRoomAdmin(this.database, i.roomId, viewerId))) throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
+        await requireScheduledWorkManager(this.database, i.roomId, viewerId);
         const webhook = await this.database.query(`SELECT 1 FROM agent_subscriptions WHERE id::text=$1 AND source='webhook'`, [i.subscriptionId]);
         if (webhook.rowCount) await requireWebhookAdmin(this.database, i.roomId, viewerId);
         await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId, this.composio);
@@ -5085,9 +5082,7 @@ export class PhoneService {
     });
   }
   private async listRoomSchedules(roomId: string, viewerId: string) {
-    await this.requireTopLevelRoom(roomId);
-    if (!(await humanRoomAdmin(this.database, roomId, viewerId)))
-      throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
+    await requireScheduledWorkManager(this.database, roomId, viewerId);
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
@@ -5103,9 +5098,7 @@ export class PhoneService {
     return { schedules: schedules.rows.map(roomSchedule) };
   }
   private async readScheduledWork(roomId: string, viewerId: string): Promise<Output<'readScheduledWork'>> {
-    await this.requireTopLevelRoom(roomId);
-    if (!(await humanRoomAdmin(this.database, roomId, viewerId)))
-      throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
+    await requireScheduledWorkManager(this.database, roomId, viewerId);
     const [room, schedules, subscriptions] = await Promise.all([
       this.database.query<{ name: string | null; agent_id: string; agent_name: string }>(
         `SELECT room.name, agent.id agent_id, agent.name agent_name
@@ -5146,9 +5139,7 @@ export class PhoneService {
     input: Input<'deleteRoomSchedule'>,
     viewerId: string,
   ): Promise<void> {
-    await this.requireTopLevelRoom(input.roomId);
-    if (!(await humanRoomAdmin(this.database, input.roomId, viewerId)))
-      throw new Error(WORKSPACE_ADMIN_AUTHORITY_MESSAGE);
+    await requireScheduledWorkManager(this.database, input.roomId, viewerId);
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules schedule USING rooms surface
        WHERE schedule.id=$1 AND surface.id=schedule.room_id

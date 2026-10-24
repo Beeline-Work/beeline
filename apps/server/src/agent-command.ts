@@ -24,7 +24,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
-import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, blockingReview, lockCornerLifecycle } from './corner-lifecycle.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   hasSystemReportMention,
@@ -274,13 +274,13 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
   // current head or revision gets its own wake from the ordinary generators.
   return `${recovery}, superseded_corner_wakes AS MATERIALIZED (
     SELECT command.id FROM recovery_scope command
-    JOIN corner_facts fact ON fact.corner_id=command.room_id
+    JOIN corner_facts fact ON fact.corner_id=COALESCE((command.review_context->>'cornerId')::uuid,command.room_id)
     LEFT JOIN messages source ON source.id=command.source_message_id
     WHERE (command.review_context IS NOT NULL AND (
         command.review_context->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
         OR command.review_context->'pullRequest' IS DISTINCT FROM fact.lifecycle->'pr'->'number'
         OR (command.review_context->>'briefRevision')::int IS DISTINCT FROM
-          COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id),0)))
+          COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),0)))
       OR (command.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
         AND source.system_event->'object'->>'headSha' IS NOT NULL
         AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
@@ -436,6 +436,16 @@ export async function repairReviewerCornerMembership(
   return member.rowCount > 0;
 }
 
+/** Exact target comparison also applies to review reports routed to another place. */
+export async function supersededReview(db: SqlDatabase, command: CommandRow): Promise<boolean> {
+  if (!command.review_context) return false;
+  return Boolean((await db.query(`SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
+    AND (fact.lifecycle->'pr'->>'headSha' IS DISTINCT FROM $2
+      OR fact.lifecycle->'pr'->'number' IS DISTINCT FROM $3::jsonb)`,
+    [command.review_context.cornerId ?? command.room_id, command.review_context.headSha,
+      JSON.stringify(command.review_context.pullRequest)])).rowCount);
+}
+
 export async function createAgentCommand(
   db: SqlDatabase,
   input: {
@@ -490,9 +500,29 @@ export async function createAgentCommand(
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
+  let reviewContext: Record<string, unknown> | undefined = ['report', 'order', 'agent_tag'].includes(input.reason) && input.parent?.review_context && input.parent.review_context.purpose !== 'repair'
+    ? { ...input.parent.review_context, purpose: input.reason === 'report' ? 'verdict' : 'repair' } : undefined;
+  if (reviewContext && await supersededReview(db, input.parent!)) return undefined;
+  if ((['order', 'agent_tag'].includes(input.reason) || input.reason === 'corner_review_needed') && !reviewContext) {
+    reviewContext = (await db.query<{ context: Record<string, unknown> }>(
+      `SELECT jsonb_build_object('cornerId',fact.corner_id,'headSha',fact.lifecycle->'pr'->>'headSha',
+         'pullRequest',fact.lifecycle->'pr'->'number','briefRevision',
+         COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),0)) context
+       FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN corner_facts fact ON fact.corner_id=corner.id
+       WHERE corner.id=$1 AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+         AND ($3::boolean OR $2=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()}))`,
+      [input.roomId, input.agentId, input.reason === 'corner_review_needed'],
+    )).rows[0]?.context;
+  }
+  if (input.reason === 'agent_tag' && reviewContext && reviewContext.purpose !== 'repair' &&
+      await blockingReview(db, input.roomId, String(reviewContext.headSha))) return undefined;
+  if (reviewContext && input.reason === 'corner_review_needed') reviewContext.purpose = 'repair';
+  if (reviewContext) input = { ...input, wakeNote: [input.wakeNote,
+    `Current handoff target: PR #${reviewContext.pullRequest} at ${reviewContext.headSha}. Older heads in the conversation are historical.`].filter(Boolean).join('\n') };
   const sourceText = member.rows[0]!.source_text;
   const note = input.wakeNote ? `\n${input.wakeNote}` : '';
-  const privatePayload = input.privatePayload ?? (parent?.private_payload && input.inheritPrivatePayload !== false
+  const privatePayload = input.privatePayload ? { ...input.privatePayload, text: input.privatePayload.text + note } : (parent?.private_payload && input.inheritPrivatePayload !== false
     ? { ...parent.private_payload, reportedGenerationId: undefined, kind: 'lifecycle' as const,
         text: (input.action === 'resume' && sourceText
           ? `${parent.private_payload.text}\nResume context: ${sourceText}`
@@ -546,6 +576,10 @@ export async function createAgentCommand(
       AND agent_id=$4 AND action=$5) LIMIT 1`,
     [id, input.roomId, input.sourceMessageId, input.agentId, input.action ?? 'input'],
   )).rows[0];
+  if (command && reviewContext) {
+    await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1', [command.id, JSON.stringify(reviewContext)]);
+    command.review_context = reviewContext;
+  }
   return command;
   });
 }
@@ -1980,6 +2014,7 @@ export async function reconcileCornerMergeBlockers(
 export async function reconcileConfiguredCornerReviewers(
   db: SqlDatabase,
   parentRoomId?: string,
+  refreshHead?: (cornerId: string) => Promise<void>,
 ): Promise<{ subscriptions: number; commands: number }> {
     db = new CornerAccessDatabase(db);
   const subscriptions = await db.query(
@@ -2114,6 +2149,7 @@ export async function reconcileConfiguredCornerReviewers(
     [parentRoomId ?? null],
   );
   for (const candidate of candidates.rows) {
+    if (refreshHead) await refreshHead(candidate.corner_id);
     // Re-report the green head. A review state repairs a missing wake; an
     // implement state waits for its current worker before taking rereview.
     const outcome = await advanceCorner(db, candidate.corner_id, {

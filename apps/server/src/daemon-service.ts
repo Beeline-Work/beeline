@@ -33,6 +33,7 @@ import {
   authorizeCommandOutput,
   authorizeFailedTurnOutput,
   claimAgentCommand,
+  supersededReview,
   commandInbox,
   createAgentCommand,
   nextAgentDepth,
@@ -488,6 +489,21 @@ export class DaemonService {
           throw error;
         },
       ));
+    // Provider reads happen before the command transaction. Reports may be
+    // delivered in the commander's Room, so refresh their origin corners too.
+    if (!this.commandTransaction && scopedRoom && this.github) {
+      if (['getAgentCommands', 'claimAgentCommand'].includes(name)) {
+        const origins = await this.database.query<{ corner_id: string }>(
+          `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id
+           FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+             AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
+          [scopedRoom, authenticatedAgentId]);
+        for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
+      } else if (isCorner && (['getCornerRestoreState', 'order', 'report', 'postCornerMessage'].includes(name) ||
+        name === 'postRoomMessage' && candidate.relay === undefined)) {
+        await this.github.refreshCornerReviewHead?.(scopedRoom);
+      }
+    }
     if (voiceAgentName && typeof candidate.text === 'string')
       candidate.text = cleanVoiceReply(candidate.text, voiceAgentName);
     if (name === 'postRoomMessage' && candidate.relay !== undefined)
@@ -705,6 +721,10 @@ export class DaemonService {
                 candidate.generationId,
                 allowCompleted,
               );
+        if (['postRoomMessage', 'postCornerMessage', 'order', 'report'].includes(name) && command.review_context?.purpose !== 'repair' && await supersededReview(db, command)) {
+          await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [command.id]);
+          return { ...this.writeResult(), id: command.id, skipped: true } as Output<Name>;
+        }
         // A lost receipt response may be replayed after the fallback consumed
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')

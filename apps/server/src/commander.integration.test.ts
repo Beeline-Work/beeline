@@ -34,6 +34,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db.close());
 beforeEach(async () => {
+  Object.assign(daemon, { github: undefined });
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);

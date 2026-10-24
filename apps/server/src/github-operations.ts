@@ -875,6 +875,38 @@ export class GitHubOperations {
     await this.app.dispatchProductionWorkflow(target.token, target.repository, inputs);
   }
 
+  /** Resolve handoffs against GitHub even when the synchronize webhook is late. */
+  async refreshCornerReviewHead(cornerId: string): Promise<void> {
+    const stored = (await this.database.query<{ parent_id: string; number: number; head: string }>(
+      `SELECT room.parent_id,(fact.lifecycle->'pr'->>'number')::int number,
+         fact.lifecycle->'pr'->>'headSha' head
+       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+       WHERE room.id=$1 AND room.archived_at IS NULL
+         AND fact.lifecycle->'pr'->>'number' IS NOT NULL`, [cornerId],
+    )).rows[0];
+    if (!stored) return;
+    const target = await this.roomWorkflowTarget(stored.parent_id);
+    const pr = await this.app.readPullRequest(target.token, target.repository, stored.number);
+    if (pr.state === 'closed' && !pr.merged) {
+      await this.recordClosedCornerPullRequest(cornerId, stored.number, this.database);
+      return;
+    }
+    if (pr.merged || pr.headSha === stored.head) return;
+    await this.database.transaction(async db => {
+      await lockCornerLifecycle(db, cornerId);
+      const changed = await db.query(
+        `UPDATE corner_facts SET lifecycle=jsonb_set(
+           jsonb_set(lifecycle-'checksSummary'-'checkRefreshRetry','{pr,headSha}',to_jsonb($4::text)),
+           '{checks}','"pending"'),updated_at=now()
+         WHERE corner_id=$1 AND lifecycle->'pr'->>'number'=$2
+           AND lifecycle->'pr'->>'headSha'=$3 RETURNING corner_id`,
+        [cornerId, String(stored.number), stored.head, pr.headSha],
+      );
+      if (changed.rowCount) await advanceCorner(db, cornerId,
+        { kind: 'push', headSha: pr.headSha, contents: { headSha: pr.headSha } });
+    });
+  }
+
   /** Caller is authorized by DaemonService against the requesting corner membership. */
   async prChecksStatus(input: { cornerId: string; pullRequest?: number | string }, confirmZeroChecks = false) {
     const corner = (

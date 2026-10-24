@@ -1035,6 +1035,10 @@ export class GitHubAppClient {
         );
       } catch (error) {
         if (error instanceof GitHubHttpError && error.status === 404) continue;
+        // Private repositories on GitHub Free cannot configure branch protection.
+        if (error instanceof GitHubHttpError && error.status === 403 &&
+          (error.message.includes('Upgrade to GitHub Pro') ||
+            error.message.includes('make this repository public'))) continue;
         throw error;
       }
       for (const required of requiredChecks(body)) {

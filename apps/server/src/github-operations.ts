@@ -1,3 +1,4 @@
+import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
@@ -286,6 +287,7 @@ export type LandCornerOutcome =
 
 export class GitHubOperations {
   readonly #key: Buffer;
+  readonly #webhooks = new NotificationWork();
   readonly #roomTokens = new Map<string, { token: string; expiresAt: number }>();
   readonly #roomTokenMints = new Map<string, Promise<{ token: string; expiresAt: number }>>();
   constructor(
@@ -1366,6 +1368,10 @@ export class GitHubOperations {
   }
 
   async processWebhook(event: string, payload: unknown, deliveryId?: string) {
+    return this.#webhooks.run(() => this.processWebhookDelivery(event, payload, deliveryId));
+  }
+
+  private async processWebhookDelivery(event: string, payload: unknown, deliveryId?: string) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
     const body = payload as Record<string, unknown>;
     // The authenticated phone route uses this internal signal after a human message commits.

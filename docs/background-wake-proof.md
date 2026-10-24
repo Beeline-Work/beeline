@@ -68,3 +68,42 @@ Each row lists all jobs formerly reached on a generic wake. Repairs have an inde
 | Media expiry; maintenance; blocked-check notices; expired command leases; mention notices; institutional curator | Minute repair, as before. |
 
 Push, Sentry, schedules, choices, and deadline jobs run before the repair set when both are due. A notification arriving during a running job remains pending for the next iteration. Leadership takeover re-arms all jobs; dedicated advisory-lock ownership is unchanged.
+
+## Webhook burst and phone pool contention
+
+Ruby supplied another production window (2026-10-24, 01:18:47–01:19:13 UTC): about fifteen GitHub webhook POSTs in a second, followed by roughly forty slow-query lines in a second on the server machines. Only two queries were active at the subsequent database sample. This suggests queued work rather than simultaneous SQL execution, but the later activity sample alone cannot prove the earlier queue. Fly machine metadata identifies the deployed image as `0.1.105-62a269572454` on both machines.
+
+The four fingerprints are mapped to their exact parameter-free SQL in [background-query-fingerprints.json](background-query-fingerprints.json). Their hashes were recomputed with the production profiler algorithm, including `CornerAccessStatement` membership rewriting where applicable:
+
+| Fingerprint | SQL / call site | Why it runs during the burst |
+| --- | --- | --- |
+| `d9831d171473d1fb` | `DaemonService.access`: `SELECT EXISTS(...) corner_reviewer, ... FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL` | Helper inbox/command delivery performs its access check. |
+| `42b9a50d4e902175` | `readAgentCommands`: `WITH recovery_scope AS MATERIALIZED (...) ... SELECT c.* ...` | `getAgentCommands` and `getRoomInbox`/`commandInbox` render durable pending commands after live invalidations. Includes workflow expiry/recovery fences. |
+| `f08cb3ec410a21df` | `CommanderWakeDeadlines.refresh` (now `refreshOnce`): `SELECT min(command.wake_after) due FROM agent_commands command ... WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'` | Every command invalidation formerly started another deadline read, including while an identical read was waiting. |
+| `ca61a04a12b9b235` | `GitHubOperations.processCornerEvent`: `SELECT corner.id corner_id,parent.id parent_id,... FROM rooms corner ...` | Each webhook locates its repository/branch’s corners before reconciling the live rollup. |
+
+The initial PR’s repair-cadence fix does **not** bound these foreground webhook operations. The extension admits at most two webhook reconciliations per `GitHubOperations` instance. Every delivery still executes and awaits its own result; there is no event dropping, cached verdict, or skipped subscription. Commander deadline reads separately admit one at a time, coalesce repeated Room/agent requests, and reread after a change received while running. This bounds pool checkouts before they compete with navigation. It does not change reviewer repair behavior or authority checks.
+
+### Reproduction R-WEBHOOK-BURST
+
+Production writes remain forbidden, and the extension has not been deployed. The safe stand-in sends signed POSTs to the built server’s real GitHub webhook route, with a real helper WebSocket subscribed to the affected corner, the PostgreSQL live listener, real `GitHubOperations` reconciliation and `DaemonService` command reads, and concurrent built `PhoneService.readNeedsYou` navigation reads. GitHub responses and helper/phone authentication are fixture boundaries; all database queries use isolated loopback PostgreSQL.
+
+```sh
+npm run build -w @beeline/server
+BEELINE_BACKGROUND_TEST_POSTGRES_URL=postgresql://localhost:56539/postgres \
+node scripts/prove-webhook-burst.mjs
+```
+
+The script compiles the original PR’s webhook/commander classes from `7f44162ed` into ignored build output for the negative control. Override `BEELINE_WEBHOOK_BASELINE_REF` if necessary. Both phases use the same five-slot foreground pool, fifteen deliveries over 700 ms and five Needs-you reads. A test-only 80 ms delay per checked-out query models network/statement round-trip occupancy without creating busy SQL; it is not a measured production network latency. Queries are timed by the real `PostgresDatabase` profiler, whose slow threshold is 500 ms. Pool checkout p95 is sampled around the real `pg.Pool.connect`; query delay is excluded from that checkout measurement. Rate is normalized from the observed burst-and-drain window, not extrapolated from a production counter.
+
+Measured on 2026-10-24:
+
+| Burst measurement | Initial PR / before extension | After extension |
+| --- | ---: | ---: |
+| Signed webhook deliveries acknowledged and stored | 15 | 15 |
+| Burst-and-drain window | 10.495 s | 9.794 s |
+| Slow-query count (at least 500 ms, including pool wait) | 68 | 1 |
+| Slow queries per minute, normalized | 388.77 | 6.13 |
+| Pool-checkout wait p95 | 2,024.37 ms | 0.18 ms |
+
+The remaining isolated slow query is included rather than claiming zero. Checkout count increased (143 to 173): the helper could complete more of its queued live deliveries instead of remaining stalled. The extension bounds contention, not the number of durable events that must be processed. The recorded access/command-read and webhook-match fingerprints all execute in this proof; the separate commander notification regression verifies that fifteen same-key notifications produce one active read and one follow-up read. Existing wake-digest and webhook tests retain authority, retry, and delivery coverage. Actual phone Back animation and production after-deployment measurements are not claimed by this server-boundary stand-in.

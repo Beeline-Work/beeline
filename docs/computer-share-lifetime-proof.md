@@ -1,5 +1,7 @@
 # Squire share lifetime and navigation consumer proof
 
+The public live-share viewer is served at `https://server.usebeeline.app/s/<id>/`, matching the server's default origin.
+
 This change implements the Squire 1.1.33 contract supplied by firstmate: repeated `operate_share {session_id}` calls retain the URL and advance `expires_at`; the stream supplies main-frame `{type: 'navigation', url, origin}` notifications. It is independent of the phone-opening change at https://github.com/Beeline-Work/beeline/pull/2373.
 
 `SquireShareRenewals` runs on the owning helper connection between model turns, without extending the conversation's idle lease. Room and corner callbacks persist renewed expiry through `refreshComputerSession`. The server matches the agent, Room, source session, and upstream URL, advances expiry monotonically, and cannot resurrect an ended card.

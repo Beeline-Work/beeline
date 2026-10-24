@@ -144,7 +144,7 @@ export async function noteComputerHandback(database: SqlDatabase, row: ComputerS
   }
 }
 
-/** The public origin can move to computer.usebeeline.app after DNS and TLS are ready. */
+/** Browser-share viewers are served at server.usebeeline.app by default. */
 export function computerSessionUrl(id: string): string {
   const origin = process.env.BEELINE_COMPUTER_ORIGIN || 'https://server.usebeeline.app';
   return `${origin.replace(/\/$/, '')}/s/${id}/`;

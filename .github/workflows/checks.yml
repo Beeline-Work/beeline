@@ -545,7 +545,11 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+    # Same-repository PRs, merge-queue and dispatch runs use the beeline-ci
+    # runners on squire so they do not wait for hosted runners. Fork PRs stay
+    # on hosted runners: the repository is public, and fork code must never run
+    # on squire.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -657,7 +661,8 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
+    # Routed like SERVER SUITE SHARD: beeline-ci on squire, fork PRs hosted.
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","beeline-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -670,9 +675,12 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           mobile: 'true'
+      # Squire shares its CPUs with agents and releases, so cap the workers.
+      # A hosted runner has 4 vCPUs and already uses 3, so the cap only
+      # changes self-hosted runs.
       - name: Run the mobile vitest suite
         working-directory: apps/mobile
-        run: npx vitest run
+        run: npx vitest run --maxWorkers=4
       - name: Typecheck the mobile app
         run: npm run mobile:typecheck
 

@@ -46,3 +46,14 @@ test('every Linux workspace consumer waits for the shared preparation job', () =
   assert.match(mobile.with.key, /patch-livekit-abort.cjs/);
   assert.match(mobile.with.path, /public\/canvaskit.wasm/);
 });
+
+test('server shards and the mobile suite use beeline-ci only for same-repository code', () => {
+  const route = "${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('[\"self-hosted\",\"beeline-ci\"]') || 'ubuntu-latest' }}";
+  for (const name of ['server-suite-shard', 'mobile-suite']) assert.equal(jobs[name]['runs-on'], route, name);
+  for (const [name, job] of Object.entries(jobs)) {
+    if (name === 'server-suite-shard' || name === 'mobile-suite') continue;
+    assert.doesNotMatch(JSON.stringify(job['runs-on']), /beeline-ci/, `${name} must not use beeline-ci`);
+  }
+  const vitest = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
+  assert.match(vitest.run, /--maxWorkers=4\b/);
+});

@@ -129,6 +129,7 @@ function attentionSql() {
     activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
+    blocker.agent_commander,blocker.human_blocker,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id
@@ -163,9 +164,10 @@ export async function refreshCornerAttention(
       );
     }
     const now = Date.now();
+    // Pending checks stay review until a final result or a new push, so the
+    // old 30-minute CI clock is not a deadline.
     const deadlines = [
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
-      row.ci_started_at ? new Date(row.ci_started_at).getTime() + 30 * 60_000 : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };
   });
@@ -181,7 +183,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** Two single-use deadlines per corner, reconstructed after startup or listener reconnect. */
+/** The turn-gap deadline, reconstructed after startup or listener reconnect. Pending checks have none. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

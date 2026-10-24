@@ -903,6 +903,20 @@ export class MonolithCornerTurnLoop {
       }
       return this.sessionId;
     }
+    // A client without a usable session still owns a harness process.
+    if (this.client) await this.discardSession(true);
+    try {
+      return await this.activateCold(trace);
+    } catch (error) {
+      // Cleanup must not hide the activation failure that owns the receipt.
+      await this.discardSession(true).catch(cleanupError =>
+        console.error('[body] failed to stop harness after activation failure:', cleanupError),
+      );
+      throw error;
+    }
+  }
+
+  private async activateCold(trace?: TurnTrace): Promise<string> {
     trace?.noteActivation('cold');
     this.sectionBaseline.reset();
     const [configuration, roster, grants, restored] = await Promise.all([

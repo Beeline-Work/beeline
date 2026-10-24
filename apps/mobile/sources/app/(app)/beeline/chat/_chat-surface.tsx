@@ -1186,7 +1186,7 @@ export function BuzzChatSurface({
   const githubAccess = useGitHubAccess(githubScope);
   const roomRepoCandidates = githubAccess?.candidates ?? [];
   const githubInstallations = githubAccess?.installations ?? [];
-  const workspaceChatList = useChatList(chatListKey);
+  const workspaceChatList = useChatList(chatListKey, { transcriptRoomId: decodedId });
   const workspaceChats = useMemo<readonly ChatListItem[]>(
     () => workspaceChatList?.chats ?? [],
     [workspaceChatList],

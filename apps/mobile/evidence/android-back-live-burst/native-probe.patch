@@ -1,0 +1,14 @@
+--- a/scripts/latency-rig/android/LatencyRigProbe.java
++++ b/scripts/latency-rig/android/LatencyRigProbe.java
+@@ -45,9 +45,9 @@
+   private static synchronized void observe(View view) {
+     Pending p = pending;
+     if (p == null || p.startNanos == 0 || p.submitted || !view.isHardwareAccelerated()) return;
+-    View room = roomScreen(view);
++    View room = p.name.contains("list-back") ? view : roomScreen(view);
+     if (room == null) return;
+-    int composerTop = composerTop(room);
++    int composerTop = p.name.contains("list-back") ? 100000 : composerTop(room);
+     if (composerTop == Integer.MAX_VALUE || !visibleRow(room, p.needle, composerTop)) return;
+     p.submitted = true;
+     view.getViewTreeObserver().registerFrameCommitCallback(() -> {

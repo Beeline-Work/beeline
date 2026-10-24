@@ -620,6 +620,21 @@ describe('phone surface readers', () => {
       .not.toHaveProperty('summary');
   });
 
+  it('keeps a Room preview whose latest message id is not hex', () => {
+    // Reproduction R1: a DM whose newest row was an automatic failure report
+    // read "No messages yet" with the Room's creation time.
+    for (const id of [`failure:${'d'.repeat(64)}:0`, '11111111-2222-4333-8444-555555555555']) {
+      const view = readChatListView({
+        workspace,
+        chats: [{ room: header, latestMessage: { id, text: 'failed: label-bg-audit', createdAt: 9, author: agent } }],
+        viewer: identity,
+        truncated: false,
+        watchFilters: [],
+      });
+      expect(view?.chats[0]?.latestMessage).toMatchObject({ id, text: 'failed: label-bg-audit', createdAt: 9 });
+    }
+  });
+
   it('keeps exact viewer-attention facts and ignores malformed reasons', () => {
     const latest = {
       id: 'a'.repeat(64),

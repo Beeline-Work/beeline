@@ -222,7 +222,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+  options: { automatic?: boolean; agentOnly?: boolean; openingRoute?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -259,7 +259,7 @@ export async function reportToCommander(
     }
   }
   const strict = Boolean(command) && !options.automatic;
-  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
+  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command, options.openingRoute);
   // Closed work has no outstanding request. Do not move its stale reports to
   // an ancestor Room merely because that Room still exists.
   if (origin && (await db.query(`SELECT 1 FROM rooms corner LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -421,8 +421,10 @@ export async function refuseTagPastCommander(
 }
 
 /** The recorded return route shared by lifecycle reports and commander approvals. */
-export async function commanderReportAddress(db: SqlDatabase, roomId: string, command?: CommandRow) {
-  if (!command)
+export async function commanderReportAddress(db: SqlDatabase, roomId: string, command?: CommandRow, openingRoute = false) {
+  // Idle attention belongs to the opening commander, regardless of later peer orders.
+  if (openingRoute) command = undefined;
+  if (!command && !openingRoute)
     command = (
       await db.query<CommandRow>(
         `SELECT ordered.* FROM agent_commands ordered JOIN rooms corner ON corner.id=ordered.room_id

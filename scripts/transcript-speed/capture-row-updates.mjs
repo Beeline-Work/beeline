@@ -47,6 +47,10 @@ try {
   adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d',
     `beeline://beeline/chat/${rooms[0]}?communityId=${workspace}`, 'app.usebeeline/.MainActivity');
   await pause(2000);
+  if (/mInputShown=true/.test(adb('shell', 'dumpsys', 'input_method'))) {
+    adb('shell', 'input', 'keyevent', '4');
+    await pause(500);
+  }
   await control.ready();
   const jumpLabel = [...dump().matchAll(/content-desc="([^"]*)"/g)].map(match => match[1]).find(label => label.endsWith('Jump to newest message'));
   if (jumpLabel) { tap(pointFor(dump(), 'content-desc', jumpLabel)); await pause(1500); }

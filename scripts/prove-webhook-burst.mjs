@@ -37,9 +37,53 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const until=async fn=>{const end=Date.now()+30000;while(!fn()){if(Date.now()>end)throw new Error('proof did not settle');await pause(10)}};
 const percentile=values=>values.sort((a,b)=>a-b)[Math.ceil(values.length*.95)-1]??0;
 const hash=sql=>createHash('sha256').update(sql.replace(/\s+/g,' ').trim()).digest('hex').slice(0,16);
+// Delay the earlier installation write to expose completion-order reversal.
+async function installationOrder(Operations) {
+ let started, release;
+ const suspended = new Promise(resolve => { started = resolve; });
+ const gate = new Promise(resolve => { release = resolve; });
+ let status = 'active';
+ const writes = [];
+ const database = {query: async sql => {
+  if (sql.includes("SET status='suspended'")) { started(); await gate; status='suspended'; writes.push(status); }
+  else if (sql.includes("SET status='revoked'")) { status='revoked'; writes.push(status); }
+  else if (sql.includes('UPDATE github_repositories SET active=false')) writes.push('repositories inactive');
+  else throw new Error('unexpected installation query');
+  return {rows:[],rowCount:1};
+ }};
+ const operations = new Operations(database,{}, {}, 'fixture');
+ const first = operations.processWebhook('installation',{action:'suspend',installation:{id:77}});
+ await suspended;
+ const second = operations.processWebhook('installation',{action:'deleted',installation:{id:77}});
+ await new Promise(resolve => setImmediate(resolve));
+ release();
+ await Promise.all([first,second]);
+ return {status,writes};
+}
+async function crossInstanceOrder(Operations, database) {
+ let started, release;
+ const suspended = new Promise(resolve => { started = resolve; });
+ const gate = new Promise(resolve => { release = resolve; });
+ const slow = {query: async (sql,values) => {
+  if (sql.includes("SET status='suspended'")) { started(); await gate; }
+  return database.query(sql,values);
+ }};
+ const firstServer = new Operations(slow,{}, {}, 'fixture');
+ const secondServer = new Operations(database,{}, {}, 'fixture');
+ const first = firstServer.processWebhook('installation',{action:'suspend',installation:{id:77}});
+ await suspended;
+ await secondServer.processWebhook('installation',{action:'deleted',installation:{id:77}});
+ release(); await first;
+ const status = (await database.query('SELECT status FROM github_installations WHERE installation_id=77')).rows[0].status;
+ const repositoriesActive = (await database.query('SELECT active FROM github_repositories WHERE repository_id=101')).rows[0].active;
+ await database.query("UPDATE github_installations SET status='active' WHERE installation_id=77");
+ await database.query('UPDATE github_repositories SET active=true WHERE repository_id=101');
+ return {status,repositoriesActive};
+}
 const admin=new Pool({connectionString:url,max:1});
 const results={};
 for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines],['after',GitHubOperations,CommanderWakeDeadlines]]) {
+ const ordering = await installationOrder(Operations);
  const schema=`webhook_burst_${phase}_${Date.now()}`;
  await admin.query('CREATE EXTENSION IF NOT EXISTS vector');await admin.query(`CREATE SCHEMA ${schema}`);
  const fixture=new PostgresDatabase('',1,{mode:'migration',pool:new Pool({connectionString:url,max:1,options:`-c search_path=${schema},public -c jit=off`})});
@@ -56,6 +100,7 @@ for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines]
  await fixture.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,[corner,workspace,room,worker]);
  await fixture.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,NULL,$5,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,[workspace,room,owner,worker,peer]);
  await fixture.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,feature_branch,lifecycle,workflow_state) VALUES($1,$2,$3,$4::jsonb,'checks')`,[corner,worker,branch,JSON.stringify({checks:'pending',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1'}})]);
+ const crossInstanceOrdering = await crossInstanceOrder(Operations, fixture);
  const pool=new Pool({connectionString:url,max:5,options:`-c search_path=${schema},public -c jit=off`});
  const connect=pool.connect.bind(pool);
  pool.connect=async()=>{const began=performance.now();const client=await connect();if(measuring)checkouts.push(performance.now()-began);
@@ -90,7 +135,7 @@ for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines]
   await Promise.all([...requests,...navigation]);
   await until(()=>activeQueries===0&&pool.waitingCount===0);await pause(200);await until(()=>activeQueries===0&&pool.waitingCount===0);
   const seconds=(performance.now()-started)/1000;
-  results[phase]={requests:15,seconds,queryDelayMs:lagMs,poolSize:5,slowQueries:slow.length,slowQueriesPerMinute:slow.length*60/seconds,checkoutWaitP95Ms:percentile(checkouts),checkoutCount:checkouts.length,fingerprints:Object.fromEntries(fingerprints),inboxFrames:frames.filter(f=>f.type==='inbox').length};
+  results[phase]={ordering,crossInstanceOrdering,requests:15,seconds,queryDelayMs:lagMs,poolSize:5,slowQueries:slow.length,slowQueriesPerMinute:slow.length*60/seconds,checkoutWaitP95Ms:percentile(checkouts),checkoutCount:checkouts.length,fingerprints:Object.fromEntries(fingerprints),inboxFrames:frames.filter(f=>f.type==='inbox').length};
   assert.equal(Number((await fixture.query('SELECT count(*) n FROM github_webhook_deliveries')).rows[0].n),15);
  }finally{measuring=false;console.warn=warn;}
  }finally{socket?.terminate();deadlines?.stop();await listener?.stop();if(server)await new Promise(resolve=>server.close(resolve));await db?.close();await fixture.close();await admin.query(`DROP SCHEMA ${schema} CASCADE`);}
@@ -99,3 +144,11 @@ for (const result of Object.values(results)) for (const fingerprint of ['d9831d1
 await admin.end();console.log(JSON.stringify({reproduction:'R-WEBHOOK-BURST',results}));
 assert(results.after.checkoutWaitP95Ms<results.before.checkoutWaitP95Ms);
 assert(results.after.slowQueries<results.before.slowQueries);
+
+assert.equal(results.before.ordering.status,'suspended');
+assert.equal(results.after.ordering.status,'revoked');
+assert.deepEqual(results.after.ordering.writes,['suspended','revoked','repositories inactive']);
+
+assert.equal(results.before.crossInstanceOrdering.status,'suspended');
+assert.equal(results.after.crossInstanceOrdering.status,'revoked');
+assert.equal(results.after.crossInstanceOrdering.repositoriesActive,false);

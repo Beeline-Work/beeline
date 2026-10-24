@@ -82,7 +82,7 @@ The four fingerprints are mapped to their exact parameter-free SQL in [backgroun
 | `f08cb3ec410a21df` | `CommanderWakeDeadlines.refresh` (now `refreshOnce`): `SELECT min(command.wake_after) due FROM agent_commands command ... WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'` | Every command invalidation formerly started another deadline read, including while an identical read was waiting. |
 | `ca61a04a12b9b235` | `GitHubOperations.processCornerEvent`: `SELECT corner.id corner_id,parent.id parent_id,... FROM rooms corner ...` | Each webhook locates its repository/branch’s corners before reconciling the live rollup. |
 
-The initial PR’s repair-cadence fix does **not** bound these foreground webhook operations. The extension admits at most two webhook reconciliations per `GitHubOperations` instance. Every delivery still executes and awaits its own result; there is no event dropping, cached verdict, or skipped subscription. Commander deadline reads separately admit one at a time, coalesce repeated Room/agent requests, and reread after a change received while running. This bounds pool checkouts before they compete with navigation. It does not change reviewer repair behavior or authority checks.
+The initial PR’s repair-cadence fix does **not** bound these foreground webhook operations. The extension serializes webhook deliveries in arrival order per `GitHubOperations` instance. Every delivery still executes and awaits its own result; there is no event dropping, cached verdict, or skipped subscription. Commander deadline reads separately admit one at a time, coalesce repeated Room/agent requests, and reread after a change received while running. This bounds pool checkouts before they compete with navigation. It does not change reviewer repair behavior or authority checks.
 
 ### Reproduction R-WEBHOOK-BURST
 
@@ -101,9 +101,18 @@ Measured on 2026-10-24:
 | Burst measurement | Initial PR / before extension | After extension |
 | --- | ---: | ---: |
 | Signed webhook deliveries acknowledged and stored | 15 | 15 |
-| Burst-and-drain window | 10.495 s | 9.794 s |
-| Slow-query count (at least 500 ms, including pool wait) | 68 | 1 |
-| Slow queries per minute, normalized | 388.77 | 6.13 |
-| Pool-checkout wait p95 | 2,024.37 ms | 0.18 ms |
+| Burst-and-drain window | 9.054 s | 17.164 s |
+| Slow-query count (at least 500 ms, including pool wait) | 65 | 0 |
+| Slow queries per minute, normalized | 430.73 | 0 |
+| Pool-checkout wait p95 | 1,321.90 ms | 0.04 ms |
 
-The remaining isolated slow query is included rather than claiming zero. Checkout count increased (143 to 173): the helper could complete more of its queued live deliveries instead of remaining stalled. The extension bounds contention, not the number of durable events that must be processed. The recorded access/command-read and webhook-match fingerprints all execute in this proof; the separate commander notification regression verifies that fifteen same-key notifications produce one active read and one follow-up read. Existing wake-digest and webhook tests retain authority, retry, and delivery coverage. Actual phone Back animation and production after-deployment measurements are not claimed by this server-boundary stand-in.
+No query crossed the 500 ms slow threshold in this controlled after run. Serial delivery increased the burst drain time; it preserves ordering while keeping foreground pool checkouts available. Checkout count increased (143 to 217): the helper could complete more of its queued live deliveries instead of remaining stalled. The extension bounds contention, not the number of durable events that must be processed. The recorded access/command-read and webhook-match fingerprints all execute in this proof; the separate commander notification regression verifies that fifteen same-key notifications produce one active read and one follow-up read. Existing wake-digest and webhook tests retain authority, retry, and delivery coverage. Actual phone Back animation and production after-deployment measurements are not claimed by this server-boundary stand-in.
+
+
+### Delivery ordering regression
+
+The reviewed concurrent admission could finish a later installation deletion before an earlier suspended-installation write. `github-webhook-order.test.ts` reproduced this with unequal database-write durations: `revoked → repositories inactive → suspended`, leaving the installation suspended. A same-duration queue test did not cover that race.
+
+The webhook queue now explicitly admits one delivery at a time. The regression passes with `suspended → revoked → repositories inactive`, leaving the installation revoked. `scripts/prove-webhook-burst.mjs` repeats this path through both built classes and asserts the before/after final state, alongside the fresh burst measurements above. This is serialization within each operations instance; no concurrent queue completion is described as arrival-order preservation.
+
+The same delayed suspension was also reproduced through two independent operations instances against real PostgreSQL: a local queue alone cannot order work on different machines. The suspension UPDATE now requires `status<>'revoked'`, so it cannot overwrite a deletion that another instance already committed. The built proof and the separate real-query regression both retain revoked installation status and inactive repositories after that interleaving.

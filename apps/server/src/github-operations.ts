@@ -287,7 +287,7 @@ export type LandCornerOutcome =
 
 export class GitHubOperations {
   readonly #key: Buffer;
-  readonly #webhooks = new NotificationWork();
+  readonly #webhooks = new NotificationWork(1);
   readonly #roomTokens = new Map<string, { token: string; expiresAt: number }>();
   readonly #roomTokenMints = new Map<string, Promise<{ token: string; expiresAt: number }>>();
   constructor(
@@ -1422,7 +1422,8 @@ export class GitHubOperations {
     }
     if (event === 'installation' && body.action === 'suspend') {
       await this.database.query(
-        `UPDATE github_installations SET status='suspended',updated_at=now() WHERE installation_id=$1`,
+        `UPDATE github_installations SET status='suspended',updated_at=now()
+         WHERE installation_id=$1 AND status<>'revoked'`,
         [install.id],
       );
       return;

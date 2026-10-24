@@ -81,6 +81,7 @@ export function TranscriptNavigationRow({
     );
   return (
     <View style={[navigationStyles.row, divider && navigationStyles.divider]} testID={testID}>
+      {leading ? <View style={navigationStyles.glyph}>{leading}</View> : null}
       {primary ? (
         <Pressable accessibilityRole="link" {...primary} style={navigationStyles.copyTarget}>
           {children}

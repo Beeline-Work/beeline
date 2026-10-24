@@ -49,7 +49,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
       </LedgerDisclosure> : null}
       {items.length === 1 || expanded ? <>
         {(showAll || items.length <= 3 ? items : items.slice(0, 2)).map((item, index) => (
-          <RepositoryLifecycleRow key={item.id} item={item} glyph={anchored} divider={index > 0}
+          <RepositoryLifecycleRow key={item.id} item={item} glyph={anchored || (isRepositoryLifecycleItem(item) && !!item.cornerId && item.cornerId !== cornerId)} divider={index > 0}
             testID={anchored ? `corner-opened-marker-${item.cornerId}` : undefined}
             onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
         ))}
@@ -69,13 +69,12 @@ export function isRepositoryLifecycleItem(item: RepositoryItem) {
 
 /**
  * GitHub and corner destinations are separate; the title keeps the remaining width.
- * `glyph` draws the same row as the call-site line under the message a corner
- * was opened from: the branch mark leads it and it hangs off that message
- * without a rule.
+ * Corner-linked rows received here belong to this call site. A caller showing
+ * a row inside the corner itself can suppress its branch mark with `glyph`.
  */
 export function RepositoryLifecycleRow({
   item,
-  glyph = false,
+  glyph = isRepositoryLifecycleItem(item) && Boolean(item.cornerId),
   divider = false,
   testID,
   onOpenCorner,
@@ -100,7 +99,7 @@ export function RepositoryLifecycleRow({
         testID={`notification-run-cell-${item.id}`}
         divider={divider}
         singleDestination
-        leading={<CornerBranchGlyph />}
+        leading={glyph && item.cornerId ? <CornerBranchGlyph /> : undefined}
         trailing={
           item.cornerId
             ? {
@@ -145,7 +144,7 @@ export function RepositoryLifecycleRow({
     <TranscriptNavigationRow
       testID={`notification-run-cell-${item.id}`}
         divider={divider}
-      leading={glyph ? <CornerBranchGlyph /> : undefined}
+      leading={glyph && item.cornerId ? <CornerBranchGlyph /> : undefined}
       singleDestination={!isRepositoryLifecycleItem(item) && !item.cornerId}
       primary={
         item.url && (isRepositoryLifecycleItem(item) || item.cornerId)

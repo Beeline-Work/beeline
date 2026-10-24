@@ -106,15 +106,15 @@ it('opens a sibling corner in the parent Room from a corner turn', async () => {
   ).rows[0];
   expect(room).toEqual({ parent_id: ROOM, repository_key: 'owner/widgets' });
 
-  // The Room keeps a neutral record; the calling corner gets its source marker.
+  // Only the calling corner gets an opening record at its source message.
   const cards = (
     await db.query<{ room_id: string; card: { sourceMessageId?: string } }>(
       `SELECT room_id,card FROM messages WHERE card->>'type'='corner-open' AND card->>'cornerId'=$1`,
       [second.cornerId],
     )
   ).rows;
-  expect(cards).toHaveLength(2);
-  expect(cards.find((card) => card.room_id === ROOM)?.card).not.toHaveProperty('sourceMessageId');
+  expect(cards).toHaveLength(1);
+  expect(cards.some((card) => card.room_id === ROOM)).toBe(false);
   expect(cards.find((card) => card.room_id === first.cornerId)?.card.sourceMessageId).toBe(
     input.brief.approval.sourceMessageId,
   );

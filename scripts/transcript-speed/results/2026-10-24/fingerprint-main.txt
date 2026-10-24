@@ -1,0 +1,11 @@
+
+> @beeline/mobile@0.2.22 fingerprint:check
+> node scripts/native-fingerprint.mjs
+
+Native inputs changed but android.runtimeVersion is still "40".
+Fix: bump android.runtimeVersion in apps/mobile/app.config.js to "41" and ship that platform's new native build.
+Native inputs changed but ios.runtimeVersion is still "36".
+Fix: bump ios.runtimeVersion in apps/mobile/app.config.js to "37" and ship that platform's new native build.
+  android: 1c79c05996990e45972da74d27e1382577a8608f -> 2e06908be257a04810796780a0c1d1fda46e85d5
+  ios: 831938dc46dab9517152283c79603577d5765008 -> f96e405aac34aac00c0d5677a207f9815be98c47
+Run `npm run fingerprint:write --prefix apps/mobile` and commit native-fingerprint.json.

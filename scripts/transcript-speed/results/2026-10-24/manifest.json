@@ -1,0 +1,114 @@
+[
+  {
+    "file": "web/host.json.gz",
+    "uncompressedSha256": "f782a3119d86efbfb02bb5a26c9b904fa033bcfcd189b5092bf11f7d758cd08d"
+  },
+  {
+    "file": "web/overhead/capture.json.gz",
+    "uncompressedSha256": "104a0b474685dd41d3a2031660a7a11dd2b18d6e4a89a3734e1def1802d228d4"
+  },
+  {
+    "file": "web/scenarios/capture.json.gz",
+    "uncompressedSha256": "82ff28311a83015c32233c440f5134bd4c75019dbe700699442606461853c959"
+  },
+  {
+    "file": "web/opens/capture.json.gz",
+    "uncompressedSha256": "430f80b700c4a84061989bb399cfcac4d6705e34882ce0595cfefa815dfa5f7b"
+  },
+  {
+    "file": "desktop/host.json.gz",
+    "uncompressedSha256": "c7c212874a7fe1bc01dc3906ae0cb8619171b18f23860502ac1e0bcd41a92746"
+  },
+  {
+    "file": "desktop/overhead/capture.json.gz",
+    "uncompressedSha256": "fb19b8fc2755eaf63784c50c4d7e16caa90cea2224b0ad928e8c3974e4b1ff2e"
+  },
+  {
+    "file": "desktop/scenarios/capture.json.gz",
+    "uncompressedSha256": "7c09907fecfb8c8670d8cdd8d836cb07b0c74e5c594740d6281e22931a3dfc9c"
+  },
+  {
+    "file": "desktop/opens/capture.json.gz",
+    "uncompressedSha256": "aefd4ad8b1759df4eddd083bc94c73540acc340e1653095472f86270a01992a4"
+  },
+  {
+    "file": "android/host.json.gz",
+    "uncompressedSha256": "dfeee6f7ce3ef0921ba1cb09f1b41d1fd546b60ba09a5c2ee3264fb30d6fb17a"
+  },
+  {
+    "file": "android/keypaint/capture.json.gz",
+    "uncompressedSha256": "e3d3de287036ef2113823dfb0e98fe03cb73ceb017702259c2f98c4e26d23463"
+  },
+  {
+    "file": "android/opens/cache-miss-0.log.gz",
+    "uncompressedSha256": "f5d25b5c720cb153e145ef5241fba2cf1a0e16dc89f6ecd0cdd425cdffa6bf91"
+  },
+  {
+    "file": "android/opens/cache-miss-1.log.gz",
+    "uncompressedSha256": "abf6532e95f2c801645324cee4f2ef0be45a760d1beb70535d790d8e9f3d099b"
+  },
+  {
+    "file": "android/opens/cache-miss-2.log.gz",
+    "uncompressedSha256": "c8d7bf2441c9893226c5ca6cd8b1b1ea71853b9b762fe154fa436b3cacf59c42"
+  },
+  {
+    "file": "android/opens/capture.json.gz",
+    "uncompressedSha256": "bb06201e09ac7c4050cad66998c3cac79ff04ec2442b83cd551fbb65cdc7bf83"
+  },
+  {
+    "file": "android/opens/cold-process-retained-cache-0.log.gz",
+    "uncompressedSha256": "263603a21d7d39ff9c113c2b93855a1cd96a7e3656b5f37488855edd2e636995"
+  },
+  {
+    "file": "android/opens/cold-process-retained-cache-1.log.gz",
+    "uncompressedSha256": "6a06645b4476e4f9de853641809337097a648e6add3ee678cb7dde1c7921d4ca"
+  },
+  {
+    "file": "android/opens/cold-process-retained-cache-2.log.gz",
+    "uncompressedSha256": "2a4c7a1161dd7161cd3ddc6d09d96451296038a1b16dd86d3cff7218975372df"
+  },
+  {
+    "file": "android/opens/warm-0.log.gz",
+    "uncompressedSha256": "5a4596529f5c5fc52a0ee29b641ed74c9b05c89b3efe14ba20b1af54bd9ee53a"
+  },
+  {
+    "file": "android/opens/warm-1.log.gz",
+    "uncompressedSha256": "9011d123e8c3e734499321482318e47a63d451940b132bb0573c897f7bbb3241"
+  },
+  {
+    "file": "android/opens/warm-2.log.gz",
+    "uncompressedSha256": "3a394f59b28b766c97b3db3adad96ce8554905dadc4eb5c495066b399ebd69cd"
+  },
+  {
+    "file": "android/overhead-inactive/capture.json.gz",
+    "uncompressedSha256": "f974c3b550a2abe090453777d2e2bfb60476956cd3c0afa6b3a04b43161b19a1"
+  },
+  {
+    "file": "android/scenarios/capture.json.gz",
+    "uncompressedSha256": "34dc7f5eb1ab937fc610c965411af838040a2f1c73d3161b69ddaf218a5530fd"
+  },
+  {
+    "file": "android/scenarios/streams-0.png",
+    "sha256": "630e6b12273bd106c466ce9c49a44800652f01c5f9d5623c2bdd04f0828b9812"
+  },
+  {
+    "file": "android/scenarios/streams-0.txt.gz",
+    "uncompressedSha256": "f51c493373a38ecf320650ad8b79fbd63ccca719129a5ebae0c8f90a7d7b1346"
+  },
+  {
+    "file": "android/scenarios/streams-1.png",
+    "sha256": "b2030615b80d6254feb28cb16896f1932db8ae185bb920eebf41e668e6f66b28"
+  },
+  {
+    "file": "android/scenarios/streams-1.txt.gz",
+    "uncompressedSha256": "099ddf5fdd9f83e044e25a346b19f04f7ac6f9b0fd90b8d000df8775c81dabc6"
+  },
+  {
+    "file": "android/scenarios/streams-2.png",
+    "sha256": "8f13f2f6147529330fdd0d5e45ed1de35d59348d85f2d46e3a5c3008093d42d1"
+  },
+  {
+    "file": "android/scenarios/streams-2.txt.gz",
+    "uncompressedSha256": "68f7d07462a8adad8d9a0a325cd8aa7a1472beb80ecfa14a08c1b8f826ebd824"
+  }
+]

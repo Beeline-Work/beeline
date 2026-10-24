@@ -161,6 +161,8 @@ beforeAll(async () => {
   );
   // Keep real queue reconciliation; only commit-author evidence is a provider fixture.
   vi.spyOn(github, 'assertCornerReviewerNotAuthor').mockResolvedValue(undefined);
+  // Live handoff head reads have separate REVIEW-HEAD-1 provider coverage.
+  vi.spyOn(github, 'refreshCornerReviewHead').mockResolvedValue(undefined);
   Object.assign(daemon, { github });
 }, 30_000);
 afterAll(async () => db?.close());
@@ -3725,7 +3727,7 @@ describe('zero checks with no reviewer wait for the commander', () => {
     const notices = (await commands(A, cornerId)).filter(c => c.reason === 'corner_review_needed');
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ private: true, source: {
-      body: 'This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.',
+      body: expect.stringContaining('This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.'),
     } });
     expect((await commands(B, R)).filter(c => c.reason === 'report' && c.source.body.includes('pending your yes'))).toHaveLength(0);
     expect((await db.query(`SELECT 1 FROM messages WHERE text LIKE '%ready to land pending your yes%'

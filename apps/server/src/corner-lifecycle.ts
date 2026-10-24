@@ -934,13 +934,13 @@ const reviewChecksSql = `jsonb_build_object('status',lifecycle->>'checks','check
 
 /**
  * The reviewer's finished review of this head, dispatched since the current
- * brief revision and check results (callers have already checked for an
+ * brief revision (callers have already checked for an
  * approval on the head), while the corner was still in review. Another
  * review wake for the same head and brief revision would only repeat that
  * verdict. A turn that ended after the corner left review (checks re-ran)
  * gave no verdict.
  */
-async function blockingReview(
+export async function blockingReview(
   db: SqlDatabase,
   cornerId: string,
   headSha: string | null,
@@ -951,13 +951,15 @@ async function blockingReview(
       `SELECT command.id FROM agent_commands command
        JOIN rooms corner ON corner.id=command.room_id
        JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN messages source ON source.id=command.source_message_id
+       LEFT JOIN messages source ON source.id=command.source_message_id
        JOIN agent_turns turn ON turn.room_id=command.room_id
          AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
        WHERE command.room_id=$1 AND command.action='input'
          AND command.state='complete' AND turn.status='complete'
          AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
          AND (command.reason='corner_review_dispatch'
+           OR (command.reason IN ('agent_tag','order') AND command.review_context IS NOT NULL
+             AND command.review_context->>'purpose' IS DISTINCT FROM 'repair')
            OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
          AND COALESCE(command.review_context->>'headSha',source.system_event->'object'->>'headSha',
            (SELECT COALESCE(card->'contents'->>'headSha',card->>'headSha') FROM messages
@@ -965,8 +967,6 @@ async function blockingReview(
             ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
          AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
            SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1))
-         AND (command.review_context IS NULL OR command.review_context->'checks'=(
-           SELECT ${reviewChecksSql} FROM corner_facts WHERE corner_id=$1))
          AND CASE WHEN command.review_context IS NOT NULL THEN
            (command.review_context->>'briefRevision')::int=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0)
            ELSE command.created_at>=COALESCE((SELECT max(created_at) FROM corner_brief_revisions WHERE corner_id=$1),'-infinity') END
@@ -994,9 +994,9 @@ async function queueReviewerCommand(
       [input.roomId],
     )
   ).rows[0];
-  const context = (await db.query<{ context: unknown }>(
+  const context = (await db.query<{ context: Record<string, unknown> | null }>(
     `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
-       THEN jsonb_build_object('headSha',lifecycle->'pr'->>'headSha',
+       THEN jsonb_build_object('cornerId',corner_id,'headSha',lifecycle->'pr'->>'headSha',
        'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
        'checks',${reviewChecksSql},'reviewerConfiguration',(${reviewerConfigurationSql('$3')})) ELSE NULL END context
      FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0, input.agentId],
@@ -1014,11 +1014,13 @@ async function queueReviewerCommand(
   try {
     const command = await createAgentCommand(db, {
       ...input,
-      wakeNote: [brief ? `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.` : '',
+      wakeNote: [context ? `Current handoff target: PR #${context.pullRequest} at ${context.headSha}. Older heads in the conversation are historical.` : '',
+        brief ? `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.` : '',
         prior ? `Prior reviewer verdict and evidence (historical context):\n${prior}` : ''].filter(Boolean).join('\n'),
     });
     if (command) await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1',
       [command.id, context ? JSON.stringify(context) : null]);
+    if (command) command.review_context = context as Record<string, unknown> | null;
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { command };
   } catch (error) {

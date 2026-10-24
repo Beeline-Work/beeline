@@ -268,12 +268,68 @@ describe('corner message attribution', () => {
     const notices = (await commands(A, C)).filter(command => command.reason === 'corner_review_needed');
     expect(notices).toHaveLength(1);
     expect(notices[0]).toMatchObject({ private: true, source: {
-      body: 'This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.',
+      body: expect.stringContaining('This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.'),
     } });
     expect((await commands(B, R)).filter(command => command.reason === 'report' && command.source.body.includes('pending your yes'))).toHaveLength(0);
     expect((await db.query(`SELECT 1 FROM messages WHERE text LIKE '%ready to land pending your yes%'
       OR text LIKE '%Landing needs your commander%'`)).rowCount).toBe(0);
     expect((await commands(A, C)).filter(command => command.reason === 'corner_land')).toHaveLength(0);
+  });
+
+  it.each(['final', 'post'] as const)('Reproduction REVIEW-HEAD-1: a late old-head %s verdict cannot wake the worker', async surface => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(81, '1'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await greenHead(81, '2'.repeat(40));
+    if (surface === 'final') await result(review!, '@hoots FAIL: repair the old head.');
+    else await daemon.execute('postCornerMessage', { roomId: C, cornerId: C, requestId: review!.turnRequestId,
+      generationId: 'g1', text: '@hoots FAIL: repair the old head.' }, B);
+    expect(await commands(A, C)).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%repair the old head%'`, [C])).rowCount).toBe(0);
+  });
+
+  it('Reproduction REVIEW-HEAD-1: a queued repair is dropped when its reviewed head moves', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(82, '1'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, '@hoots FAIL: repair this head.');
+    await greenHead(82, '2'.repeat(40));
+    expect(await commands(A, C)).toEqual([]);
+  });
+
+  it('Reproduction REVIEW-HEAD-1: a queued reviewer report is dropped at its commander after a push', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(84, '1'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await daemon.execute('report', { roomId: C, requestId: review!.turnRequestId,
+      generationId: 'g1', status: 'done', text: 'done: FAIL on the reviewed head.' }, B);
+    await greenHead(84, '2'.repeat(40));
+    expect((await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('FAIL on the reviewed head'))).toEqual([]);
+  });
+
+  it('Reproduction REVIEW-HEAD-1: a worker that pushes while repairing hands off the new head', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(83, '1'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, '@hoots FAIL: repair this head.');
+    const [repair] = await commands(A, C);
+    await claim(repair!);
+    // GitHub moves before the synchronize webhook. Exercise the daemon's
+    // provider-refresh seam; the provider implementation has its own fixture.
+    const refreshed = vi.fn(async () => {
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [C, '2'.repeat(40)]);
+    });
+    Object.assign(daemon, { github: { refreshCornerReviewHead: refreshed } });
+    await result(repair!, '@goosy The fix is pushed; please review.');
+    const next = (await commands(B, C)).find(c => c.reason === 'agent_tag');
+    expect(refreshed).toHaveBeenCalledWith(C);
+    expect(next?.source.body).toContain(`Current handoff target: PR #83 at ${'2'.repeat(40)}`);
+    const target = (await db.query<{ context: { headSha: string } }>('SELECT review_context context FROM agent_commands WHERE id=$1', [next!.id])).rows[0]?.context;
+    expect(target?.headSha).toBe('2'.repeat(40));
   });
 
   it('stores the REVIEWER as author when the reviewer posts the review into a corner it does not own', async () => {
@@ -410,7 +466,7 @@ describe('corner message attribution', () => {
       console.info(`Demonstrated REVIEW-QUIET-1: repeated green deliveries suppressed; continuation carries ${verdict}`);
     });
 
-  it('Reproduction REVIEW-QUIET-1: a changed check result permits review with the prior verdict', async () => {
+  it('Reproduction REVIEW-HEAD-1: changed checks do not repeat a verdict on the same head', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(72, '9'.repeat(40));
     const [review] = await commands(B, C);
@@ -419,9 +475,7 @@ describe('corner message attribution', () => {
     await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
       '{"checks":[{"name":"new-required-check","status":"passed"}]}') WHERE corner_id=$1`, [C]);
     await reconcileConfiguredCornerReviewers(db, R);
-    const [continuation] = await commands(B, C);
-    expect(continuation?.source.body).toContain('FAIL: required evidence is missing.');
-    expect(continuation?.reason).toBe('corner_review_dispatch');
+    expect(await commands(B, C)).toEqual([]);
   });
 
   it.each(['pending', 'complete'] as const)(
@@ -450,7 +504,7 @@ describe('corner message attribution', () => {
     const repairStart = index.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
     expect(repairStart).toBeGreaterThan(-1);
     const repair = index.slice(repairStart, index.indexOf('const leader = new BackgroundLeader', repairStart));
-    expect(repair.replace(/\s+/g, ' ')).toContain("await backgroundJobs.run('corner-reviewers', () => reconcileConfiguredCornerReviewers(jobsDatabase));");
+    expect(repair.replace(/\s+/g, ' ')).toContain("githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined");
     const cycle = () => reconcileConfiguredCornerReviewers(db);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(61, '6'.repeat(40));
@@ -508,7 +562,7 @@ describe('corner message attribution', () => {
     expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
   });
 
-  it('Reproduction REVIEW-READY-2: a FAIL and the worker reply trade tags on the unchanged green head without a server handback', async () => {
+  it('Reproduction REVIEW-HEAD-1: a worker tag does not repeat a finished review on the unchanged head', async () => {
     const head = 'b'.repeat(40);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(27, head);
@@ -518,14 +572,15 @@ describe('corner message attribution', () => {
     await result(firstReview!, findings);
     const [repair] = await commands(A, C);
     expect(repair?.reason).toBe('agent_tag');
-    expect(repair?.source.body).toBe(findings);
+    expect(repair?.source.body).toContain(findings);
+    expect(repair?.source.body).toContain(`Current handoff target: PR #27 at ${head}`);
     await claim(repair!);
     const reply = '@goosy Added both demonstrations to the PR description; the code and head are unchanged.';
     await result(repair!, reply);
-    // The worker's tag wakes the reviewer; the sweep adds no second wake.
-    const [rereview] = await commands(B, C);
-    expect(rereview?.reason).toBe('agent_tag');
-    expect((await reconcileConfiguredCornerReviewers(db, R)).commands).toBe(0);
+    // A new commit is needed before this head can be reviewed again.
+    expect(await commands(B, C)).toEqual([]);
+    await reconcileConfiguredCornerReviewers(db, R);
+    expect(await commands(B, C)).toEqual([]);
     expect((await db.query<{ workflow_state: string; review_handback_count: number }>(
       `SELECT workflow_state,review_handback_count FROM corner_facts WHERE corner_id=$1`, [C],
     )).rows[0]).toEqual({ workflow_state: 'review', review_handback_count: 0 });

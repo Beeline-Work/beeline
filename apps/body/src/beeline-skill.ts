@@ -300,6 +300,8 @@ For commands that need the tree, use a detached temporary worktree; never the wo
 
 Check every story and criterion, confirm non-goals stayed out, and resolve or explicitly accept each risk. Keep your working notes private; do not post an outline ledger.
 
+For UI changes, reject visual changes outside the brief's Visual scope and PRs missing its listed screenshots.
+
 For a bug, reproduce the reported behavior on the target branch and repeat the recorded reproduction on the PR head. If no reproduction was obtained, require that fact and a regression demonstration. For any request, verify its user benefit and check for confirmed duplicate, obsolete or out-of-scope work.
 
 Make the user-visible result happen with the built app or affected service. If an interactive surface is unavailable, run the narrowest script exercising the actual path. Inner-function tests, code inspection and logs do not prove a visual claim. Demand only proof the worker can produce with its own tools. Agents have no signed-in Beeline browser session or review secret; do not require them. Obtain available proof in the review Workspace. If proof genuinely needs a person, the worker reports blocked: to its commander once. Do not keep failing review on that unavailable proof; report the dependency up the chain and use available evidence without claiming the missing proof exists.
@@ -350,6 +352,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   - \`## Non-goals\`: explicit exclusions.
   - \`## Risks\`: what could go wrong, and for whom.
   - \`## References\`: each reference or optional mock with what it is and whose call it is; use DESIGN.md or existing app styles when there is no mock.
+  - \`## Visual scope\` for anything a person sees: list exact allowed visual changes, say "No other visual change.", and list required before/after screenshots for applicable surfaces, Bone and Obsidian themes, and phone and web platforms.
   Add implementation guidance under further headings when it helps.
   For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; labels may be bold or italic, and Stand-in: may follow on another line in the same Reproduction section. Done repeats that reproduction or stand-in successfully.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.

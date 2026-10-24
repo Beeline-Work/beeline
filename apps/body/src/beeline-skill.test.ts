@@ -395,6 +395,15 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('resource authority, credentials and migration safety');
     expect(markdown).toContain('scope creep');
   });
+  it('requires visual scope and screenshot evidence in UI briefs and reviews', () => {
+    const spec = beelineSpecSkillMarkdown('test-release');
+    expect(spec).toContain('`## Visual scope` for anything a person sees');
+    expect(spec).toContain('No other visual change.');
+    expect(spec).toContain('before/after screenshots');
+    expect(markdown).toContain(
+      "reject visual changes outside the brief's Visual scope and PRs missing its listed screenshots",
+    );
+  });
 });
 
 describe('beeline-spec planning skill', () => {

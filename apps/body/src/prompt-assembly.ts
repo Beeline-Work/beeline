@@ -351,7 +351,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         surface === 'code-corner' &&
           android &&
           (android.leased
-            ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`; Beeline leases a port and private writable data for each instance. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
+            ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`. This corner keeps its emulator and app until the corner closes. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
             : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`),
         surface === 'repo-less-corner' &&
           "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with your native tools (or use scratch_io when mounted), then send them with post_artifact.\nDo not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.",

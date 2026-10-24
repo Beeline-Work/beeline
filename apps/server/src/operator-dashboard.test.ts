@@ -274,21 +274,52 @@ describe('private operator dashboard', () => {
     await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('live',now()),('stale',now()-interval '5 minutes')`);
     await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
       VALUES($1,1,'connection-live','live'),($2,1,'connection-stale','stale')`, [agent, stale]);
+    const freeOwner = 'f'.repeat(64), noAgent = 'e'.repeat(64);
+    const freeFirst = 'c'.repeat(64), ownLater = 'd'.repeat(64), freeLater = '9'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name,created_at) VALUES
+      ($1,'human','Free first',$6::timestamptz-interval '15 days'),
+      ($2,'human','No agent',$6::timestamptz-interval '15 days'),
+      ($3,'agent','Removed free first',$6::timestamptz-interval '14 days'),
+      ($4,'agent','Own later',$6::timestamptz-interval '10 days'),
+      ($5,'agent','Free later',$6::timestamptz-interval '9 days')`,
+      [freeOwner, noAgent, freeFirst, ownLater, freeLater, today]);
+    await db.query(`UPDATE identities SET created_at=$2::timestamptz-interval '14 days' WHERE id=$1`, [agent,today]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2),($3,$2),($4,$5)`,
+      [freeFirst,freeOwner,ownLater,freeLater,human]);
+    await db.query(`INSERT INTO free_agents(agent_id,owner_id,workspace_id,sealed_keys,state,removed_at)
+      VALUES($1,$2,$3,'test','destroyed',now()),($4,$5,$3,'test','running',NULL)`,
+      [freeFirst,freeOwner,workspace,freeLater,human]);
+    await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
+      ('free-owner',$1,'android','physical'),('no-agent',$2,'android','physical')`, [freeOwner,noAgent]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES('free-return',$1,$2,'return',$3::timestamptz-interval '8 days')`, [room,freeOwner,today]);
     const query = vi.spyOn(db, 'query');
     const value = await dashboardOverview(db, ['ios','android'], new Date().toISOString());
     expect(value.series.signups).toMatchObject({ state: 'measured' });
     if (value.series.signups?.state !== 'measured' || value.series.dau?.state !== 'measured') throw new Error('Series unavailable');
     expect(value.series.signups.data.daily).toHaveLength(90);
-    expect(value.series.signups.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(12);
+    expect(value.series.signups.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(14);
     expect(value.series.dau.data.daily.find(p => p.date === new Intl.DateTimeFormat('en-CA', {timeZone: 'America/New_York', year:'numeric', month:'2-digit', day:'2-digit'}).format(new Date(today)))?.value).toBe(1);
-    expect(value.series.dau.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(2); // older than 90d excluded
-    expect(value.retention).toMatchObject({ state: 'measured', data: { cohort: 1, retained: 1, rate: 1 } });
+    expect(value.series.dau.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(3); // older than 90d excluded
+    expect(value.retention).toMatchObject({ state: 'measured', data: { cohort: 3, retained: 2, rate: 2/3 } });
+    expect(query.mock.calls.every(([sql]) => /^(WITH|SELECT)\s/.test(sql))).toBe(true);
+    const response = await get('?platforms=ios,android');
+    expect(response.status).toBe(200);
+    const retention = (await response.json()).overview.retention.data;
+    expect(retention.byFirstAgentSource).toEqual({
+      addedOwnAgent: { cohort: 1, retained: 1 },
+      freeAgent: { cohort: 1, retained: 1 },
+      noAgent: { cohort: 1, retained: 0 },
+    });
+    const counts = Object.values(retention.byFirstAgentSource) as { cohort: number; retained: number }[];
+    expect(counts.reduce((sum, group) => sum + group.cohort, 0)).toBe(retention.cohort);
+    expect(counts.reduce((sum, group) => sum + group.retained, 0)).toBe(retention.retained);
+    for (const group of counts) expect(Object.keys(group).sort()).toEqual(['cohort', 'retained']);
     expect(value.helpers).toMatchObject({ state: 'measured', data: { paired: 12, online: 1, share: 1/12 } });
     expect(value.spend).toMatchObject({ state: 'measured', data: { usd: null } }); // absent ledger is not a measured zero
     expect(value.sources.downloadsAndroid).toMatchObject({ state: 'not_connected' });
     expect(JSON.stringify(value)).not.toContain(secret);
     expect(JSON.stringify(value)).not.toContain(human);
-    expect(query.mock.calls.every(([sql]) => /^(WITH|SELECT)\s/.test(sql))).toBe(true);
     const empty = await dashboardOverview(db, ['linux'], new Date().toISOString());
     expect(empty.retention).toMatchObject({ state: 'measured', data: { cohort: 0, retained: 0, rate: null } });
     if (empty.series.signups?.state !== 'measured') throw new Error('Empty read unavailable');

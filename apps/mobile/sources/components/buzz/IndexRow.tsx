@@ -34,7 +34,7 @@ export function TranscriptNavigationRow({
   primary,
   trailing,
   singleDestination = false,
-  divider = true,
+  divider = false,
   testID,
 }: {
   children: React.ReactNode;
@@ -63,7 +63,7 @@ export function TranscriptNavigationRow({
           hitSlop={{ top: 6, bottom: 6 }}
           style={({ pressed }) => [
             navigationStyles.row,
-            !leading && divider && navigationStyles.divider,
+            divider && navigationStyles.divider,
             pressed && navigationStyles.pressed,
           ]}
         >

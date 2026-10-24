@@ -35,7 +35,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
   }));
   const summary = lifecycleSummary(items);
   return (
-    <LedgerLogGroup style={!anchored && items.length === 1 && items[0].kind === 'issue' ? styles.issueRun : undefined}
+    <LedgerLogGroup
       testID={testID ?? `notification-run-${message.id}`}>
       {items.length > 1 ? <LedgerDisclosure expanded={expanded}
         onPress={() => { if (expanded) setShowAll(false); setExpanded(value => !value); }} accessibilityLabel={summary}
@@ -45,8 +45,8 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
         </Text>)}
       </LedgerDisclosure> : null}
       {items.length === 1 || expanded ? <>
-        {(showAll || items.length <= 3 ? items : items.slice(0, 2)).map(item => (
-          <RepositoryLifecycleRow key={item.id} item={item} glyph={anchored}
+        {(showAll || items.length <= 3 ? items : items.slice(0, 2)).map((item, index) => (
+          <RepositoryLifecycleRow key={item.id} item={item} glyph={anchored} divider={index > 0}
             testID={anchored ? `corner-opened-marker-${item.cornerId}` : undefined}
             onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
         ))}
@@ -73,12 +73,14 @@ export function isRepositoryLifecycleItem(item: RepositoryItem) {
 export function RepositoryLifecycleRow({
   item,
   glyph = false,
+  divider = false,
   testID,
   onOpenCorner,
   onOpenUrl,
 }: {
   item: RepositoryItem;
   glyph?: boolean;
+  divider?: boolean;
   /** Replaces the corner target's test id. */
   testID?: string;
   onOpenCorner(id: string): void;
@@ -93,6 +95,7 @@ export function RepositoryLifecycleRow({
     return (
       <TranscriptNavigationRow
         testID={`notification-run-cell-${item.id}`}
+        divider={divider}
         singleDestination
         leading={<CornerBranchGlyph />}
         trailing={
@@ -137,6 +140,7 @@ export function RepositoryLifecycleRow({
   return (
     <TranscriptNavigationRow
       testID={`notification-run-cell-${item.id}`}
+        divider={divider}
       leading={glyph ? <CornerBranchGlyph /> : undefined}
       singleDestination={!isRepositoryLifecycleItem(item) && !item.cornerId}
       primary={
@@ -167,7 +171,6 @@ export function RepositoryLifecycleRow({
 
 const styles = StyleSheet.create(({ buzz }) => ({
   failed: { color: buzz.accent },
-  issueRun: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.borderStrong },
   cornerCopy: { flexDirection: 'row', alignItems: 'baseline', gap: buzz.space.xs },
   cornerNumber: { flexShrink: 0 },
   cornerName: { flexShrink: 1, minWidth: 0 },

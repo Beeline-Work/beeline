@@ -65,10 +65,12 @@ function lineAccessibilityLabel(line: ToolLedgerLine): string {
  */
 function ToolLedgerLineRow({
   line,
+  divider = false,
   onPress,
   testID,
 }: {
   line: ToolLedgerLine;
+  divider?: boolean;
   onPress?: () => void;
   testID?: string;
 }) {
@@ -79,20 +81,22 @@ function ToolLedgerLineRow({
     // Text the agent wrote before a later tool call. It is not the reply, but
     // it is the agent's own words, so it is shown whole — never cut to a line.
     return (
-      <View accessibilityLabel={accessibilityLabel} style={styles.noteRow} testID={testID}>
+      <TranscriptNavigationRow divider={divider} testID={testID}>
+      <InlineRow style={styles.noteCopy}>
         <Text accessibilityElementsHidden style={styles.callGlyph}>
           {line.glyph}
         </Text>
         <View style={styles.noteBody}>
           <MonoMarkdown markdown={line.label} textStyle={styles.noteText} />
         </View>
-      </View>
+      </InlineRow>
+      </TranscriptNavigationRow>
     );
   }
   const action = line.verb ?? (line.glyph === '>_' ? 'ran' : line.glyph === '≡' ? 'read' : 'used');
   const verb = line.outcome === 'failure' ? 'Failed' : line.outcome === 'running' ? 'Running' : action.charAt(0).toUpperCase() + action.slice(1);
   return (
-    <TranscriptNavigationRow testID={testID} singleDestination
+    <TranscriptNavigationRow testID={testID} singleDestination divider={divider}
       trailing={onPress ? { onPress, accessibilityLabel, accessibilityRole: 'button',
         accessibilityState: { busy: line.outcome === 'running' },
         accessibilityHint: 'Opens this call’s output' } : undefined}>
@@ -133,10 +137,11 @@ function ToolRunGroupRow({
         {duration ? ` · ${duration}` : null}
       </LedgerDisclosure>
       {expanded
-        ? (showAll || run.lines.length <= 3 ? run.lines : run.lines.slice(0, 2)).map((line) => (
+        ? (showAll || run.lines.length <= 3 ? run.lines : run.lines.slice(0, 2)).map((line, index) => (
             <ToolLedgerLineRow
               key={line.id}
               line={line}
+              divider={index > 0}
               onPress={line.detail ? () => onPressLine?.(line) : undefined}
               testID={`tool-ledger-line-${line.id}`}
             />
@@ -296,17 +301,7 @@ const styles = StyleSheet.create((theme) => {
     },
     // A note wraps to its full length, so it keeps the ledger line's hairline
     // and gutter but not its fixed one-line height.
-    noteRow: {
-      minHeight: 44,
-      minWidth: 0,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.borderQuiet,
-      paddingHorizontal: groknight.space.xs,
-      paddingVertical: groknight.space.sm,
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: groknight.space.sm,
-    },
+    noteCopy: { flexDirection: 'row', alignItems: 'flex-start', gap: groknight.space.sm },
     noteBody: { flex: 1, minWidth: 0 },
     noteText: { ...groknight.type.meta, color: groknight.ledgerBody },
     groupFailed: { color: groknight.accent },

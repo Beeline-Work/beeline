@@ -5,6 +5,7 @@ import math
 import pathlib
 import re
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -13,6 +14,7 @@ parser.add_argument('--serial', required=True)
 parser.add_argument('--out')
 parser.add_argument('--phase', choices=['before', 'after'], default='after')
 parser.add_argument('--theme', choices=['bone', 'obsidian'])
+parser.add_argument('--open-only', action='store_true')
 args = parser.parse_args()
 out = pathlib.Path(args.out or f'evidence/disclosure-top-edge/{args.phase}')
 out.mkdir(parents=True, exist_ok=True)
@@ -72,6 +74,28 @@ rows = [
     ('script-toggle', 'script'),
 ]
 results = {'serial': args.serial, 'density': density, 'themes': {}}
+if args.open_only:
+    for key, _ in rows:
+        tap(key)
+    for theme in ['bone', 'obsidian']:
+        for _ in range(3):
+            scroll(top=True)
+        current = nodes()
+        assert any(n.get('resource-id') == 'tool-run-more-read' for n in current), 'capped steps must retain N more'
+        assert not any(n.get('resource-id') == 'tool-ledger-line-edit' for n in current), 'steps must remain capped'
+        for index in range(3):
+            nodes()
+            capture(f'android-{theme}-expanded-{index + 1}')
+            scroll()
+        results['themes'][theme] = {'groupsOpen': True, 'stepsCapped': True}
+        (out / 'android-results.json').write_text(json.dumps(results, indent=2) + '\n')
+        print(f'PASS {theme}: all groups open, steps capped', flush=True)
+        if theme == 'bone':
+            for _ in range(3):
+                scroll(top=True)
+            tap('Switch theme')
+    sys.exit(0)
+
 for theme in ([args.theme] if args.theme else ['bone', 'obsidian']):
     for _ in range(3):
         scroll(top=True)

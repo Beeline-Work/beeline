@@ -69,6 +69,16 @@ async function main() {
   assert(get('tool-run-more-read')?.textContent?.trim() === '2 more', 'reopened long list needs 2 more');
   assert(!get('tool-ledger-line-edit'), 'reopened list must cap at two');
   assert(get('tool-run-container-read').querySelectorAll('[data-testid^="tool-ledger-line-"]').length === 2, 'expanded long list must show exactly two children');
+  const bordered = (id: string) => [get(id), ...get(id).querySelectorAll('*')].some(node => parseFloat(getComputedStyle(node).borderTopWidth) > 0);
+  for (const id of ['tool-ledger-line-read', `notification-run-cell-${repositoryId}`, 'notification-run-cell-check', 'notification-run-cell-pay-1', 'notification-run-cell-notice-1', 'notification-run-cell-single-check', 'corner-status-line']) {
+    assert(!bordered(id), `${id}: first or standalone row has an upper boundary`);
+  }
+  for (const id of ['tool-ledger-line-test', 'notification-run-cell-check-2', 'notification-run-cell-pay-2', 'notification-run-cell-notice-2']) {
+    assert(bordered(id), `${id}: missing sibling separator`);
+  }
+  const repositoryChildren = get(`notification-run-${repositoryId}`).querySelectorAll('[data-testid^="notification-run-cell-"]');
+  const merged = [...repositoryChildren].find(node => node.getAttribute('data-testid')?.startsWith('notification-run-cell-') && node.textContent?.includes('Merged') && !node.getAttribute('data-testid')?.includes('-corner-'))!;
+  assert(merged && bordered(merged.getAttribute('data-testid')!), 'repository siblings need the same separator');
   const groups = ['tool-run-container-read', `notification-run-${repositoryId}`, 'notification-run-checks', 'notification-run-payments', 'notification-run-notices', 'inline-output'];
   for (const id of groups) {
     const style = getComputedStyle(get(id));

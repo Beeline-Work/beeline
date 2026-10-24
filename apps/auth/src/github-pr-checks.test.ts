@@ -32,8 +32,8 @@ describe('zero-check registration evidence', () => {
     const fetchMock = vi.fn(async (_url: string) => Response.json({ total_count: 0 }));
     vi.stubGlobal('fetch', fetchMock);
     expect(await app().confirmNoChecks('token', 'owner/widgets', sha)).toBe(true);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.github.test/repos/owner/widgets/actions/workflows?per_page=1');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://api.github.test/repos/owner/widgets/actions/workflows?per_page=1');
   });
 
   it.each([[0, 0, true], [1, 0, false], [0, 1, false], [undefined, undefined, false]])(
@@ -42,17 +42,32 @@ describe('zero-check registration evidence', () => {
       const requests: string[] = [];
       vi.stubGlobal('fetch', async (url: string) => {
         requests.push(url);
+        if (url.endsWith('/actions/permissions')) return Response.json({ enabled: true });
         return Response.json({ total_count: url.includes('/actions/workflows?') ? 2 : url.includes('/check-suites?') ? suites : runs });
       });
       const verdict = app().confirmNoChecks('token', 'owner/widgets', sha);
       await vi.advanceTimersByTimeAsync(9_999);
-      expect(requests).toHaveLength(1);
+      expect(requests).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(1);
       expect(await verdict).toBe(expected);
       expect(requests).toContain(`https://api.github.test/repos/owner/widgets/commits/${sha}/check-suites?per_page=1`);
       expect(requests).toContain(`https://api.github.test/repos/owner/widgets/actions/runs?head_sha=${sha}&per_page=1`);
     },
   );
+
+  it('confirms disabled Actions without reading workflow files or waiting', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ enabled: false }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await app().confirmNoChecks('token', 'owner/widgets', sha)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]).toEqual(['https://api.github.test/repos/owner/widgets/actions/permissions', expect.anything()]);
+  });
+
+  it.each([403, 404])('falls back to workflow evidence when permission read returns %s', async (status) => {
+    vi.stubGlobal('fetch', async (url: string) => url.endsWith('/actions/permissions')
+      ? new Response('{}', { status }) : Response.json({ total_count: 0 }));
+    expect(await app().confirmNoChecks('token', 'owner/widgets', sha)).toBe(true);
+  });
 
   it('refuses missing workflow evidence', async () => {
     vi.stubGlobal('fetch', async () => Response.json({}));

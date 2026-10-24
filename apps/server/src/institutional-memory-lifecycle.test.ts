@@ -298,7 +298,7 @@ describe('agent memory tools at the server boundary', () => {
         },
         AGENT,
       ),
-    ).rejects.toThrow('source messages are invalid');
+    ).rejects.toThrow('institutional memory needs 1 to 16 source messages');
     await expect(
       daemon().execute(
         'deleteInstitutionalMemory',

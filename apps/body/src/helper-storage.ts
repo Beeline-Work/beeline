@@ -80,7 +80,7 @@ print(json.dumps({'paths':paths,'uncertain':uncertain}))
 
 /** Capture OS evidence once per pass. Unreadable same-user evidence fails closed.
  * No signals are sent and no process or helper lifecycle is changed. */
-export async function capturePrivateProcessUse(): Promise<(root: string) => boolean> {
+export async function capturePrivateProcessUse(progress?: () => Promise<void>): Promise<(root: string) => boolean> {
   if (process.platform === 'darwin' && process.getuid) {
     try {
       const { stdout } = await execFileAsync('/usr/sbin/lsof', ['-nP', '-a', '-u', String(process.getuid()), '-Fn'], { maxBuffer: 32 * 1024 * 1024 });
@@ -89,8 +89,10 @@ export async function capturePrivateProcessUse(): Promise<(root: string) => bool
   }
   if (process.platform !== 'linux' || !process.getuid) return () => true;
   const paths: string[] = [];
+  let progressedAt = 0;
   for (const pid of await readdir('/proc')) {
     if (!/^\d+$/.test(pid)) continue;
+    if (progress && Date.now() - progressedAt >= 1_000) { progressedAt = Date.now(); await progress(); }
     const proc = `/proc/${pid}`;
     try {
       if ((await lstat(proc)).uid !== process.getuid()) continue;
@@ -355,7 +357,7 @@ export async function reclaimHelperStorage(input: {
   const mounted = observeMountUse();
   const observedUse = input.inUse ?? (async (root: string) => {
     if (Date.now() - capturedAt >= 1_000) {
-      capturedUse = await capturePrivateProcessUse();
+      capturedUse = await capturePrivateProcessUse(input.progress);
       capturedAt = Date.now();
     }
     return capturedUse(root);
@@ -374,7 +376,7 @@ export async function reclaimHelperStorage(input: {
     await input.withIdleRoom(room.name, async () => {
       if (await ownerInUse() || await emulatorLeased(root, input.emulatorLeaseRoot)) return;
       if (!input.dryRun && !await settleClaudeLogin(root, input.operatorHome ?? homedir())) return;
-      const tree = await storageTree(root);
+      const tree = await storageTree(root, input.progress);
       const grouped = new Map<string, string[]>();
       const candidates = disposalObjects(root, state.archived, tree);
       for (const path of state.archived ? candidates : candidates.flatMap(path => tree.get(path)?.directory ? unusedStorageObjects(path, tree, input.now ?? Date.now()) : [path])) {
@@ -479,6 +481,7 @@ function unusedStorageObjects(root: string, tree: Map<string, TreeEntry>, now: n
 }
 
 export interface WholeStorageOptions {
+  progress?: () => Promise<void>;
   dryRun?: boolean;
   now?: number;
   inUse?: (path: string) => Promise<boolean>;
@@ -504,11 +507,11 @@ export async function reclaimWholeStorageObject(
   const mounted = observeMountUse();
   let processUse: (path: string) => boolean = () => true;
   const inUse = options.inUse ?? (async (path: string) => {
-    if (Date.now() - capturedAt >= 1_000) { processUse = await capturePrivateProcessUse(); capturedAt = Date.now(); }
+    if (Date.now() - capturedAt >= 1_000) { processUse = await capturePrivateProcessUse(options.progress); capturedAt = Date.now(); }
     return processUse(path);
   });
   if ((!options.expireFiles && await inUse(root)) || await mounted(root) || await emulatorLeased(root, options.emulatorLeaseRoot)) return [];
-  const tree = await storageTree(root).catch(error => {
+  const tree = await storageTree(root, options.progress).catch(error => {
     options.onError?.(root, error);
     return undefined;
   });

@@ -172,6 +172,7 @@ export type PrivateCommandPayload = {
   kind: 'order' | 'report' | 'lifecycle';
   attachments?: RoomInboxResult['items'][number]['attachments'];
   reportedGenerationId?: string;
+  reportedOutcome?: string;
   /** Origin of a forwarded report, for the existing human attention index. */
   originCornerId?: string;
 };

@@ -36,11 +36,19 @@ def visit(path):
 visit(root)
 
 `;
-export async function storageTree(root: string): Promise<Map<string, TreeEntry>> {
+export async function storageTree(root: string, progress?: () => Promise<void>): Promise<Map<string, TreeEntry>> {
+  let lastProgress = 0;
+  const advanced = async () => {
+    if (progress && Date.now() - lastProgress >= 1_000) {
+      lastProgress = Date.now();
+      await progress();
+    }
+  };
   if (process.platform === 'darwin') {
     const tree = new Map<string, TreeEntry>();
     const visit = async (path: string): Promise<void> => {
       const info = await lstat(path);
+      await advanced();
       tree.set(path, { dev: info.dev, ino: info.ino, blocks: info.blocks * 512, links: info.nlink,
         directory: info.isDirectory(), lastUsed: Math.max(info.atimeMs, info.mtimeMs) });
       if (info.isDirectory() && !isSquirePath(path))
@@ -67,6 +75,7 @@ export async function storageTree(root: string): Promise<Map<string, TreeEntry>>
   child.stdout.setEncoding('utf8');
   for await (const chunk of child.stdout) {
     pending += chunk;
+    await advanced();
     let newline: number;
     while ((newline = pending.indexOf('\n')) >= 0) {
       add(pending.slice(0, newline)); pending = pending.slice(newline + 1);

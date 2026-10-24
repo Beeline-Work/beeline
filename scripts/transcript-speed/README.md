@@ -1,7 +1,7 @@
 # Transcript speed harness
 
 Measurement fixtures and drivers for the real Beeline Room UI. No product speed
-fixes. Native iOS is blocked by exhausted BrowserStack App Automate testing time; the host-list change is approved.
+fixes. The single native iOS timing run is pending separate owner follow-up; it is excluded from this delivery pass by the commander.
 
 ## Local fixture
 
@@ -147,3 +147,21 @@ leak.
 [Platform tables and measured ranking](results/2026-10-24/BASELINE.md) and [run notes, limitations and native blockers](results/2026-10-24/RUN-NOTES.md). The report command accepts `-` for an explicitly missing platform; this produces an incomplete row, never inferred measurements.
 
 Android stream visibility uses `tesseract` on retained emulator screenshots outside the timing window; accessibility dumps cannot reliably obtain idle state during streaming. The OCR check requires both stream labels (allowing O for zero), and the images remain available for inspection.
+
+## Persistent host execution on squire
+
+Use `systemd-run --user --wait --pipe --quiet bash -c '<host command>'` from
+this agent environment to reach the host. A direct `systemd-run` from the
+sandbox can fail with `Failed to connect to bus: No data available`.
+Start long builds and captures as detached user units inside that host command.
+Select Node explicitly: this capture uses `/home/lunchbox/.nvm/versions/node/v20.11.0/bin`
+first on the build PATH. The host default Node 18 fails Metro with
+`configs.toReversed is not a function`; Node 22.12.0's module detection fails
+this checkout's Expo config with `ReferenceError: require is not defined`.
+Use a private Gradle home, bounded heaps/workers, and persistent log/output paths.
+
+Keep the fixture server, delayed-image server, and capture on the same host.
+Forward the corner's emulator lease variables when launching `beeline emulator`
+through the host route; select its returned serial and ADB server port for every
+capture command. Do not select another corner's emulator. Wait for build success
+before installing the APK and capturing; never measure while compiling.

@@ -1,51 +1,47 @@
 # Capture status and reproduction
 
-This is a partial baseline, not completion of the brief. See [platform tables and measured ranking](BASELINE.md). Android remains incomplete; iOS is blocked by exhausted BrowserStack App Automate testing time.
+Android release, narrow production web and packaged Tauri baselines are captured. See [platform tables and measured ranking](BASELINE.md). Ruby directed that the single native iOS timing run remain pending separate owner follow-up and not block this delivery pass.
 
-## Retained evidence
+## Retained evidence and repeat command
 
-The gzip JSON files are raw captures. `manifest.json` records their uncompressed SHA-256 hashes. Decompress into separate web and desktop suite directories, then generate the tables with:
+The gzip JSON files are raw captures. `manifest.json` records their uncompressed SHA-256 hashes; screenshot entries use file SHA-256. Decompress each platform into its own suite directory, then regenerate with:
 
 ```sh
-node scripts/transcript-speed/report.mjs - web desktop BASELINE.md
+node scripts/transcript-speed/report.mjs android web desktop BASELINE.md
 ```
 
-A dash explicitly marks a missing platform; it never creates measurements. Replace it with the Android suite directory when that run completes.
+Each interaction has three trials; typing has twenty-one keys. Open variants each have three trials. History drivers verify older fixture content, streams use two agents, and send settlement checks local server state. The same deterministic local-only fixture is used across platforms, with 100 ms configured RTT, zero jitter, 10 Mbps bandwidth and delayed placeholder images.
 
-Web used a narrow production export (390 × 844). Desktop used the extracted Debian package, driven through tauri-driver and WebKitWebDriver under Xvfb, not a browser tab. Both embed build SHA `b3cf7eac3625d3ca69c68ba4d3043c766b73e01e`. Subsequent commits changed drivers and reporting; the embedded SHA is the artifact identity, not the final PR head. Generated metadata records React Compiler disabled. Hermes and native Fabric are not applicable to these web runtimes; Android runtime verification remains pending.
+## Android host capture
 
-Runs were serial, with this corner’s Android compiler suspended and no Android emulator running. Other workloads on the shared host cannot be excluded. Desktop startup host load was 12.07 / 15.21 / 13.59 across 20 logical CPUs. These are controlled local diagnostic baselines, not a guarantee of an otherwise idle host. The local proxy used 100 ms RTT, zero jitter and 10 Mbps bandwidth; images deliberately arrive late.
+The persistent host build and capture completed with `EXIT 0`. The Node 18 host default first failed Metro with `configs.toReversed is not a function`; Node 22.12.0 then failed this checkout's Expo config with `ReferenceError: require is not defined`. Explicit Node 20.11.0 built the release APK successfully. The README documents the host systemd route that survives sandbox resets.
 
-Each interaction has three trials; typing has twenty-one keys. Open variants each have three trials. History drivers verify older fixture content, streams use two agents, and send settlement checks local server state. Browser paint times are rendering upper bounds, not physical scanout. Separate UI/compositor frames, blank-area measurements and total hook instrumentation overhead remain unavailable; the paired comparison measures incremental sampler overhead only. Memory growth without forced GC does not establish a leak.
+The built APK embeds SHA `827dbc0018c2eede4f3729bf510147a021757b14` and a clean measured-source digest. Its SHA-256 is recorded in the table and checked against the installed APK before each driver. Device: corner-owned emulator-5562, Android 15 x86_64, 60 Hz, software GPU. Host identity, CPU, kernel and load are retained in `android/host.json.gz`. This is an emulator diagnostic baseline, not a physical-device claim. The build finished before capture; unrelated shared-host load cannot be excluded.
 
-## Android blocker
+Generated Gradle settings enable Hermes and New Architecture (`android/generated-build-settings.txt`). Runtime samples independently confirm Hermes and Fabric. Embedded Metro metadata records React Compiler disabled. Retained screenshots show both live streams outside sampling windows; OCR text accompanies each screenshot. Incoming messages were visibly checked, history gestures revealed older fixture rows, and optimistic sends settled in the local database.
 
-The local release build was interrupted across agent sandbox resets. The persistent build log ends during native dependency compilation without a Gradle completion or failure result. On resumption no Gradle/build process remained, and the artifact check returned:
+All twenty-one native keypaint samples in each sampler arm completed without timeouts. Active sampler p50/p95 is 51/69 ms, inactive 51/54 ms. These sequential samples measure incremental sampling cost with hooks installed in both arms; total instrumentation overhead remains unquantified. HWUI histograms estimate UI frame cost; JavaScript rAF intervals measure scheduling opportunities. Neither establishes physical panel scanout. Room opens use the existing newest-frame marker; settling includes five quiet frame-count polls. Cache-miss trials clear fixture app storage, sign in, then time entry to the target Room, so they exclude sign-in time.
 
-```text
-ls: cannot access 'apps/mobile/android/app/build/outputs/apk/release': No such file or directory
-```
+Android's largest pooled JS frame-interval p95 occurs during repeated Room switching (154.4 ms), then optimistic send (41.3 ms) and concurrent streams (37.7 ms). History insertion has median UI p95 of 38 ms and median 364 row commits per trial. Typing has median two row commits per key, not zero; initial keys in the first trial had zero. Incoming messages have median 42 row commits. Use these measurements to focus follow-up profiling; they do not attribute CPU time to individual functions.
 
-Local exec and the connected development shell were tried; both ran inside the same ephemeral execution sandbox. The grant listing offered connection-install grants, not a persistent host-command route. Moving build caches and captures from `/tmp` into the ignored worktree run directory preserved the completed web/desktop evidence, but did not preserve the running Android build. Earlier native diagnostic observations without retained raw captures are excluded. The Android drivers are implemented but the full native suite is not demonstrated.
+## Web and desktop
 
-Next step: resume the cached release assembly in an uninterrupted execution window, install the resulting APK on the corner emulator, then run `capture-suite.mjs android` and regenerate these tables. Do not mark the PR ready until that succeeds.
+Web used a narrow production export (390 × 844). Desktop used the extracted Debian package, driven through tauri-driver and WebKitWebDriver under Xvfb, not a browser tab. Both embed SHA `b3cf7eac3625d3ca69c68ba4d3043c766b73e01e`. Subsequent commits changed drivers/reporting; artifact identity is distinct from final PR head. Generated metadata records React Compiler disabled. Hermes and native Fabric do not apply to these web runtimes.
 
-## Native fingerprint
+These captures ran serially with this corner's Android compiler suspended and no Android emulator running. Other shared-host workloads cannot be excluded. Desktop startup load was 12.07 / 15.21 / 13.59 across twenty logical CPUs. Browser paint times are rendering upper bounds; separate UI/compositor frames remain unavailable. Paired sampling comparisons measure incremental sampler overhead only.
 
-Local fingerprint validation failed on both this branch and clean main (`735d7a8a5`), using the same installed dependency set. The two retained `fingerprint-*.txt` files contain exact outputs. Computed hashes differ between checkout paths; this demonstrates the local failure also occurs on main, not identical computed fingerprints. No runtime pins or release configuration were changed. The original PR head passed its hosted native fingerprint check.
+## Limitations and native fingerprint
 
-## iOS
+Blank-area measurements and total hook instrumentation overhead remain unavailable. Short memory growth without forced GC does not establish a leak. The README and tables state metric-specific limitations; missing evidence is never reported as zero.
 
-The owner approved the host change; vault metadata confirms `hub-cloud.browserstack.com` is allowed. The expired approval was not resumed.
+Local fingerprint validation previously failed on both this branch and clean main (`735d7a8a5`) using the same installed dependencies. Retained `fingerprint-*.txt` files contain exact outputs. Checkout-dependent hashes differ; this demonstrates the local failure also occurs on main, not identical hashes. No runtime pins or release configuration were changed. The original PR head passed hosted native fingerprint checks.
 
-The native IPA upload on 2026-10-24 returned HTTP 403:
+## Native iOS — pending separate follow-up
+
+The owner approved the BrowserStack host change, and vault metadata confirms `hub-cloud.browserstack.com` is allowed. The expired approval was not resumed. Vault authentication and Expo EAS build discovery succeeded; recent apps returned no results and the plan endpoint reported Free. Hub session availability returned `POST /v1/vault/use → 504 timeout`. Native IPA upload returned HTTP 403:
 
 ```text
 [BROWSERSTACK_TESTING_TIME_LIMIT_EXHAUSTED]App Automate testing time has expired. Contact BrowserStack Support at https://www.browserstack.com/contact for extending your Free Trial.
 ```
 
-Vault authentication and Expo EAS build discovery succeeded. BrowserStack recent apps returned no results; its plan endpoint reported Free. A hub session availability request returned `POST /v1/vault/use → 504 timeout`. Uploading an existing EAS IPA then established the expired testing-time blocker. No native timing was captured. Restore testing time on the approved account, then capture the fixture run; an existing IPA's availability does not establish that it contains this harness.
-
-## Remaining driver changes
-
-The Android driver retries accessibility snapshots, recognizes prefixed jump-to-newest labels, waits for newest content before incoming-message sampling, and retains screenshots/OCR to verify both streams outside timing windows. These changes still require the full native demonstration; no emulator was attached during the delivery check.
+No native iOS timing is claimed. Ruby owns follow-up with the owner. Restore account testing time before the single fixture run; an existing IPA's availability does not establish that it contains this harness.

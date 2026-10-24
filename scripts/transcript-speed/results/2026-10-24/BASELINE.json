@@ -1,6 +1,62 @@
 {
   "costs": [
     {
+      "platform": "Android release emulator",
+      "scenario": "keystroke",
+      "p95Ms": 17.521625000052154,
+      "missedFraction": 0.018703241895261846,
+      "rowCommits": 2
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "scroll",
+      "p95Ms": 21.991887000389397,
+      "missedFraction": 0.06915629322268327,
+      "rowCommits": 37
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "fling",
+      "p95Ms": 24.797362999990582,
+      "missedFraction": 0.12413793103448276,
+      "rowCommits": 61
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "history-prepend",
+      "p95Ms": 23.421393000055104,
+      "missedFraction": 0.15544729849424269,
+      "rowCommits": 364
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "incoming",
+      "p95Ms": 19.74659499991685,
+      "missedFraction": 0.11529933481152993,
+      "rowCommits": 42
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "warm-room-switches",
+      "p95Ms": 154.42242499999702,
+      "missedFraction": 0.5274806344522317,
+      "rowCommits": 2882
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "concurrent-streams",
+      "p95Ms": 37.72822599997744,
+      "missedFraction": 0.27262813522355506,
+      "rowCommits": 252
+    },
+    {
+      "platform": "Android release emulator",
+      "scenario": "optimistic-send",
+      "p95Ms": 41.32988400012255,
+      "missedFraction": 0.16789667896678967,
+      "rowCommits": 59
+    },
+    {
       "platform": "Narrow production web",
       "scenario": "keystroke",
       "p95Ms": 16.700000000000728,

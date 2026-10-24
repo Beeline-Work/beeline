@@ -1,0 +1,5 @@
+newArchEnabled=true
+hermesEnabled=true
+Build log: BUILD SUCCESSFUL in 6m 27s; EXIT 0
+Node used for build: v20.11.0
+Runtime/React Compiler/build SHA: see scenarios/capture.json.gz

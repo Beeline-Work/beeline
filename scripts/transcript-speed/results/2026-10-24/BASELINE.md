@@ -6,9 +6,43 @@ Frame intervals are pooled across trials. Android UI percentiles are the median 
 
 ## Android release emulator
 
-| Status | Evidence |
-| --- | --- |
-| Incomplete | No accepted capture supplied. See run notes for the exact blocker; no baseline is inferred. |
+Runtime: google/sdk_gphone64_x86_64/emu64xa:15/AE3A.240806.043/12960925:userdebug/dev-keys. Device: emulator-5562. Refresh: 60.0 Hz (Android display evidence in raw capture).
+
+Runtime probe: `{"hermes":true,"fabric":true}`.
+
+Embedded build: `{"reactCompiler":false,"platform":"android","engine":"hermes","checkoutSha":"827dbc0018c2eede4f3729bf510147a021757b14","sourceDiffSha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}`. Artifact SHA-256: `f72b96ba2bee56395291cafab5c3eb9e4ebe6e2464261d4e77746ba04cfb0eba`. Fixture: `cd7b92b10869393264cc3c20f1ff42f4c3c8a9ef77223697504231deeec64ae4`.
+
+Sampling overhead: sequential native keypaint trials, sampler inactive p50/p95 51.0/54.0 ms; active 51.0/69.0 ms. Polling is suspended in both arms. Hooks remain installed in both arms; this measures incremental sampling cost, not total instrumentation overhead.
+
+| Scenario | Trials | JS/render interval p50 / p95 ms | UI frame p50 / p95 ms | UI janky / rendered frames | Median transcript / row commits | Missed JS opportunities |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| idle | 3 | 16.7 / 17.0 | 5.0 / 5.0 | 1 / 10 | 0.0 / 0.0 | 0 |
+| keystroke | 21 | 16.7 / 17.5 | 5.0 / 16.0 | 19 / 82 | 1.0 / 2.0 | 15 |
+| scroll | 3 | 16.7 / 22.0 | 16.0 / 28.0 | 13 / 393 | 4.0 / 37.0 | 50 |
+| fling | 3 | 16.7 / 24.8 | 19.0 / 30.0 | 24 / 505 | 3.0 / 61.0 | 90 |
+| history-prepend | 3 | 16.7 / 23.4 | 21.0 / 38.0 | 46 / 1430 | 15.0 / 364.0 | 702 |
+| incoming | 3 | 16.7 / 19.7 | 7.0 / 16.0 | 5 / 56 | 6.0 / 42.0 | 52 |
+| warm-room-switches | 3 | 16.7 / 154.4 | 61.0 / 101.0 | 74 / 115 | 133.0 / 2882.0 | 2860 |
+| concurrent-streams | 3 | 16.7 / 37.7 | 18.0 / 25.0 | 21 / 722 | 18.0 / 252.0 | 250 |
+| optimistic-send | 3 | 16.7 / 41.3 | 23.0 / 73.0 | 15 / 102 | 10.0 / 59.0 | 91 |
+
+| Room open | Trials | First content p50 / p95 ms | Settled p50 / p95 ms |
+| --- | ---: | ---: | ---: |
+| cold-process-retained-cache | 3 | 1427.0 / 1622.0 | 4010.0 / 4204.0 |
+| warm | 3 | 671.0 / 681.0 | 1626.0 / 1626.0 |
+| cache-miss | 3 | 564.0 / 574.0 | 1591.0 / 2821.0 |
+
+Device epoch launch to existing release newest-frame marker; log timestamp includes delivery latency, not a physical scanout timestamp. First five unchanged HWUI frame-count polls after newest-frame, 100ms apart; includes quiet confirmation interval and polling overhead
+
+Keystroke-to-frame: n=21, p50=51.0 ms, p95=69.0 ms. Activity key-down dispatch to hardware frame commit containing the complete composer text; excludes adb transport and physical panel scanout
+
+| Memory after Room switches | Before MiB | After MiB | Change MiB |
+| --- | ---: | ---: | ---: |
+| Trial 1, 20 switches, app PSS | 304.4 | 307.4 | 3.0 |
+| Trial 2, 20 switches, app PSS | 302.5 | 325.2 | 22.7 |
+| Trial 3, 20 switches, app PSS | 325.0 | 333.9 | 8.9 |
+
+Blank area during fling: not instrumented; no zero-blank-area claim. Memory growth across this short experiment does not by itself prove a leak.
 
 ## Narrow production web
 
@@ -89,11 +123,20 @@ Blank area during fling: not instrumented; no zero-blank-area claim. Memory grow
 
 | Status | Dependency |
 | --- | --- |
-| Pending | Owner approval of BrowserStack host edit (01M5QSN2JGRMWXHK8G9M0HNW48); resume the single native run after approval. |
+| Pending | Separate owner follow-up for the single native timing run; excluded from this delivery pass by the commander. BrowserStack testing time must be restored. |
 
 ## Ranked measured costs
 
 The ranking uses pooled animation-interval p95 within each platform. It identifies expensive scenarios; it does not assign CPU time to individual functions. Platform hardware and rendering backends differ, so do not read this as a device comparison.
+
+### Android release emulator
+
+| Rank | Scenario | p95 interval ms | Missed opportunities % | Median row commits |
+| --- | --- | ---: | ---: | ---: |
+| 1 | warm-room-switches | 154.4 | 52.7 | 2882.0 |
+| 2 | optimistic-send | 41.3 | 16.8 | 59.0 |
+| 3 | concurrent-streams | 37.7 | 27.3 | 252.0 |
+| 4 | fling | 24.8 | 12.4 | 61.0 |
 
 ### Narrow production web
 
@@ -115,7 +158,7 @@ The ranking uses pooled animation-interval p95 within each platform. It identifi
 
 ## Recommended remaining work
 
-1. **Step 2 — reduce redraw propagation.** Isolate composer state and stabilize row inputs; rerun per-keystroke and incoming-message commit counts on Android, preserving send settlement and follow behavior. Use these measured counts as the before baseline, not a promise of a particular speedup.
+1. **Step 2 — reduce redraw propagation.** Prioritize Room switching and incoming-message row invalidation; stabilize row inputs and measure composer isolation separately. Use the per-key and per-incoming counts above to distinguish small composer costs from broad row invalidation. Preserve send settlement and follow behavior and rerun these same counts. Use these measured counts as the before baseline, not a promise of a particular speedup.
 2. **Step 3 — reduce row work.** Profile history insertion, send settlement, and concurrent streams to attribute the measured stalls to row types. Optimize markdown/code/card work only where the profile supports it, then compare this same fixture.
 3. **Step 4 — benchmark list engines.** Compare the existing list with candidates using fling, explicit history prepend, landing/follow, and memory trials. Add blank-area instrumentation before choosing a replacement.
 4. **Step 5 — address remaining startup and memory cost.** Use cold/warm/cache-miss splits and repeated switches to choose the next target. Confirm memory growth with longer runs and GC-aware analysis before calling it a leak.

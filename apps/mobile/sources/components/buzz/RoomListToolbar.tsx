@@ -95,7 +95,7 @@ export function RoomListToolbar({
         accessibilityLabel="Search Rooms and direct messages"
         placeholder="Search Rooms and direct messages"
         placeholderTextColor={styles.label.color}
-        variant="search"
+        variant="roomSearch"
         style={styles.searchInput}
         testID={desktop ? 'desktop-room-search' : 'room-search'}
       />

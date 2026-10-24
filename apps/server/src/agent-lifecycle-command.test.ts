@@ -105,18 +105,16 @@ describe('tagged agent lifecycle commands', () => {
     ).toEqual(['@bee is offline · no turn is running']);
   });
 
-  it('enforces restart authority and deduplicates the accepted request', async () => {
+  it('lets any Room member restart and deduplicates the accepted request', async () => {
+    // Restart only interrupts the agent, so a member who does not own it may ask.
     await send('3'.repeat(64), MEMBER, '@bee /restart');
-    expect(
-      (await database.query(`SELECT 1 FROM agent_commands WHERE action='restart'`)).rowCount,
-    ).toBe(0);
     expect(
       (
         await database.query<{ text: string }>(
           `SELECT text FROM messages WHERE presentation='system' ORDER BY created_at DESC LIMIT 1`,
         )
       ).rows[0]?.text,
-    ).toContain('only its owner or a Room manager');
+    ).toContain('@bee queued a restart');
 
     const id = '4'.repeat(64);
     const phone = new PhoneService(database, 'http://local.test', undefined, undefined, live);

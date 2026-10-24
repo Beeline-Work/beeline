@@ -1077,7 +1077,7 @@ it('failure visibility: stale and cancelled generations cannot create failure re
   await expect(daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER)).rejects.toThrow();
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(0);
 });
-it('failure visibility: archived return corner falls back through its recorded opening ancestor', async () => {
+it('closed-corner reports do not fall back through a recorded opening ancestor', async () => {
   const opened = await open();
   const turn = await worker(opened.cornerId);
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($2::text)) WHERE id=$1`, [turn.id, opened.cornerId]);
@@ -1086,7 +1086,7 @@ it('failure visibility: archived return corner falls back through its recorded o
   const { reportToCommander } = await import('./commander.js');
   const command = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [turn.id])).rows[0]!;
   await reportToCommander(db, opened.cornerId, WORKER, 'failed: saved login is unconfirmed', command, 'archived-report');
-  expect((await commands(ROOM, RUBY)).find(c => c.id === 'archived-report')).toMatchObject({ private: true });
+  expect((await commands(ROOM, RUBY)).find(c => c.id === 'archived-report')).toBeUndefined();
   expect((await commands(opened.cornerId, RUBY)).some(c => c.id === 'archived-report')).toBe(false);
 });
 it('failure visibility: unavailable commander membership refuses automatic publication without committing success', async () => {
@@ -1134,7 +1134,7 @@ it('an expired order execution lease is reclaimed without an unreported-order re
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
   expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [turn.id])).rows[0]?.state).toBe('complete');
 });
-it('failure visibility: archived return follows the nearest live opening ancestor before the top Room', async () => {
+it('closed-corner reports do not wake even the nearest live opening ancestor', async () => {
   const opened = await open(), turn = await worker(opened.cornerId), ancestor = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Live parent corner',$4)`, [ancestor, WS, ROOM, RUBY]);
   await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"implement"}')`, [ancestor, RUBY]);
@@ -1144,7 +1144,7 @@ it('failure visibility: archived return follows the nearest live opening ancesto
   const { reportToCommander } = await import('./commander.js');
   const command = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [turn.id])).rows[0]!;
   await reportToCommander(db, opened.cornerId, WORKER, 'failed: login is unconfirmed', command, 'nearest-live-report');
-  expect((await commands(ancestor, RUBY)).find(c => c.id === 'nearest-live-report')).toBeDefined();
+  expect((await commands(ancestor, RUBY)).find(c => c.id === 'nearest-live-report')).toBeUndefined();
   expect((await commands(ROOM, RUBY)).find(c => c.id === 'nearest-live-report')).toBeUndefined();
 });
 it('failure visibility: Squire approval proves a current durable wait, not a completed outcome', async () => {
@@ -1597,4 +1597,101 @@ it.each(['room', 'corner'] as const)('Reproduction R1: post then a differently w
   expect(messages.map(message => message.id)).toEqual([posted.id]);
   expect((await db.query(`SELECT presentation,activity FROM messages WHERE id=$1`, [final.id])).rows[0])
     .toMatchObject({ presentation: 'activity', activity: [{ kind: 'note', title: 'Turn summary', text: summary }] });
+});
+
+it.each(['done','no-reply'])('WAKE-STORM: auth-failed reviewer reports once and never echoes up a discharged order (%s)', async outcome => {
+  const NIGLET = '6'.repeat(64), SOL = '7'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Niglet','niglet'),($2,'agent','Sol','sol') ON CONFLICT DO NOTHING`, [NIGLET,SOL]);
+  await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3) ON CONFLICT DO NOTHING', [NIGLET,SOL,HUMAN]);
+  for (const agent of [NIGLET,SOL]) for (const address of [null,ROOM,DM])
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS,address,agent]);
+  await daemon.execute('postAgentTurnReceipt', {...authority(order),status:'complete'}, RUBY);
+  const queuedRoot = await createAgentCommand(db, {roomId:DM,agentId:NIGLET,
+    sourceMessageId:order.sourceMessageId,reason:'human_tag'});
+  const root = (await commands(DM,NIGLET)).find(c=>c.id===queuedRoot!.id)!;
+  await claim(root);
+  await daemon.execute('order', {...authority(root),address:DM,agent:'ruby',text:'Build the widget'}, NIGLET);
+  order = (await commands(DM,RUBY)).find(c=>c.reason==='order')!;
+  await claim(order);
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', {...authority(turn),status:'complete'}, WORKER);
+  await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [ROOM,SOL]);
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
+    JSON.stringify({checks:'passing',pr:{number:42,headSha:'a'.repeat(40)}})]);
+  await systemLine(db, {roomId:opened.cornerId,authorId:HUMAN,subject:{kind:'github',name:'GitHub'},
+    verb:'passed checks',kind:'check-passed',object:{text:'checks',headSha:'a'.repeat(40)}});
+  const review = (await commands(opened.cornerId,SOL))[0]!;
+  await claim(review);
+  await daemon.execute('postAgentTurnReceipt', {...authority(review),status:'failed',reason:'ACP error -32000: Authentication required'}, SOL);
+  const {reconcileConfiguredCornerReviewers} = await import('./agent-command.js');
+  for (let cycle=0;cycle<5;cycle++) await reconcileConfiguredCornerReviewers(db,ROOM);
+  expect(await commands(opened.cornerId,SOL)).toHaveLength(0);
+  const failures = (await commands(DM,RUBY)).filter(c=>c.reason==='report');
+  expect(failures).toHaveLength(1);
+  if (outcome === 'done') await daemon.execute('report', {...authority(order),status:'done',text:'done: the assigned coordination is complete'}, RUBY);
+  else await daemon.execute('postAgentTurnReceipt', {...authority(order),status:'complete',completionKind:'no-reply'}, RUBY);
+  const upstreamResults = outcome === 'done' ? 1 : 0;
+  expect((await commands(DM,NIGLET)).filter(c=>c.reason==='report')).toHaveLength(upstreamResults);
+  await claim(failures[0]!);
+  // A later turn retains provenance for explicit escalation, not an automatic
+  // obligation to report each status update to the original upstream orderer.
+  await daemon.execute('postRoomMessage', {...authority(failures[0]!),text:'The reviewer still requires authentication.'}, RUBY);
+  expect((await commands(DM,NIGLET)).filter(c=>c.reason==='report')).toHaveLength(upstreamResults);
+  const {reportToCommander} = await import('./commander.js');
+  const row = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1',[review.id])).rows[0]!;
+  for(let attempt=0;attempt<5;attempt++) await db.transaction(tx=>reportToCommander(tx,opened.cornerId,SOL,
+    `failed: Widget (${opened.cornerId}): ACP error -32000: Authentication required`,row,`repeated-failure-${attempt}`,{automatic:true}));
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND reason='report' AND private_payload->>'authorId'=$2`,[RUBY,SOL])).rowCount).toBe(1);
+  // Closing the source corner silences both old pending and fresh reports.
+  await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1',[opened.cornerId]);
+  expect(await db.transaction(tx=>reportToCommander(tx,opened.cornerId,SOL,'failed: another auth failure',row,'after-close',{automatic:true})))
+    .toMatchObject({skipped:true});
+  expect((await commands(DM,RUBY)).filter(c=>c.reason==='report')).toHaveLength(0);
+});
+
+
+it.each([0,1])('WAKE-STORM: legacy pending failures collapse and closed-corner reports vanish (batch=%s)', async minutes => {
+  const opened = await open();
+  await db.query('UPDATE agents SET wake_batch_minutes=$2 WHERE agent_id=$1',[RUBY,minutes]);
+  try {
+    const queued = [];
+    for(let attempt=0;attempt<3;attempt++) queued.push(await createAgentCommand(db,{
+      roomId:DM,agentId:RUBY,sourceMessageId:null,reason:'report',
+      privatePayload:{kind:'report',authorId:WORKER,fromRoomId:opened.cornerId,originCornerId:opened.cornerId,
+        text:'failed: Authentication required'},
+    }));
+    const pending = (await commands(DM,RUBY)).filter(c=>c.reason==='report');
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).toBe(queued[0]!.id);
+    await expect(claim({...pending[0]!,id:queued[1]!.id})).rejects.toThrow();
+    // Exercise an already released digest, not just a newly queued report.
+    await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1',[opened.cornerId]);
+    expect((await commands(DM,RUBY)).filter(c=>c.reason==='report')).toHaveLength(0);
+    await expect(claim(pending[0]!)).rejects.toThrow();
+  } finally {
+    await db.query('UPDATE agents SET wake_batch_minutes=0 WHERE agent_id=$1',[RUBY]);
+  }
+});
+
+
+it('WAKE-STORM: identical failures of separate Room orders retain both results', async () => {
+  for (let task=0;task<2;task++) await createAgentCommand(db, {
+    roomId:DM,agentId:RUBY,sourceMessageId:null,reason:'report',
+    privatePayload:{kind:'report',authorId:WORKER,fromRoomId:ROOM,text:'failed: provider unavailable'},
+  });
+  expect((await commands(DM,RUBY)).filter(c=>c.reason==='report')).toHaveLength(2);
+});
+
+
+it('WAKE-STORM: a returned result answers a human order once across later delegate report turns', async () => {
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  await daemon.execute('report', {...authority(order),status:'done',text:'done: coordination finished'}, RUBY);
+  await daemon.execute('report', {...authority(turn),status:'blocked',text:'blocked: reviewer requires authentication'}, WORKER);
+  const returned = (await commands(DM,RUBY)).find(c=>c.reason==='report')!;
+  await claim(returned);
+  await daemon.execute('postRoomMessage', {...authority(returned),text:'The reviewer still needs to sign in.'}, RUBY);
+  expect((await phone.readRoom(DM,HUMAN))!.messages.filter(m=>m.author.pubkey===RUBY && m.presentation==='message').map(m=>m.text))
+    .toEqual(['done: coordination finished']);
 });

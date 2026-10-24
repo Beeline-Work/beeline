@@ -940,6 +940,7 @@ function readPermission(value: unknown): NonNullable<RoomViewMessage['permission
     ...field('purpose', oneOf(item.purpose, ['squire-spending'])),
     ...field('reason', nonempty(item.reason) ? item.reason : undefined),
     ...field('decidedAt', integer(item.decidedAt) ? item.decidedAt : undefined),
+    ...field('ownerId', nonempty(item.ownerId) ? item.ownerId : undefined),
     ...field('cornerId', uuid(item.cornerId) ? item.cornerId : undefined),
   };
 }

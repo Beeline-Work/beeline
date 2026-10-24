@@ -87,7 +87,8 @@ vi.mock('@/buzz/speech-recognition-adapter', () => ({
   getRecognitionModule: () => mockMod,
 }));
 
-vi.mock('@/buzz/groknight', () => ({
+vi.mock('@/buzz/groknight', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/buzz/groknight')>(),
   groknight: {
     type: { body: { lineHeight: 20 }, machine: {} },
     buzz: {

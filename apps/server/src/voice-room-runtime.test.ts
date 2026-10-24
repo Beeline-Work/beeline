@@ -109,7 +109,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   try {
     await runtime.utterance('human', 'Jellybean, hello');
     expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi Jellybean.');
-    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer, expect.any(Object));
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();
     await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
@@ -457,7 +457,7 @@ it('lookup goes to order: speaks a short checking line at once when the brain st
   try {
     await runtime.utterance('human', 'Ruby build a widget');
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'Checking. I’ll tell you when I have it.');
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'Checking. I’ll tell you when I have it.', expect.any(Object));
     expect(speech.synthesize.mock.calls.map(call => call[0]).join(' ')).toBe('Checking. I’ll tell you when I have it.');
   } finally { await runtime.close(); }
 });
@@ -472,7 +472,7 @@ it('records the audible acknowledgement before external work completes', async (
   try {
     await runtime.utterance('human', 'Ruby reproduce the bug');
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'You’re right to question it.');
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'You’re right to question it.', expect.any(Object));
   } finally { await runtime.close(); }
 });
 
@@ -606,11 +606,52 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     } };
 }
 
+it.each(['I', 'um', 'so', 'and'])('Reproduction stray-word-1: drops confident %s without interrupting or prefixing the next request', async text => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    const signal = harness.speech.synthesize.mock.calls[0]![2];
+    harness.emit('Update', text, 1, [{ confidence: 0.99, start: 0, end: 0.6 }]);
+    harness.emit('EndOfTurn', text, 1, [{ confidence: 0.99, start: 0, end: 0.6 }]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(signal.aborted).toBe(false);
+    expect(harness.messages).toEqual(['@ronnie Explain the answer']);
+    expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
+    harness.finishPlayback();
+    await vi.waitFor(() => expect(harness.service.recordAnswer).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'I think so', 2);
+    await vi.waitFor(() => expect(harness.messages).toEqual(['@ronnie Explain the answer', '@ronnie I think so']));
+  } finally { harness.finishPlayback(); await runtime.close(); }
+});
+
+it.each(['Ronnie', '@ronnie'])('keeps a lone call agent name or handle: %s', async text => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  const utterance = vi.spyOn(runtime, 'utterance');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', text, 0, [{ confidence: 0.99, start: 0, end: 0.2 }]);
+    await vi.waitFor(() => expect(utterance).toHaveBeenCalledWith('human', text, expect.any(Number), false, true));
+    expect(harness.service.config.brain.answer).not.toHaveBeenCalled();
+    harness.emit('EndOfTurn', 'I think so', 1);
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
+    expect(harness.service.recordHuman.mock.calls[0]![3].id).toBe('ronnie');
+  } finally { harness.finishPlayback(); await runtime.close(); }
+});
+
 it.each([
   ['Hey,', 0.3, 0.2, false],
   ['Hey', 0.95, 0.08, false],
-  ['Hey', 0.95, 0.2, true],
-  ...['yeah', 'yes', 'yep', 'ok', 'okay', 'uh', 'um', 'huh', 'hmm', 'mm'].map(text => [text, 0.3, 0.2, false]),
+  ['Hey', 0.95, 0.2, false],
+  ...['uh', 'um', 'huh', 'hmm', 'mm'].map(text => [text, 0.3, 0.2, false]),
+  ...['yes', 'no', 'yeah', 'yep', 'yup', 'nope', 'sure', 'okay', 'ok', 'wait', 'pause', 'continue', 'thanks', 'I think so'].map(text => [text, 0.3, 0.2, true]),
 ] as [string, number, number, boolean][])('Reproduction filler-final-1: %s confidence=%s duration=%s delivered=%s', async (text, confidence, end, delivered) => {
   const harness = phantomHarness();
   const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
@@ -631,7 +672,7 @@ it.each([
   } finally { harness.finishPlayback(); await runtime.close(); }
 });
 
-it('Reproduction filler-final-2: does not append an unconfirmed filler to the previous request', async () => {
+it.each(['Hey,', 'I', 'um', 'so', 'and'])('Reproduction stray-word-1/filler-final-2: does not append %s to a pending request', async text => {
   const harness = phantomHarness();
   let finish!: () => void;
   harness.service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
@@ -645,7 +686,8 @@ it('Reproduction filler-final-2: does not append an unconfirmed filler to the pr
     await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
     harness.emit('EndOfTurn', 'Your reply seems slower than the previous version.', 0);
     await vi.waitFor(() => expect(finish).toBeDefined());
-    harness.emit('EndOfTurn', 'Hey,', 1, [{ confidence: 0.3, start: 0, end: 0.2 }]);
+    harness.emit('Update', text, 1, [{ confidence: 0.99, start: 0, end: 0.6 }]);
+    harness.emit('EndOfTurn', text, 1, [{ confidence: 0.99, start: 0, end: 0.6 }]);
     await new Promise(resolve => setImmediate(resolve));
     expect((runtime as any).assembler.current('human').text).toBe('Your reply seems slower than the previous version.');
     finish();
@@ -655,7 +697,7 @@ it('Reproduction filler-final-2: does not append an unconfirmed filler to the pr
   } finally { finish?.(); harness.finishPlayback(); await runtime.close(); }
 });
 
-it('Demonstration filler-final-1/2: recognizer finals reach the persisted phone transcript without phantom fillers', async () => {
+it('Demonstration stray-word-1 and filler-final-1/2: recognizer finals reach the persisted phone transcript without phantom fillers', async () => {
   const db = new PgliteDatabase(), live = new LiveHub();
   const human = 'a'.repeat(64), agent = 'b'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
@@ -701,9 +743,12 @@ it('Demonstration filler-final-1/2: recognizer finals reach the persisted phone 
     expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.']);
     finish();
     await vi.waitFor(() => expect(fixture.speech.synthesize).toHaveBeenCalled());
-    say('Hey', 3, 0.95);
-    await vi.waitFor(async () => expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.', '@ruby Hey']));
-    console.log('filler-final-1/2: STT final → real VoiceService/database → PhoneService transcript: noise absent, prior request unchanged, confirmed Hey delivered.');
+    for (const [index, word] of ['I', 'um', 'so', 'and'].entries()) say(word, 3 + index, 0.99);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.']);
+    say('yes', 7, 0.95);
+    await vi.waitFor(async () => expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.', '@ruby yes']));
+    console.log('filler-final-1/2: STT final → real VoiceService/database → PhoneService transcript: noise absent, prior request unchanged, confident stray words absent, yes delivered.');
   } finally { finish?.(); await voice.close(); await db.close(); }
 }, 30_000);
 
@@ -740,11 +785,11 @@ it('dispatches a low-confidence final without interrupting playback when voiceIn
     await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
     const signal = harness.speech.synthesize.mock.calls[0]![2];
     const words = [{ confidence: 0.3, start: 0, end: 0.08 }];
-    harness.emit('Update', 'budget', 1, words);
+    harness.emit('Update', 'thanks', 1, words);
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(signal.aborted).toBe(false);
-    harness.emit('EndOfTurn', 'budget', 1, words);
-    await vi.waitFor(() => expect(utterance).toHaveBeenCalledWith('human', 'budget', expect.any(Number), false, false));
+    harness.emit('EndOfTurn', 'thanks', 1, words);
+    await vi.waitFor(() => expect(utterance).toHaveBeenCalledWith('human', 'thanks', expect.any(Number), false, false));
     await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
     expect(signal.aborted).toBe(false);
     expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
@@ -782,7 +827,7 @@ it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS
   }
 });
 
-it.each(['stop', 'wait', 'no', 'Yeah', 'Please explain something else'])('preserves a real barge-in: %s', async text => {
+it.each(['stop', 'cancel', 'wait', 'no', 'Yeah', 'Please explain something else'])('preserves a real barge-in: %s', async text => {
   const harness = phantomHarness('Hey stop wait no there is the answer.');
   const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
   state.streams = [new ReadableStream()];
@@ -794,7 +839,7 @@ it.each(['stop', 'wait', 'no', 'Yeah', 'Please explain something else'])('preser
     harness.emit('Update', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
-    if (text === 'stop') {
+    if (text === 'stop' || text === 'cancel') {
       await vi.waitFor(() => expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true));
     expect(harness.service.leave).not.toHaveBeenCalled();
       expect(harness.service.recordHuman).toHaveBeenCalledOnce();
@@ -831,7 +876,7 @@ it('keeps echo context until a delayed final and ignores duplicate finals before
     expect(harness.service.recordHuman).toHaveBeenCalledOnce();
     expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
     // A new deliberate short utterance after playback is still a valid turn.
-    harness.emit('EndOfTurn', 'Hey', 2);
+    harness.emit('EndOfTurn', 'yes', 2);
     await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
   } finally { clock?.mockRestore(); await runtime.close(); }
 });
@@ -1407,7 +1452,7 @@ it('Reproduction MULTI-1: another human\'s laughter does not cancel the reply to
     say('starter', 'Update', 'haha', 0);
     say('starter', 'EndOfTurn', 'haha', 0);
     firstToken();
-    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'I’m here. What do you need?'));
+    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'I’m here. What do you need?', expect.any(Object)));
     expect(service.config.brain.answer.mock.calls[0]?.[3].aborted).toBe(false);
     expect(service.recordHuman.mock.calls.map(call => [call[2], call[4]])).toEqual([['second', 'Ruby are you there']]);
   } finally { await runtime.close(); }
@@ -2659,5 +2704,34 @@ it('Reproduction R1: the quick answer and search acknowledgement are clean befor
     await runtime.utterance('human','Ruby, what is new?');
     expect(service.recordAnswer.mock.calls.map(call=>call[2])).toEqual(['Let me look.', 'Here is the answer.']);
     expect(speech.synthesize.mock.calls.map(call=>call[0])).toEqual(['Let me look.', 'Here is the answer.']);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-TAG-1: only final replies route handles, while spoken audio uses names', async () => {
+  const { service, speech } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, _onText, _signal, context) => {
+    expect(context!.agents).toContainEqual({name:'Ruby',handle:'ruby'});
+    await context!.announce('@ruby let me look.');
+    return {text:'@ruby what are you up to?',order:false};
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try {
+    await runtime.utterance('human','Ruby, ask the other agent');
+    expect(service.recordAnswer.mock.calls.map(call=>[call[2],(call[3] as any).routeMentions])).toEqual([
+      ['@ruby let me look.',false],['@ruby what are you up to?',true],
+    ]);
+    expect(service.recordAnswer.mock.calls[1]?.[3]).toMatchObject({sourceId:'source',replyId:expect.any(String)});
+    expect(speech.synthesize.mock.calls.map(call=>call[0])).toEqual(['Ruby let me look.','Ruby what are you up to?']);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-TAG-1: order acknowledgements leave agent mentions to the heavy final reply', async () => {
+  const {service} = conversationService(1);
+  service.config.brain.answer.mockResolvedValue({text:'I will ask @ruby.',order:true});
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try {
+    await runtime.utterance('human','Ruby, do the work');
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordAnswer).toHaveBeenCalledWith('room','ruby','I will ask @ruby.',expect.objectContaining({routeMentions:false}));
   } finally { await runtime.close(); }
 });

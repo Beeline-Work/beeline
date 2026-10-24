@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HullLivePulse } from './MonoHull';
 import { SurfaceGlyphLoader } from './SurfaceGlyphLoader';
 import { Button } from './Button';
+import { InlineRow } from './IndexRow';
 import { PinGlyph } from './PinGlyph';
 import { IdentityMark } from './IdentityMark';
 import { DictationWaveform } from './DictationWaveform';
@@ -35,11 +36,11 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
   const warning = voice.endingWarning ?? voice.budgetWarning;
   const pinned = voice.agents.find(agent => agent.pubkey === voice.target);
   return <>
-    {pinned && <View style={styles.pinLine} testID="voice-pin-line">
-      <Text style={styles.pinLabel}>Pinned to <Text style={styles.pinnedName}>{pinned.name}</Text></Text>
+    {pinned && <InlineRow style={styles.pinLine} testID="voice-pin-line">
+      <Text numberOfLines={1} ellipsizeMode="tail" style={styles.pinLabel}>Pinned to <Text style={styles.pinnedName}>{pinned.name}</Text></Text>
       <Button label="" variant="quiet" iconOnly accessibilityLabel="Unpin agent" onPress={() => voice.aim(pinned.pubkey)}
-        style={styles.unpinTarget} icon={<Text style={styles.unpin}>Unpin</Text>} />
-    </View>}
+        hitSlop={theme.buzz.space.sm} style={styles.unpinTarget} icon={<Text numberOfLines={1} style={styles.unpin}>Unpin</Text>} />
+    </InlineRow>}
     <View style={styles.controls} testID="voice-bar">
       <View style={styles.waveform} accessibilityLabel={voice.speaker
         ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : voice.muted ? 'Microphone muted' : 'Listening'} testID="voice-waveform">
@@ -71,10 +72,10 @@ const styles = StyleSheet.create(theme => ({
   selected: { backgroundColor: theme.buzz.bgHighlight, borderColor: theme.buzz.borderStrong },
   pinBadge: { position: 'absolute', top: -7, right: -7, width: 18, height: 18, borderRadius: 3, backgroundColor: theme.buzz.accent, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.buzz.bgBase, zIndex: 2 },
   pinnedName: { color: theme.buzz.textPrimary, fontFamily: theme.buzz.proseSemibold },
-  pinLine: { justifyContent: 'center', height: 20, paddingRight: theme.buzz.space.xxl, marginBottom: 8 },
-  unpinTarget: { position: 'absolute', right: -8, top: -12 },
-  pinLabel: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
-  unpin: { ...theme.buzz.type.meta, color: theme.buzz.accent, textDecorationLine: 'underline' },
+  pinLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: theme.buzz.space.sm, paddingTop: theme.buzz.space.sm, gap: theme.buzz.space.sm },
+  unpinTarget: { flexShrink: 0, width: 'auto' },
+  pinLabel: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, flex: 1, minWidth: 0 },
+  unpin: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, textDecorationLine: 'underline' },
   speakingPulse: { ...StyleSheet.absoluteFillObject, pointerEvents: 'none' },
   speakingFrame: { ...StyleSheet.absoluteFillObject, borderWidth: 1, borderRadius: 3, borderColor: theme.buzz.accent },
   name: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },

@@ -260,6 +260,38 @@ export async function reportToCommander(
   }
   const strict = Boolean(command) && !options.automatic;
   const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
+  // Closed work has no outstanding request. Do not move its stale reports to
+  // an ancestor Room merely because that Room still exists.
+  if (origin && (await db.query(`SELECT 1 FROM rooms corner LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
+    WHERE corner.id=$1 AND (corner.archived_at IS NOT NULL OR fact.lifecycle->>'lifecycle' IN ('closed','landed'))`, [origin])).rowCount)
+    return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
+  // A standing failure can be observed by many dispatch attempts. Its wake
+  // identity belongs to the corner and failure, not the failed attempt.
+  if (origin && text.startsWith('failed:')) {
+    const recovery = (await db.query<{ id: string }>(`SELECT request_id id FROM agent_turns
+      WHERE agent_id=$1 AND status='complete' ORDER BY created_at DESC,request_id DESC LIMIT 1`, [agentId])).rows[0]?.id;
+    reportId = createHash('sha256').update(`corner-failure:${origin}:${agentId}:${recipient}:${returnRoom}:${text}:${recovery ?? ''}:${JSON.stringify(command?.review_context?.reviewerConfiguration ?? null)}`).digest('hex');
+  }
+  const order = command ? await commandOrder(db, command) : undefined;
+  const assignment = order?.agent_id === agentId && (order.private_payload?.kind === 'order' ||
+    (!order.private_payload && order.source_message_id && (await db.query(
+      `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
+       WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [order.source_message_id])).rowCount)) ? order : undefined;
+  if (assignment) {
+    // The obligation belongs to the order, across generations and later
+    // continuations. Keep explicit new blockers possible, but a terminal
+    // result or final prose cannot continually re-answer a discharged order.
+    const saved = (await db.query<{ report_outcome: string | null; result_message_id: string | null; no_reply: boolean; previously_reported: boolean }>(
+      `SELECT report_outcome,result_message_id,
+       COALESCE(private_payload->>'reportedGenerationId'=generation_id,false) previously_reported,
+       EXISTS(SELECT 1 FROM agent_turns turn
+        WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+          AND turn.request_id=command.turn_request_id AND turn.completion_kind='no-reply') no_reply
+       FROM agent_commands command WHERE id=$1 FOR UPDATE`, [assignment.id])).rows[0];
+    if ((options.automatic && (saved?.report_outcome || saved?.result_message_id || saved?.no_reply || saved?.previously_reported)) ||
+      (/^(done|failed):/.test(text) && ['done','failed'].includes(saved?.report_outcome ?? '')))
+      return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
+  }
   if (!recipient || !returnRoom) {
     if (strict) throw new CommandRefusalError('this order has no commander return address', 409);
     console.error(`[commander] ${roomId}: cannot route report without recorded opening provenance`);
@@ -358,6 +390,9 @@ export async function reportToCommander(
       [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, reportMessageId]);
     }
   }
+  if (assignment) await db.query(`UPDATE agent_commands SET report_outcome=
+    CASE WHEN report_outcome IN ('done','failed') THEN report_outcome ELSE $2 END WHERE id=$1`,
+    [assignment.id, /^(done|blocked|failed|needs-decision):/.exec(text)?.[1] ?? 'reported']);
   return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true,
     receipt: member.kind === 'agent' ? 'Report queued privately; not confirmation of execution.' : 'Report stored and visible.' };
 }

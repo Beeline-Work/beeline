@@ -88,6 +88,7 @@ beforeEach(async () => {
   daemon = new DaemonService(db, new LiveHub());
   // These lifecycle fixtures model an independent PR author; provider checks have separate coverage.
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
+  await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
@@ -126,8 +127,61 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 }
 
 describe('corner message attribution', () => {
+  it.each([
+    {reason:'ACP error -32000: Authentication required',free:false},
+    {reason:'model selection unavailable',free:false},
+    {reason:'provider refused the selected configuration',reasonKind:'model-selection-unavailable' as const,free:false},
+    {reason:'ACP error -32000: Authentication required',free:true},
+  ])('WAKE-STORM: standing reviewer failure waits for recovery: $reason (free=$free)', async ({reason,reasonKind,free}) => {
+    if (free) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'{}')`, [B,W,H]);
+    await db.query('UPDATE agents SET selected_model=NULL WHERE agent_id=$1', [B]);
+    await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R, B]);
+    await greenHead(7, 'a'.repeat(40));
+    const [review] = await commands(B, C);
+    expect(review).toBeDefined();
+    await claim(review!);
+    await daemon.execute('postAgentTurnReceipt', { roomId: C, requestId: review!.turnRequestId,
+      generationId: 'g1', status: 'failed', reason, reasonKind }, B);
+    for (let cycle = 0; cycle < 5; cycle++) await reconcileConfiguredCornerReviewers(db, R);
+    expect(await commands(B, C)).toHaveLength(0);
+    const reports = (await commands(A, R)).filter(c => c.reason === 'report');
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.source.body).toContain(reason);
+    // A timer and a new PR head cannot repair credentials or a missing model.
+    await db.query(`UPDATE agent_turns SET created_at=now()-interval '1 day' WHERE agent_id=$1`, [B]);
+    await greenHead(8, 'b'.repeat(40));
+    await reconcileConfiguredCornerReviewers(db, R);
+    expect(await commands(B, C)).toHaveLength(0);
+    // A model selection change is a concrete recovery signal.
+    await db.query("UPDATE agents SET selected_model='working-model' WHERE agent_id=$1", [B]);
+    await reconcileConfiguredCornerReviewers(db, R);
+    expect(await commands(B, C)).toHaveLength(1);
+  });
+
   // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
   // check webhook exists to create the configured reviewer's command.
+  it.each(['sign-in','successful-turn','legacy-configuration'])('WAKE-STORM: reviewer resumes after a concrete %s recovery', async recovery => {
+    await db.query('UPDATE agents SET selected_model=NULL WHERE agent_id=$1', [B]);
+    await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R,B]);
+    await greenHead(9,'c'.repeat(40));
+    const [review] = await commands(B,C);
+    await claim(review!);
+    await daemon.execute('postAgentTurnReceipt', {roomId:C,requestId:review!.turnRequestId,
+      generationId:'g1',status:'failed',reason:'Authentication required'}, B);
+    if (recovery === 'legacy-configuration') await db.query(`UPDATE agent_commands
+      SET review_context=review_context-'reviewerConfiguration' WHERE id=$1`, [review!.id]);
+    await reconcileConfiguredCornerReviewers(db,R);
+    expect(await commands(B,C)).toHaveLength(0);
+    if(recovery === 'sign-in') await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+      VALUES($1,$2,$3,'Signed in','agent-sign-in',jsonb_build_object('agentId',$3::text,'attemptId',$1::text,'status','signed-in'))`,
+      ['recovery-'+review!.id,R,B]);
+    else if(recovery === 'successful-turn') await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status)
+      VALUES($1,$2,$3,'complete')`, [R,'recovery-'+review!.id,B]);
+    else await db.query("UPDATE agents SET selected_model='recovered-model' WHERE agent_id=$1", [B]);
+    await reconcileConfiguredCornerReviewers(db,R);
+    expect(await commands(B,C)).toHaveLength(1);
+  });
+
   it('wakes the configured reviewer for a zero-check PR, privately asks the implementer to report when no reviewer is configured', async () => {
     let headSha = '1'.repeat(40);
     const checkGate = vi.fn(async () => ({
@@ -195,7 +249,8 @@ describe('corner message attribution', () => {
     ).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
 
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
-    await db.query(`DELETE FROM agent_commands`);
+    await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
+  await db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);
     await db.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle-'checksSummary','{checks}','"unknown"'),

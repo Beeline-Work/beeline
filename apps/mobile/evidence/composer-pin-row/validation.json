@@ -1,0 +1,6 @@
+{
+  "reproduction": "PIN-ROW-1",
+  "before": {"browserCases": 8, "failed": 8, "failures": ["horizontal inset", "top padding", "long-name containment"]},
+  "after": {"testFiles": 4, "passedTests": 36, "browserCases": 8, "typecheck": "passed", "uiPolicyWithMainBaseline": "passed", "impeccableDetectorFindings": []},
+  "native": {"transport": "stubbed", "component": "production ConversationComposer", "capture": "adb screencap on leased emulator", "automationLimit": "live waveform prevents UIAutomator idle"}
+}

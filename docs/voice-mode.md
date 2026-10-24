@@ -92,8 +92,12 @@ and uses word confidence when available. Recent playback fragments are excluded
 from input to prevent echo from starting another reply. Flux's
 [word confidence fields](https://developers.deepgram.com/reference/speech-to-text/listen-flux)
 provide the recognition evidence for non-final events. A finished turn with recognized
-words bypasses confidence and duration filtering; echo and stop-command handling
-still apply. Low-confidence or very short finals do not override the word-count/duration
+words bypasses confidence and duration filtering. Single-word turns are kept only
+for yes, no, yeah, yep, yup, nope, sure, okay, ok, stop, wait, cancel, pause,
+continue, thanks, or a call agent’s name or handle. Other single words are ignored
+before they can post, answer, interrupt playback or enter request assembly; their
+partial recognizer updates are ignored too. Echo and stop-command handling still
+apply. Low-confidence or very short finals do not override the word-count/duration
 barge-in gate in single-human calls. An interrupted real-work report stays in the
 transcript and does not replay its opening on subsequent refreshes.
 

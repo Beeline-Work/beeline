@@ -14,7 +14,8 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
-import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
+import { isNoReplyDeclaration } from './no-reply.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -234,7 +235,7 @@ import {
   startWorkflow,
   workflowRunRequester,
 } from './workflow-runs.js';
-import { activeWorkflowRunIds, scheduleWorkflowName } from './workflow-admin.js';
+import { activeWorkflowRunIds, humanRoomAdmin, scheduleWorkflowName } from './workflow-admin.js';
 import { isCornerReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
@@ -564,10 +565,16 @@ export class DaemonService {
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
     ]);
+    // Final text is normally published unconditionally by the helper's stream
+    // settle. Older harnesses express silence as prose instead of the no-reply
+    // tool. Settle that outcome before either public insertion or private routing.
+    const silentFinal = name === 'postRoomMessage' && candidate.presentation !== 'card' &&
+      isNoReplyDeclaration(String(candidate.text ?? ''));
     if (
       !this.commandTransaction &&
       scopedRoom &&
       name === 'postRoomMessage' &&
+      !silentFinal &&
       candidate.relay === undefined &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string' &&
@@ -702,6 +709,8 @@ export class DaemonService {
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
           return this.writeResult() as Output<Name>;
+        if (silentFinal && command.state === 'complete')
+          return this.writeResult() as Output<Name>;
         // Silence is a server-owned terminal outcome, including private return
         // routes. Older helpers may still submit final text after the tool.
         if (name === 'postRoomMessage' && (await db.query(
@@ -724,7 +733,7 @@ export class DaemonService {
         // A corner is the ordered work's own address: its viewers watch the
         // turn's live work and progress there. Urgent terminal prose still
         // reports privately; done uses the explicit guarded report tool.
-        if (command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
+        if (!silentFinal && command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount)) || ([
           'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name) && !(await db.query(
@@ -790,7 +799,19 @@ export class DaemonService {
         scoped.afterCommit = (task) => {
           committedTasks.push(task);
         };
-        const result = await scoped.execute(name, input, authenticatedAgentId);
+        let result: Output<Name>;
+        if (silentFinal) {
+          // Settle through the authorized completion path below. A recursive
+          // execute call unnecessarily adds a generic System producer route.
+          await db.query(`UPDATE agent_turns SET status='complete',completion_kind='no-reply',created_at=now()
+            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
+            [scopedRoom,authenticatedAgentId,requestId]);
+          await db.query(`DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2
+            AND turn_id=$3 AND kind IN ('draft','thought')`, [scopedRoom,authenticatedAgentId,requestId]);
+          await settleTurnFailureLine(db,buffered,scopedRoom, String(requestId),authenticatedAgentId);
+          candidate.status = 'complete';
+          result = this.writeResult() as Output<Name>;
+        } else result = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
           await db.query(
             `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
@@ -835,12 +856,12 @@ export class DaemonService {
               [offerId, command.id],
             );
         }
-        if (name === 'postRoomMessage' && candidate.relay === undefined) {
+        if (name === 'postRoomMessage' && candidate.relay === undefined && !silentFinal) {
           // routeAgentResult reads the reply's own text for the agents it hands
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
-        } else if (name === 'postAgentTurnReceipt') {
+        } else if (name === 'postAgentTurnReceipt' || silentFinal) {
           if (candidate.status === 'working')
             await db.query(
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
@@ -914,7 +935,7 @@ export class DaemonService {
           },
         });
       }
-      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner) {
+      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner && !silentFinal) {
         await this.reconcileZeroCheckWorkerCompletion(
           scopedRoom!,
           authenticatedAgentId,
@@ -3348,9 +3369,13 @@ export class DaemonService {
         access_policy: unknown;
         owner_id: string | null;
       }>(
-        `SELECT r.workspace_id,m.role,i.kind,r.archived_at IS NOT NULL archived,a.access_policy,a.owner_id
+        `SELECT r.workspace_id,CASE WHEN m.identity_id IS NOT NULL THEN COALESCE(workspace_member.role,m.role) END role,
+           i.kind,r.archived_at IS NOT NULL archived,a.access_policy,a.owner_id
          FROM rooms r
          LEFT JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
+         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
+           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
+           AND workspace_member.removed_at IS NULL
          LEFT JOIN identities i ON i.id=$2
          LEFT JOIN agents a ON a.agent_id=$3
          WHERE r.id=$1`,
@@ -5221,6 +5246,12 @@ export class DaemonService {
         ...(agentRow.handle ? { handle: agentRow.handle } : {}),
         ...(agentRow.avatar ? { avatar: agentRow.avatar } : {}),
       };
+      // Squire spending is the agent owner's call; the card names who decides.
+      const spendingOwnerId = scope.type === 'money.spend'
+        ? (await database.query<{ owner_id: string | null }>(
+            `SELECT owner_id FROM agents WHERE agent_id=$1`, [agentId],
+          )).rows[0]?.owner_id ?? undefined
+        : undefined;
       const created = id();
       await systemLine(database, {
         id: created,
@@ -5239,7 +5270,9 @@ export class DaemonService {
           requester,
           tool,
           ...(repository ? { repository } : {}),
-          ...(scope.type === 'money.spend' ? { purpose: 'squire-spending' } : {}),
+          ...(scope.type === 'money.spend'
+            ? { purpose: 'squire-spending', ...(spendingOwnerId ? { ownerId: spendingOwnerId } : {}) }
+            : {}),
           status: 'pending',
         },
       });
@@ -5564,7 +5597,46 @@ export class DaemonService {
     );
     return { schedules };
   }
+  /**
+   * Editing or deleting a saved schedule is workspace-admin-only: the person
+   * whose message started this agent turn must be a human Workspace admin of
+   * the schedule's Room. A turn with no such person (a scheduled wake, or no
+   * active command) is refused.
+   */
+  private async requireScheduleAdmin(
+    db: SqlDatabase,
+    scheduleRoomId: string,
+    input: { roomId: string; requestId?: unknown; generationId?: unknown },
+    agentId: string,
+  ) {
+    const command = this.authorizedCommand ?? (
+      typeof input.requestId === 'string' && typeof input.generationId === 'string'
+        ? await authorizeCommandOutput(db, input.roomId, agentId, input.requestId, input.generationId)
+        : undefined);
+    const requester = command
+      ? (await db.query<{ author_id: string }>(
+          `SELECT author_id FROM messages WHERE id=$1 AND deleted_at IS NULL`,
+          [command.root_source_message_id],
+        )).rows[0]?.author_id
+      : undefined;
+    if (!requester || !(await humanRoomAdmin(db, scheduleRoomId, requester)))
+      throw new Error('workspace admins only: only a workspace admin can change or delete a saved schedule');
+  }
   private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
+    const target = (await this.database.query<{ room_id: string }>(
+      `SELECT room_id FROM agent_schedules
+       WHERE id=$1
+         AND (room_id=$2 OR ($4::boolean AND EXISTS (
+           SELECT 1 FROM memberships self_membership
+           WHERE self_membership.room_id=agent_schedules.room_id
+             AND self_membership.identity_id=$3 AND self_membership.removed_at IS NULL)))
+         AND workflow_run IS NULL
+         AND (agent_id=$3 OR creator_id=agent_id)
+         AND (NOT $4::boolean OR agent_id=$3)`,
+      [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
+    )).rows[0];
+    if (!target) throw new Error('schedule not found');
+    await this.requireScheduleAdmin(this.database, target.room_id, input, agentId);
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
        WHERE id=$1
@@ -5581,7 +5653,8 @@ export class DaemonService {
     return this.writeResult();
   }
   /**
-   * Any agent in the Room may edit a schedule an agent created for itself.
+   * Any agent in the Room may carry the edit of a schedule an agent created
+   * for itself, but only for a human Workspace admin (`requireScheduleAdmin`).
    * Its runs are posted as the scheduler's line, never in a person's name, so
    * an edit cannot put words in anybody's mouth; a person's schedule is not
    * editable here.
@@ -5615,6 +5688,7 @@ export class DaemonService {
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null; room_id: string }>(
         `SELECT message,workflow_slug,room_id FROM agent_schedules WHERE id=$1
+           AND creator_id=agent_id
            AND (room_id=$2 OR ($4::boolean AND EXISTS (
              SELECT 1 FROM memberships self_membership
              WHERE self_membership.room_id=agent_schedules.room_id
@@ -5625,6 +5699,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!existing) throw new Error('schedule not found');
+    await this.requireScheduleAdmin(db, existing.room_id, input, agentId);
     const workflowName =
       (await scheduleWorkflowName(
         db,
@@ -5879,6 +5954,17 @@ export class DaemonService {
     return this.writeResult();
   }
   private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) {
+    // An informational continuation has no automatic return obligation. An
+    // actual incoming assignment may receive its first result here;
+    // reportToCommander fences that obligation across all later continuations.
+    if (automatic && command.private_payload?.kind !== 'order') {
+      const incoming = await commandOrder(database, command);
+      const ownOrder = incoming.agent_id === agentId && (incoming.private_payload?.kind === 'order' ||
+        (!incoming.private_payload && incoming.source_message_id && (await database.query(
+          `SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
+           WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [incoming.source_message_id])).rowCount));
+      if (!ownOrder) return { ...this.writeResult(), delivered: true, skipped: true };
+    }
     const receivedPrefix = text.match(/^([^\s:]{1,64}):/)?.[1];
     const prefix = text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-');
     if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
@@ -5937,7 +6023,7 @@ export class DaemonService {
     });
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
       createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask });
-    if ('delivered' in result && !result.delivered) return result;
+    if (result.skipped || ('delivered' in result && !result.delivered)) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
       [command.room_id, agentId, attachment.id]);
@@ -8482,8 +8568,12 @@ export class DaemonService {
       handle: string | null;
       role: string;
     }>(
-      `SELECT identity.id,identity.kind,identity.name,identity.handle,member.role
+      `SELECT identity.id,identity.kind,identity.name,identity.handle,
+         COALESCE(workspace_member.role,member.role) role
        FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+       LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=member.workspace_id
+         AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+         AND workspace_member.removed_at IS NULL
        WHERE member.room_id=$1 AND member.removed_at IS NULL
        ORDER BY identity.kind,identity.name`,
       [roomId],

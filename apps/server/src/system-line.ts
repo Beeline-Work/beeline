@@ -345,7 +345,9 @@ async function subscribers(
   kind: SystemEventKind | undefined,
 ): Promise<string[]> {
     database = new CornerAccessDatabase(database);
-  if (!kind || !isSubscribableEventKind(kind)) return [];
+  // Passive opened notifications contain no request for work. Explicit
+  // subscriptions with a task prompt still run through subscription-fired.
+  if (!kind || kind === 'corner-opened' || !isSubscribableEventKind(kind)) return [];
   try {
     const rows = await database.query<{ identity_id: string }>(
       `SELECT DISTINCT member.identity_id FROM memberships member
@@ -551,7 +553,7 @@ export async function systemLine(
   };
   return database.transaction(async (tx) => {
     const watches =
-      input.kind && ['corner-opened', 'merged'].includes(input.kind)
+      input.kind === 'merged'
         ? (
             await tx.query<{ watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }>(
               `SELECT w.watcher_room_id,w.agent_id,to_jsonb(incoming) incoming_command FROM corner_watches w
@@ -565,7 +567,7 @@ export async function systemLine(
              AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id IN (corner.id,corner.parent_id)
                AND target.identity_id=w.agent_id AND target.removed_at IS NULL)
            FOR SHARE OF w,m,watcher`,
-              [input.kind === 'corner-opened' ? input.card?.cornerId ?? input.roomId : input.roomId, JSON.stringify([input.kind === 'corner-opened' ? 'opened' : input.kind]), input.kind === 'corner-opened' ? input.subject.id ?? null : null],
+              [input.roomId, JSON.stringify(['merged']), null],
             )
           ).rows
         : [];

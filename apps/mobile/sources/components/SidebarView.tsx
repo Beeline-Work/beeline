@@ -146,7 +146,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
   membersGlyph: { color: theme.buzz.ledgerQuiet },
-  trayGlyph: { color: theme.buzz.accent, backgroundColor: theme.buzz.bgBase },
+  trayGlyph: { color: theme.buzz.ledgerQuiet, backgroundColor: theme.buzz.bgBase },
   desktopWorkspaceHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',

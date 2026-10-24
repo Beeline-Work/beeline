@@ -94,6 +94,7 @@ function ToolLedgerLineRow({
     );
   }
   const action = line.verb ?? (line.glyph === '>_' ? 'ran' : line.glyph === '≡' ? 'read' : 'used');
+  const hasNamedAction = line.label.startsWith(`${action} `);
   const verb = line.outcome === 'failure' ? 'Failed' : line.outcome === 'running' ? 'Running' : action.charAt(0).toUpperCase() + action.slice(1);
   return (
     <TranscriptNavigationRow testID={testID} singleDestination divider={divider}
@@ -101,7 +102,7 @@ function ToolLedgerLineRow({
         accessibilityState: { busy: line.outcome === 'running' },
         accessibilityHint: 'Opens this call’s output' } : undefined}>
       <InlineRow style={styles.toolCopy}>
-        <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text>
+        {!hasNamedAction ? <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text> : null}
         <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>{line.label}</Text>
         {line.reason ? <Text numberOfLines={1} style={styles.callReason}>{line.reason}</Text> : null}
         {duration ? <Text style={styles.callDuration}>{duration}</Text> : null}

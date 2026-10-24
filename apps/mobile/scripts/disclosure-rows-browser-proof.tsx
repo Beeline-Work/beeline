@@ -82,10 +82,10 @@ async function main() {
   const groups = ['tool-run-container-read', `notification-run-${repositoryId}`, 'notification-run-checks', 'notification-run-payments', 'notification-run-notices', 'inline-output'];
   for (const id of groups) {
     const style = getComputedStyle(get(id));
-    assert(style.marginTop === '8px' && style.marginBottom === '8px', `${id}: unequal group spacing`);
+    assert(style.marginTop === '0px' && style.marginBottom === '0px', `${id}: unequal group spacing`);
   }
   for (const [previous, next] of [[`notification-run-${repositoryId}`, 'notification-run-checks'], ['notification-run-checks', 'notification-run-payments'], ['notification-run-payments', 'notification-run-notices'], ['notification-run-notices', 'inline-output']]) {
-    assert(Math.abs(get(next).getBoundingClientRect().top - get(previous).getBoundingClientRect().bottom - 16) < 1, `${next}: leftover group gap`);
+    assert(Math.abs(get(next).getBoundingClientRect().top - get(previous).getBoundingClientRect().bottom) < 1, `${next}: leftover group gap`);
   }
   const number = [...document.querySelectorAll('[role="link"]')].find(node => node.textContent === 'PR 2721')!;
   assert(number, 'PR link missing');
@@ -103,7 +103,8 @@ async function main() {
   assert(Math.abs(arrowX('corner-status-line') - arrowX('notification-run-cell-check')) < 1, 'status chevron column differs');
   assert(Math.abs(get('corner-status-line').getBoundingClientRect().left - get('notification-run-cell-check').getBoundingClientRect().left) < 1, 'status left edge differs');
   const card = get('script-card').getBoundingClientRect();
-  assert(card.bottom - get('script').getBoundingClientRect().bottom >= 16, 'script has no bottom padding');
+  assert(getComputedStyle(get('script')).marginBottom === '0px', 'script body margin differs from main');
+  assert(Math.abs(card.height - 147) < 1, 'open script card height differs from main');
   document.getElementById('result')!.textContent =
     `PASS DISCLOSURE-EDGE: ${before ? 'original edge' : 'no edge'}, 44px targets, edge taps expand/collapse, next-message spacing`;
 }

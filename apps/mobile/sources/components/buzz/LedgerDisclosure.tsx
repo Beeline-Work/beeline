@@ -41,13 +41,12 @@ export function LedgerDisclosure({
     </Pressable>
   );
 }
-/** One spacing rhythm around every expandable transcript group. */
+/** Shared container without additional transcript spacing. */
 export function LedgerLogGroup({ style, ...props }: ViewProps) {
-  return <View {...props} style={[styles.group, style]} />;
+  return <View {...props} style={style} />;
 }
 
 const styles = StyleSheet.create(({ buzz }) => ({
-  group: { marginVertical: buzz.space.sm },
   row: {
     minHeight: 44,
     minWidth: 44,

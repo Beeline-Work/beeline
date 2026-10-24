@@ -846,3 +846,18 @@ describe('folded historical transcripts', () => {
     ).toBe('6 steps · 4 failed, expandable');
   });
 });
+
+
+it('keeps MCP machine labels without duplicating or recasing the tool name', () => {
+  const renderer = render(<TurnStepsLine items={[{
+    kind: 'tool', id: 'mcp-read', title: 'mcp__filesystem__read_file',
+    input: 'example.ts', status: 'completed', output: 'contents',
+  }]} />);
+  expandRun(renderer, 'mcp-read');
+  const row = hostNodes(renderer, /^tool-ledger-line-mcp-read$/)[0];
+  const texts = row.findAll((node: any) => node.type === 'Text')
+    .map((node: any) => node.props.children).filter((value: unknown) => typeof value === 'string');
+  expect(texts).toContain('read_file example.ts');
+  expect(texts).not.toContain('Read_file');
+  expect(texts.filter((text: string) => text.includes('read_file'))).toHaveLength(1);
+});

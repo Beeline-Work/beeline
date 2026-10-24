@@ -350,6 +350,37 @@ describe('PR-scoped check gate', () => {
     expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(1);
   });
 
+  it('Reproduction R1: a green deploy re-read posts the passing result, not a pending check', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      [AUTHOR],
+    );
+    suiteStatus = 'queued';
+    suiteRuns = 0;
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['TYPECHECK'];
+    rollupContexts = {
+      totalCount: 1,
+      nodes: [
+        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
+      ],
+    };
+    await operations.refreshOpenPendingChecks();
+    const note = (await db.query<{ text: string; event: unknown }>(
+      `SELECT text, system_event event FROM messages
+       WHERE room_id=$1 AND system_event->>'kind'='check-passed'`,
+      [AUTHOR],
+    )).rows[0];
+    expect(note).toBeTruthy();
+    const posted = JSON.stringify({ text: note!.text, event: note!.event });
+    expect(posted).not.toMatch(/started/i);
+    expect(posted).not.toMatch(/"status"\s*:\s*"pending"/);
+    expect(posted).not.toContain('Pull request checks');
+    expect(note!.text).toContain('passed a check');
+  });
+
   it('Reproduction EMPTY-SUITE-1: a same-name success from another app leaves the required check pending', async () => {
     suiteStatus = 'queued';
     suiteRuns = 0;

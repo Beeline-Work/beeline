@@ -358,11 +358,17 @@ export async function expiredWakeDigestSources(db: SqlDatabase, roomId: string, 
      SELECT id FROM stale_wakes`, [roomId, agentId, ids])).rows.map(row => row.id);
 }
 
-/** Automatic work cannot answer a worker's explicit waiting report. */
+/** Automatic work cannot answer a worker's explicit waiting report.
+ * A green review wake still goes out: that report is often the pending gate. */
 function waitingReportSql(command: string): string {
   return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
     SELECT 1 FROM corner_report_blockers blocker WHERE blocker.corner_id=${command}.room_id
-  ) OR ${command}.private_payload->>'kind' IN ('order','report') OR EXISTS (
+  ) OR ${command}.private_payload->>'kind' IN ('order','report')
+    OR ${command}.reason='corner_review_dispatch'
+    OR (${command}.reason='subscribed_event' AND EXISTS (
+      SELECT 1 FROM messages review_source WHERE review_source.id=${command}.source_message_id
+        AND review_source.system_event->>'kind'='check-passed'))
+    OR EXISTS (
     SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
     WHERE source.id=${command}.source_message_id AND author.kind='human' AND source.system_event IS NULL
   ))`;
@@ -450,11 +456,12 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; wake_batch_minutes: number; human_input: boolean }>(
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_kind: string | null; wake_batch_minutes: number; human_input: boolean }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
        (SELECT text FROM messages WHERE id=$3) source_text,
+       (SELECT system_event->>'kind' FROM messages WHERE id=$3) source_kind,
        COALESCE((SELECT wake_batch_minutes FROM agents WHERE agent_id=i.id FOR SHARE),0) wake_batch_minutes,
        COALESCE((SELECT author.kind='human' AND source.presentation='message' AND source.system_event IS NULL
          FROM messages source JOIN identities author ON author.id=source.author_id WHERE source.id=$3),false)
@@ -467,8 +474,11 @@ export async function createAgentCommand(
        input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order'],
   );
   if (!member.rowCount) return undefined;
+  // A green review is the reply to a block filed while checks were still pending.
+  const greenReviewWake = input.reason === 'corner_review_dispatch'
+    || (input.reason === 'subscribed_event' && member.rows[0]!.source_kind === 'check-passed');
   if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
-      input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input &&
+      input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input && !greenReviewWake &&
       await cornerReportWaiting(db, input.roomId, input.privatePayload?.kind))
     return undefined;
   const opening = member.rows[0]!.opening;

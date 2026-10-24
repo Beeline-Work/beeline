@@ -1699,6 +1699,38 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     expect((await cards(cornerId)).filter((card) => card.outcome === 'passing')).toHaveLength(1);
   });
 
+  it('Reproduction R1: a green head queues the reviewer after a pending-gate block', async () => {
+    const cornerId = await open('owner/widgets');
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await pushToCorner(cornerId, SHA);
+    expect(await currentState(cornerId)).toBe('checks');
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId, JSON.stringify({
+      checks: 'pending', lifecycle: 'in-review',
+      pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, title: 'Ship the widget' },
+    })]);
+    // The reviewer reported blocked while the gate was still pending. The head did not move.
+    await db.query(
+      `INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id,commander_id) VALUES($1,$2,$1,$3)`,
+      [cornerId, H, B],
+    );
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`, [cornerId]);
+    const source = await systemLine(db, {
+      roomId: cornerId, authorId: A, subject: { kind: 'github', name: 'GitHub' },
+      verb: 'passed a check', kind: 'check-passed', object: { text: 'checks', headSha: SHA },
+    });
+    await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: source.id });
+    // A second green fact for the same head must not drop or duplicate the wake.
+    await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: source.id });
+    const review = (await commands(B, cornerId)).filter(command =>
+      command.reason === 'subscribed_event' || command.reason === 'corner_review_dispatch');
+    expect(review).toHaveLength(1);
+    expect((await db.query<{ state: string }>(
+      `SELECT state FROM agent_commands WHERE id=$1`,
+      [review[0]!.id],
+    )).rows[0]?.state).toBe('pending');
+    expect(await currentState(cornerId)).toBe('review');
+  });
+
   it('a redelivered red check wakes the implementer once', async () => {
     const cornerId = await open('owner/widgets');
     await redHead(cornerId, 3, SHA);

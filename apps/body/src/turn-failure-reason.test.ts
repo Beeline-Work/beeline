@@ -126,17 +126,9 @@ describe('distillTurnFailureReason', () => {
     expect(reason.kind).toBe('hiccup');
   });
 
-  it('reports an auth-shaped failure as a retryable hiccup, not a standing not-signed-in verdict', () => {
-    // claude-agent-acp's own OAuth token refresh can race a session activation
-    // and report a transient 401/"Authentication required" indistinguishable
-    // by text from a genuinely expired/missing credential (the production
-    // symptom: "ACP -32000 Authentication required" at session/create). Let
-    // the server's bounded hiccup retries (packages/api-contract's
-    // escalateExhaustedHiccup) give the race a chance to clear before it
-    // settles into the standing not-signed-in copy.
-    expect(
-      distillTurnFailureReason(new Error('ACP error -32000: Authentication required')).kind,
-    ).toBe('hiccup');
+  it('terminates explicit ACP authentication refusals and retains token-refresh retries', () => {
+    expect(distillTurnFailureReason(new Error('ACP error -32000: Authentication required')))
+      .toEqual({ text: 'Authentication required: the agent needs to sign in again', kind: 'not-signed-in' });
     expect(
       distillTurnFailureReason(
         new Error('401 authentication_error: OAuth token refresh in progress, retry'),

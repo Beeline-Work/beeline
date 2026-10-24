@@ -284,7 +284,9 @@ async function canonicalPhrase(
     phrase.subject.kind === 'agent'
       ? `@${agentHandle(phrase.subject.name)}`
       : phrase.subject.kind === 'github'
-        ? `@${clause(phrase.subject.name).replace(/^@/, '')}`
+        ? phrase.kind === 'subscription-fired' && phrase.subject.name === 'GitHub'
+          ? 'GitHub'
+          : `@${clause(phrase.subject.name).replace(/^@/, '')}`
         : phrase.subject.name;
   return {
     ...phrase,

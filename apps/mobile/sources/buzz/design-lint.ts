@@ -67,8 +67,6 @@ export const DESIGN_BASELINE_REASONS: Readonly<Partial<Record<DesignRule, Readon
       'The empty Room list clears the 80-point compose button that floats over it.',
     'app/(app)/beeline/onboarding.tsx':
       'The focused input thickens its border by 1, and the padding gives that 1 back so the text does not move.',
-    'components/buzz/CornerOpenedMarker.tsx':
-      'Reserves the 36-point Ledger marginalia column the timestamp hangs in (LEDGER_MARGINALIA_WIDTH).',
     'components/buzz/IndexRow.tsx':
       'The approved row mock: a row with a subtitle sits 14 inside each hairline with 2 between title and subtitle, so one subtitle line keeps the row near 64.',
     'components/buzz/Ledger.tsx':

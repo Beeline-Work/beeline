@@ -861,3 +861,23 @@ it('keeps MCP machine labels without duplicating or recasing the tool name', () 
   expect(texts).not.toContain('Read_file');
   expect(texts.filter((text: string) => text.includes('read_file'))).toHaveLength(1);
 });
+
+
+it('retains Failed and a brass cross for a failed named MCP tool', () => {
+  const renderer = render(<TurnStepsLine items={[{
+    kind: 'tool', id: 'mcp-failure', title: 'mcp__example__read_file',
+    command: 'mcp__example__read_file example.ts', input: 'example.ts',
+    output: 'permission denied', status: 'failed',
+  }]} />);
+  expandRun(renderer, 'mcp-failure');
+  const row = hostNodes(renderer, /^tool-ledger-line-mcp-failure$/)[0];
+  const texts = row.findAll((node: any) => node.type === 'Text');
+  expect(texts.map((node: any) => node.props.children)).toContain('read_file example.ts');
+  const failed = texts.find((node: any) => node.props.children === 'Failed');
+  const cross = texts.find((node: any) => node.props.testID === 'activity-verdict-mcp-failure');
+  expect(failed).toBeDefined();
+  expect(failed.props.style).toContainEqual({ color: groknight.accent });
+  expect(cross.props.children).toBe('✗');
+  expect(cross.props.style).toContainEqual({ color: groknight.accent });
+  expect(texts.map((node: any) => node.props.children)).not.toContain('Read_file');
+});

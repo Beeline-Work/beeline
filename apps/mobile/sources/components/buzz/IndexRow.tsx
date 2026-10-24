@@ -46,7 +46,7 @@ export function TranscriptNavigationRow({
   testID?: string;
 }) {
   const chevron = (
-    <View style={navigationStyles.cornerTarget}>
+    <View style={singleDestination ? navigationStyles.inlineChevron : navigationStyles.cornerTarget}>
       <ChevronGlyph
         color={navigationStyles.chevron.color}
         direction="right"
@@ -104,6 +104,8 @@ const navigationStyles = StyleSheet.create(({ buzz }) => ({
   },
   copyTarget: { minHeight: 44, minWidth: 44, flex: 1, paddingVertical: buzz.space.sm },
   cornerTarget: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+  // The whole row owns the tap target; the mark reserves only its own width.
+  inlineChevron: { minHeight: 44, flexShrink: 0, justifyContent: 'center' },
   chevron: { color: buzz.accent },
 }));
 

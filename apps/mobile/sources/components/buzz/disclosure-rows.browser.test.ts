@@ -28,7 +28,7 @@ for (const width of [390, 1280])
           'SpaceGrotesk-SemiBold',
           'IBMPlexMono-Regular',
         ];
-        const head = `<style>#result{display:none}body{background:${theme === 'bone' ? '#F3EEE4' : '#14091A'};color:${theme === 'bone' ? '#171310' : '#f0f0f3'}}${fonts.map((font) => `@font-face{font-family:'${font}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile, 'sources/assets/fonts', `${font}.ttf`)).toString('base64')})}`).join('')}</style>`;
+        const head = `<style>#root{width:${width}px}#result{display:none}body{background:${theme === 'bone' ? '#F3EEE4' : '#14091A'};color:${theme === 'bone' ? '#171310' : '#f0f0f3'}}${fonts.map((font) => `@font-face{font-family:'${font}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile, 'sources/assets/fonts', `${font}.ttf`)).toString('base64')})}`).join('')}</style>`;
         const proof = await runBrowserProof({
           entry: path.join(mobile, 'scripts/disclosure-rows-browser-proof.tsx'),
           mobile,

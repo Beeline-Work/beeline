@@ -172,9 +172,9 @@ export function RepositoryLifecycleRow({
 
 const styles = StyleSheet.create(({ buzz }) => ({
   failed: { color: buzz.accent },
-  cornerCopy: { flexDirection: 'row', alignItems: 'baseline', gap: buzz.space.xs },
-  cornerNumber: { flexShrink: 0 },
+  cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
   cornerName: { flexShrink: 1, minWidth: 0 },
+  cornerNumber: { flexShrink: 0, marginLeft: buzz.space.xs },
   repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary },
   verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
   number: {

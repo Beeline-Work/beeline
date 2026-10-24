@@ -102,10 +102,11 @@ function ToolLedgerLineRow({
         accessibilityState: { busy: line.outcome === 'running' },
         accessibilityHint: 'Opens this call’s output' } : undefined}>
       <InlineRow style={styles.toolCopy}>
-        {!hasNamedAction ? <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text> : null}
+        {!hasNamedAction || line.outcome === 'failure' ? <Text style={[styles.toolVerb, line.outcome === 'failure' && styles.groupFailed]}>{verb}</Text> : null}
         <Text ellipsizeMode="middle" numberOfLines={1} style={styles.callObject}>{line.label}</Text>
         {line.reason ? <Text numberOfLines={1} style={styles.callReason}>{line.reason}</Text> : null}
         {duration ? <Text style={styles.callDuration}>{duration}</Text> : null}
+        {showVerdict && hasNamedAction && line.outcome === 'failure' ? <Text accessibilityElementsHidden style={[styles.callVerdictText, styles.groupFailed]} testID={`activity-verdict-${line.id}`}>✗</Text> : null}
         {showVerdict && line.outcome === 'running' ? <View testID={`activity-verdict-${line.id}`}><BeelineMarkSpinner live /></View> : null}
       </InlineRow>
     </TranscriptNavigationRow>
@@ -271,6 +272,7 @@ const styles = StyleSheet.create((theme) => {
     // that settles it are the same words in the same column (C98).
     toolCopy: { flexDirection: 'row', alignItems: 'center', gap: groknight.space.sm },
     toolVerb: { ...groknight.type.meta, color: groknight.textPrimary },
+    callVerdictText: { ...groknight.type.machine, width: 18, flexShrink: 0, textAlign: 'right' },
     messageDraft: { marginTop: groknight.space.xs },
     // A fixed glyph column, so every label starts on one line even though
     // `>_` is two characters wide and the rest are one.

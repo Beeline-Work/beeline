@@ -7566,7 +7566,7 @@ export class DaemonService {
       throw new CommandRefusalError('App id or key is required', 400);
     const selector = appId.trim();
     const isId = /^[0-9a-f-]{36}$/i.test(selector);
-    const rows = (await this.database.query<{ id: string; app_key: string;
+    const candidates = (await this.database.query<{ id: string; app_key: string;
       display_name: string; domain: string | null; transport: AppTransport;
       owner_identity_id: string; composio_account_id: string | null;
       composio_link_expires_at: Date | null;
@@ -7586,6 +7586,10 @@ export class DaemonService {
        ORDER BY app.id`,
       [isId ? selector : selector.replace(/^app:/, ''), roomId, agentId],
     )).rows;
+    // connect status advertises the agent owner's active apps, across Workspaces.
+    // Resolve those keys before considering apps shared by other Room members.
+    const owned = candidates.filter(row => row.owner_identity_id === row.agent_owner_id);
+    const rows = !isId && owned.length ? owned : candidates;
     if (rows.length > 1)
       throw new CommandRefusalError(`Connected app key is ambiguous; use an exact app id: ${rows.map(row => row.id).join(', ')}`, 400);
     const row = rows[0];

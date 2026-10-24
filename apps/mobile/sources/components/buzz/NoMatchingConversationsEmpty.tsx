@@ -28,6 +28,7 @@ export function NoMatchingConversationsEmpty({ onShowAll }: { onShowAll: () => v
         testID="no-match-show-all-conversations"
         label={'Show all conversations'}
         variant="quiet"
+        iconPosition="end"
         icon={
           <>
             <ChevronGlyph direction="right" size={18} color={styles.actionText.color} />

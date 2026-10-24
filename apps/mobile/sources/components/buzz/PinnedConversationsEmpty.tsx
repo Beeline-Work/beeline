@@ -25,6 +25,7 @@ export function PinnedConversationsEmpty({
         testID={desktop ? 'desktop-show-all-conversations' : 'show-all-conversations'}
         label={'Show all conversations'}
         variant="quiet"
+        iconPosition="end"
         icon={
           <>
             <ChevronGlyph direction="right" size={18} color={styles.actionText.color} />

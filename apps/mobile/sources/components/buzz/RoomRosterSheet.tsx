@@ -263,6 +263,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
               accessibilityLabel={`Show the rest: ${roster.overflowLabel}`}
               onPress={() => setExpanded(true)}
               testID="room-roster-more"
+              iconPosition="end"
               icon={<ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />}
               appearance={{ control: styles.rosterMore, label: styles.rosterMoreLabel }}
             />

@@ -297,16 +297,72 @@ describe('save_memory requester authority on corner wakes', () => {
     expect(await savedFacts()).toEqual([]);
   });
 
-  it('answers a body that is not one sentence with a 400, not a 503', async () => {
+  it('keeps source availability, source count, person_asked, size, and root partition refusals clear', async () => {
+    const turn = await wake(CORNER, CORNER_ASK, 'human_tag');
+    const base = fact('taps.rules', 'The tap hangs.', [CORNER_ASK]);
+    for (const [patch, error] of [
+      [{ sourceMessageIds: [ROOM_REQUEST] }, /sources must be non-deleted messages in this Room/],
+      [{ sourceMessageIds: ['missing'] }, /unavailable source/],
+      [{ sourceMessageIds: [] }, /1 to 16 source messages/],
+      [{ sourceMessageIds: Array(17).fill(CORNER_ASK) }, /1 to 16 source messages/],
+      [{ personAsked: 'false' }, /person_asked must be true or false/],
+      [{ body: '🐝'.repeat(51) }, /at most 200 bytes/],
+    ] as const) {
+      const saved = await operation('saveInstitutionalMemory', turn, { ...base, ...patch });
+      expect(saved.status).toBe(400);
+      expect(saved.body.error).toMatch(error);
+    }
+    await database.query('UPDATE messages SET deleted_at=now() WHERE id=$1', [CHILD_REPORT]);
+    const deleted = await operation('saveInstitutionalMemory', turn, { ...base, sourceMessageIds: [CHILD_REPORT] });
+    expect(deleted.status).toBe(400);
+    expect(deleted.body.error).toMatch(/unavailable source/);
+    expect(await savedFacts()).toEqual([]);
+  });
+
+  it('keeps a requester write in its root source partition', async () => {
+    const turn = await wake(CORNER, ROOM_REQUEST, 'human_tag');
+    const saved = await operation('saveInstitutionalMemory', turn,
+      fact('taps.partition', 'The tap hangs.', [CORNER_ASK]));
+    expect(saved.status).toBe(400);
+    expect(saved.body.error).toMatch(/root source partition/);
+  });
+
+  it('accepts sixteen report/card sources and adds the same-Room root without consuming the input limit', async () => {
+    const ids = Array.from({ length: 16 }, (_, index) => String(index + 100).padStart(64, '0'));
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+       SELECT id,$2,$3,'Source card','system','{"kind":"report"}'::jsonb FROM unnest($1::text[]) id`,
+      [ids, CORNER, REPORTER],
+    );
+    const turn = await wake(CORNER, CORNER_ASK, 'human_tag');
+    const saved = await operation('saveInstitutionalMemory', turn,
+      fact('taps.sources', 'The tap needs a store fix.', ids));
+    expect(saved.status).toBe(200);
+    const sources = await database.query<{ message_id: string }>(
+      'SELECT message_id FROM institutional_memory_item_sources WHERE item_id=$1',
+      [saved.body.itemId],
+    );
+    expect(sources.rows.map(row => row.message_id).sort()).toEqual([...ids, CORNER_ASK].sort());
+  });
+
+  // Reproduction REMEMBER-SAVE-1: the daemon HTTP save path with only a report
+  // source used to refuse a missing explicit root citation (and then prose).
+  it('REMEMBER-SAVE-1 saves report-only sources and bounded prose, attaching the root', async () => {
+    await database.query(
+      `UPDATE messages SET presentation='system',system_event='{"kind":"report"}'::jsonb WHERE id=$1`,
+      [CHILD_REPORT],
+    );
     const turn = await wake(CORNER, CORNER_ASK, 'human_tag');
     const saved = await operation(
       'saveInstitutionalMemory',
       turn,
-      fact('taps.semicolon', 'The tap hangs; the store fixes it.', [CORNER_ASK]),
+      fact('taps.report', 'Note that the tap might hang.\nThe store probably fixes it.', [CHILD_REPORT]),
     );
-    expect(saved).toEqual({
-      status: 400,
-      body: { error: 'institutional memory body must be one sentence' },
-    });
+    expect(saved.status).toBe(200);
+    const sources = await database.query<{ message_id: string }>(
+      'SELECT message_id FROM institutional_memory_item_sources WHERE item_id=$1 ORDER BY message_id',
+      [saved.body.itemId],
+    );
+    expect(sources.rows.map(row => row.message_id)).toEqual([CORNER_ASK, CHILD_REPORT]);
   });
 });

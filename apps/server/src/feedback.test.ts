@@ -665,12 +665,14 @@ describe('triage corner: sibling fix corners and its daily schedule, with no set
       )
     ).rows[0]!;
     expect(brief.spec).toContain('fb_123');
-    // The open card lands in the parent Room, where the sibling is listed.
+    // The sibling stays listed under the parent, but only the triage call site gets its row.
     const card = await database.query(
       `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2`,
       [ROOM, cornerId],
     );
-    expect(card.rowCount).toBe(1);
+    expect(card.rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND card_type='daemon-fact' AND card->>'cornerId'=$2`, [turn.roomId,cornerId])).rowCount).toBe(1);
   });
 
   it('runs a daily schedule created inside the triage corner in that corner', async () => {

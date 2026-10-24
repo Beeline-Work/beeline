@@ -832,6 +832,10 @@ it('keeps Room opening facts historical while current worker and commander goals
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
     VALUES('goal-card',$1,$2,'Opened','daemon-fact',$3::jsonb)`,
     [ROOM, RUBY, JSON.stringify({ type: 'corner-open', cornerId: opened.cornerId, name: 'Widget', objective: 'Build the widget', sourceMessageId: 'source' })]);
+  // Model a historical parent record explicitly; new DM opens no longer write it.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card,created_at)
+    VALUES('legacy-opening',$1,$2,'Opened','daemon-fact',$3::jsonb,now()-interval '1 minute')`,
+    [ROOM,RUBY,JSON.stringify({type:'corner-open',cornerId:opened.cornerId,name:'Widget',objective:'Widget'})]);
   const stored = (await db.query(`SELECT * FROM messages ORDER BY id`)).rows;
   const openingId = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1
     AND card->>'cornerId'=$2 AND id<>'goal-card' AND card->>'type'='corner-open' LIMIT 1`,
@@ -898,9 +902,10 @@ it('makes an owner-approved systemctl user-bus command available in a subsequent
 
 it('does not resolve an opening card against a corner belonging to another parent Room', async () => {
   const opened = await open();
-  // Exercise a resident call-site marker without resolving another Room’s private goal.
-  await db.query(`UPDATE messages SET card=card||'{"sourceMessageId":"source"}'::jsonb
-    WHERE room_id=$1 AND card->>'cornerId'=$2`, [ROOM, opened.cornerId]);
+  // A resident call-site marker must not resolve another Room's private goal.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+    VALUES('resident-opening',$1,$2,'Opened','daemon-fact',$3::jsonb)`,
+    [ROOM,RUBY,JSON.stringify({type:'corner-open',cornerId:opened.cornerId,name:'Widget',objective:'Widget',sourceMessageId:'source'})]);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, DM]);
   await db.query(`UPDATE corner_facts SET objective='Private goal in another Room' WHERE corner_id=$1`, [opened.cornerId]);
   const view = await phone.readRoom(ROOM, HUMAN);

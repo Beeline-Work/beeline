@@ -445,6 +445,11 @@ describe('corner_owed', () => {
     expect(messageScans.filter((scan) => scan.alias === 'source')).toHaveLength(1);
     expect(messageScans.filter((scan) => scan.alias === 'item')).toHaveLength(1);
     expect(corners!.sql).toContain('JOIN messages item ON item.id=owed.message_id');
-    expect(messageScans.filter((scan) => !['source', 'item'].includes(scan.alias))).toHaveLength(3);
+    // Each unread-cursor branch checks legacy corner visibility against the
+    // indexed call-site cards. These scans do not recover owed facts.
+    const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
+    expect(callsiteScans).toHaveLength(2);
+    expect(messageScans.filter((scan) => !['source', 'item'].includes(scan.alias) &&
+      !scan.alias.startsWith('callsite'))).toHaveLength(3);
   });
 });

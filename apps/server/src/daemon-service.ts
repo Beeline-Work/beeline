@@ -8267,13 +8267,9 @@ export class DaemonService {
           [parentCommand.source_message_id, commandRoomId],
         )
       ).rows[0];
-      const destinations = [
-        { roomId, sourceMessageId: commandRoomId === roomId ? source?.id : undefined },
-        ...(source && commandRoomId !== roomId
-          ? [{ roomId: commandRoomId, sourceMessageId: source.id }] : []),
-      ];
-      // The parent record never carries a private origin. Only that origin's
-      // own transcript receives its source id, with no second lifecycle wake.
+      // A real dispatching message owns the opening. Without one, the parent
+      // Room is the call site. Do not write a duplicate before the source row.
+      const destinations = [{ roomId: source ? commandRoomId : roomId, sourceMessageId: source?.id }];
       for (const destination of destinations) {
         await systemLine(db, {
           roomId: destination.roomId,

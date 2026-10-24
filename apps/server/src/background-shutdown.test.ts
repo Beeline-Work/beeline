@@ -123,8 +123,10 @@ describe('background shutdown', () => {
 
   it('Reproduction MA-1: merge recovery repeats after startup on the reconciliation interval', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const recurring = source.slice(source.indexOf('if (now - lastReconciliationAt >= reconciliationMs)'));
-    const cycle = recurring.slice(0, recurring.indexOf('if (freeAgents)'));
+    const repairStart = source.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
+    expect(repairStart).toBeGreaterThan(-1);
+    const recurring = source.slice(repairStart);
+    const cycle = recurring.slice(0, recurring.indexOf('const leader = new BackgroundLeader'));
     expect(cycle).toContain('githubJobs.recoverUnfinishedMergeClaims()');
     expect(cycle).toContain('githubJobs.reconcileMergedCorners()');
     expect(source).not.toContain('recoveredCornerMerges');

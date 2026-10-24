@@ -1,3 +1,4 @@
+import { NotificationWork } from './notification-work.js';
 import type { LiveHub } from './live.js';
 import type { SqlDatabase } from './database.js';
 import {
@@ -186,6 +187,8 @@ export async function flushDueCommanderWakes(db: SqlDatabase): Promise<number> {
 /** Durable wake windows use one timeout each; queue locks fence duplicate deliveries. */
 export class CommanderWakeDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly work = new NotificationWork(1);
+  private readonly refreshing = new Map<string, { again: boolean; done: Promise<void> }>();
   private stopped = false;
   private release: () => void;
   private resync: () => void;
@@ -215,7 +218,23 @@ export class CommanderWakeDeadlines {
     ).rows;
     for (const row of rows) await this.refresh(row.room_id, row.agent_id);
   }
-  private async refresh(roomId: string, agentId: string): Promise<void> {
+  private refresh(roomId: string, agentId: string): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    const key = `${roomId}:${agentId}`;
+    const existing = this.refreshing.get(key);
+    if (existing) { existing.again = true; return existing.done; }
+    const entry = { again: false, done: Promise.resolve() };
+    this.refreshing.set(key, entry);
+    entry.done = (async () => {
+      do {
+        entry.again = false;
+        await this.work.run(() => this.refreshOnce(roomId, agentId));
+      } while (entry.again && !this.stopped);
+    })().finally(() => { this.refreshing.delete(key); });
+    return entry.done;
+  }
+
+  private async refreshOnce(roomId: string, agentId: string): Promise<void> {
     if (this.stopped) return;
     const key = `${roomId}:${agentId}`;
     const row = (

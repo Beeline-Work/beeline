@@ -32,6 +32,9 @@
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
+        // The background latency runbook invokes these isolated database proofs by path.
+        "scripts/prove-background-waste.mjs",
+        "scripts/prove-webhook-burst.mjs",
         "scripts/cleanup-legacy-daemon-chat.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/prove-corner-startup.mjs",

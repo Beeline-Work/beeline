@@ -1,3 +1,4 @@
+import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
@@ -286,6 +287,7 @@ export type LandCornerOutcome =
 
 export class GitHubOperations {
   readonly #key: Buffer;
+  readonly #webhooks = new NotificationWork(1);
   readonly #roomTokens = new Map<string, { token: string; expiresAt: number }>();
   readonly #roomTokenMints = new Map<string, Promise<{ token: string; expiresAt: number }>>();
   constructor(
@@ -1366,99 +1368,105 @@ export class GitHubOperations {
   }
 
   async processWebhook(event: string, payload: unknown, deliveryId?: string) {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
-    const body = payload as Record<string, unknown>;
-    // The authenticated phone route uses this internal signal after a human message commits.
-    if (event === 'beeline:human-message' && typeof body.cornerId === 'string') {
-      await this.recoverUnfinishedMergeClaims(body.cornerId);
-      return;
-    }
-    if (event === 'merge_group') {
-      await this.reconcileQueuedCorners();
-      return;
-    }
-    const installation = body.installation;
-    if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
-    const install = installation as Record<string, unknown>;
-    if (typeof install.id !== 'number') return;
-    if (deliveryId) {
-      const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);
-      for (const roomId of new Set(changed)) this.onRoomChanged?.(roomId);
-    }
-    if (
-      event === 'push' ||
-      event === 'issues' ||
-      event === 'pull_request' ||
-      event === 'check_run' ||
-      event === 'check_suite' ||
-      event === 'status'
-    ) {
-      await this.processRepositoryEvent(event, body, install.id);
-      await this.processCornerEvent(event, body, install.id);
-      if (event === 'push') await this.processBaseBranchPush(body, install.id);
-      await this.reconcileQueuedCorners();
-      return;
-    }
-    // Only installation and repository lifecycle events change the catalog.
-    // Other subscribed webhook types must not turn every delivery into a
-    // full GitHub refresh and repository-change wake for every bound Room.
-    if (event !== 'installation' && event !== 'installation_repositories' && event !== 'repository') return;
-    if (event === 'installation' && body.action === 'deleted') {
-      await this.database.query(
-        `UPDATE github_installations SET status='revoked',updated_at=now() WHERE installation_id=$1`,
-        [install.id],
-      );
-      await this.database.query(
-        `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`,
-        [install.id],
-      );
-      return;
-    }
-    if (event === 'installation' && body.action === 'suspend') {
-      await this.database.query(
-        `UPDATE github_installations SET status='suspended',updated_at=now() WHERE installation_id=$1`,
-        [install.id],
-      );
-      return;
-    }
-    const existing = (
-      await this.database.query<{ owner_id: string }>(
-        `SELECT owner_id FROM github_installations WHERE installation_id=$1`,
-        [install.id],
-      )
-    ).rows[0]?.owner_id;
-    let owner = existing;
-    if (!owner && event === 'installation') {
-      const sender = body.sender;
-      if (
-        sender &&
-        typeof sender === 'object' &&
-        !Array.isArray(sender) &&
-        typeof (sender as Record<string, unknown>).id === 'number'
-      )
-        owner = (
-          await this.database.query<{ identity_id: string }>(
-            `SELECT identity_id FROM identity_external_links WHERE provider='github' AND subject=$1`,
-            [String((sender as Record<string, unknown>).id)],
-          )
-        ).rows[0]?.identity_id;
-    }
-    if (!owner) return;
-    if (event === 'installation_repositories') {
-      const removed = Array.isArray(body.repositories_removed) ? body.repositories_removed : [];
-      const removedIds = removed.flatMap((entry) => {
-        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
-        const id = (entry as Record<string, unknown>).id;
-        return typeof id === 'number' && Number.isSafeInteger(id) ? [id] : [];
-      });
-      if (removedIds.length) {
-        await this.database.query(
-          `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1 AND repository_id=ANY($2::bigint[])`,
-          [install.id, removedIds],
-        );
+    const release = await this.#webhooks.acquire();
+    try {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+      const body = payload as Record<string, unknown>;
+      // The authenticated phone route uses this internal signal after a human message commits.
+      if (event === 'beeline:human-message' && typeof body.cornerId === 'string') {
+        await this.recoverUnfinishedMergeClaims(body.cornerId);
+        return;
       }
+      if (event === 'merge_group') {
+        await this.reconcileQueuedCorners();
+        return;
+      }
+      const installation = body.installation;
+      if (!installation || typeof installation !== 'object' || Array.isArray(installation)) return;
+      const install = installation as Record<string, unknown>;
+      if (typeof install.id !== 'number') return;
+      if (deliveryId) {
+        const changed = await fireRepositorySubscriptions(this.database, install.id, event, body, deliveryId);
+        for (const roomId of new Set(changed)) this.onRoomChanged?.(roomId);
+      }
+      if (
+        event === 'push' ||
+        event === 'issues' ||
+        event === 'pull_request' ||
+        event === 'check_run' ||
+        event === 'check_suite' ||
+        event === 'status'
+      ) {
+        await this.processRepositoryEvent(event, body, install.id);
+        await this.processCornerEvent(event, body, install.id);
+        if (event === 'push') await this.processBaseBranchPush(body, install.id);
+        await this.reconcileQueuedCorners();
+        return;
+      }
+      // Only installation and repository lifecycle events change the catalog.
+      // Other subscribed webhook types must not turn every delivery into a
+      // full GitHub refresh and repository-change wake for every bound Room.
+      if (event !== 'installation' && event !== 'installation_repositories' && event !== 'repository') return;
+      if (event === 'installation' && body.action === 'deleted') {
+        await this.database.query(
+          `UPDATE github_installations SET status='revoked',updated_at=now() WHERE installation_id=$1`,
+          [install.id],
+        );
+        await this.database.query(
+          `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1`,
+          [install.id],
+        );
+        return;
+      }
+      if (event === 'installation' && body.action === 'suspend') {
+        await this.database.query(
+          `UPDATE github_installations SET status='suspended',updated_at=now()
+           WHERE installation_id=$1 AND status<>'revoked'`,
+          [install.id],
+        );
+        return;
+      }
+      const existing = (
+        await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM github_installations WHERE installation_id=$1`,
+          [install.id],
+        )
+      ).rows[0]?.owner_id;
+      let owner = existing;
+      if (!owner && event === 'installation') {
+        const sender = body.sender;
+        if (
+          sender &&
+          typeof sender === 'object' &&
+          !Array.isArray(sender) &&
+          typeof (sender as Record<string, unknown>).id === 'number'
+        )
+          owner = (
+            await this.database.query<{ identity_id: string }>(
+              `SELECT identity_id FROM identity_external_links WHERE provider='github' AND subject=$1`,
+              [String((sender as Record<string, unknown>).id)],
+            )
+          ).rows[0]?.identity_id;
+      }
+      if (!owner) return;
+      if (event === 'installation_repositories') {
+        const removed = Array.isArray(body.repositories_removed) ? body.repositories_removed : [];
+        const removedIds = removed.flatMap((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+          const id = (entry as Record<string, unknown>).id;
+          return typeof id === 'number' && Number.isSafeInteger(id) ? [id] : [];
+        });
+        if (removedIds.length) {
+          await this.database.query(
+            `UPDATE github_repositories SET active=false,updated_at=now() WHERE installation_id=$1 AND repository_id=ANY($2::bigint[])`,
+            [install.id, removedIds],
+          );
+        }
+      }
+      await this.syncInstallation(owner, install.id);
+    } finally {
+      release();
     }
-    await this.syncInstallation(owner, install.id);
   }
 
   /** One startup pass for repository corners whose first GitHub events were missed. */

@@ -644,10 +644,12 @@ describe('GitHub phone operations', () => {
       return { state: 'failed', total: 1, failing: ['lint'], checks: [] };
     });
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    // Another server can move the head while this instance awaits GitHub.
+    const otherServer = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     const delivery = operations.processWebhook('check_run', payload);
     await fetching;
     try {
-      if (kind === 'moved') await operations.processWebhook('push', {
+      if (kind === 'moved') await otherServer.processWebhook('push', {
         installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
         ref: 'refs/heads/feature/checks-1', after: '2'.repeat(40), commits: [],
       });
@@ -2051,7 +2053,9 @@ describe('GitHub phone operations', () => {
     await firstStarted;
     // The aggregate turns green on another delivery for the same check. The
     // first delivery already used its ordinary GitHub note's deterministic ID.
-    const second = operations.processWebhook('check_run', payload('lint', 'completed'));
+    // Local admission is serial; independent servers still overlap their fetches.
+    const otherServer = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+    const second = otherServer.processWebhook('check_run', payload('lint', 'completed'));
     try {
       await second;
       expect(readCommitCheckRollup).toHaveBeenCalledTimes(2);
@@ -2486,7 +2490,7 @@ describe('GitHub phone operations', () => {
     });
     const firstPush = operations.processWebhook('push', { ...basePush, after: olderCandidate });
     await olderRead;
-    await operations.processWebhook('push', { ...basePush, after: newerCandidate });
+    await otherServer.processWebhook('push', { ...basePush, after: newerCandidate });
     releaseOlderRead();
     await firstPush;
     expect(

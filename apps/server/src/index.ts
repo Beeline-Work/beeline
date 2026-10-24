@@ -26,6 +26,7 @@ import {
   runMaintenance,
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
+import { BackgroundWork } from './background-work.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
@@ -434,98 +435,96 @@ async function main() {
         : {}),
     },
   });
-  let lastReconciliationAt = Number.NEGATIVE_INFINITY;
-  let pushPending = Boolean(push); // one leader-start reconciliation
   let repairedPromotedCorners = false;
   let reconciledMergeability = false;
   let reconciledPendingChecks = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
-  const leader = new BackgroundLeader(
-    jobsDatabase,
-    async (newLeader) => {
-      if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
-      if (newLeader) {
-        lastReconciliationAt = Number.NEGATIVE_INFINITY;
-        pushPending = Boolean(push);
-        repairedPromotedCorners = false;
-        reconciledMergeability = false;
-        reconciledPendingChecks = false;
-      }
-      if (githubJobs && !repairedPromotedCorners) {
-        const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
-          githubJobs.repairPromotedCornerBranches());
-        repairedPromotedCorners = repair.ok;
-      }
-      if (push && pushPending) {
-        pushPending = false;
-        await backgroundJobs.run('push', () => push.runOnce());
-      }
-      await backgroundJobs.run('operator-system-dms', () => flushOperatorSystemDms(jobsDatabase));
-      await backgroundJobs.run('schedules', () => schedules.runOnce());
-      await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
-      await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-      const deadlineDue = await backgroundJobs.run('deadline-expiry', () =>
-        deadlineExpiry.runOnce(newLeader));
-      // Reviewers can stop or lose a wake after startup. Repair every cycle;
-      // existing head-scoped dispatch and report keys keep replays quiet.
-      await backgroundJobs.run('corner-reviewers', () =>
-        reconcileConfiguredCornerReviewers(jobsDatabase));
-      if (githubJobs) {
-        await backgroundJobs.run('corner-branch-cleanup', () => githubJobs.retryBranchDeletions());
-        await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
-      }
-      if (githubJobs && !reconciledMergeability) {
-        const result = await backgroundJobs.run('github-mergeability', () =>
-          githubJobs.refreshStaleMergeability());
-        reconciledMergeability = result.ok;
-      }
-      if (githubJobs && !reconciledPendingChecks) {
-        const pendingChecks = await backgroundJobs.run('github-pending-checks', () =>
-          githubJobs.refreshOpenPendingChecks());
-        reconciledPendingChecks = pendingChecks.ok;
-      }
-      const now = Date.now();
-      if (now - lastReconciliationAt >= reconciliationMs) {
-        lastReconciliationAt = now;
-        // Merges happen throughout a leader's tenure. Keep retrying missed
-        // webhooks and claims whose grace/backoff deadline was not due at boot.
-        if (githubJobs) {
-          await backgroundJobs.run('corner-merge-recovery', () =>
-            githubJobs.recoverUnfinishedMergeClaims());
-          await backgroundJobs.run('github-merged-corners', () =>
-            githubJobs.reconcileMergedCorners());
-        }
-        await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
-        await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
-        await backgroundJobs.run('corner-checks-blocked', () =>
-          noteBlockedCornerChecks(jobsDatabase));
-        await backgroundJobs.run('expired-command-leases', () =>
-          reclaimExpiredCommandLeases(jobsDatabase, live));
-        await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
-        await backgroundJobs.run('institutional-curator', () =>
-          runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
-            ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
-          }));
-      }
-      if (freeAgents) await backgroundJobs.run('free-agents', () => freeAgents.sweep());
-      const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
-      const pushDue = push ? await backgroundJobs.run('push-next-due', () => push.nextDueAt()) : null;
-      if (pushDue?.ok && pushDue.value) pushPending = true;
-      const sentryDue = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
-      return Math.min(
-        reconciliationMs,
-        ...(pushDue?.ok && pushDue.value ? [Math.max(1000, pushDue.value.getTime() - Date.now())] : []),
-        ...(sentryDue.ok && sentryDue.value ? [Math.max(1000, sentryDue.value.getTime() - Date.now())] : []),
-        ...(freeAgents ? [FREE_AGENT_SWEEP_MS] : []),
-        ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
-        ...(deadlineDue.ok && deadlineDue.value !== null
-          ? [Math.max(0, deadlineDue.value)] : []),
-      );
-    },
-    reconciliationMs,
-  );
-  if (push) liveListener.setPushWake(() => { pushPending = true; leader.wake(); });
-  liveListener.setOwedWake(() => leader.wake());
+  const work = new BackgroundWork();
+  if (push) work.add('push', reconciliationMs, async () => {
+    await backgroundJobs.run('push', () => push.runOnce());
+    const due = await backgroundJobs.run('push-next-due', () => push.nextDueAt());
+    if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
+  });
+  work.add('schedules', reconciliationMs, async () => {
+    await backgroundJobs.run('schedules', () => schedules.runOnce());
+    const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
+    if (due.ok && due.value) return Math.max(0, due.value.getTime() - Date.now());
+  });
+  work.add('sentry', reconciliationMs, async () => {
+    await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
+    const due = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
+    if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
+  });
+  work.add('choices', reconciliationMs, async () => {
+    await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+    const due = await backgroundJobs.run('choice-next-due', () => jobsDatabase.query<{ due: Date | null }>(
+      `SELECT min(closes_at) due FROM room_choices WHERE status='open' AND closes_at IS NOT NULL`));
+    if (due.ok && due.value.rows[0]?.due)
+      return Math.max(5000, due.value.rows[0].due.getTime() - Date.now());
+  });
+  work.add('deadlines', reconciliationMs, async (newLeader) => {
+    const due = await backgroundJobs.run('deadline-expiry', () => deadlineExpiry.runOnce(newLeader));
+    if (due.ok && due.value !== null) return Math.max(0, due.value);
+  });
+  if (freeAgents) work.add('free-agents', FREE_AGENT_SWEEP_MS, async () => {
+    await backgroundJobs.run('free-agents', () => freeAgents.sweep());
+  });
+  work.add('repair', reconciliationMs, async (newLeader) => {
+    if (newLeader) {
+      repairedPromotedCorners = false;
+      reconciledMergeability = false;
+      reconciledPendingChecks = false;
+    }
+    if (githubJobs && !repairedPromotedCorners) {
+      const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
+        githubJobs.repairPromotedCornerBranches());
+      repairedPromotedCorners = repair.ok;
+    }
+    if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
+    await backgroundJobs.run('operator-system-dms', () => flushOperatorSystemDms(jobsDatabase));
+    // Repair lost reviewer wakes on the reconciliation cadence;
+    // existing head-scoped dispatch and report keys keep replays quiet.
+    await backgroundJobs.run('corner-reviewers', () =>
+      reconcileConfiguredCornerReviewers(jobsDatabase));
+    if (githubJobs) {
+      await backgroundJobs.run('corner-branch-cleanup', () => githubJobs.retryBranchDeletions());
+      await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
+    }
+    if (githubJobs && !reconciledMergeability) {
+      const result = await backgroundJobs.run('github-mergeability', () =>
+        githubJobs.refreshStaleMergeability());
+      reconciledMergeability = result.ok;
+    }
+    if (githubJobs && !reconciledPendingChecks) {
+      const pendingChecks = await backgroundJobs.run('github-pending-checks', () =>
+        githubJobs.refreshOpenPendingChecks());
+      reconciledPendingChecks = pendingChecks.ok;
+    }
+    const now = Date.now();
+    // Merges happen throughout a leader's tenure. Keep retrying missed
+    // webhooks and claims whose grace/backoff deadline was not due at boot.
+    if (githubJobs) {
+      await backgroundJobs.run('corner-merge-recovery', () =>
+        githubJobs.recoverUnfinishedMergeClaims());
+      await backgroundJobs.run('github-merged-corners', () =>
+        githubJobs.reconcileMergedCorners());
+    }
+    await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
+    await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
+    await backgroundJobs.run('corner-checks-blocked', () =>
+      noteBlockedCornerChecks(jobsDatabase));
+    await backgroundJobs.run('expired-command-leases', () =>
+      reclaimExpiredCommandLeases(jobsDatabase, live));
+    await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
+    await backgroundJobs.run('institutional-curator', () =>
+      runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
+        ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
+      }));
+  });
+  const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader), reconciliationMs);
+  const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
+  if (push) liveListener.setPushWake(() => wakeWork('push'));
+  liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
   // A committed wake for a sleeping free agent starts its Machine at once;
   // the leader sweep retries anything this misses.
   const stopFreeAgentWake = freeAgents
@@ -540,11 +539,12 @@ async function main() {
       })
     : undefined;
   const stopBackgroundWake = live.subscribeAll((event) => {
-    if (
-      event.type === 'invalidate' &&
-      (event.reason === 'postgres:messages' || event.reason === 'postgres:agent_schedules')
-    )
-      leader.wake();
+    if (event.type !== 'invalidate') return;
+    if (event.reason === 'postgres:messages') {
+      wakeWork('deadlines', 'messages');
+      wakeWork('choices', 'messages');
+    }
+    if (event.reason === 'postgres:agent_schedules') wakeWork('schedules');
   });
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';

@@ -554,7 +554,6 @@ type LifecycleTarget = {
   harness: string | null;
   handle: string | null;
   name: string;
-  access_policy: unknown;
   lifecycle_id: string | null;
   release_version: string | null;
   source_sha: string | null;
@@ -587,7 +586,6 @@ async function routeTaggedLifecycleCommand(
   const target = (
     await db.query<LifecycleTarget>(
       `SELECT agent.agent_id,agent.owner_id,agent.harness,identity.handle,identity.name,
-         agent.access_policy,
          presence.body->>'lifecycleId' lifecycle_id,
          presence.body->>'releaseVersion' release_version,
          presence.body->>'sourceSha' source_sha,
@@ -615,13 +613,9 @@ async function routeTaggedLifecycleCommand(
 
   // Restart, stop, retry and debug are open to anyone in the Room: they only
   // interrupt the agent and debug reports this Room's turn alone. A Room, corner
-  // or DM role never changes that. Sign-in stays with the agent's owner.
+  // or DM role never changes that, and neither does the agent's access policy,
+  // which decides only who may give it work. Sign-in stays with the agent's owner.
   const ownsAgent = target.owner_id === source.author_id;
-  const mayAddress = senderMayAddressAgent(
-    parseAgentAccessPolicy(target.access_policy),
-    source.author_id,
-    target.owner_id,
-  );
   const loginHarness = isAgentSignInHarness(target.harness) ? target.harness : undefined;
   const deniedVerb =
     action !== 'login'
@@ -644,10 +638,6 @@ async function routeTaggedLifecycleCommand(
       afterMessageId: sourceId,
     });
   };
-  if (!mayAddress) {
-    await deny('the sender may not address this agent');
-    return true;
-  }
   if (action === 'login') {
     // Claude Code's own `/login`, at the call site, for every harness: the
     // card carries what the machine answers (a link, a device code, or a key

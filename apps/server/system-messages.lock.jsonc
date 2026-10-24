@@ -353,16 +353,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:85e9c6394897b3d6",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "wrapper",
-    "template": "deny('the sender may not address this agent')",
-    "literals": [
-      "'the sender may not address this agent'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:9231f724276cc9ce",
     "file": "apps/server/src/agent-command.ts",
     "kind": "wrapper",

@@ -158,6 +158,38 @@ describe('permissions: agent owner, Workspace admin, or anyone in the Room', () 
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE action='restart'`)).rowCount).toBe(1);
   });
 
+  it('an access policy that limits who may give the agent work never blocks restart, stop, retry and debug', async () => {
+    // `creator` and an allowlist that leaves out both the sender and the owner
+    // decide who may give the agent work; they never gate these controls.
+    for (const policy of [{ type: 'creator' }, { type: 'allowlist', allow: [WS_ADMIN] }]) {
+      await database.query(`UPDATE agents SET access_policy=$2::jsonb WHERE agent_id=$1`, [
+        AGENT,
+        JSON.stringify(policy),
+      ]);
+      for (const [, roomId] of placesFor(ROOM_ADMIN)) {
+        await database.query(`DELETE FROM agent_commands WHERE action='restart'`);
+        await send(roomId, ROOM_ADMIN, '@bee /restart');
+        expect((await lifecycleLine(roomId))?.verb).toBe('queued a restart');
+        await send(roomId, ROOM_ADMIN, '@bee debug');
+        expect((await lifecycleLine(roomId))?.verb).toBe('reported diagnostics');
+        await startTurn(roomId, AGENT_OWNER);
+        await send(roomId, ROOM_ADMIN, '@bee stop');
+        expect((await lifecycleLine(roomId))?.verb).toBe('stopped its running turn');
+        const ask = await startTurn(roomId, AGENT_OWNER);
+        await database.query(`UPDATE agent_turns SET status='failed' WHERE room_id=$1 AND request_id=$2`, [roomId, ask]);
+        await send(roomId, ROOM_ADMIN, '@bee retry');
+        expect((await lifecycleLine(roomId))?.verb).toBe('queued a retry for its last failed turn');
+        // Sign-in still belongs to the owner alone, and the owner keeps it.
+        await send(roomId, ROOM_ADMIN, '@bee login');
+        expect((await lifecycleLine(roomId))?.consequence).toBe('only its owner may sign it in');
+      }
+      for (const [, roomId] of placesFor(AGENT_OWNER)) {
+        await send(roomId, AGENT_OWNER, '@bee login');
+        expect((await lifecycleLine(roomId))?.verb).toBe('started a Claude sign-in');
+      }
+    }
+  });
+
   it('only the agent owner may sign it in, in every place, whatever their role', async () => {
     for (const person of [WS_OWNER, WS_ADMIN, ROOM_ADMIN])
       for (const [, roomId] of placesFor(person)) {

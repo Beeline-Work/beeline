@@ -325,12 +325,12 @@
   },
   {
     "file": "components/buzz/LedgerDisclosure.tsx",
-    "line": 24,
+    "line": 27,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "261c53bd92fb396e7130",
-    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} accessibilityState={accessibilityState} aria-expanded={expanded} onPress={onPress} style={styles.row} testID={rowTestID} > <View style={styles.chevron}> <ChevronGlyph color={theme.buzz.textMuted} direction={expanded ? 'down' : 'right'} size={CHEVRON_ROW_SIZE} /> </View> <Text style={styles.label}>{children}</Text> </Pres",
-    "reason": "Shared expandable row primitive; geometry remains unchanged under revision six."
+    "id": "ea713bdc5c0346ad0526",
+    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} accessibilityState={accessibilityState} aria-expanded={expanded} onPress={onPress} style={firstLine ? styles.firstLineRow : styles.row} testID={rowTestID} > <View style={firstLine ? styles.firstLineChevron : styles.chevron}> <ChevronGlyph color={theme.buzz.textMuted} direction={expanded ? 'down' : 'right'} size={CHEVRON_",
+    "reason": "Shared expandable row primitive owns the existing disclosure target and the approved first-line system-message layout."
   },
   {
     "file": "components/buzz/MemberPickerSheet.tsx",

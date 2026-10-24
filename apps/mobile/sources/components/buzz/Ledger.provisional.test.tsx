@@ -113,7 +113,9 @@ it.each(['web', 'ios', 'android'])('renders a workflow system notice without a s
   expect(renderer.root.findAllByType('MonoMarkdown')).toEqual([]);
   expect(renderer.root.findAllByProps({ testID: 'chat-byline-profile' })).toEqual([]);
   const object = renderer.root.findByProps({ testID: 'system-line-object-workflow-start' });
-  act(() => object.props.onPress());
+  const press = { stopPropagation: vi.fn() };
+  act(() => object.props.onPress(press));
+  expect(press.stopPropagation).toHaveBeenCalledTimes(1);
   expect(onOpenUrl).toHaveBeenCalledWith('/beeline/workflow-run?runId=7a434a73');
   expect(JSON.stringify(renderer.toJSON())).toContain('started workflow');
   act(() => renderer.unmount());

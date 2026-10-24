@@ -130,16 +130,18 @@ export async function pruneEndedOwnerStorage(supervisorRoot: string, options: Wh
 
 /** Recover the old deterministic checkout layout without treating a missing
  * server row as deletion authority. The hash binds Room, remote and branch. */
-export async function discoverLegacyStorageOwners(supervisorRoot: string, workspaceId: string, states: readonly StorageRoomState[]): Promise<StorageOwner[]> {
+export async function discoverLegacyStorageOwners(supervisorRoot: string, workspaceId: string, states: readonly StorageRoomState[], progress?: () => Promise<void>): Promise<StorageOwner[]> {
   const owners: StorageOwner[] = [];
   const root = resolve(supervisorRoot, 'beeline');
   for (const state of states) {
+    await progress?.();
     if (state.workspaceId && state.workspaceId !== workspaceId) continue;
     if (/^[a-zA-Z0-9-]{1,80}$/.test(state.roomId) && await lstat(resolve(root, 'corners', state.roomId)).catch(() => undefined))
       owners.push({ workspaceId, roomId: state.roomId, kind: 'corners', itemId: state.roomId });
   }
   const recorded = new Set((await readStorageOwners(supervisorRoot)).filter(owner => owner.kind === 'room-checkouts').map(owner => owner.itemId));
   for (const itemId of await readdir(resolve(root, 'room-checkouts')).catch(() => [])) {
+    await progress?.();
     if (!/^[a-f0-9]{24}$/.test(itemId) || recorded.has(itemId)) continue;
     const path = resolve(root, 'room-checkouts', itemId);
     try {
@@ -244,10 +246,11 @@ export async function pruneOpenCheckoutObjects(supervisorRoot: string, states: r
   const byId = new Map(states.map(state => [state.roomId, state]));
   const owners = [...new Map([...(await readStorageOwners(supervisorRoot)), ...discovered].map(owner => [`${owner.kind}/${owner.itemId}`, owner])).values()];
   for (const owner of owners) {
+    await options.progress?.();
     if (byId.get(owner.roomId)?.archived !== false) continue;
     const root = resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId);
     const work = async () => {
-      const inUse = options.inUse ?? (async (path: string) => (await capturePrivateProcessUse())(path));
+      const inUse = options.inUse ?? (async (path: string) => (await capturePrivateProcessUse(options.progress))(path));
       if (await inUse(root)) return;
       const ignored = await execFileAsync('git', ['-C', root, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory'],
         { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 16 * 1024 * 1024 }).then(result => result.stdout.split('\0'), () => []);

@@ -2050,14 +2050,16 @@ export class RoomRuntimeCoordinator {
   /** Archive cleanup runs on each authoritative reconciliation. Open private
    * folders are reconsidered every six hours; no file-age decision is made. */
   private async sweepRoomPrivateStorage(states: readonly StorageRoomState[]): Promise<void> {
-    for (const owner of await discoverLegacyStorageOwners(this.runtime.supervisorRoot, this.runtime.communityId, states))
+    for (const owner of await discoverLegacyStorageOwners(this.runtime.supervisorRoot, this.runtime.communityId, states, () => this.yieldReconciliation()))
       await rememberStorageOwner(this.runtime.supervisorRoot, owner);
     await this.reclaimPrivateStorage(states);
     await pruneOpenCheckoutObjects(this.runtime.supervisorRoot, states, {
+      progress: () => this.yieldReconciliation(),
       log: entry => console.log(`[body] open checkout storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
     });
     const archived = new Set(states.filter(state => state.archived).map(state => state.roomId));
     for (const owner of await readStorageOwners(this.runtime.supervisorRoot)) {
+      await this.yieldReconciliation();
       if (!archived.has(owner.roomId)) continue;
       const state = states.find(state => state.roomId === owner.roomId)!;
       await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
@@ -2065,6 +2067,7 @@ export class RoomRuntimeCoordinator {
       await this.scheduler.withIdleStorage(owner.roomId, async () => {
         await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, {
           landedHeadSha: state.landedHeadSha,
+          progress: () => this.yieldReconciliation(),
           log: entry => console.log(`[body] Room ${owner.roomId} checkout deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
         });
       });

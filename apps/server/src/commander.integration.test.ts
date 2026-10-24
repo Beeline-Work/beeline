@@ -337,6 +337,61 @@ it.each(['working', 'activity', 'other-place', 'optimistic'])(
   },
 );
 
+it('Reproduction reported-stall: delivered done survives loss of terminal receipt', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: widget complete' }, WORKER);
+  const { ConnectionPresence } = await import('./connection-presence.js');
+  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, turn.turnRequestId]);
+  const presence = new ConnectionPresence(db, new LiveHub());
+  try {
+    await presence.start();
+    await vi.waitFor(async () => expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+      [opened.cornerId, turn.turnRequestId])).rows[0]?.status).toBe('complete'));
+  } finally { await presence.stop(); }
+  expect((await db.query(`SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, turn.turnRequestId])).rows).toEqual([{ status: 'complete', failure_reason: null }]);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report').map(c => c.source.body))
+    .toEqual(['done: widget complete']);
+  expect((await db.query(`SELECT state,hiccup_attempts FROM agent_commands WHERE id=$1`, [turn.id])).rows)
+    .toEqual([{ state: 'complete', hiccup_attempts: 0 }]);
+  console.info('Demonstrated reported-stall: commander retains done; worker complete; no failure or retry');
+});
+
+it.each(['unclaimed', 'disconnected', 'connected'])('Reproduction explained-stall: %s reaches the corner or commander with its cause', async kind => {
+  const opened = await open();
+  const turn = (await commands(opened.cornerId, WORKER))[0]!;
+  if (kind !== 'unclaimed') {
+    await claim(turn);
+    await db.query(`UPDATE agent_commands SET hiccup_attempts=3 WHERE id=$1`, [turn.id]);
+  }
+  if (kind === 'connected') {
+    await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('proof') ON CONFLICT(instance_id) DO UPDATE SET renewed_at=now()`);
+    await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+      VALUES($1,1,'proof','proof')`, [WORKER]);
+  }
+  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`, [opened.cornerId]);
+  const { ConnectionPresence } = await import('./connection-presence.js');
+  const presence = new ConnectionPresence(db, new LiveHub());
+  try {
+    await presence.start();
+    await vi.waitFor(async () => expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1`, [opened.cornerId])).rows[0]?.status).toBe('failed'));
+  } finally {
+    await presence.stop();
+    if (kind === 'connected') {
+      await db.query(`DELETE FROM agent_connections WHERE connection_id='proof' AND agent_id=$1`, [WORKER]);
+      await db.query(`DELETE FROM live_server_instances WHERE instance_id='proof'`);
+    }
+  }
+  const failure = (await db.query<{ failure_reason: string }>(`SELECT failure_reason FROM agent_turns WHERE room_id=$1`, [opened.cornerId])).rows[0]!.failure_reason;
+  expect(failure).toContain(kind === 'unclaimed' ? 'did not claim the queued turn within 90 seconds' :
+    kind === 'connected' ? 'connected but stopped reporting' : 'helper disconnected');
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports.some(c => c.source.body.includes(failure))).toBe(true);
+  if (kind === 'unclaimed') expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [turn.id])).rows[0]?.state).toBe('pending');
+  console.info(`Demonstrated explained-stall (${kind}): ${failure}`);
+});
+
 it('Reproduction named-stall: exhausted corner stall names its source in the commander inbox', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await db.query('UPDATE agent_commands SET hiccup_attempts=3 WHERE id=$1', [turn.id]);

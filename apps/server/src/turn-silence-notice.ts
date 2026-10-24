@@ -141,6 +141,26 @@ export async function reclaimExpiredCommandLeases(
   return terminated;
 }
 
+/** A delivered done report discharges this execution even if its final receipt was lost. */
+async function settleReportedTurn(db: SqlDatabase, input: {
+  roomId: string; agentId: string; requestId: string; generationId?: string | null;
+}): Promise<boolean> {
+  await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+    turnSilenceLockKey(input.roomId, input.requestId, input.agentId),
+  ]);
+  const done = await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()
+    WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND generation_id=$4
+      AND state='claimed' AND (CASE WHEN private_payload ? 'reportedOutcome'
+        THEN private_payload->>'reportedOutcome' ELSE report_outcome END)='done'
+      AND private_payload->>'reportedGenerationId'=generation_id RETURNING id`,
+    [input.roomId, input.agentId, input.requestId, input.generationId]);
+  if (!done.rowCount) return false;
+  await db.query(`UPDATE agent_turns SET status='complete',failure_reason=NULL,created_at=now()
+    WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 AND status='working'`,
+    [input.roomId, input.agentId, input.requestId, input.generationId]);
+  return true;
+}
+
 export async function noteFirstSilence(
   database: SqlDatabase,
   live: LiveHub,
@@ -156,6 +176,11 @@ export async function noteFirstSilence(
     readonly stalled?: boolean;
   },
 ): Promise<TurnSilenceOutcome> {
+  if (input.stalled && input.generationId != null &&
+      await database.transaction(db => settleReportedTurn(db, input))) {
+    live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'turn' });
+    return NO_RESTART;
+  }
   if (await database.transaction(db => closeFreeAgentTurn(db, input))) return NO_RESTART;
   // A reply can commit before a delayed watchdog or generation-free receipt.
   // Check before reassignment too: answered work must not move to another agent.
@@ -286,6 +311,8 @@ async function inscribeSilence(
       [input.roomId, input.agentId, input.requestId, input.generationId ?? null],
     )
   ).rows[0];
+  if (command && input.stalled && input.generationId != null && await settleReportedTurn(database, input)) return NO_RESTART;
+
   // A watchdog belongs to one execution. Once that generation has completed,
   // or a successor owns the command, its delayed callback is stale and must
   // leave no failure line, turn transition, or retry behind.

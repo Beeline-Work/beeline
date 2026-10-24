@@ -6076,8 +6076,9 @@ export class DaemonService {
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
       [command.room_id, agentId, attachment.id]);
     if (command.private_payload) await database.query(
-      `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{reportedGenerationId}',to_jsonb($2::text)) WHERE id=$1`,
-      [command.id, command.generation_id]);
+      `UPDATE agent_commands SET private_payload=private_payload ||
+        jsonb_build_object('reportedGenerationId',$2::text,'reportedOutcome',$3::text) WHERE id=$1`,
+      [command.id, command.generation_id, prefix ?? null]);
     return result;
   }
   private async watchCorner(

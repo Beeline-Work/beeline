@@ -124,3 +124,9 @@ The conflict resolution retains main’s newer reviewer recovery rules and passi
 The repeated Room-list proof still produces 110 full scans before and zero after, while preserving Working and archived-corner behavior.
 
 On the integrated head, the repeated burst proof acknowledged and stored all fifteen deliveries per phase. Slow queries per minute fell from 429.78 to 0.00, and pool-checkout p95 fell from 1596.41 ms to 0.08 ms under the same synthetic occupancy. The current command-read fingerprint is `855547fbb0ffa86c`. Both installation-ordering regressions pass.
+
+### Approved producer scope
+
+The System-message lock indexes producer method scopes. Moving unchanged webhook producer calls to a helper changed those identities. Admission now acquires a queue slot before the existing `processWebhook` body and releases it in `finally`, preserving the approved producer scope and wording without changing the lock. Regressions cover ignored deliveries, failed writes, exclusive admission and duplicate release as well as both installation-ordering cases.
+
+The repeated built burst proof stored every delivery in both phases: slow-query rate 427.31 → 0.00/min; pool-checkout p95 1591.34 → 0.06 ms under the same synthetic occupancy.

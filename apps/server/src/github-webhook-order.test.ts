@@ -78,3 +78,23 @@ it('keeps revocation terminal when the delayed suspension runs on another server
       .toEqual([{ active: false }]);
   } finally { await database.close(); }
 });
+
+it('releases webhook admission after an ignored delivery or a failed database write', async () => {
+  let fail = true;
+  const writes: string[] = [];
+  const database = {
+    query: async (sql: string) => {
+      if (fail) { fail = false; throw new Error('write failed'); }
+      writes.push(sql);
+      return { rows: [], rowCount: 1 };
+    },
+  } as unknown as SqlDatabase;
+  const operations = new GitHubOperations(database, {} as GitHubOAuthClient, {} as GitHubAppClient, 'fixture');
+  await operations.processWebhook('installation', null);
+  await expect(operations.processWebhook('installation', { action: 'suspend', installation: { id: 77 } }))
+    .rejects.toThrow('write failed');
+  await operations.processWebhook('installation', { action: 'deleted', installation: { id: 77 } });
+  expect(writes).toHaveLength(2);
+  expect(writes[0]).toContain("SET status='revoked'");
+  expect(writes[1]).toContain('UPDATE github_repositories SET active=false');
+});

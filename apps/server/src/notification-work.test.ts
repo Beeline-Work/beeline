@@ -44,3 +44,22 @@ it('coalesces repeated commander notifications and rereads once after an in-flig
     expect(error).not.toHaveBeenCalled();
   } finally { deadlines.stop(); }
 });
+
+it('keeps an acquired delivery exclusive until its idempotent release', async () => {
+  const queue = new NotificationWork(1);
+  const first = await queue.acquire();
+  const started: string[] = [];
+  const second = queue.run(async () => { started.push('second'); });
+  await Promise.resolve();
+  expect(started).toEqual([]);
+  first();
+  first();
+  await second;
+  const third = await queue.acquire();
+  const fourth = queue.run(async () => { started.push('fourth'); });
+  await Promise.resolve();
+  expect(started).toEqual(['second']);
+  third();
+  await fourth;
+  expect(started).toEqual(['second', 'fourth']);
+});

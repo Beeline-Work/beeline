@@ -7,10 +7,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { processAlive } from './android-emulator-lease.js';
 import {
   closeCornerEmulatorListeners,
+  cornerEmulatorHostFromEnv,
   cornerEmulatorSocketName,
   listenCornerEmulator,
   reapKeptCornerEmulators,
   stopKeptCornerEmulator,
+  type CornerEmulatorHost,
   type KeptCornerEmulator,
 } from './corner-emulator.js';
 
@@ -21,6 +23,7 @@ afterEach(async () => {
   for (const root of roots) {
     await stopKeptCornerEmulator(root, 'corner-keep').catch(() => undefined);
     await stopKeptCornerEmulator(root, 'corner-gone').catch(() => undefined);
+    await stopKeptCornerEmulator(root, 'corner-attack').catch(() => undefined);
   }
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -29,6 +32,7 @@ async function layout(name: string): Promise<{
   supervisor: string;
   socketPath: string;
   env: NodeJS.ProcessEnv;
+  host: CornerEmulatorHost;
 }> {
   const supervisor = await mkdtemp(join(tmpdir(), `corner-emulator-${name}-`));
   roots.push(supervisor);
@@ -45,29 +49,33 @@ async function layout(name: string): Promise<{
     supervisor, 'beeline', 'workspaces', 'ws', 'shared-home', 'cache', 'android-leases',
   );
   await mkdir(leaseRoot, { recursive: true });
+  const env: NodeJS.ProcessEnv = {
+    ANDROID_HOME: sdk,
+    BEELINE_ANDROID_EMULATOR_BINARY: binary,
+    BEELINE_ANDROID_LEASE_ROOT: leaseRoot,
+    BEELINE_ANDROID_INSTANCE_ROOT: join(supervisor, 'instances'),
+    BEELINE_ANDROID_BASE_AVD_HOME: avdBase,
+    ANDROID_AVD_HOME: avdBase,
+  };
+  const host = cornerEmulatorHostFromEnv(env);
+  if (!host) throw new Error('test host is incomplete');
   return {
     supervisor,
     socketPath: cornerEmulatorSocketName(name),
-    env: {
-      ANDROID_HOME: sdk,
-      BEELINE_ANDROID_EMULATOR_BINARY: binary,
-      BEELINE_ANDROID_LEASE_ROOT: leaseRoot,
-      BEELINE_ANDROID_INSTANCE_ROOT: join(supervisor, 'instances'),
-      BEELINE_ANDROID_BASE_AVD_HOME: avdBase,
-      ANDROID_AVD_HOME: avdBase,
-    },
+    env,
+    host,
   };
 }
 
 function turn(
   socketPath: string,
   cornerId: string,
-  env: NodeJS.ProcessEnv,
+  requestEnv: NodeJS.ProcessEnv = {},
 ): Promise<{ status: number; response: string }> {
   const payload = JSON.stringify({
     cornerId,
     args: ['-avd', 'demo', '-no-window'],
-    env,
+    env: requestEnv,
   });
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['-e', `
@@ -113,9 +121,9 @@ async function record(env: NodeJS.ProcessEnv, cornerId: string): Promise<KeptCor
 describe('corner emulator lifetime', () => {
   it('keeps the leased emulator and its lease after the turn that started it exits', async () => {
     const cornerId = 'corner-keep';
-    const { supervisor, socketPath, env } = await layout('keep');
-    await listenCornerEmulator(socketPath);
-    const first = await turn(socketPath, cornerId, env);
+    const { supervisor, socketPath, env, host } = await layout('keep');
+    await listenCornerEmulator(socketPath, undefined, host);
+    const first = await turn(socketPath, cornerId);
     const started = JSON.parse(first.response) as { ok: boolean; alreadyRunning: boolean; serial: string };
     expect(started.ok).toBe(true);
     expect(started.alreadyRunning).toBe(false);
@@ -124,7 +132,7 @@ describe('corner emulator lifetime', () => {
     expect(await readFile(kept.markerPath, 'utf8')).toBe(kept.ownership);
     expect(existsSync(kept.instanceRoot)).toBe(true);
 
-    const second = await turn(socketPath, cornerId, env);
+    const second = await turn(socketPath, cornerId);
     const again = JSON.parse(second.response) as { ok: boolean; alreadyRunning: boolean; serial: string };
     expect(again).toMatchObject({ ok: true, alreadyRunning: true, serial: started.serial });
     expect((await record(env, cornerId)).pid).toBe(kept.pid);
@@ -145,14 +153,68 @@ describe('corner emulator lifetime', () => {
 
   it('releases a kept emulator on helper start when the corner is confirmed gone', async () => {
     const cornerId = 'corner-gone';
-    const { supervisor, socketPath, env } = await layout('gone');
-    await listenCornerEmulator(socketPath);
-    await turn(socketPath, cornerId, env);
+    const { supervisor, socketPath, env, host } = await layout('gone');
+    await listenCornerEmulator(socketPath, undefined, host);
+    await turn(socketPath, cornerId);
     const kept = await record(env, cornerId);
     expect(processAlive(kept.pid)).toBe(true);
     const stopped = await reapKeptCornerEmulators(supervisor, new Set(), async () => true);
     expect(stopped).toEqual([cornerId]);
     expect(processAlive(kept.pid)).toBe(false);
     expect(existsSync(kept.markerPath)).toBe(false);
+  }, 30_000);
+
+  it('rejects a client-selected emulator binary and does not run it', async () => {
+    const cornerId = 'corner-attack';
+    const { supervisor, socketPath, env, host } = await layout('attack');
+    await listenCornerEmulator(socketPath, undefined, host);
+    const attackRoot = join(supervisor, 'attack-sdk');
+    const marker = join(attackRoot, 'marker');
+    const binary = join(attackRoot, 'emulator', 'emulator');
+    const avdBase = join(attackRoot, 'avd');
+    await mkdir(join(attackRoot, 'emulator'), { recursive: true });
+    await mkdir(join(avdBase, 'demo.avd'), { recursive: true });
+    await writeFile(join(avdBase, 'demo.ini'), 'path=/opt/avd/demo.avd\n');
+    await writeFile(join(avdBase, 'demo.avd', 'config.ini'), 'AvdId=demo\n');
+    // Both ANDROID_HOME and the binary point at this tree, so a check that
+    // only compares those two request values would let the script through.
+    await writeFile(binary, `#!/bin/sh\necho ran > '${marker}'\nexec sleep 120\n`, { mode: 0o755 });
+    await chmod(binary, 0o755);
+    const attack = await turn(socketPath, cornerId, {
+      ANDROID_HOME: attackRoot,
+      ANDROID_SDK_ROOT: attackRoot,
+      BEELINE_ANDROID_EMULATOR_BINARY: binary,
+      BEELINE_ANDROID_LEASE_ROOT: join(attackRoot, 'leases'),
+      BEELINE_ANDROID_INSTANCE_ROOT: join(attackRoot, 'instances'),
+      BEELINE_ANDROID_BASE_AVD_HOME: avdBase,
+      ANDROID_AVD_HOME: avdBase,
+      ANDROID_EMULATOR_HOME: join(attackRoot, 'emu-home'),
+      PATH: attackRoot,
+      HOME: attackRoot,
+      TMPDIR: attackRoot,
+    });
+    const rejected = JSON.parse(attack.response) as { ok: boolean; error?: string };
+    expect(rejected).toEqual({ ok: false, exitCode: 1, error: 'emulator paths are owned by the helper' });
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(join(env.BEELINE_ANDROID_LEASE_ROOT!, 'kept', `${cornerId}.json`))).toBe(false);
+
+    const echoed = await turn(socketPath, cornerId, {
+      ANDROID_HOME: env.ANDROID_HOME,
+      BEELINE_ANDROID_EMULATOR_BINARY: env.BEELINE_ANDROID_EMULATOR_BINARY,
+    });
+    expect(JSON.parse(echoed.response)).toMatchObject({
+      ok: false,
+      error: 'emulator paths are owned by the helper',
+    });
+    expect(existsSync(marker)).toBe(false);
+
+    const honest = await turn(socketPath, cornerId, { ANDROID_ADB_SERVER_PORT: '6799' });
+    const started = JSON.parse(honest.response) as { ok: boolean; alreadyRunning: boolean };
+    expect(started).toMatchObject({ ok: true, alreadyRunning: false });
+    const kept = await record(env, cornerId);
+    expect(processAlive(kept.pid)).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+    expect(kept.leaseRoot).toBe(env.BEELINE_ANDROID_LEASE_ROOT);
+    expect(kept.adbServerPort).toBe('6799');
   }, 30_000);
 });

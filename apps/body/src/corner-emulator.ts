@@ -8,6 +8,13 @@
  * longer than a Unix socket name, and the sandbox hides /tmp, so the socket
  * is not a file.
  *
+ * The helper seals the emulator binary, the SDK, and the lease and instance
+ * paths when it opens the socket. Those values come from the corner
+ * configuration the helper already computed. A request that names any of them
+ * is rejected, so a client cannot point this process at another executable.
+ * The client may pass only its adb server port, so a second agent in the
+ * corner can attach to the same device.
+ *
  * At most one emulator is kept per corner. It registers with the adb server
  * port of the agent who started it (`android-agent-env.ts` still gives each
  * agent home its own port). A later start from either agent in the corner
@@ -44,8 +51,90 @@ export const ANDROID_LEASE_ENV_KEYS = [
   'BEELINE_CORNER_ID',
 ] as const;
 
-const FORWARD_ENV_KEYS = [...ANDROID_LEASE_ENV_KEYS, 'PATH', 'HOME', 'TMPDIR'] as const;
+/** Paths and process roots the helper owns. A socket request must not set these. */
+const HOST_OWNED_ENV_KEYS = [
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'ANDROID_EMULATOR_HOME',
+  'ANDROID_AVD_HOME',
+  'BEELINE_ANDROID_LEASE_ROOT',
+  'BEELINE_ANDROID_INSTANCE_ROOT',
+  'BEELINE_ANDROID_BASE_AVD_HOME',
+  'BEELINE_ANDROID_EMULATOR_BINARY',
+  'PATH',
+  'HOME',
+  'TMPDIR',
+] as const;
+
+/** Per-agent adb wiring. Safe to take from the caller; it does not select a binary. */
+const CLIENT_ENV_KEYS = [
+  'ANDROID_ADB_SERVER_PORT',
+  'ADB_EMU',
+  'BEELINE_ANDROID_EMULATOR_PORT',
+] as const;
+
 const CORNER_ID = /^[A-Za-z0-9_-]{1,80}$/;
+
+/** Executable, SDK, and lease paths captured from the helper's corner configuration. */
+export interface CornerEmulatorHost {
+  androidHome: string;
+  emulatorBinary: string;
+  leaseRoot: string;
+  instanceRoot: string;
+  baseAvdHome: string;
+  sdkRoot?: string;
+  emulatorHome?: string;
+  avdHome?: string;
+  path?: string;
+  home?: string;
+  tmpdir?: string;
+}
+
+export function cornerEmulatorHostFromEnv(
+  env: Record<string, string | undefined>,
+): CornerEmulatorHost | undefined {
+  const androidHome = env.ANDROID_HOME;
+  const emulatorBinary = env.BEELINE_ANDROID_EMULATOR_BINARY;
+  const leaseRoot = env.BEELINE_ANDROID_LEASE_ROOT;
+  const instanceRoot = env.BEELINE_ANDROID_INSTANCE_ROOT;
+  const baseAvdHome = env.BEELINE_ANDROID_BASE_AVD_HOME;
+  if (!androidHome || !emulatorBinary || !leaseRoot || !instanceRoot || !baseAvdHome)
+    return undefined;
+  return {
+    androidHome,
+    emulatorBinary,
+    leaseRoot,
+    instanceRoot,
+    baseAvdHome,
+    ...(env.ANDROID_SDK_ROOT ? { sdkRoot: env.ANDROID_SDK_ROOT } : {}),
+    ...(env.ANDROID_EMULATOR_HOME ? { emulatorHome: env.ANDROID_EMULATOR_HOME } : {}),
+    ...(env.ANDROID_AVD_HOME ? { avdHome: env.ANDROID_AVD_HOME } : {}),
+    ...(env.PATH ? { path: env.PATH } : {}),
+    ...(env.HOME ? { home: env.HOME } : {}),
+    ...(env.TMPDIR ? { tmpdir: env.TMPDIR } : {}),
+  };
+}
+
+/** Resolve helper paths once. The binary has to be that SDK's emulator. */
+function sealHost(host: CornerEmulatorHost): NodeJS.ProcessEnv {
+  const androidHome = resolve(host.androidHome);
+  const emulatorBinary = resolve(host.emulatorBinary);
+  if (emulatorBinary !== resolve(androidHome, 'emulator/emulator'))
+    throw new Error('emulator binary is not the installed SDK emulator');
+  return {
+    ANDROID_HOME: androidHome,
+    ANDROID_SDK_ROOT: resolve(host.sdkRoot ?? host.androidHome),
+    BEELINE_ANDROID_LEASE_ROOT: resolve(host.leaseRoot),
+    BEELINE_ANDROID_INSTANCE_ROOT: resolve(host.instanceRoot),
+    BEELINE_ANDROID_BASE_AVD_HOME: resolve(host.baseAvdHome),
+    BEELINE_ANDROID_EMULATOR_BINARY: emulatorBinary,
+    ...(host.emulatorHome ? { ANDROID_EMULATOR_HOME: resolve(host.emulatorHome) } : {}),
+    ...(host.avdHome ? { ANDROID_AVD_HOME: resolve(host.avdHome) } : {}),
+    ...(host.path ? { PATH: host.path } : {}),
+    ...(host.home ? { HOME: host.home } : {}),
+    ...(host.tmpdir ? { TMPDIR: host.tmpdir } : {}),
+  };
+}
 
 /** Abstract name. A filesystem path under the agent home does not fit in `sun_path`. */
 export function cornerEmulatorSocketName(cornerId: string): string {
@@ -57,7 +146,7 @@ function socketAddress(socketPath: string): string {
   return socketPath.startsWith('@') ? `\0${socketPath.slice(1)}` : socketPath;
 }
 const BOOT_TIMEOUT_MS = 240_000;
-const listeners = new Map<string, Server>();
+const listeners = new Map<string, { server: Server; host: CornerEmulatorHost }>();
 const cornerGates = new Map<string, Promise<void>>();
 
 export interface KeptCornerEmulator {
@@ -193,7 +282,7 @@ async function withCornerGate<T>(cornerId: string, body: () => Promise<T>): Prom
 
 function forwardedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const key of FORWARD_ENV_KEYS) {
+  for (const key of CLIENT_ENV_KEYS) {
     const value = env[key];
     if (value) out[key] = value;
   }
@@ -273,27 +362,37 @@ export type KeptEmulatorResult =
  * Start the corner's emulator, or return the one already running.
  * The spawned process is detached from this caller, so the caller's exit
  * does not stop it or release its lease.
+ * `host` is the helper's corner configuration. It replaces any executable,
+ * SDK, or lease path on `env`.
  */
 export async function keepCornerEmulator(
   cornerId: string,
   args: string[],
   env: NodeJS.ProcessEnv,
+  host: CornerEmulatorHost,
 ): Promise<KeptEmulatorResult> {
   if (!CORNER_ID.test(cornerId)) return { ok: false, exitCode: 1, error: 'invalid corner id' };
-  const leaseRoot = env.BEELINE_ANDROID_LEASE_ROOT;
+  let sealed: NodeJS.ProcessEnv;
+  try {
+    sealed = sealHost(host);
+  } catch (error) {
+    return { ok: false, exitCode: 1, error: error instanceof Error ? error.message : String(error) };
+  }
+  const bound: NodeJS.ProcessEnv = { ...env, ...sealed };
+  const leaseRoot = bound.BEELINE_ANDROID_LEASE_ROOT;
   if (!leaseRoot) return { ok: false, exitCode: 1, error: 'Beeline emulator lease environment is unavailable' };
-  const binary = env.BEELINE_ANDROID_EMULATOR_BINARY;
-  const expected = env.ANDROID_HOME ? resolve(env.ANDROID_HOME, 'emulator/emulator') : '';
+  const binary = bound.BEELINE_ANDROID_EMULATOR_BINARY;
+  const expected = bound.ANDROID_HOME ? resolve(bound.ANDROID_HOME, 'emulator/emulator') : '';
   if (!binary || resolve(binary) !== expected)
     return { ok: false, exitCode: 1, error: 'emulator binary is not the installed SDK emulator' };
   return withCornerGate(cornerId, async () => {
     const existing = await readRecord(leaseRoot, cornerId);
     if (existing && await sameProcess(existing.pid, existing.startedAt)) {
-      await adbConnect(env, existing.port);
+      await adbConnect(bound, existing.port);
       return { ok: true, serial: existing.serial, port: existing.port, alreadyRunning: true };
     }
     if (existing) await releaseRecord(existing);
-    const started = await spawnLeasedEmulator(args, env, { detached: true });
+    const started = await spawnLeasedEmulator(args, bound, { detached: true });
     if ('exitCode' in started)
       return { ok: false, exitCode: started.exitCode, error: 'emulator did not start' };
     const pid = started.child.pid;
@@ -302,7 +401,7 @@ export async function keepCornerEmulator(
       return { ok: false, exitCode: 1, error: 'emulator did not start' };
     }
     const startedAt = await processStart(pid);
-    const record = recordFromLease(cornerId, started.lease, pid, startedAt, env, leaseRoot);
+    const record = recordFromLease(cornerId, started.lease, pid, startedAt, bound, leaseRoot);
     await writeRecord(record);
     started.child.once('error', () => undefined);
     started.child.once('exit', () => {
@@ -311,12 +410,12 @@ export async function keepCornerEmulator(
       });
     });
     started.child.unref();
-    const booted = await waitUntilBooted(env, record.serial, pid);
+    const booted = await waitUntilBooted(bound, record.serial, pid);
     if (!booted) {
       await releaseRecord(record);
       return { ok: false, exitCode: 1, error: `emulator ${record.serial} exited before Android finished booting` };
     }
-    await adbConnect(env, record.port);
+    await adbConnect(bound, record.port);
     return { ok: true, serial: record.serial, port: record.port, alreadyRunning: false };
   });
 }
@@ -392,19 +491,34 @@ function parseRequest(line: string): { cornerId: string; args: string[]; env: No
     return { error: 'invalid corner id' };
   if (!Array.isArray(parsed.args) || parsed.args.some((arg) => typeof arg !== 'string' || arg.length > 512))
     return { error: 'invalid emulator arguments' };
-  const source = parsed.env && typeof parsed.env === 'object' ? parsed.env as Record<string, unknown> : {};
+  const source = parsed.env && typeof parsed.env === 'object' && !Array.isArray(parsed.env)
+    ? parsed.env as Record<string, unknown>
+    : {};
+  for (const key of HOST_OWNED_ENV_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(source, key))
+      return { error: 'emulator paths are owned by the helper' };
+  }
   const env: NodeJS.ProcessEnv = {};
-  for (const key of FORWARD_ENV_KEYS) {
+  for (const key of CLIENT_ENV_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
     const value = source[key];
-    if (typeof value === 'string' && value.length > 0 && value.length < 16_384) env[key] = value;
+    if (typeof value !== 'string' || value.length === 0 || value.length >= 16_384)
+      return { error: 'invalid emulator environment' };
+    env[key] = value;
   }
   return { cornerId: parsed.cornerId, args: parsed.args as string[], env };
 }
 
 /** Listen in the helper. The socket is unref'd so it does not keep a process alive by itself. */
-export async function listenCornerEmulator(socketPath: string, cornerId?: string): Promise<void> {
+export async function listenCornerEmulator(
+  socketPath: string,
+  cornerId: string | undefined,
+  host: CornerEmulatorHost,
+): Promise<void> {
   if (listeners.has(socketPath)) return;
   if (cornerId && !CORNER_ID.test(cornerId)) throw new Error('invalid corner id');
+  // Fail before binding the socket when the helper's own paths are inconsistent.
+  sealHost(host);
   const abstract = socketPath.startsWith('@');
   if (!abstract) {
     await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 });
@@ -427,7 +541,7 @@ export async function listenCornerEmulator(socketPath: string, cornerId?: string
         if ('error' in request) return { ok: false as const, exitCode: 1, error: request.error };
         if (cornerId && request.cornerId !== cornerId)
           return { ok: false as const, exitCode: 1, error: 'corner emulator socket is for a different corner' };
-        return keepCornerEmulator(request.cornerId, request.args, request.env);
+        return keepCornerEmulator(request.cornerId, request.args, request.env, host);
       }).then((response) => {
         if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
       }).catch((error: unknown) => {
@@ -450,13 +564,13 @@ export async function listenCornerEmulator(socketPath: string, cornerId?: string
   });
   if (!abstract) await chmod(socketPath, 0o600);
   server.unref();
-  listeners.set(socketPath, server);
+  listeners.set(socketPath, { server, host });
 }
 
 export async function closeCornerEmulatorListeners(): Promise<void> {
-  await Promise.all([...listeners.entries()].map(async ([path, server]) => {
+  await Promise.all([...listeners.entries()].map(async ([path, listener]) => {
     listeners.delete(path);
-    await new Promise<void>((done) => server.close(() => done()));
+    await new Promise<void>((done) => listener.server.close(() => done()));
     if (!path.startsWith('@')) await unlink(path).catch(() => undefined);
   }));
 }

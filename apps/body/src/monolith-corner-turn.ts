@@ -27,6 +27,7 @@ import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import {
   androidLeaseShellBindings,
+  cornerEmulatorHostFromEnv,
   cornerEmulatorSocketName,
   listenCornerEmulator,
   stopKeptCornerEmulator,
@@ -1157,15 +1158,16 @@ export class MonolithCornerTurnLoop {
         : {}),
     };
 
-    if (agentEnv.BEELINE_ANDROID_LEASE_ROOT && agentEnv.BEELINE_ANDROID_INSTANCE_ROOT) {
+    const emulatorHost = cornerEmulatorHostFromEnv(agentEnv);
+    if (emulatorHost) {
       await Promise.all([
-        mkdir(agentEnv.BEELINE_ANDROID_LEASE_ROOT, { recursive: true, mode: 0o700 }),
-        mkdir(agentEnv.BEELINE_ANDROID_INSTANCE_ROOT, { recursive: true, mode: 0o700 }),
+        mkdir(emulatorHost.leaseRoot, { recursive: true, mode: 0o700 }),
+        mkdir(emulatorHost.instanceRoot, { recursive: true, mode: 0o700 }),
         mkdir(agentEnv.ANDROID_EMULATOR_HOME!, { recursive: true, mode: 0o700 }),
       ]);
       const socketPath = cornerEmulatorSocketName(this.options.cornerId);
       try {
-        await listenCornerEmulator(socketPath, this.options.cornerId);
+        await listenCornerEmulator(socketPath, this.options.cornerId, emulatorHost);
         agentEnv.BEELINE_CORNER_EMULATOR_SOCKET = socketPath;
         agentEnv.BEELINE_CORNER_ID = this.options.cornerId;
       } catch (error) {

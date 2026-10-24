@@ -43,7 +43,7 @@ export function createGameProxy({
     const url = new URL(request.url ?? '/', gameOrigin);
     if (request.method !== 'GET' || !/^\/play\/[0-9a-f-]{36}$/.test(url.pathname)) {
       response.writeHead(404, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
-      response.end('Game not found');
+      response.end('Not found');
       return;
     }
     try {
@@ -67,7 +67,7 @@ export function createGameProxy({
     } catch {
       if (!response.headersSent)
         response.writeHead(503, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
-      response.end('Game unavailable. Close and reopen it to try again.');
+      response.end('Unavailable. Close and reopen it to try again.');
     }
   });
 }

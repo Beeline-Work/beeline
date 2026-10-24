@@ -85,7 +85,7 @@ describe('runnable viewer boundary', () => {
     expect(props.mediaCapturePermissionGrantType).toBe('deny');
     await act(async () => props.onRenderProcessGone());
     expect(tree.root.findAllByType('WebView')).toHaveLength(0);
-    expect(tree.root.findByType('Text').props.children).toContain('Game stopped');
+    expect(tree.root.findByType('Text').props.children).toContain('Stopped.');
     await act(async () => tree.unmount());
   });
   it('keeps a running game mounted when trusted parent controls rerender', async () => {
@@ -122,7 +122,7 @@ describe('runnable viewer boundary', () => {
     expect(target.style.visibility).toBe('hidden');
     expect(tree.root.findAllByType('iframe')).toHaveLength(0);
     expect(tree.root.findByType('Text').props.children).toBe(
-      'This game tried to open another page and was closed',
+      'This page tried to open another page and was closed.',
     );
     await act(async () => tree.root.findByType('Button').props.onPress());
     const reopened = tree.root.findByType('iframe');

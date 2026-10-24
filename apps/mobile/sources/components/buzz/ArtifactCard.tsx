@@ -117,7 +117,8 @@ export const ArtifactCard = React.memo(function ArtifactCard({
     isDesktop ? 'desktop' : Platform.OS === 'ios' ? 'ios' : 'android',
   );
   const title = activeAttachment.title ?? activeAttachment.name;
-  const kindWord = format === 'document' ? activeAttachment.mimeType.toLowerCase() : format;
+  const kindWord = format === 'game' ? 'Interactive'
+    : format === 'document' ? activeAttachment.mimeType.toLowerCase() : format;
   const kindLine = `${activeAuthorHandle ? `@${activeAuthorHandle.replace(/^@/, '')} · ` : ''}${kindWord} · ${formatAttachmentSize(activeAttachment.size)}`;
   const openInBrowser = useCallback(
     () => void openArtifactInBrowserOrExplain(activeAttachment),

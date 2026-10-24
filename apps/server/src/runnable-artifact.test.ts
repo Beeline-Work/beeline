@@ -64,9 +64,9 @@ describe('runnable artifact host', () => {
       expect(shell).toContain("event.data !== 'beeline-start-game'");
       expect((await fetch(`${base}/v1/phone/identity`)).status).toBe(404);
       expect(calls).toBe(2);
-      expect(
-        (await fetch(`${base}/play/11111111-1111-4111-8111-111111111111?token=bad`)).status,
-      ).toBe(404);
+      const unavailable = await fetch(`${base}/play/11111111-1111-4111-8111-111111111111?token=bad`);
+      expect(unavailable.status).toBe(404);
+      expect(await unavailable.text()).toBe('This interactive link is unavailable. Close and reopen the artifact.');
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),

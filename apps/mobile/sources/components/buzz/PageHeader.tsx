@@ -3,6 +3,11 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { CHEVRON_BACK_SIZE, ChevronGlyph } from './ChevronGlyph';
 
+/** Shared title text for headers whose surrounding controls own the layout. */
+export function PageHeaderTitle(props: React.ComponentProps<typeof Text>) {
+  return <Text {...props} />;
+}
+
 export interface PageHeaderProps {
   /** The section's one title. */
   title: string;
@@ -69,13 +74,13 @@ export function PageHeader({
             {eyebrow}
           </Text>
         ) : null}
-        <Text
+        <PageHeaderTitle
           accessibilityRole="header"
           style={[styles.headerTitle, prominent && styles.headerHero]}
           testID={titleTestID}
         >
           {title}
-        </Text>
+        </PageHeaderTitle>
         {meta ? <Text style={styles.headerMeta}>{meta}</Text> : null}
       </View>
       {trailing ? (

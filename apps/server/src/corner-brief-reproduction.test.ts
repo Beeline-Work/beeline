@@ -24,6 +24,9 @@ describe('repository bugfix reproduction flag', () => {
     ['Stand-in: check\nReproduction not feasible: reason', true],
     ['Reproduction not feasible: \nStand-in: check', true],
     ['Reproduction not feasible: reason\nStand-in:', true],
+    ['## Reproduction\nRun the revise tool with the brief; it loses the approval link.', false],
+    ['## Reproduction R1\nThe revise call fails.', false],
+    ['## Reproduction\n## Other\nUnrelated text', true],
     ['', true],
   ])(
     'flags only a missing real-target reproduction or explained stand-in: %s',

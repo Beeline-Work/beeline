@@ -176,6 +176,12 @@ send trials. Both arms must use the same option, recorded in capture metadata.
 The Android driver rejects incoming/stream/send samples with no row commits:
 visibility after sampling alone cannot establish that the action was measured.
 
+After the timing run, `capture-row-updates.mjs <output>` exercises visible
+edits, server reactions and a real reaction toggle, verifies zero transcript
+commits while typing, checks the keyboard dock, and checks that an incoming
+message preserves an older visible reading anchor. It uses the same fixture,
+device, APK and control-port environment variables and retains screenshots.
+
 ## Persistent host execution on squire
 
 Use `systemd-run --user --wait --pipe --quiet bash -c '<host command>'` from

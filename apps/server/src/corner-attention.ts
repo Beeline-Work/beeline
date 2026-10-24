@@ -71,6 +71,8 @@ BEGIN
               AND (owed.expires_at IS NULL OR owed.expires_at>now())) THEN NULL
         ELSE clock_timestamp() END WHERE corner_id=corner;
     END IF;
+  ELSIF TG_TABLE_NAME='agent_schedules' THEN
+    corner=COALESCE(NEW.room_id,OLD.room_id);
   ELSE
     corner=COALESCE(NEW.corner_id,OLD.corner_id);
   END IF;
@@ -108,6 +110,9 @@ CREATE TRIGGER corner_state_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merg
 DROP TRIGGER IF EXISTS corner_state_owed ON corner_owed;
 CREATE TRIGGER corner_state_owed AFTER INSERT OR UPDATE OR DELETE ON corner_owed
  FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
+DROP TRIGGER IF EXISTS corner_state_schedule ON agent_schedules;
+CREATE TRIGGER corner_state_schedule AFTER INSERT OR UPDATE OR DELETE ON agent_schedules
+ FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 -- Preserve pending heads during the first deployment; subsequent migrations never reset their clock.
 UPDATE corner_attention_spans span SET ci_head=f.lifecycle->'pr'->>'headSha',
  ci_started_at=to_timestamp(COALESCE((f.lifecycle->'checksSummary'->>'updatedAt')::double precision,extract(epoch FROM now())))
@@ -123,13 +128,17 @@ type Row = CornerStateRow & {
   parent_id: string;
   last_state: string | null;
   episode: string;
+  scheduled_wait: boolean;
 };
 function attentionSql() {
   return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
     activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
-    span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text
+    span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,
+    EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
+      AND schedule.next_run_at>now()
+      AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) scheduled_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id
     ${cornerWorkSql()} ${cornerBlockerSql()}
@@ -144,7 +153,15 @@ export async function refreshCornerAttention(
   return db.transaction(async (tx) => {
     const row = (await tx.query<Row>(attentionSql(), [cornerId])).rows[0];
     if (!row) return;
-    const state = cornerRowState(row).state;
+    const displayed = cornerRowState(row).state;
+    const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
+    // Display deadlines identify stale work; pending CI and standing scheduled
+    // waits are not idle-alert episodes. Ending a wait can open a real episode.
+    const summary = row.lifecycle?.checksSummary;
+    const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' ||
+      (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
+    const suppressed = row.scheduled_wait || pendingHead;
+    const state = displayed === 'idle' && suppressed ? 'waiting' : displayed;
     const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
     await tx.query(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
@@ -159,7 +176,7 @@ export async function refreshCornerAttention(
         `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`,
         undefined,
         id,
-        { automatic: true, agentOnly: true },
+        { automatic: true, agentOnly: true, openingRoute: true },
       );
     }
     const now = Date.now();

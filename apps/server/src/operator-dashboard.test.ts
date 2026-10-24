@@ -218,6 +218,52 @@ describe('private operator dashboard', () => {
     ).toMatchObject({ count: 0, denominator: 1, dropOffCount: 1, dropOffRate: 1 });
     expect(value.usage.people.find((s: any) => s.stage === 'signup').count).toBe(1);
   });
+  it('R-first-session-screens: records new-signup first-session screens through HTTP and reads counts only', async () => {
+    const event = {
+      event: 'provider_tapped' as const, installId: randomUUID(), attemptId: randomUUID(),
+      platform: 'android' as const, provider: 'github' as const, version: '0.2.22',
+      environment: 'production' as const, timestamp: new Date().toISOString(),
+    };
+    await recordSigninFunnelEvent(db, event, 'server');
+    await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '1 minute'`);
+    const person = '9'.repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','New customer')`, [person]);
+    const app = createBeelineServer({
+      database: db,
+      auth: { authenticatePhone: async (value: string) => (value === 'phone-key-for-dashboard-test' ? person : null) } as TokenAuth,
+      phone: {} as PhoneService, daemon: {} as DaemonService, live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+    const appBase = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    const send = (data: unknown, authorized = true) => fetch(`${appBase}/v1/funnel/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(authorized ? { authorization: 'Bearer phone-key-for-dashboard-test' } : {}),
+      },
+      body: JSON.stringify({ ...event, timestamp: new Date().toISOString(), ...(data as object) }),
+    });
+    expect((await send({ event: 'signed_in' })).status).toBe(204);
+    const screen = { event: 'screen_shown', provider: undefined };
+    expect((await send({ ...screen, screen: 'beeline/tray' }, false)).status).toBe(401);
+    expect((await send({ ...screen, screen: 'beeline/chat/2f1c' })).status).toBe(400);
+    expect((await send({ ...screen, screen: 'beeline/tray', name: 'Ada' })).status).toBe(400);
+    expect((await send({ ...screen, screen: 'beeline/tray' })).status).toBe(204);
+    expect((await send({ ...screen, screen: 'beeline/chat/[channelId]' })).status).toBe(204);
+    const value = await (await get('?platforms=android')).json();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(value.signinFunnel.firstSession.days).toEqual([{
+      date: today, signups: 1, withScreens: 1,
+      screens: [
+        { screen: 'beeline/chat/[channelId]', reached: 1, last: 1 },
+        { screen: 'beeline/tray', reached: 1, last: 0 },
+      ],
+    }]);
+    expect(JSON.stringify(value.signinFunnel.firstSession)).not.toContain(event.installId);
+    expect(JSON.stringify(value.signinFunnel.firstSession)).not.toContain(person);
+    await new Promise<void>(resolve => app.close(() => resolve()));
+  });
   it('validates anonymous events at the HTTP boundary and rate limits without persisting personal fields', async () => {
     const input={event:'app_opened',installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android',version:'0.2.22',environment:'production',timestamp:new Date().toISOString()};
     const send=(data:unknown,ip='funnel-proof')=>fetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});

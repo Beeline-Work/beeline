@@ -2377,7 +2377,7 @@ CREATE TABLE IF NOT EXISTS signin_funnel_installs (
 CREATE TABLE IF NOT EXISTS signin_funnel_events (
   install_id uuid NOT NULL,
   attempt_id uuid NOT NULL,
-  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent')),
+  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown')),
   platform text NOT NULL CHECK (platform IN ('ios','android','web','macos','windows','linux')),
   version text NOT NULL,
   provider text NOT NULL DEFAULT '' CHECK (provider IN ('','github','google')),
@@ -2386,12 +2386,23 @@ CREATE TABLE IF NOT EXISTS signin_funnel_events (
   source text NOT NULL CHECK (source IN ('client','server')),
   occurred_at timestamptz NOT NULL,
   recorded_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(install_id,attempt_id,event,provider)
+  -- Allowlisted route pattern for screen_shown only; never a route value.
+  screen text NOT NULL DEFAULT '',
+  PRIMARY KEY(install_id,attempt_id,event,provider,screen)
 );
 CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
+ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS screen text NOT NULL DEFAULT '';
+DO $$ BEGIN
+  IF (SELECT array_length(conkey,1) FROM pg_constraint
+      WHERE conrelid='signin_funnel_events'::regclass AND contype='p') <> 5 THEN
+    ALTER TABLE signin_funnel_events DROP CONSTRAINT signin_funnel_events_pkey;
+    ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_pkey
+      PRIMARY KEY(install_id,attempt_id,event,provider,screen);
+  END IF;
+END $$;
 ALTER TABLE signin_funnel_events DROP CONSTRAINT IF EXISTS signin_funnel_events_event_check;
 ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_event_check
-  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent'));
+  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown'));
 CREATE TABLE IF NOT EXISTS signin_funnel_auth_flows (
   flow_hash text PRIMARY KEY,
   context jsonb NOT NULL,

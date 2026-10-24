@@ -1,5 +1,9 @@
-import { parseSigninFunnelEvent, FUNNEL_UUID } from '@beeline/api-contract/signin-funnel';
-import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
+import {
+  parseSigninFunnelEvent,
+  FUNNEL_FIRST_SESSION_MS,
+  FUNNEL_UUID,
+} from '@beeline/api-contract/signin-funnel';
+import type { FunnelScreen, SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 
 interface Store {
   getItem(key: string): Promise<string | null>;
@@ -87,7 +91,9 @@ export function createSigninFunnelClient(input: {
         context,
         provider: event.provider!,
         createdAt: value.createdAt as number,
-        sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 7),
+        ...(Number.isFinite(value.signedInAt) ? { signedInAt: value.signedInAt as number } : {}),
+        // Seven funnel steps plus at most one entry per first-session screen.
+        sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 64),
       };
     } catch {
       return null;
@@ -112,6 +118,7 @@ export function createSigninFunnelClient(input: {
     if (pending?.context.attemptId === base.attemptId) {
       if (pending.sent.includes(key)) return pending.context;
       pending.sent.push(key);
+      if (event === 'signed_in') pending.signedInAt = now();
       await input.storage.setItem(ATTEMPT_KEY, JSON.stringify(pending));
     } else {
       if (seen.has(key)) return base;
@@ -165,6 +172,30 @@ export function createSigninFunnelClient(input: {
       serial(() => step('callback_result', undefined, outcome, errorCode)),
     signedIn: (authorization: string) =>
       serial(() => step('signed_in', undefined, undefined, undefined, authorization)),
+    /** First visit to each screen in the 10 minutes after sign-in; route pattern only. */
+    screenShown: (screen: FunnelScreen, authorization: () => Promise<string | undefined>) =>
+      serial(async () => {
+        if (suppressed || input.environment !== 'production') return;
+        const pending = await readPending();
+        if (!pending?.signedInAt) return;
+        const elapsed = now() - pending.signedInAt;
+        if (elapsed < 0 || elapsed >= FUNNEL_FIRST_SESSION_MS) return;
+        const key = `${pending.context.attemptId}:screen_shown:${screen}`;
+        if (pending.sent.includes(key) || pending.sent.length >= 64) return;
+        const token = await authorization().catch(() => undefined);
+        if (!token) return;
+        pending.sent.push(key);
+        await input.storage.setItem(ATTEMPT_KEY, JSON.stringify(pending));
+        send(
+          {
+            ...pending.context,
+            event: 'screen_shown',
+            screen,
+            timestamp: new Date(now()).toISOString(),
+          },
+          token,
+        );
+      }),
     activation: (event: 'workspace_created' | 'first_message_sent', authorization: string) =>
       serial(() => step(event, undefined, undefined, undefined, authorization)),
     pending: () =>

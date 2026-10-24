@@ -154,3 +154,45 @@ it('keeps activation attribution after sign-in across a later session and sends 
   expect(milestones.map(event => event.event)).toEqual(['workspace_created', 'first_message_sent']);
   expect(milestones.every(event => event.attemptId === attempt?.attemptId)).toBe(true);
 });
+
+it('sends each screen once in the 10 minutes after sign-in, and none after', async () => {
+  const { input, send } = setup();
+  let time = Date.now();
+  input.now = () => time;
+  const timed = createSigninFunnelClient(input);
+  const auth = async () => 'session';
+  await timed.screenShown('beeline/tray', auth);
+  expect(send).not.toHaveBeenCalled();
+  const attempt = await timed.begin('github');
+  await timed.signedIn('session');
+  send.mockClear();
+  await timed.screenShown('beeline/tray', auth);
+  await timed.screenShown('beeline/tray', auth);
+  time += 9 * 60_000;
+  await createSigninFunnelClient(input).screenShown('beeline/chat/[channelId]', auth);
+  await createSigninFunnelClient(input).screenShown('beeline/tray', auth);
+  expect(send.mock.calls.map(([event]) => [event.event, event.screen])).toEqual([
+    ['screen_shown', 'beeline/tray'],
+    ['screen_shown', 'beeline/chat/[channelId]'],
+  ]);
+  for (const [event, authorization] of send.mock.calls) {
+    expect(parseSigninFunnelEvent(event)).not.toBeNull();
+    expect(event.attemptId).toBe(attempt?.attemptId);
+    expect(authorization).toBe('session');
+  }
+  time += 60_000;
+  await timed.screenShown('beeline/settings', auth);
+  await createSigninFunnelClient(input).screenShown('beeline/members', auth);
+  expect(send).toHaveBeenCalledTimes(2);
+});
+it('sends no screen event without a session', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  await client.signedIn('session');
+  send.mockClear();
+  await client.screenShown('beeline/tray', async () => undefined);
+  await client.screenShown('beeline/tray', async () => { throw new Error('signed out'); });
+  expect(send).not.toHaveBeenCalled();
+  await client.screenShown('beeline/tray', async () => 'session');
+  expect(send).toHaveBeenCalledTimes(1);
+});

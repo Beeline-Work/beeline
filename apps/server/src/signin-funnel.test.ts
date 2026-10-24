@@ -273,3 +273,72 @@ it('measures authenticated Workspace and first-message stages once per install a
   for (const stage of ['workspace_created', 'first_message_sent'])
     expect(result.perPlatform[0]?.stages.find(row => row.stage === stage)).toMatchObject({ count: 1 });
 });
+
+it('keeps first-session screens only for a new signup within 10 minutes, and reads out counts per cohort day', async () => {
+  const signup = async (identity: string) => {
+    const event = make({ event: 'provider_tapped', provider: 'github' });
+    await recordSigninFunnelEvent(db, event, 'server');
+    await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '1 minute' WHERE install_id=$1`, [event.installId]);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, [identity]);
+    await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', identity);
+    return { ...event, provider: undefined, event: 'screen_shown' as const };
+  };
+  const a = await signup('a'.repeat(64));
+  const b = await signup('b'.repeat(64));
+  const screens = async () => (await db.query(`SELECT install_id,screen FROM signin_funnel_events WHERE event='screen_shown' ORDER BY recorded_at`)).rows;
+  // Without a session, the server keeps nothing.
+  await recordSigninFunnelEvent(db, { ...a, screen: 'beeline/tray' }, 'client');
+  expect(await screens()).toEqual([]);
+  await recordSigninFunnelEvent(db, { ...a, screen: 'beeline/tray' }, 'client', 'a'.repeat(64));
+  await recordSigninFunnelEvent(db, { ...a, screen: 'beeline/tray' }, 'client', 'a'.repeat(64));
+  await recordSigninFunnelEvent(db, { ...a, screen: 'beeline/chat/[channelId]' }, 'client', 'a'.repeat(64));
+  await recordSigninFunnelEvent(db, { ...b, screen: 'beeline/tray' }, 'client', 'b'.repeat(64));
+  // A returning-account sign-in has no Signup row, so its screens are not kept.
+  const returning = make({ event: 'screen_shown', screen: 'beeline/tray' });
+  await recordSigninFunnelEvent(db, { ...returning, event: 'signed_in', provider: 'github', screen: undefined }, 'client', 'a'.repeat(64));
+  await recordSigninFunnelEvent(db, returning, 'client', 'a'.repeat(64));
+  expect(await screens()).toHaveLength(3);
+  // Ten minutes after that install's signed_in, screen events are dropped.
+  await db.query(`UPDATE signin_funnel_events SET occurred_at=occurred_at-interval '10 minutes 1 second' WHERE install_id=$1`, [b.installId]);
+  await recordSigninFunnelEvent(db, { ...b, screen: 'beeline/settings' }, 'client', 'b'.repeat(64));
+  expect((await screens()).map(r => r.screen)).not.toContain('beeline/settings');
+  const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
+  expect(result.firstSession).toEqual({
+    from: expect.any(String),
+    through: today(),
+    unit: 'people',
+    windowMinutes: 10,
+    source: expect.any(String),
+    days: [{
+      date: today(),
+      signups: 2,
+      withScreens: 2,
+      screens: [
+        { screen: 'beeline/tray', reached: 2, last: 1 },
+        { screen: 'beeline/chat/[channelId]', reached: 1, last: 1 },
+      ],
+    }],
+  });
+  expect(JSON.stringify(result.firstSession)).not.toContain(a.installId);
+  // Screen events stay out of the existing stage counts and series.
+  expect(result.perPlatform[0]?.series.some(s => s.stage === 'screen_shown')).toBe(false);
+});
+it('reads zero screens for signups from builds that send none', async () => {
+  const event = make({ event: 'provider_tapped', provider: 'google' });
+  await recordSigninFunnelEvent(db, event, 'server');
+  await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '1 minute'`);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, ['c'.repeat(64)]);
+  await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', 'c'.repeat(64));
+  const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
+  expect(result.firstSession.days).toEqual([{ date: today(), signups: 1, withScreens: 0, screens: [] }]);
+});
+it('upgrades a ledger keyed without screen so each screen gets its own row', async () => {
+  await db.query(`ALTER TABLE signin_funnel_events DROP CONSTRAINT signin_funnel_events_pkey`);
+  await db.query(`ALTER TABLE signin_funnel_events DROP COLUMN screen`);
+  await db.query(`ALTER TABLE signin_funnel_events ADD PRIMARY KEY(install_id,attempt_id,event,provider)`);
+  await migrate(db);
+  await migrate(db);
+  const key = (await db.query(`SELECT pg_get_constraintdef(oid) def FROM pg_constraint
+    WHERE conrelid='signin_funnel_events'::regclass AND contype='p'`)).rows[0];
+  expect(key?.def).toBe('PRIMARY KEY (install_id, attempt_id, event, provider, screen)');
+});

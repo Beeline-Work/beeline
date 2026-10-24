@@ -1,4 +1,4 @@
-import { useLayoutEffect } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 // Imported only by the explicitly instrumented build. Store samples in memory;
 // writing a log for every frame would distort the measurement.
@@ -15,6 +15,18 @@ export function useMeasuredCommit(kind, id) {
   useLayoutEffect(() => {
     if (!sample) return;
     sample.commits.push({ kind, id, atMs: performance.now() });
+  });
+}
+// Diagnostic builds only: identify the exact prop that crossed a memo boundary.
+export function useMeasuredPropCommit(kind, id, readProps) {
+  useMeasuredCommit(kind, id);
+  const previous = useRef(null);
+  useLayoutEffect(() => {
+    const props = readProps();
+    const entry = sample?.commits.at(-1);
+    if (entry?.kind === kind && entry.id === id)
+      entry.propsChanged = Object.keys(props).filter(key => !previous.current || !Object.is(previous.current[key], props[key]));
+    previous.current = props;
   });
 }
 globalThis.__transcriptSpeed = {

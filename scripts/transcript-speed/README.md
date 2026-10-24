@@ -182,6 +182,12 @@ commits while typing, checks the keyboard dock, and checks that an incoming
 message preserves an older visible reading anchor. It uses the same fixture,
 device, APK and control-port environment variables and retains screenshots.
 
+For diagnosis only, build with `BEELINE_TRANSCRIPT_PROP_TRACE=1` alongside the
+measurement flag. Row commits then record which props changed, and surface
+commits record changes to the renderer dependencies and transcript partitions.
+The embedded `propTrace` flag identifies these builds. Rebuild with prop tracing
+off for before/after timing; diagnostic captures are not acceptance timings.
+
 ## Persistent host execution on squire
 
 Use `systemd-run --user --wait --pipe --quiet bash -c '<host command>'` from

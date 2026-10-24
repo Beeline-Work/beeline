@@ -65,6 +65,7 @@ function mountGroups(roomId: string, groups: Groups) {
     renderer = create(React.createElement(View, { roomId, groups, capture }));
   });
   return {
+    selectedGroups: () => current,
     groupTexts: () => current.map((rows) => rows.map((message) => message.text)),
     texts: () => (current[0] ?? []).map((message) => message.text),
     authors: () => (current[0] ?? []).map((message) => message.author.name),
@@ -80,6 +81,20 @@ function mount(roomId: string, rows: readonly RoomViewMessage[]) {
 }
 
 describe('room message records', () => {
+  it('keeps selected windows stable across unrelated renders after a canonical row update', () => {
+    const source = [row('stable-window', 'Before', 1)];
+    const view = mountGroups('room-stable-window', [source]);
+    act(() => writeRoomMessage(SCOPE, 'room-stable-window', row('stable-window', 'Edited', 2)));
+    const edited = view.selectedGroups()[0];
+    view.updateGroups([source]);
+    expect(view.selectedGroups()[0]).toBe(edited);
+    expect(view.texts()).toEqual(['Edited']);
+    act(() => writeRoomMessage(SCOPE, 'room-stable-window', row('stable-window', 'Edited again', 3)));
+    expect(view.selectedGroups()[0]).not.toBe(edited);
+    expect(view.texts()).toEqual(['Edited again']);
+    view.unmount();
+  });
+
   it('settles a Room with a renamed author when message notifications refresh its turn selection', () => {
     const original = row('renamed-author', 'message');
     const stamp = currentSurfaceStamp();

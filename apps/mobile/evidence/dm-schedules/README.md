@@ -70,3 +70,22 @@ CI=1 ../node_modules/.bin/expo start --go --port 8209 --max-workers 2
 Reverse that port with the leased device's explicit adb selector and open
 `exp://127.0.0.1:8209`. Dismiss Expo's initial developer menu. Tap the schedule
 entry, then Grok Bot results. The standalone proof never ships as the app entry.
+
+## DM wording follow-up
+
+The first detail screenshot incorrectly said Where: this Room. The server now
+includes an optional `isDirectMessage` fact in the scheduled-work projection.
+The mobile list, location rows, detail facts, header/back label, fallback event
+triggers and empty-state creation guidance use that fact to say DM. A missing
+Room name alone does not imply a DM; old server projections retain Room wording.
+There are no create/edit forms on these pages; the empty-state instruction is
+the creation guidance, and the existing Stop action is unchanged.
+
+- `android-subscription-before-copy.png` preserves the wrong wording.
+- `android-subscription-masked.png` now shows Where: this DM.
+- `android-list.png` shows the DM header and this DM list attribution.
+- The rendered-page browser regression covers the list, schedule detail,
+  subscription detail and empty creation guidance; existing Room checks pass.
+- Follow-up checks: root typecheck and UI policy; mobile component/design tests
+  (41), rendered browser page tests (19), server tests (27), API contract tests
+  (508), all passed.

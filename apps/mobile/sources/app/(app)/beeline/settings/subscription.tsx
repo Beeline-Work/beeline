@@ -107,8 +107,8 @@ export default function Subscription() {
         <ScrollView contentContainerStyle={{ paddingBottom: 24 + insets.bottom }} testID="subscription-page">
           <ScheduledWorkFacts
             agents={[creatorName]}
-            runs={subscriptionRuns(subscription)}
-            where={subscriptionWhere(subscription, work?.roomName)}
+            runs={subscriptionRuns(subscription, work?.isDirectMessage)}
+            where={subscriptionWhere(subscription, work?.roomName, work?.isDirectMessage)}
             whereCorner={subscription.corner}
           />
           {subscription.source === 'webhook' && subscription.webhook ? (

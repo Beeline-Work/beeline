@@ -5,7 +5,7 @@ export const router = { push: href => navigate(href.pathname), back: () => navig
 export const useLocalSearchParams = () => ({roomId:'dm-fixture',workspaceId:'workspace-fixture',subscriptionId:'e5997c6a-fixture'});
 export const useFocusEffect = callback => useEffect(callback,[callback]);
 export const useSharedSurface = () => ({value:{
- roomName:null,agentNames:[['ruby','Ruby']],schedules:[],subscriptions:[{
+ isDirectMessage:true,roomName:null,agentNames:[['ruby','Ruby']],schedules:[],subscriptions:[{
  id:'e5997c6a-fixture',roomId:'dm-fixture',agentId:'ruby',source:'webhook',event:'webhook.called',
  title:'Grok Bot results',when:'On webhook call',prompt:'Receive Grok Bot results.',
  firedCount:0,createdAt:1792800000,

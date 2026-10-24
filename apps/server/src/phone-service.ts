@@ -5100,8 +5100,8 @@ export class PhoneService {
   private async readScheduledWork(roomId: string, viewerId: string): Promise<Output<'readScheduledWork'>> {
     await requireScheduledWorkManager(this.database, roomId, viewerId);
     const [room, schedules, subscriptions] = await Promise.all([
-      this.database.query<{ name: string | null; agent_id: string; agent_name: string }>(
-        `SELECT room.name, agent.id agent_id, agent.name agent_name
+      this.database.query<{ name: string | null; direct_participants: string[] | null; agent_id: string; agent_name: string }>(
+        `SELECT room.name, room.direct_participants, agent.id agent_id, agent.name agent_name
          FROM rooms room
          LEFT JOIN memberships member ON member.room_id=room.id AND member.removed_at IS NULL
          LEFT JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent'
@@ -5117,6 +5117,7 @@ export class PhoneService {
         : subscription));
     return {
       roomName: room.rows[0]?.name ?? null,
+      isDirectMessage: Boolean(room.rows[0]?.direct_participants),
       agentNames: room.rows.filter((row) => row.agent_id).map((row) => [row.agent_id, row.agent_name]),
       schedules: schedules.schedules,
       subscriptions: projectedSubscriptions,

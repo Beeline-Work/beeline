@@ -72,7 +72,7 @@ vi.mock('@/buzz/surface-storage', () => {
 });
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { resetClientState } from '@/sync/client-reset';
-import { scheduleTrigger, subscriptionTitle, subscriptionWhen } from '@/buzz/scheduled-work';
+import { scheduleTrigger, scheduleWhere, subscriptionWhere, subscriptionTitle, subscriptionWhen } from '@/buzz/scheduled-work';
 import ScheduledWork, { orderScheduledWork } from './schedules';
 import PromptSchedule from './schedule';
 import Subscription from './subscription';
@@ -280,4 +280,14 @@ it('keeps old subscription rows named and dates a one-time wake in local time', 
   const next = new Date(2026, 9, 23, 10);
   expect(scheduleTrigger({ maxRuns: 1, nextRunAt: next.getTime() / 1000 } as any, now))
     .toMatch(/^Tomorrow at 10:00 /);
+});
+
+
+it('uses the server DM flag for location and fallback trigger wording, not a missing Room name', () => {
+  expect(scheduleWhere({}, null, true)).toBe('this DM');
+  expect(subscriptionWhere({} as any, null, true)).toBe('this DM');
+  expect(scheduleWhere({}, null)).toBe('this Room');
+  expect(scheduleWhere({}, 'Room', false)).toBe('this Room');
+  expect(subscriptionWhen({ source: 'room', event: 'joined' } as any, true)).toBe('On someone joining this DM');
+  expect(subscriptionWhen({ source: 'room', event: 'other' } as any, true)).toBe('On an event in this DM');
 });

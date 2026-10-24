@@ -4,8 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 
 /** The only two places a Room's scheduled work can run. */
-export function ScheduledWorkWhere({ corner }: { corner?: { id: string; name: string } | null }) {
-  if (!corner) return <Text numberOfLines={1} style={styles.room}>this Room</Text>;
+export function ScheduledWorkWhere({ corner, isDirectMessage = false }: { corner?: { id: string; name: string } | null; isDirectMessage?: boolean }) {
+  if (!corner) return <Text numberOfLines={1} style={styles.room}>{isDirectMessage ? 'this DM' : 'this Room'}</Text>;
   return <View style={styles.corner}>
     <CornerGlyph size={CORNER_META_SIZE} />
     <Text numberOfLines={1} style={styles.name}>{corner.name}</Text>

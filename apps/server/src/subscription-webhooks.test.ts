@@ -174,6 +174,7 @@ describe('human DM scheduled-work management', () => {
         await expect(phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId }, actor)).rejects.toThrow();
       }
       const view = await phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER);
+      expect(view.isDirectMessage).toBe(true);
       expect(view.subscriptions.map(s => s.id)).toContain(hook.id);
       expect(view.subscriptions[0]!.webhook?.url).toContain(`/hooks/${hook.id}`);
       expect(view.subscriptions[0]!.recentCalls).toEqual([]);

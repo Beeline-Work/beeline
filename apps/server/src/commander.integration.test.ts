@@ -1695,3 +1695,70 @@ it('WAKE-STORM: a returned result answers a human order once across later delega
   expect((await phone.readRoom(DM,HUMAN))!.messages.filter(m=>m.author.pubkey===RUBY && m.presentation==='message').map(m=>m.text))
     .toEqual(['done: coordination finished']);
 });
+
+it('Reproduction SELF-1: orders itself in another Room and corner, refuses the current place', async () => {
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: 'ruby', text: 'Continue in the Room' }, RUBY);
+  const roomTurn = (await commands(ROOM, RUBY)).find(c => c.reason === 'order')!;
+  expect(roomTurn.source.body).toBe('Continue in the Room');
+  await claim(roomTurn);
+  await expect(daemon.execute('order', { ...authority(roomTurn), address: ROOM, agent: 'ruby', text: 'Recurse' }, RUBY))
+    .rejects.toThrow('current place');
+  const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    name: 'self-work', objective: 'Continue own work', implementer: 'ruby',
+    brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
+  await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Resume own corner' }, RUBY);
+  const ownCornerTurn = (await commands(opened.cornerId, RUBY)).find(c => c.reason === 'order')!;
+  expect(ownCornerTurn.source.body).toBe('Resume own corner');
+  await claim(ownCornerTurn);
+  await expect(daemon.execute('order', { ...authority(ownCornerTurn), address: opened.cornerId, text: 'Recurse' }, RUBY))
+    .rejects.toThrow('current place');
+  console.info('Demonstrated SELF-1: own Room and corner receive private orders; same-place recursion refused');
+});
+
+it('Reproduction SELF-1: cross-place self-tags wake, same-place self-tags do not, and ping-pong ends', async () => {
+  const opened = await open();
+  const post = async (turn: AgentCommand, cornerId: string) => daemon.execute('postCornerMessage', {
+    ...authority(turn), cornerId, text: '@ruby continue here',
+  }, RUBY);
+  expect((await post(order, ROOM)).woken).toEqual(['ruby']);
+  let turn = (await commands(ROOM, RUBY)).find(c => c.reason === 'agent_tag')!;
+  await claim(turn);
+  expect((await post(turn, ROOM)).woken).toEqual([]);
+  expect((await post(turn, opened.cornerId)).woken).toEqual(['ruby']);
+  turn = (await commands(opened.cornerId, RUBY)).find(c => c.reason === 'agent_tag')!;
+  await claim(turn);
+  expect((await post(turn, ROOM)).woken).toEqual(['ruby']);
+  turn = (await commands(ROOM, RUBY)).find(c => c.reason === 'agent_tag' && c.parentCommandId === turn.id)!;
+  await claim(turn);
+  expect((await post(turn, opened.cornerId)).notWoken).toContainEqual({ handle: 'ruby', reason: 'agent tag chain depth limit reached' });
+  console.info('Demonstrated SELF-1: public cross-place self-tags wake; same-place and depth-bound tags wake nobody');
+});
+
+it('Reproduction SELF-1: self-order ping-pong consumes the existing depth budget', async () => {
+  let turn = order;
+  for (const address of [ROOM, DM, ROOM]) {
+    await daemon.execute('order', { ...authority(turn), address, agent: 'ruby', text: 'Continue elsewhere' }, RUBY);
+    turn = (await commands(address, RUBY)).find(c => c.reason === 'order' && c.parentCommandId === turn.id)!;
+    await claim(turn);
+  }
+  await expect(daemon.execute('order', { ...authority(turn), address: DM, agent: 'ruby', text: 'Continue elsewhere' }, RUBY))
+    .rejects.toThrow('depth limit');
+});
+
+it('Reproduction SELF-2: own brief revision and background shell completion can finish silently', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await daemon.execute('postBackgroundToolCompletion', { ...authority(turn), toolCallId: 'shell', title: 'Run tests', status: 'completed' }, WORKER);
+  const shell = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'corner_background_tool')!;
+  await claim(shell);
+  await daemon.execute('markAgentTurnSilent', authority(shell), WORKER);
+  const own = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    idempotencyKey: 'own-revision', name: 'own-revision', objective: 'Continue own work', implementer: 'ruby',
+    brief: { spec: 'Continue own work', repositoryWork: false } }, RUBY);
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}'::jsonb)`, [own.cornerId, RUBY]);
+  await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: own.cornerId, expectedRevision: 1,
+    brief: { spec: 'Build the clarified widget', change: 'Clarify work' } }, RUBY);
+  const revision = (await commands(own.cornerId, RUBY)).find(c => c.reason === 'corner_brief_revision')!;
+  await claim(revision);
+  await daemon.execute('markAgentTurnSilent', authority(revision), RUBY);
+  console.info('Demonstrated SELF-2: completion and revision continuations accept silence without filler');
+});

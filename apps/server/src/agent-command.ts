@@ -1004,18 +1004,19 @@ export async function routeAgentResult(
   sourceId: string,
   speaker?: { roomId: string; agentId: string },
 ) {
-  const roomId = parent?.room_id ?? speaker?.roomId;
+  const addressedRoomId = speaker?.roomId ?? parent?.room_id;
   const agentId = parent?.agent_id ?? speaker?.agentId;
   const woken: string[] = [];
   const notWoken: { handle: string; reason: string }[] = [];
-  if (!roomId || !agentId) return { woken, notWoken };
-  const source = (await db.query<{ text: string }>(
-    `SELECT text FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3
+  if (!addressedRoomId || !agentId) return { woken, notWoken };
+  const source = (await db.query<{ text: string; room_id: string }>(
+    `SELECT text,room_id FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3
        AND presentation='message' AND deleted_at IS NULL`,
-    [sourceId, roomId, agentId],
+    [sourceId, addressedRoomId, agentId],
   )).rows[0];
   if (!source) return { woken, notWoken };
-  const mentions = await resolveCurrentMemberMentions(db, roomId, source.text, agentId);
+  const roomId = source.room_id;
+  const mentions = await resolveCurrentMemberMentions(db, roomId, source.text, parent && parent.room_id !== roomId ? undefined : agentId);
   for (const handle of typedMentionHandles(source.text)) {
     if (isChannelMentionToken(handle)) continue;
     if (!mentions.some(mention => mention.handle === handle))

@@ -3228,6 +3228,14 @@ export async function migrate(
      ON messages((card->>'machineId'),(card->>'ownerId'))
      WHERE card_type='machine-offline' AND card->>'status'='open'`,
   ));
+  // Reviewer recovery reads one successful sign-in without scanning transcript
+  // history on each reconciliation. Build outside the busy messages transaction.
+  await retryMigrationStep('agent sign-in recovery index', () => createIndexConcurrently(
+    database, 'messages_agent_sign_in_success_idx',
+    `CREATE INDEX CONCURRENTLY messages_agent_sign_in_success_idx
+     ON messages((card->>'agentId'),created_at DESC,id DESC)
+     WHERE card_type='agent-sign-in' AND card->>'status'='signed-in'`,
+  ));
   // The Needs-you tray finds undecided grant cards without reading transcripts.
   await retryMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',

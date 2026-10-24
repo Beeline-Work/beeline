@@ -83,7 +83,7 @@ it('R-GH-403: actual PR and discussion rate limits send no Sentry event; plain 4
       .filter(item => item.exception);
     expect(events).toHaveLength(2);
     expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
-      'GitHub PR checks failed: HTTP 403', 'GitHub pull request read failed: HTTP 403',
+      'GitHub PR checks GET /repos/owner/widgets/pulls/1 failed: HTTP 403', 'GitHub pull request read failed: HTTP 403',
     ]);
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 });

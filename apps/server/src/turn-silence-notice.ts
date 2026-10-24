@@ -227,7 +227,7 @@ export async function noteFirstSilence(
        LEFT JOIN agents configuration ON configuration.agent_id=agent.id
        WHERE command.room_id=$1 AND command.turn_request_id=$2 AND command.agent_id=$3
          AND command.action IN ('input','resume')
-         AND (command.private_payload IS NOT NULL OR $4::boolean) LIMIT 1`,
+         AND (command.private_payload IS NOT NULL OR command.review_context IS NOT NULL OR $4::boolean) LIMIT 1`,
         [
           input.roomId,
           input.requestId,
@@ -422,8 +422,11 @@ async function inscribeSilence(
   }
 
   let reportDelivered: boolean | undefined;
+  if (command?.review_context && !hiccupRestart && !updateRequeued)
+    await database.query(`UPDATE agent_commands SET review_context=review_context ||
+      jsonb_build_object('failureKind',$2::text) WHERE id=$1`, [command.id,renderClassified.kind]);
   if (
-    command?.private_payload &&
+    command && (command.private_payload?.kind === 'order' || Boolean(command.review_context)) &&
     !hiccupRestart &&
     !updateRequeued &&
     classified.kind !== 'offline'

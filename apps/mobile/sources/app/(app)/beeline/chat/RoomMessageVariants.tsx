@@ -105,7 +105,8 @@ export interface WritePermissionCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
+  /** The server's Workspace owner/admin decision (`viewer.permissions.manage`). */
+  viewerCanManage?: boolean;
   actionId: string | null;
   targetBranch?: string;
   roomName?: string;
@@ -118,7 +119,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   agent,
   viewerIsAgent,
   viewerPubkey,
-  viewerRole,
+  viewerCanManage = false,
   actionId,
   targetBranch,
   roomName,
@@ -130,16 +131,19 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
   const display = resolveAgentDisplayIdentity(permission.agentPubkey, agent);
   const pending = permission.status === 'pending';
   const busy = actionId === permission.permissionId;
+  // Squire spending is the spending agent's owner's call alone (the server
+  // names them on the card); other write requests go to the requester or a
+  // Workspace owner or admin, the same rule `decidePermission` enforces.
   const canDecide =
     !viewerIsAgent &&
-    (viewerPubkey === permission.requesterPubkey ||
-      viewerRole === 'admin' ||
-      viewerRole === 'owner');
+    (squireSpending
+      ? Boolean(permission.ownerPubkey) && viewerPubkey === permission.ownerPubkey
+      : viewerPubkey === permission.requesterPubkey || viewerCanManage);
   const footerNote = pending
-    ? !permission.repository ? 'missing target' : !canDecide || (squireSpending && viewerRole !== 'owner') ? 'waiting for the requester or Room owner' : undefined
+    ? !permission.repository ? 'missing target' : !canDecide ? squireSpending ? 'waiting for its owner' : 'waiting for the requester or a workspace admin' : undefined
     : approvalDecisionNote(permission.status, permission.decider, permission.decidedAt ?? message.timestamp, viewerPubkey);
   const actions: TranscriptCardAction[] =
-    pending && canDecide && permission.repository && (!squireSpending || viewerRole === 'owner')
+    pending && canDecide && permission.repository
       ? [
           {
             label: 'No',
@@ -233,7 +237,8 @@ export interface ConnectorOfferCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
+  /** The server's Workspace owner/admin decision (`viewer.permissions.manage`). */
+  viewerCanManage?: boolean;
   /** The offer whose acceptance is in flight. */
   actionId: string | null;
   onAccept(
@@ -318,7 +323,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   agent,
   viewerIsAgent,
   viewerPubkey,
-  viewerRole,
+  viewerCanManage = false,
   actionId,
   onAccept,
   onContinue,
@@ -332,7 +337,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
   const connecting = offer.status === 'connecting';
   const canAccept =
     !viewerIsAgent &&
-    (viewerPubkey === offer.addressee.pubkey || viewerRole === 'admin' || viewerRole === 'owner');
+    (viewerPubkey === offer.addressee.pubkey || viewerCanManage);
   const busy = actionId === offer.offerId;
   const actions: TranscriptCardAction[] =
     pending && canAccept

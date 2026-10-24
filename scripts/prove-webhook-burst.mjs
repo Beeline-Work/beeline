@@ -88,7 +88,7 @@ for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines]
  await admin.query('CREATE EXTENSION IF NOT EXISTS vector');await admin.query(`CREATE SCHEMA ${schema}`);
  const fixture=new PostgresDatabase('',1,{mode:'migration',pool:new Pool({connectionString:url,max:1,options:`-c search_path=${schema},public -c jit=off`})});
  let db,server,listener,deadlines,socket;const frames=[];
- const checkouts=[],slow=[],fingerprints=new Map();let measuring=false,activeQueries=0;
+ const checkouts=[],slow=[],fingerprints=new Map(),commandReads=new Map();let measuring=false,activeQueries=0;
  try {
  await migrate(fixture);
  await fixture.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'agent','Worker','worker'),($3,'agent','Peer','peer')`,[owner,worker,peer]);
@@ -106,7 +106,7 @@ for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines]
  pool.connect=async()=>{const began=performance.now();const client=await connect();if(measuring)checkouts.push(performance.now()-began);
   const query=client.query.bind(client),release=client.release.bind(client);
   client.query=async(...args)=>{const sql=typeof args[0]==='string'?args[0]:args[0].text;activeQueries++;
-   try{if(measuring&&lagMs)await pause(lagMs);return await query(...args)}finally{activeQueries--;if(measuring){const fp=hash(sql);fingerprints.set(fp,(fingerprints.get(fp)??0)+1);}}};
+   try{if(measuring&&lagMs)await pause(lagMs);return await query(...args)}finally{activeQueries--;if(measuring){const fp=hash(sql);fingerprints.set(fp,(fingerprints.get(fp)??0)+1);if(sql.includes('WITH recovery_scope AS MATERIALIZED'))commandReads.set(fp,sql);}}};
   client.release=(...args)=>{client.query=query;client.release=release;return release(...args)};return client;};
  db=new PostgresDatabase('',5,{pool});
  const live=new LiveHub(),phone=new PhoneService(db,'http://proof.invalid'),daemon=new DaemonService(db,live);
@@ -135,12 +135,16 @@ for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines]
   await Promise.all([...requests,...navigation]);
   await until(()=>activeQueries===0&&pool.waitingCount===0);await pause(200);await until(()=>activeQueries===0&&pool.waitingCount===0);
   const seconds=(performance.now()-started)/1000;
-  results[phase]={ordering,crossInstanceOrdering,requests:15,seconds,queryDelayMs:lagMs,poolSize:5,slowQueries:slow.length,slowQueriesPerMinute:slow.length*60/seconds,checkoutWaitP95Ms:percentile(checkouts),checkoutCount:checkouts.length,fingerprints:Object.fromEntries(fingerprints),inboxFrames:frames.filter(f=>f.type==='inbox').length};
+  results[phase]={ordering,crossInstanceOrdering,requests:15,seconds,queryDelayMs:lagMs,poolSize:5,slowQueries:slow.length,slowQueriesPerMinute:slow.length*60/seconds,checkoutWaitP95Ms:percentile(checkouts),checkoutCount:checkouts.length,fingerprints:Object.fromEntries(fingerprints),commandReadFingerprints:[...commandReads.keys()],inboxFrames:frames.filter(f=>f.type==='inbox').length};
   assert.equal(Number((await fixture.query('SELECT count(*) n FROM github_webhook_deliveries')).rows[0].n),15);
  }finally{measuring=false;console.warn=warn;}
  }finally{socket?.terminate();deadlines?.stop();await listener?.stop();if(server)await new Promise(resolve=>server.close(resolve));await db?.close();await fixture.close();await admin.query(`DROP SCHEMA ${schema} CASCADE`);}
 }
-for (const result of Object.values(results)) for (const fingerprint of ['d9831d171473d1fb','42b9a50d4e902175','ca61a04a12b9b235']) assert(result.fingerprints[fingerprint]>0);
+// Main may evolve command recovery SQL; still require the exact recovery path to execute.
+for (const result of Object.values(results)) {
+ assert(result.commandReadFingerprints.length>0);
+ for (const fingerprint of ['d9831d171473d1fb','ca61a04a12b9b235']) assert(result.fingerprints[fingerprint]>0);
+}
 await admin.end();console.log(JSON.stringify({reproduction:'R-WEBHOOK-BURST',results}));
 assert(results.after.checkoutWaitP95Ms<results.before.checkoutWaitP95Ms);
 assert(results.after.slowQueries<results.before.slowQueries);

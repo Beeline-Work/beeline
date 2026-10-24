@@ -1,0 +1,44 @@
+[
+  {
+    "phase": "before",
+    "state": "empty",
+    "fieldBounds": "[0,448][1080,551]",
+    "filterBounds": "[53,299][137,414]",
+    "query": "Search Rooms and direct messages",
+    "roomLabels": [
+      "#general",
+      "#proof"
+    ]
+  },
+  {
+    "phase": "before",
+    "state": "typed",
+    "fieldBounds": "[0,448][1080,551]",
+    "filterBounds": "[53,299][137,414]",
+    "query": "proof",
+    "roomLabels": [
+      "#proof"
+    ]
+  },
+  {
+    "phase": "after",
+    "state": "empty",
+    "fieldBounds": "[0,416][1080,531]",
+    "filterBounds": "[53,299][137,414]",
+    "query": "Search Rooms and direct messages",
+    "roomLabels": [
+      "#general",
+      "#proof"
+    ]
+  },
+  {
+    "phase": "after",
+    "state": "typed",
+    "fieldBounds": "[0,416][1080,531]",
+    "filterBounds": "[53,299][137,414]",
+    "query": "proof",
+    "roomLabels": [
+      "#proof"
+    ]
+  }
+]

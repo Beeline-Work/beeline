@@ -5,7 +5,7 @@ import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { VoiceBudgetStore } from './voice-budget.js';
 import { AgentVoiceService } from './agent-voice.js';
-import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -14,7 +14,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { systemLine, restateSystemLine, ensureSystemIdentity } from './system-line.js';
 import { searchInstitutionalHistory } from './institutional-history.js';
-import { routeHumanMessage } from './agent-command.js';
+import { routeAgentResult, routeHumanMessage, type CommandRow } from './agent-command.js';
 import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSearch, type VoiceSpeech, type VoiceSttFactory,
   OpenRouterVoiceBrain, openRouterWebSearch, AuraSpeech, fluxFactory, VOICE_MODEL, AURA_VOICES, savedAuraVoice } from './voice-providers.js';
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
@@ -482,7 +482,8 @@ export class VoiceService {
     return write;
   }
 
-  async recordAnswer(roomId: string, agentId: string, text: string) {
+  async recordAnswer(roomId: string, agentId: string, text: string,
+    options?: { replyId?: string; sourceId?: string; routeMentions?: boolean }) {
     text=text.trim();
     // Luna can render the same complete answer twice, formatted then plain.
     // Collapse only identical whole renditions separated by a paragraph break;
@@ -496,12 +497,21 @@ export class VoiceService {
     if (!text.trim()) return;
     await this.db.transaction(async database => {
       const physical = await prepareCornerCompatibility(database, roomId, agentId);
-      await (async function(this: { db: SqlDatabase }) {
-    await this.db.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
-      SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id
-      WHERE m.room_id=$2 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.archived_at IS NULL`,
-      [randomBytes(32).toString('hex'), roomId, agentId, text, VOICE_MODEL]);
-      }).call({ db: physical });
+      const messageId = options?.replyId
+        ? createHash('sha256').update(`voice-reply:${roomId}:${agentId}:${options.replyId}`).digest('hex')
+        : randomBytes(32).toString('hex');
+      const inserted = await physical.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
+        SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id
+        WHERE m.room_id=$2 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.archived_at IS NULL
+        ON CONFLICT(id) DO NOTHING RETURNING id`,
+        [messageId, roomId, agentId, text, VOICE_MODEL]);
+      if (!inserted.rowCount || options?.routeMentions === false || !text.includes('@')) return;
+      const parent = options?.sourceId ? (await physical.query<CommandRow>(
+        `SELECT command.* FROM voice_orders voice JOIN agent_commands command
+          ON command.source_message_id=voice.source_message_id AND command.agent_id=voice.agent_id
+         WHERE voice.source_message_id=$1 AND voice.agent_id=$2 AND command.room_id=$3
+         ORDER BY command.created_at DESC LIMIT 1`, [options.sourceId, agentId, roomId])).rows[0] : undefined;
+      await routeAgentResult(physical, parent, messageId, { roomId, agentId });
     });
   }
 

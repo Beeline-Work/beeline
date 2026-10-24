@@ -116,3 +116,11 @@ The reviewed concurrent admission could finish a later installation deletion bef
 The webhook queue now explicitly admits one delivery at a time. The regression passes with `suspended → revoked → repositories inactive`, leaving the installation revoked. `scripts/prove-webhook-burst.mjs` repeats this path through both built classes and asserts the before/after final state, alongside the fresh burst measurements above. This is serialization within each operations instance; no concurrent queue completion is described as arrival-order preservation.
 
 The same delayed suspension was also reproduced through two independent operations instances against real PostgreSQL: a local queue alone cannot order work on different machines. The suspension UPDATE now requires `status<>'revoked'`, so it cannot overwrite a deletion that another instance already committed. The built proof and the separate real-query regression both retain revoked installation status and inactive repositories after that interleaving.
+
+### Integration with current main
+
+The conflict resolution retains main’s newer reviewer recovery rules and passive-watch behavior alongside minute-cadence repair. The merge-recovery regression now locates the registered repair callback. Main also changes command recovery SQL, so the burst proof records the current command-read fingerprint and verifies that the recovery CTE executes in both phases; the production fingerprint mapping above remains historical evidence.
+
+The repeated Room-list proof still produces 110 full scans before and zero after, while preserving Working and archived-corner behavior.
+
+On the integrated head, the repeated burst proof acknowledged and stored all fifteen deliveries per phase. Slow queries per minute fell from 429.78 to 0.00, and pool-checkout p95 fell from 1596.41 ms to 0.08 ms under the same synthetic occupancy. The current command-read fingerprint is `855547fbb0ffa86c`. Both installation-ordering regressions pass.

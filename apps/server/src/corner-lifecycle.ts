@@ -5,7 +5,7 @@ import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
 import type { activeCornerHolds } from './corner-holds.js';
 import { createHash } from 'node:crypto';
-import type { CornerLifecycleContract, WorkflowTerminalState } from '@beeline/api-contract/daemon';
+import { classifyTurnSilence, isAuthShapedFault, type CornerLifecycleContract, type WorkflowTerminalState } from '@beeline/api-contract/daemon';
 import { cornerRunFromLifecycle, type CornerLifecycleView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -20,7 +20,6 @@ import { cornerImplementerSql } from './corner-worker.js';
 import {
   firstHealthyAgent,
   isCornerReviewer,
-  nextHealthyAgent,
   reviewerList,
 } from './agent-health.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
@@ -759,7 +758,7 @@ async function checksReported(
       sourceMessageId: event.sourceMessageId,
       reason: 'subscribed_event',
     });
-    if (!queued.command) {
+    if (!queued.command && !queued.blocked) {
       const reason = `the reviewer command could not be queued on ${headSha ?? 'this head'}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`;
       console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
       return noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId, reason);
@@ -900,6 +899,7 @@ async function ensureReviewDispatch(
     return noteReviewBlocked(db, cornerId, corner, pr.headSha,
       'the configured reviewer is unreachable or unhealthy', false);
   }
+  if (await reviewerStandingFailure(db, reviewerAgentId)) return OK;
   // A fresh source lets a recovered review wake follow an earlier completed
   // command from the same check fact. The lifecycle card remains the run state.
   const source = await systemLine(db, {
@@ -915,7 +915,7 @@ async function ensureReviewDispatch(
     sourceMessageId: source.id,
     reason: 'corner_review_dispatch',
   });
-  if (!queued.command) {
+  if (!queued.command && !queued.blocked) {
     const reason = `the reviewer command could not be queued on ${pr.headSha}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`;
     console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
     return noteReviewBlocked(db, cornerId, corner, pr.headSha, reason);
@@ -980,7 +980,8 @@ async function blockingReview(
 async function queueReviewerCommand(
   db: SqlDatabase,
   input: Parameters<typeof createAgentCommand>[1],
-): Promise<{ command?: CommandRow; error?: string }> {
+): Promise<{ command?: CommandRow; error?: string; blocked?: boolean }> {
+  if (await reviewerStandingFailure(db, input.agentId)) return { blocked: true };
   // The wake names the brief revision current at dispatch, so a reviewer
   // never reviews against a superseded one.
   const brief = (
@@ -993,8 +994,8 @@ async function queueReviewerCommand(
     `SELECT CASE WHEN lifecycle->'pr'->>'headSha' IS NOT NULL AND lifecycle->'pr'->>'number' IS NOT NULL
        THEN jsonb_build_object('headSha',lifecycle->'pr'->>'headSha',
        'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
-       'checks',${reviewChecksSql}) ELSE NULL END context
-     FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0],
+       'checks',${reviewChecksSql},'reviewerConfiguration',(${reviewerConfigurationSql('$3')})) ELSE NULL END context
+     FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0, input.agentId],
   )).rows[0]?.context;
   const prior = (await db.query<{ text: string }>(
     `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
@@ -1021,6 +1022,38 @@ async function queueReviewerCommand(
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { error: error instanceof Error ? error.message.slice(0, 160) : 'unknown dispatch error' };
   }
+}
+
+/** Only real recovery facts clear standing provider failures; elapsed time and
+ * a new PR/check event cannot repair credentials or a missing model. */
+function reviewerConfigurationSql(agent: string): string {
+  return `SELECT jsonb_build_object('harness',harness,'model',selected_model,'effort',selected_effort,
+    'unavailable',model_unavailable,'signIn',(SELECT card->>'attemptId' FROM messages
+      WHERE card_type='agent-sign-in' AND card->>'agentId'=${agent} AND card->>'status'='signed-in'
+      ORDER BY created_at DESC,id DESC LIMIT 1))
+    FROM agents WHERE agent_id=${agent}`;
+}
+
+async function reviewerStandingFailure(db: SqlDatabase, agentId: string): Promise<boolean> {
+  const failed = (await db.query<{ id: string; reason: string | null; kind: string | null }>(
+    `SELECT command.id,turn.failure_reason reason,command.review_context->>'failureKind' kind FROM agent_commands command
+     JOIN agent_turns turn ON turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+       AND turn.request_id=command.turn_request_id
+     WHERE command.agent_id=$1 AND command.review_context IS NOT NULL AND turn.status='failed'
+       AND (command.review_context->'reviewerConfiguration' IS NULL
+         OR command.review_context->'reviewerConfiguration'=(${reviewerConfigurationSql('$1')}))
+       AND NOT EXISTS (SELECT 1 FROM agent_turns recovered WHERE recovered.agent_id=$1
+         AND recovered.status='complete' AND recovered.created_at>turn.created_at)
+     ORDER BY turn.created_at DESC LIMIT 1`, [agentId],
+  )).rows[0];
+  if (!failed) return false;
+  // Legacy dispatches lack the snapshot. Capture it once, so a subsequent
+  // sign-in or model change can recover them without a retry timer.
+  await db.query(`UPDATE agent_commands SET review_context=review_context ||
+    jsonb_build_object('reviewerConfiguration',(${reviewerConfigurationSql('$2')}))
+    WHERE id=$1 AND NOT review_context ? 'reviewerConfiguration'`, [failed.id,agentId]);
+  return isAuthShapedFault(failed.reason ?? '') ||
+    ['wrong-model','allowance-spent','not-signed-in'].includes(failed.kind ?? classifyTurnSilence(failed.reason).kind);
 }
 
 /**
@@ -1071,13 +1104,16 @@ async function dispatchableListReviewer(
   headSha: string | null,
   failed?: string,
 ): Promise<string | undefined> {
-  const list = reviewerList({
+  const configured = reviewerList({
     reviewer_agent_id: corner.configured_reviewer_id,
     reviewer_fallback_ids: corner.reviewer_fallback_ids,
   }).filter(id => id !== corner.worker_agent_id);
-  const reviewerAgentId = failed
-    ? await nextHealthyAgent(db, corner.parent_id, list, failed)
-    : await firstHealthyAgent(db, corner.parent_id, list);
+  const list: string[] = [];
+  // Preserve the configured order before filtering standing failures. Removing
+  // the failed id first would lose its position and restart at the primary.
+  const candidates = failed ? configured.slice(configured.indexOf(failed) + 1) : configured;
+  for (const id of candidates) if (!await reviewerStandingFailure(db, id)) list.push(id);
+  const reviewerAgentId = await firstHealthyAgent(db, corner.parent_id, list);
   if (!reviewerAgentId) {
     await noteReviewerListExhausted(db, { cornerId, sourceMessageId, headSha });
     return undefined;
@@ -1171,7 +1207,7 @@ export async function reassignFailedCornerReviewer(
       sourceMessageId: input.requestId,
       reason: dispatch.reason,
     });
-    if (!queued.command)
+    if (!queued.command && !queued.blocked)
       await noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId,
         `the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`);
   });

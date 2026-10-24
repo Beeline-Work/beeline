@@ -75,6 +75,21 @@ it.each(['ordinary', 'tagged', 'threaded', 'private', 'private-agent', 'corner',
   },
 );
 
+
+it.each(['I posted nothing.', 'Nothing to post.', "I won't post to the Room.", 'NO_REPLY', 'No reply needed.'])(
+  'WAKE-STORM: a final silence declaration publishes nothing: %s', async text => {
+    for (const roomId of [R, C]) {
+      const queued = await createAgentCommand(db, { roomId, agentId: A, sourceMessageId: null, reason: 'system' });
+      const command = (await commands(A, roomId)).find(c => c.id === queued!.id)!;
+      await claim(command);
+      await result(command, text);
+      await result(command, text);
+      expect((await db.query('SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2', [command.turnRequestId,A])).rowCount).toBe(0);
+      expect((await db.query('SELECT completion_kind FROM agent_turns WHERE request_id=$1 AND agent_id=$2', [command.turnRequestId,A])).rows[0]?.completion_kind).toBe('no-reply');
+      await expect(result(command, text, 'wrong-generation')).rejects.toThrow('authority rejected');
+    }
+  });
+
 it('Reproduction cold-beebee-first-reply: paints every mentioned agent before helper pickup', async () => {
   await send('@hoots @goosy Hello');
   const before = await phone.readRoom(R, H);

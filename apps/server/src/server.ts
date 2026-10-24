@@ -34,9 +34,10 @@ import {
 import { bearer, GoogleSignInError, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
+  WORKSPACE_ADMIN_AUTHORITY_MESSAGE,
+  SPENDING_OWNER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_WALLET_AUTHORITY_MESSAGE,
-  TURN_REQUESTER_AUTHORITY_MESSAGE,
   PHONE_OPERATION_NAMES,
   YOLO_AUTHORITY_MESSAGE,
   MessageSearchTooBroadError,
@@ -669,7 +670,8 @@ export function createBeelineServer(options: ServerOptions): Server {
                   message.includes('command already completed') ||
                   message.includes('manager') ||
                   message.includes(AGENT_OWNER_AUTHORITY_MESSAGE) ||
-                  message.includes(TURN_REQUESTER_AUTHORITY_MESSAGE) ||
+                  message.includes(WORKSPACE_ADMIN_AUTHORITY_MESSAGE) ||
+                  message.includes(SPENDING_OWNER_AUTHORITY_MESSAGE) ||
                   message.includes('yolo cannot be enabled in a public workspace') ||
                   message.includes(YOLO_AUTHORITY_MESSAGE) ||
                   message.includes(CONNECTOR_OFFER_AUTHORITY_MESSAGE) ||

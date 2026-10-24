@@ -36,6 +36,7 @@ let pullBaseSha: string | undefined;
 let mainHead: string;
 let failMergeabilityRead: boolean;
 let workflowCount: number;
+let actionsEnabled: boolean;
 let registeredCount: number;
 let onWorkflowRead: (() => Promise<void>) | undefined;
 let workflowStatus: string;
@@ -105,6 +106,7 @@ beforeEach(async () => {
   mainHead = 'd'.repeat(40);
   failMergeabilityRead = false;
   workflowCount = 0;
+  actionsEnabled = true;
   registeredCount = 1;
   onWorkflowRead = undefined;
   workflowStatus = 'completed';
@@ -134,6 +136,7 @@ beforeEach(async () => {
       { message: 'Resource not accessible by integration' },
       { status: 403, headers: { 'x-github-request-id': 'sentry-1d', 'x-accepted-github-permissions': 'actions=read' } },
     );
+    if (url.endsWith('/actions/permissions')) return Response.json({ enabled: actionsEnabled });
     if (url.endsWith('/actions/workflows?per_page=1')) {
       await onWorkflowRead?.();
       return Response.json({ total_count: workflowCount });
@@ -980,6 +983,25 @@ describe('zero-check worker completion', () => {
     expect(after.reviewer).toEqual(['subscribed_event']);
     expect(after.worker).toEqual([]);
   });
+
+  it('Reproduction ACTIONS-OFF: disabled Actions with workflow files reaches review and merge approval', async () => {
+    rollupState = null;
+    workflowCount = 2;
+    actionsEnabled = false;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
+    expect(after.reviewer).toEqual(['subscribed_event']);
+    await daemon.execute('approveCornerMerge', { cornerId: C, headSha: SHA }, REVIEWER);
+    expect(await gate()).toMatchObject({ checkCount: 0, approved: true, mergeAllowed: true });
+    rollupState = 'SUCCESS';
+    rollupContexts = { totalCount: 0, nodes: [] };
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['external-ci'];
+    expect(await gate()).toMatchObject({ checks: 'pending', mergeAllowed: false });
+    console.info('ACTIONS-OFF: worker handoff reaches review; approved zero-check head mergeable; missing external CI blocks');
+  }, 20_000);
 
   it('Reproduction ZC-REGISTRATION: does not wake review before delayed checks register', async () => {
     rollupState = null;

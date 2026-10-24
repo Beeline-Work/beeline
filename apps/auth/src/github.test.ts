@@ -1326,7 +1326,7 @@ it.each(['primary', 'secondary', 'plain', 'invalid', 'reset-with-budget'])(
       } else expect(error.retryAfter).toBeNull();
     }
     // Long waits belong to the durable queue; no immediate request retries.
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   },
 );
 

@@ -3258,6 +3258,34 @@ export class DaemonService {
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
+    if (!row) {
+      // A dispatched review lends access to current brief citations only.
+      // Keep this separate from Room access and requester-derived authority.
+      row = (await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
+        `SELECT substring(message.text FROM $4::integer + 1 FOR 4000) body,
+                char_length(message.text) total,message.attachments
+         FROM messages message
+         JOIN rooms corner ON corner.id=$1 AND corner.archived_at IS NULL
+         JOIN rooms source ON source.id=message.room_id AND source.workspace_id=corner.workspace_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN LATERAL (SELECT * FROM corner_brief_revisions
+           WHERE corner_id=corner.id ORDER BY revision DESC LIMIT 1) brief
+           ON brief.source_room_id=message.room_id
+         WHERE message.id=$3 AND message.deleted_at IS NULL AND message.presentation='message'
+           AND (message.id=brief.source_message_id
+             OR message.id=brief.approval_basis->>'sourceMessageId'
+             OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(brief.intent_verbatim,'[]'::jsonb)) intent
+               WHERE intent->>'sourceMessageId'=message.id))
+           AND EXISTS(SELECT 1 FROM agent_commands command
+             WHERE command.room_id=corner.id AND command.agent_id=$2
+               AND command.state IN ('pending','claimed') AND command.review_context IS NOT NULL
+               AND command.review_context->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+               AND command.review_context->'pullRequest'=fact.lifecycle->'pr'->'number'
+               AND command.review_context->>'briefRevision'=brief.revision::text)
+         LIMIT 1`,
+        [input.roomId,agentId,input.messageId,offset],
+      )).rows[0];
+    }
     if (!row && this.authorizedCommand?.room_id === input.roomId) {
       const authority = (
         await this.database.query<{ workspace_id: string; requester_identity_id: string }>(

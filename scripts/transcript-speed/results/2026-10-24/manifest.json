@@ -1,0 +1,34 @@
+[
+  {
+    "file": "web/host.json.gz",
+    "uncompressedSha256": "f782a3119d86efbfb02bb5a26c9b904fa033bcfcd189b5092bf11f7d758cd08d"
+  },
+  {
+    "file": "web/overhead/capture.json.gz",
+    "uncompressedSha256": "104a0b474685dd41d3a2031660a7a11dd2b18d6e4a89a3734e1def1802d228d4"
+  },
+  {
+    "file": "web/scenarios/capture.json.gz",
+    "uncompressedSha256": "82ff28311a83015c32233c440f5134bd4c75019dbe700699442606461853c959"
+  },
+  {
+    "file": "web/opens/capture.json.gz",
+    "uncompressedSha256": "430f80b700c4a84061989bb399cfcac4d6705e34882ce0595cfefa815dfa5f7b"
+  },
+  {
+    "file": "desktop/host.json.gz",
+    "uncompressedSha256": "c7c212874a7fe1bc01dc3906ae0cb8619171b18f23860502ac1e0bcd41a92746"
+  },
+  {
+    "file": "desktop/overhead/capture.json.gz",
+    "uncompressedSha256": "fb19b8fc2755eaf63784c50c4d7e16caa90cea2224b0ad928e8c3974e4b1ff2e"
+  },
+  {
+    "file": "desktop/scenarios/capture.json.gz",
+    "uncompressedSha256": "7c09907fecfb8c8670d8cdd8d836cb07b0c74e5c594740d6281e22931a3dfc9c"
+  },
+  {
+    "file": "desktop/opens/capture.json.gz",
+    "uncompressedSha256": "aefd4ad8b1759df4eddd083bc94c73540acc340e1653095472f86270a01992a4"
+  }
+]

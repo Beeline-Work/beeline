@@ -11,6 +11,10 @@ let md = '# Transcript speed baseline\n\n';
 md += 'Local fixture only, three trials per interaction and open variant; twenty-one individual keystrokes. Android is an emulator, web is a narrow production export, and desktop is the packaged Tauri binary. None establishes physical-phone performance.\n\n';
 md += 'Frame intervals are pooled across trials. Android UI percentiles are the median of each trial’s HWUI histogram percentile, not pooled quantiles. HWUI jank and missed JavaScript animation opportunities are different measures. Browser animation callbacks observe main-thread/render scheduling together; separate compositor timings and physical scanout are not measured.\n\n';
 for (const [index, directory] of [androidDir, webDir, desktopDir].entries()) {
+  if (directory === '-') {
+    md += `## ${['Android release emulator', 'Narrow production web', 'Packaged Tauri desktop'][index]}\n\n| Status | Evidence |\n| --- | --- |\n| Incomplete | No accepted capture supplied. See run notes for the exact blocker; no baseline is inferred. |\n\n`;
+    continue;
+  }
   const run = await read(path.join(directory, 'scenarios/capture.json'));
   const opens = await read(path.join(directory, 'opens/capture.json'));
   const label = ['Android release emulator', 'Narrow production web', 'Packaged Tauri desktop'][index];

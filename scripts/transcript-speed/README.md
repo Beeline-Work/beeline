@@ -141,3 +141,7 @@ Paired browser overhead measures active sampling versus inactive sampling with
 the measurement hooks installed in both arms; total hook/build overhead remains
 unquantified. Short memory growth is evidence for investigation, not proof of a
 leak.
+
+## Retained baseline
+
+[Platform tables and measured ranking](results/2026-10-24/BASELINE.md) and [run notes, limitations and native blockers](results/2026-10-24/RUN-NOTES.md). The report command accepts `-` for an explicitly missing platform; this produces an incomplete row, never inferred measurements.

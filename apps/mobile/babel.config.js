@@ -21,6 +21,9 @@ module.exports = function (api) {
   return {
     presets: ['babel-preset-expo'],
     plugins: [
+      ...(process.env.BEELINE_TRANSCRIPT_MEASURE === '1'
+        ? [require.resolve('../../scripts/transcript-speed/commits.cjs')]
+        : []),
       ['react-native-unistyles/plugin', { root: 'sources' }],
       workletsPlugin // Must be last - automatically selects correct plugin for version
     ],

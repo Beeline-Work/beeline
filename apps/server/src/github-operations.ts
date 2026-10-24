@@ -2355,9 +2355,57 @@ export class GitHubOperations {
     }
   }
 
+  /**
+   * Re-read open corners still stored as pending. A deploy uses this so a head
+   * whose only unfinished suites are empty app placeholders moves on without
+   * waiting for another check event. Corners that are actually still running
+   * stay pending. One pass; a rate limit stops the pass and the next leader
+   * tries again.
+   */
+  async refreshOpenPendingChecks(): Promise<void> {
+    const rows = await this.database.query<CornerWebhookTarget & {
+      repository: string; pr_number: string; head_sha: string;
+    }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
+        '' AS summary,fact.owner_agent_id author_id,github.full_name repository,
+        github.repository_id,github.installation_id,
+        fact.lifecycle->'pr'->>'number' pr_number,
+        fact.lifecycle->'pr'->>'headSha' head_sha
+      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+      JOIN rooms parent ON parent.id=corner.parent_id
+      JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+        AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+          COALESCE(parent.repository_remote,parent.repository_key,''),
+          '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+      WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+        AND fact.lifecycle->>'checks'='pending'
+        AND fact.owner_agent_id IS NOT NULL
+        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+        AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
+      ORDER BY fact.updated_at LIMIT 100`);
+    for (const target of rows.rows) {
+      try {
+        await this.refreshCheckRollup(
+          { ...target, has_pr: true, pr_number: target.pr_number },
+          target.repository,
+          { name: 'Pull request checks', status: 'pending', headSha: target.head_sha },
+          this.database,
+          { quiet: true },
+        );
+      } catch (error) {
+        if (error instanceof GitHubHttpError && error.rateLimited) {
+          console.error('[github] pending check re-read stopped on a rate limit');
+          return;
+        }
+        captureServerError(error, { background_job: 'github-pending-checks' });
+        console.error('[github] pending check re-read failed:', error);
+      }
+    }
+  }
+
   private async refreshCheckRollup(
     target: CornerWebhookTarget & { has_pr?: boolean; pr_number?: string | null }, repository: string,
     check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
+    options?: { quiet?: boolean },
   ) {
     const checkHeadSha = check.headSha!;
     let fetchStartedAt = 0;
@@ -2511,6 +2559,7 @@ export class GitHubOperations {
           // on a failure, so the implementer knows what to fix and a passing
           // check can never be described as the failure.
           const failing = reportFailure && newFailures.length ? newFailures : summary.failing?.length ? summary.failing : [check.name];
+          if (!options?.quiet || becamePassing || becameFailing)
           await this.systemNote(
             target.corner_id,
             target.author_id,

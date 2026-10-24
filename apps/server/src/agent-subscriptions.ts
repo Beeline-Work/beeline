@@ -12,6 +12,7 @@ import { scheduleWorkflowName } from './workflow-admin.js';
 import { connectedProviderApp, providerForEvent, queueProviderWebhook,
   providerEventIsAvailable, retireUnusedProviderWebhook } from './provider-webhooks.js';
 import { notifyConnectorHelper } from './postgres-live.js';
+import { repositorySubscriptionLine } from './repository-subscription-line.js';
 
 export const AGENT_SUBSCRIPTIONS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_subscriptions (
@@ -476,8 +477,7 @@ export async function fireRepositorySubscriptions(
       if (!current) return false;
       const line = await systemLine(tx, {
         id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
-        verb: 'received', object: 'a repository event', consequence: eventName,
+        ...repositorySubscriptionLine(eventName, repository, details),
         kind: 'subscription-fired', payload, wakes: [row.agent_id],
         subscriptionPrompt: current.prompt, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,
       });

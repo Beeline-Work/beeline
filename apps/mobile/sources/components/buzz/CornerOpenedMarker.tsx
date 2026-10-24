@@ -1,8 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 
-import { LEDGER_MARGINALIA_WIDTH } from './Ledger';
 import { RepositoryLifecycleRow } from './PrLifecycleCard';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleItem } from '@/buzz/pr-lifecycle';
@@ -21,7 +19,7 @@ export function CornerOpenedMarker({
   testID?: string;
 }) {
   return (
-    <View style={styles.line}>
+    <View>
       <RepositoryLifecycleRow
         glyph
         testID={testID}
@@ -42,11 +40,6 @@ export function CornerOpenedMarker({
   );
 }
 
-const styles = StyleSheet.create(() => ({
-  // Clear of the Ledger's timestamp column, like the message it hangs off.
-  line: { paddingRight: LEDGER_MARGINALIA_WIDTH },
-}));
-
 /** Each requested corner keeps its own visible line and stable key. */
 export function CornerOpenedMarkers({
   message,
@@ -63,7 +56,7 @@ export function CornerOpenedMarkers({
   });
   if (!items.length) return null;
   return (
-    <View style={styles.line}>
+    <View>
       {items.map((item) => (
         <RepositoryLifecycleRow
           key={item.id}

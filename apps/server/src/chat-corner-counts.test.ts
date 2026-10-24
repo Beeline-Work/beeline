@@ -20,12 +20,12 @@ describe('chat corner counts', () => {
       row({}, 'working'),
       { ...row({ checks: 'pending', pr: { url: 'https://github.com/example/repo/pull/1', number: 1 } } as any), ci_started_at: new Date() },
     ]);
-    expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 3 });
+    expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 2 });
     expect(result.get('room')?.openCorners.map((corner) => corner.state)).toEqual([
       'waiting',
       'waiting',
       'working',
-      'waiting',
+      'review',
     ]);
   });
   it('marks corners the viewer follows or that owe them something', () => {

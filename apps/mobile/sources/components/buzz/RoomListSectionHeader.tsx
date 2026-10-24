@@ -20,7 +20,7 @@ export function RoomListSectionHeader({
   title,
   inset = 'screen',
   spacing = 'section',
-  surface = 'screen',
+  surface = 'inherit',
   count,
   actionAccessibilityLabel,
   actionTestID,
@@ -40,10 +40,11 @@ export function RoomListSectionHeader({
   /** Flush when the surrounding section already supplies its vertical gap. */
   spacing?: 'section' | 'flush';
   /**
-   * `sheet` drops the screen fill so the header takes the sheet's own surface
-   * instead of a pale band. Not for sticky headers: rows would show through.
+   * Ordinary labels inherit their container. Sticky headers must opt into an
+   * opaque screen fill (or supply one on their surrounding sticky row).
+   * `sheet` preserves the existing sheet spacing while inheriting its fill.
    */
-  surface?: 'screen' | 'sheet';
+  surface?: 'inherit' | 'screen' | 'sheet';
   testID?: string;
   actionDisabled?: boolean;
   count?: number;
@@ -59,6 +60,7 @@ export function RoomListSectionHeader({
     <View
       style={[
         styles.sectionHeader,
+        surface === 'screen' && styles.screenSurface,
         inset === 'content' && styles.contentInset,
         inset === 'row' && styles.rowInset,
         inset === 'sheet' && styles.sheetInset,
@@ -151,9 +153,9 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: hull.space.lg,
       paddingBottom: hull.space.xs,
       paddingHorizontal: hull.space.md,
-      backgroundColor: hull.bgTerminal,
     },
     phoneSpacing: { paddingTop: hull.space.md },
+    screenSurface: { backgroundColor: hull.bgTerminal },
     actionSpacing: { paddingTop: 0, paddingBottom: 0, minHeight: 44 },
     contentInset: { paddingHorizontal: 0 },
     rowInset: { paddingHorizontal: hull.space.sm },

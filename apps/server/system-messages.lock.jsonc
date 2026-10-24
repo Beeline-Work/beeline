@@ -1,4 +1,5 @@
 // Static Room openings and ordinary corner PR events approved by lunchboxfortwo, messages d331599d and 810c1361 (go), brief revision 2; opening metadata, PR corner destinations, and replacement of the Room completion producer only. Existing wording unchanged.
+// Repository subscription GitHub item links approved by lunchboxfortwo, message 3a86f53dcb0ae80cb1b8c88c23d8c9a3cfb4efaeb3ff2157735300ef212b20b0 (brief revision 1); repository producer and transitive GitHub service-name literal snapshots only.
 // Workspace bootstrap failure classification approved by lunchboxfortwo, message 763d8e665ec25825aa5d743f9354bf1d85d644695a0868868363e0c8ca1620a1 (yes to dc2b6595424352a29596120be6b9c92ac48797767d42672b19434011da7e3e6c); PR #2842, two inscribeSilence entries only.
 // Approval language alignment approved by lunchboxfortwo, message b4cce318d8678714e46c5f81e7e0bcdc489a94369e6e9aaf09f69a504dfbdf53 (brief revision 4); Squire decision snapshots only.
 // Approval-card anatomy and decisions approved by lunchboxfortwo, message d521a13a (mock 52a31072; brief revision 3); associated card, mutation and wrapper snapshots only.
@@ -602,27 +603,47 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-subscriptions.ts:fireRepositorySubscriptions:systemLine:3c94df8dfc94cb6f",
+    "id": "src/agent-subscriptions.ts:fireRepositorySubscriptions:systemLine:15b2bcb15113dae2",
     "file": "apps/server/src/agent-subscriptions.ts",
     "kind": "systemLine",
-    "template": "systemLine(tx, {\n    id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },\n    verb: 'received', object: 'a repository event', consequence: eventName,\n    kind: 'subscription-fired', payload, wakes: [row.agent_id],\n    subscriptionPrompt: current.prompt, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,\n})",
+    "template": "systemLine(tx, {\n    id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,\n    ...repositorySubscriptionLine(eventName, repository, details),\n    kind: 'subscription-fired', payload, wakes: [row.agent_id],\n    subscriptionPrompt: current.prompt, subscriptionWorkflowSlug: current.workflow_slug ?? undefined,\n})",
     "literals": [
+      "' '",
       "''",
-      "'Beeline'",
-      "'a repository event'",
+      "'GitHub'",
+      "'closed issue'",
+      "'closed pull request'",
       "'closed'",
+      "'github'",
       "'hex'",
       "'issue'",
+      "'issue.closed'",
+      "'issue.opened'",
+      "'issue.reopened'",
       "'issues'",
+      "'merged pull request'",
       "'number'",
       "'object'",
+      "'opened issue'",
+      "'opened pull request'",
       "'pull_request'",
-      "'received'",
+      "'pull_request.closed'",
+      "'pull_request.opened'",
+      "'pull_request.reopened'",
+      "'reopened issue'",
+      "'reopened pull request'",
       "'repository'",
       "'sha256'",
+      "'star.'",
+      "'star.created'",
+      "'star.deleted'",
+      "'starred'",
       "'string'",
-      "'system'",
+      "'unstarred'",
+      "`#${details.number}`",
       "`${event === 'issues' ? 'issue' : event}.${action}`",
+      "`${title.slice(0, 79).trimEnd()}…`",
+      "`https://github.com/${repository}`",
       "`subscription:${deliveryId}:${row.id}`"
     ],
     "occurrences": 1
@@ -4123,6 +4144,7 @@
     "literals": [
       "' '",
       "''",
+      "'GitHub'",
       "'NFKD'",
       "'[]'",
       "'_'",
@@ -4953,6 +4975,7 @@
     "literals": [
       "' '",
       "''",
+      "'GitHub'",
       "'NFKD'",
       "'_'",
       "'agent'",
@@ -4985,6 +5008,7 @@
       "' '",
       "''",
       "'Approve'",
+      "'GitHub'",
       "'NFKD'",
       "'Use your passkey for'",
       "'Vouch for'",

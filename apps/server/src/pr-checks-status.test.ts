@@ -282,8 +282,8 @@ describe('PR-scoped check gate', () => {
     rollupContexts = {
       totalCount: 2,
       nodes: [
-        { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS' },
-        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED' },
+        { __typename: 'CheckRun', name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', checkSuite: { app: { databaseId: 15368 } } },
+        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
       ],
     };
     await operations.processWebhook('check_run', {
@@ -325,7 +325,7 @@ describe('PR-scoped check gate', () => {
     rollupContexts = {
       totalCount: 1,
       nodes: [
-        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED' },
+        { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
       ],
     };
     await operations.refreshOpenPendingChecks();
@@ -334,6 +334,24 @@ describe('PR-scoped check gate', () => {
       [AUTHOR],
     )).rows[0]?.checks).toBe('passing');
     expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(1);
+  });
+
+  it('Reproduction EMPTY-SUITE-1: a same-name success from another app leaves the required check pending', async () => {
+    suiteStatus = 'queued';
+    suiteRuns = 0;
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['lint'];
+    rollupContexts = {
+      totalCount: 1,
+      nodes: [{
+        __typename: 'CheckRun',
+        name: 'lint',
+        status: 'COMPLETED',
+        conclusion: 'SUCCESS',
+        checkSuite: { app: { databaseId: 999 } },
+      }],
+    };
+    expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
   });
 
   it('Reproduction EMPTY-SUITE-1: a missing required check stays pending', async () => {

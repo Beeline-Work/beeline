@@ -340,24 +340,52 @@ function suiteHasUnfinishedRuns(item: unknown): boolean {
   return count > 0;
 }
 
-function requiredContextNames(body: Record<string, unknown>): string[] {
+/** A branch-protection requirement. `appId` null accepts the context from any GitHub App. */
+type RequiredCheck = { readonly name: string; readonly appId: number | null };
+
+/**
+ * `checks` carries the GitHub App that must report each context. The legacy
+ * `contexts` list is only the names, so it must not widen an app-pinned check
+ * into a match against any app.
+ */
+function requiredChecks(body: Record<string, unknown>): RequiredCheck[] {
   const checks = body.checks;
   const contexts = body.contexts;
   if (!Array.isArray(checks) && !Array.isArray(contexts))
     throw new Error('GitHub required status checks are invalid');
-  const names = new Set<string>();
+  const required: RequiredCheck[] = [];
+  const named = new Set<string>();
   if (Array.isArray(checks)) {
     for (const check of checks) {
       if (!check || typeof check !== 'object' || Array.isArray(check)) continue;
       const context = (check as { context?: unknown }).context;
-      if (typeof context === 'string' && context) names.add(context);
+      if (typeof context !== 'string' || !context) continue;
+      const rawApp = (check as { app_id?: unknown }).app_id;
+      // -1 is GitHub's explicit "any app". Null and omission mean the same.
+      const appId = typeof rawApp === 'number' && Number.isSafeInteger(rawApp) && rawApp > 0
+        ? rawApp
+        : null;
+      required.push({ name: context, appId });
+      named.add(context);
     }
   }
   if (Array.isArray(contexts)) {
-    for (const context of contexts)
-      if (typeof context === 'string' && context) names.add(context);
+    for (const context of contexts) {
+      if (typeof context === 'string' && context && !named.has(context))
+        required.push({ name: context, appId: null });
+    }
   }
-  return [...names];
+  return required;
+}
+
+/** REST `app.id` is GraphQL `App.databaseId` on the check run's suite. */
+function checkRunAppId(context: Record<string, unknown>): number | null {
+  const suite = context.checkSuite;
+  if (!suite || typeof suite !== 'object' || Array.isArray(suite)) return null;
+  const app = (suite as { app?: unknown }).app;
+  if (!app || typeof app !== 'object' || Array.isArray(app)) return null;
+  const id = (app as { databaseId?: unknown }).databaseId;
+  return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 export interface GitHubCheckRollup {
@@ -860,7 +888,7 @@ export class GitHubAppClient {
           repository(owner:$owner,name:$name){object(expression:$expression){... on Commit{
             oid statusCheckRollup{state contexts(first:100){totalCount nodes{
               __typename
-              ... on CheckRun{name status conclusion detailsUrl}
+              ... on CheckRun{name status conclusion detailsUrl checkSuite{app{databaseId}}}
               ... on StatusContext{context state description targetUrl}
             }}}
           }}}
@@ -894,6 +922,7 @@ export class GitHubAppClient {
     if (!contexts || typeof contexts.totalCount !== 'number' || !Array.isArray(contexts.nodes)) {
       throw new Error('GitHub commit check rollup contexts are invalid');
     }
+    const reported: { name: string; appId: number | null }[] = [];
     const checks = contexts.nodes.flatMap((value) => {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
       const context = value as Record<string, unknown>;
@@ -915,6 +944,8 @@ export class GitHubAppClient {
             : 'pending';
       const conclusion = isRun ? context.conclusion : context.description;
       const url = isRun ? context.detailsUrl : context.targetUrl;
+      const appId = isRun ? checkRunAppId(context) : null;
+      if (checkState === 'passed') reported.push({ name: checkName, appId });
       return [
         {
           name: checkName,
@@ -926,11 +957,12 @@ export class GitHubAppClient {
     });
     // A workflow can register before it creates a check run, and a suite can
     // already hold queued runs the rollup has not listed. An empty suite is
-    // only the placeholder GitHub opens for an installed app.
+    // only the placeholder GitHub opens for an installed app. A required
+    // check still has to come from the GitHub App branch protection names.
     let pending = await this.hasUnfinishedChecks(accessToken, fullName, headSha);
     if (!pending && state === 'passed') {
       const missing = await this.missingRequiredChecks(
-        accessToken, fullName, headSha, new Set(checks.map((check) => check.name)),
+        accessToken, fullName, headSha, reported,
       );
       if (missing.length) {
         pending = true;
@@ -970,12 +1002,12 @@ export class GitHubAppClient {
     return suites || workflows;
   }
 
-  /** Branch-protection contexts that have not reported on this head. */
+  /** Branch-protection contexts whose required GitHub App has not passed on this head. */
   private async missingRequiredChecks(
     accessToken: string,
     fullName: string,
     headSha: string,
-    reported: ReadonlySet<string>,
+    reported: readonly { readonly name: string; readonly appId: number | null }[],
   ): Promise<string[]> {
     const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/commits/${headSha}/pulls?per_page=100`,
@@ -1004,8 +1036,11 @@ export class GitHubAppClient {
         if (error instanceof GitHubHttpError && error.status === 404) continue;
         throw error;
       }
-      for (const name of requiredContextNames(body)) {
-        if (!reported.has(name)) missing.add(name);
+      for (const required of requiredChecks(body)) {
+        const satisfied = reported.some((check) =>
+          check.name === required.name &&
+          (required.appId === null || check.appId === required.appId));
+        if (!satisfied) missing.add(required.name);
       }
     }
     return [...missing];

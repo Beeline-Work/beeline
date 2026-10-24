@@ -5,18 +5,26 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
 /**
  * Invariants for `deriveCornerState`, including precedence when they overlap.
  *
- * 1. `waiting` iff there is a blocker and it is not the case that checks are
+ * 1. `archived` iff the corner, its run, or its lifecycle is landed or closed.
+ * 2. `review` iff a reviewer turn is active and checks are not failing, or
+ *    checks are pending on the current head with no human-owed blocker and
+ *    no worker turn running.
+ * 3. `working` is a running worker turn, unless failing checks are past the
+ *    30-minute repair window; the repair window itself after checks start
+ *    failing with no blocker; or the 30-second grace after a non-failing
+ *    turn. It does not override archived. A live reviewer beats it only
+ *    while checks are not failing. An expired repair with a still-running
+ *    turn is idle when nothing is owed, and waiting when a blocker is.
+ * 4. `waiting` iff there is a blocker and it is not the case that checks are
  *    pending on the current head and every blocker is owed to an agent.
- * 2. `review` iff a reviewer turn is active, or checks are pending on the
- *    current head with no human-owed blocker and no worker turn running.
- * 3. `working` is a running worker turn, or the 30-second grace after a
- *    non-failing turn, and it does not override archived or a live reviewer.
- * 4. `archived` iff the corner, its run, or its lifecycle is landed or closed.
- *    Anything else left over is `idle`.
+ *    This scan leaves `stallReport` unset, so an agent-commander report on a
+ *    red head stays waiting. A `stallReport` during pending checks is idle
+ *    and is covered outside this scan.
+ * 5. Anything else left over is `idle`, including failing checks once the
+ *    repair window is missing or older than 30 minutes.
  *
- * Archived, then a live reviewer, then a running worker, beat later rules.
  * `workerQueued` is enumerated and must not change the result. `ciStartedAt`
- * is enumerated and must not end a pending run.
+ * does not end a pending run. It does open the failing-check repair window.
  */
 
 const NOW = 1_700_000_000;
@@ -179,31 +187,29 @@ function scan(
                         const actual: CornerState = deriveCornerState(facts).state;
                         const closed = isClosed(facts);
                         const pending = pendingOnHead(facts);
-                        const human = blocker !== 'none' && blocker !== 'agent';
                         const anyBlocker = blocker !== 'none';
                         const agentOnly = blocker === 'agent';
                         const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
-                        const withinGrace =
+                        const failing = checks === 'failing';
+                        const repairOpen =
+                          facts.ciStartedAt !== undefined && NOW - facts.ciStartedAt < 30 * 60;
+                        const repairExpired = failing && facts.ciStartedAt !== undefined && !repairOpen;
+                        let expected: CornerState;
+                        if (closed) expected = 'archived';
+                        else if (reviewerActive && !failing) expected = 'review';
+                        else if (turnRunning && !repairExpired) expected = 'working';
+                        else if (failing && !anyBlocker) expected = repairOpen ? 'working' : 'idle';
+                        else if (anyBlocker && !(pending && agentOnly)) expected = 'waiting';
+                        else if (pending) expected = 'review';
+                        else if (
                           facts.lastTurnEndedAt !== undefined &&
-                          NOW - facts.lastTurnEndedAt < 30 &&
-                          checks !== 'failing';
-                        const waiting =
-                          !closed && !reviewerActive && !turnRunning && anyBlocker && !(pending && agentOnly);
-                        const review = !closed && (reviewerActive || (pending && !human && !turnRunning));
-                        const working =
-                          !closed &&
-                          !reviewerActive &&
-                          (turnRunning || (withinGrace && !waiting && !(pending && !human)));
-                        const idle = !closed && !review && !working && !waiting;
-                        const problems: string[] = [];
-                        if ((actual === 'archived') !== closed) problems.push('archived');
-                        if ((actual === 'waiting') !== waiting) problems.push('waiting');
-                        if ((actual === 'review') !== review) problems.push('review');
-                        if ((actual === 'working') !== working) problems.push('working');
-                        if ((actual === 'idle') !== idle) problems.push('idle');
-                        if (problems.length > 0 && failures.length < 8) {
+                          NOW - facts.lastTurnEndedAt < 30
+                        )
+                          expected = 'working';
+                        else expected = 'idle';
+                        if (actual !== expected && failures.length < 8) {
                           failures.push(
-                            `${problems.join('+')} got ${actual} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} grace=${grace} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker} age=${age}`,
+                            `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} grace=${grace} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker} age=${age}`,
                           );
                         }
                       }

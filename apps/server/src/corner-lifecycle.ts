@@ -648,6 +648,15 @@ async function applyEvent(
   }
 }
 
+/** Start the 30-minute repair clock once the implementer is actually queued. */
+async function armFailingRepair(db: SqlDatabase, cornerId: string, headSha: string | null): Promise<void> {
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=COALESCE(ci_started_at, clock_timestamp()),
+       ci_head=COALESCE($2, ci_head) WHERE corner_id=$1`,
+    [cornerId, headSha],
+  );
+}
+
 /** Where a checks verdict leads, decided before any card is written. */
 type ChecksPlan =
   | { outcome: 'failing' }
@@ -669,10 +678,6 @@ async function checksReported(
   )).rows[0];
   if (source?.head_sha && source.head_sha !== corner.lifecycle.pr?.headSha)
     return no('checks event belongs to an old head');
-  // A passing head still wakes the reviewer. A report filed while checks were
-  // pending is not a code verdict, and a rejected green event is not retried.
-  if (event.result !== 'passing' && await cornerReportWaiting(db, cornerId))
-    return no('the corner is waiting for an answer');
   // A fact replayed after the checks moved on is stale.
   if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);
   const from = transition.state;
@@ -730,6 +735,7 @@ async function checksReported(
         sourceMessageId: event.sourceMessageId, reason: 'corner_check',
       });
       if (!command) await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId, undefined, 'corner_check wake could not be queued');
+      else await armFailingRepair(db, cornerId, headSha);
       return command ? OK : no('the implementer cannot be woken');
     }
     if (repeat) return no(`${plan.outcome} already holds on this head`);
@@ -752,6 +758,7 @@ async function checksReported(
       await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId, undefined, 'corner_check wake could not be queued');
       return no('the implementer cannot be woken');
     }
+    await armFailingRepair(db, cornerId, headSha);
   } else if (plan.outcome === 'passing' && !plan.approved && !(await blockingReview(db, cornerId, headSha))) {
     // A blocking verdict on this head and brief revision is handed back by
     // `ensureReviewDispatch` instead of waking the reviewer again.

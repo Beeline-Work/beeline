@@ -2504,14 +2504,24 @@ export class GitHubOperations {
         const beforeFetch = await this.lifecycle(target.corner_id, database);
         if (beforeFetch.pr?.headSha && beforeFetch.pr.headSha !== checkHeadSha) return;
         const oldReport = beforeFetch.checksSummary as (typeof beforeFetch.checksSummary & {
-          reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean; attempt?: number;
+          reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean;
+          partialRepairSent?: boolean; attempt?: number;
         }) | undefined;
         const restarting = checksRestarted(oldReport?.checks, rollup.checks);
         const alreadyReported = oldReport?.reportedHeadSha === checkHeadSha && !restarting
           ? oldReport.reportedFailing ?? [] : [];
         const candidateFailures = failedChecks.filter(item => !alreadyReported.includes(item.name));
+        // Logs for a newly failed job are readable while the rest of the run
+        // is open. Skip the fetch only when a repair turn is already open.
+        const repairOpen = alreadyReported.length > 0 && !checksSettled(rollup.checks)
+          ? (await database.query(
+              `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'
+                 AND state IN ('pending','claimed') LIMIT 1`,
+              [target.corner_id],
+            )).rowCount > 0
+          : false;
         const logCandidates = candidateFailures.length &&
-          (!alreadyReported.length || (checksSettled(rollup.checks) && !oldReport?.failureFollowupSent))
+          (!alreadyReported.length || (checksSettled(rollup.checks) && !oldReport?.failureFollowupSent) || !repairOpen)
           ? candidateFailures : [];
         const jobLogs = await Promise.all(logCandidates.map(async item => {
           const jobId = actionsJobId(item.url);
@@ -2566,24 +2576,36 @@ export class GitHubOperations {
             fetchStartedAt,
           };
           const priorReport = current.checksSummary as (typeof current.checksSummary & {
-            reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean; attempt?: number;
+            reportedHeadSha?: string; reportedFailing?: readonly string[]; failureFollowupSent?: boolean;
+            partialRepairSent?: boolean; attempt?: number;
           }) | undefined;
           const sameReportedHead = priorReport?.reportedHeadSha === checkHeadSha;
           const newAttempt = sameReportedHead && checksRestarted(priorReport.checks, summary.checks);
           const attempt = sameReportedHead ? (priorReport.attempt ?? 0) + (newAttempt ? 1 : 0) : 0;
           const reported = sameReportedHead && !newAttempt ? priorReport.reportedFailing ?? [] : [];
           const newFailures = summary.failing.filter(name => !reported.includes(name));
+          const workerBusy = (await database.query(
+            `SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'
+               AND state IN ('pending','claimed') LIMIT 1`,
+            [target.corner_id],
+          )).rowCount > 0;
           const firstFailure = summary.status === 'failing' && newFailures.length > 0 && !reported.length;
           const followup = summary.status === 'failing' && reported.length > 0 &&
             checksSettled(summary.checks) && !checksSettled(priorReport?.checks ?? []) &&
             !(sameReportedHead && !newAttempt && priorReport.failureFollowupSent);
-          const reportFailure = firstFailure || followup;
+          // A later failed job, after the first repair turn has ended, wakes
+          // once without waiting for the checks that are still running.
+          const partialRepair = !followup && summary.status === 'failing' && !checksSettled(summary.checks) &&
+            reported.length > 0 && newFailures.length > 0 && !workerBusy &&
+            !(sameReportedHead && !newAttempt && priorReport.partialRepairSent);
+          const reportFailure = firstFailure || followup || partialRepair;
           const storedSummary = {
             ...summary,
             attempt,
             reportedHeadSha: checkHeadSha,
             reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,
             failureFollowupSent: Boolean((sameReportedHead && !newAttempt && priorReport.failureFollowupSent) || followup),
+            partialRepairSent: Boolean((sameReportedHead && !newAttempt && priorReport.partialRepairSent) || partialRepair),
           };
           await this.updateLifecycle(
             target.corner_id,
@@ -2621,9 +2643,10 @@ export class GitHubOperations {
                 || (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),
             };
           }
-          // The first failed job wakes immediately. Completion wakes once
-          // more even when the same job still fails, so a promised rerun or
-          // log read has a turn to finish it. Replays share the attempt's id.
+          // The first failed job wakes immediately, even while other checks
+          // run. A later failed job wakes once more if that turn has ended,
+          // without waiting for the rest of the run. Completion wakes once
+          // more when the run settles. Replays share the attempt's id.
           const becameFailing = reportFailure;
           // A green/red rollup is a property of the whole head, not of the one
           // check that happened to arrive last. Name the actual failing jobs
@@ -2663,17 +2686,17 @@ export class GitHubOperations {
                   : {}),
               ...(becameFailing ? { payload: {
                 failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),
-                // A failure in a run that still has jobs going cannot be
-                // re-run on GitHub; the wake says so instead of implying a
-                // repair is available now.
+                // The failed jobs are already a fix turn. A GitHub rerun of a
+                // job in this workflow waits until the run ends; the wake says
+                // to push now instead of waiting for the other checks.
                 ...(!checksSettled(summary.checks) ? { runInProgress: true } : {}),
-                ...(followup || newAttempt ? { followup: true } : {}),
+                ...(followup || partialRepair || newAttempt ? { followup: true } : {}),
               } } : {}),
             },
             becamePassing
               ? `github:checks:green:${check.headSha}:${attempt}`
               : becameFailing
-                ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : 'first'}`
+                ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : partialRepair ? 'partial' : 'first'}`
               : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`,
             database,
           );

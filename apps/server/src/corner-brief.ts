@@ -64,10 +64,14 @@ export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = 
     '$2',
   );
   const reproduction = /(?:^|\n)\s*(?:[-*>]\s*)?(?:#{1,3}\s*)?Reproduction(?: [a-z0-9_-]+)?:\s*\S.+/i.test(proofText);
+  const reproductionSection = proofText.split(/(?=^#{1,6}[ \t]+)/m).some(section =>
+    /^#{1,6}[ \t]+Reproduction(?:[ \t]+[a-z0-9_-]+)?[ \t]*:?[ \t]*\n[\s\S]*\S/i.test(section) &&
+    !/Reproduction not feasible/i.test(section),
+  );
   const standIn = proofText.split(/(?=^#{1,6}[ \t]+)/m).some((section) =>
     /(?:^|\n)[ \t]*(?:[-*>][ \t]*)?Reproduction not feasible:[ \t]*\S[^\n]*?(?:[ \t;]+|\n[\s\S]*?)Stand-in:[ \t]*\S/i.test(section),
   );
-  return repositoryBacked && draft.repositoryWork !== false && bugfix && !reproduction && !standIn
+  return repositoryBacked && draft.repositoryWork !== false && bugfix && !reproduction && !reproductionSection && !standIn
     ? ['Repository bugfix brief needs Reproduction <id>: real-target steps and failure, or Reproduction not feasible: reason; Stand-in: closest check. Done repeats that check successfully.'] : [];
 }
 
@@ -308,7 +312,7 @@ export async function resolveCornerBriefApproval(
   revisionHash: string;
   sourceRoomId: string;
 }> {
-  if (revision) {
+  if (revision && !draft.approval) {
     const commander = (await db.query<{ parent_id: string }>(
       `SELECT parent_id FROM rooms WHERE id=$1 AND created_by=$2`,
       [revision.cornerId, revision.agentId],

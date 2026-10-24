@@ -8333,7 +8333,6 @@ export class DaemonService {
       await this.reach(input.cornerId, agentId, db).catch(() => {
         throw new CommandRefusalError('corner brief revision denied', 403);
       });
-      if (corner.created_by === agentId) draft = { ...draft, approval: undefined };
       validateCornerBrief(draft);
       const commandRoomId = input.roomId ?? input.cornerId;
       const command = await authorizeCommandOutput(

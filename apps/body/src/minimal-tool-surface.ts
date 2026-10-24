@@ -850,7 +850,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       },
       "required": ["address", "action"],
       "additionalProperties": false,
-      "anyOf": [
+      "allOf": [{"anyOf": [
         {
           "properties": {"action": {"const": "metadata"}},
           "required": ["action", "name"],
@@ -861,7 +861,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "required": ["action", "brief", "expectedRevision", "change"]
         },
         {"properties": {"action": {"const": "install_brief"}}, "required": ["action", "brief", "name"]}
-      ]
+      ]}]
     }
   },
   {

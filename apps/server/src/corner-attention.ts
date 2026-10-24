@@ -135,6 +135,7 @@ function attentionSql() {
     activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
+    blocker.agent_commander,blocker.human_blocker,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,
     EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.next_run_at>now()
@@ -155,8 +156,8 @@ export async function refreshCornerAttention(
     if (!row) return;
     const displayed = cornerRowState(row).state;
     const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
-    // Display deadlines identify stale work; pending CI and standing scheduled
-    // waits are not idle-alert episodes. Ending a wait can open a real episode.
+    // Pending CI and standing scheduled waits are not idle-alert episodes.
+    // Ending a wait can open a real episode.
     const summary = row.lifecycle?.checksSummary;
     const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' ||
       (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
@@ -180,9 +181,10 @@ export async function refreshCornerAttention(
       );
     }
     const now = Date.now();
+    // Pending checks stay review until a final result or a new push, so the
+    // old 30-minute CI clock is not a deadline.
     const deadlines = [
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
-      row.ci_started_at ? new Date(row.ci_started_at).getTime() + 30 * 60_000 : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };
   });
@@ -198,7 +200,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** Two single-use deadlines per corner, reconstructed after startup or listener reconnect. */
+/** The turn-gap deadline, reconstructed after startup or listener reconnect. Pending checks have none. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

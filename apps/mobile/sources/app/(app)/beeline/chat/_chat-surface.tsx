@@ -305,6 +305,7 @@ import {
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
   foldTranscriptRows,
@@ -950,6 +951,8 @@ export function BuzzChatSurface({
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ChatDisplayMessage['reactions']>>({});
+  const optimisticReactionsRef = useRef(optimisticReactions);
+  optimisticReactionsRef.current = optimisticReactions;
   const [optimisticDeletes, setOptimisticDeletes] = useState<Record<string, true>>({});
   const reactingRef = useRef(new Set<string>());
   const { showCopied: showReportToast, toast: reportToast } =
@@ -1268,12 +1271,13 @@ export function BuzzChatSurface({
     [roomSurface?.messages, roomSurface?.toolRows],
   );
   // Resolve references only within the Room family returned by this surface.
-  const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
+  const rawChannelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
     return buildChannelReferenceIndex(
       [
         ...workspaceChats
           .filter((item) => !item.directMessage)
-          .map((item) => ({ channelId: item.room.id, name: item.room.name })),
+          .map((item) => ({ channelId: item.room.id, name: item.room.name }))
+          .sort((left, right) => left.channelId.localeCompare(right.channelId)),
         ...(roomSurface?.parent
           ? [{ channelId: roomSurface.parent.id, name: roomSurface.parent.name }]
           : []),
@@ -1301,6 +1305,13 @@ export function BuzzChatSurface({
     routeChannelTitle,
     workspaceChats,
   ]);
+  // Room previews change on each arrival; links depend only on ids and names.
+  const channelReferenceIndex = useStable(rawChannelReferenceIndex, (previous, next) =>
+    previous.rooms.length === next.rooms.length &&
+    previous.corners.length === next.corners.length &&
+    previous.rooms.every((room, index) => shallowEqualRecord(room, next.rooms[index]!)) &&
+    previous.corners.every((corner, index) => shallowEqualRecord(corner, next.corners[index]!)),
+  );
   const desktopWorkPanePrimary: DesktopWorkPanePrimary = isDirectMessage
     ? 'direct-message'
     : isCorner
@@ -1702,7 +1713,7 @@ export function BuzzChatSurface({
     ) : transcriptHistoryStatus === 'complete' ? (
       <LedgerHistoryLine text={isCorner ? 'Beginning of corner' : `Beginning of ${ROOM_LABEL}`} />
     ) : null;
-  const availableAgents = useMemo(
+  const rawAvailableAgents = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'agent')
@@ -1717,7 +1728,11 @@ export function BuzzChatSurface({
         ),
     [conversationIdentities, roomSurface?.members, roomSurface?.room.workspaceId],
   );
-  const availablePeople = useMemo(
+  const availableAgents = useStable(rawAvailableAgents, (previous, next) =>
+    previous.length === next.length &&
+    previous.every((agent, index) => shallowEqualRecord(agent, next[index]!)),
+  );
+  const rawAvailablePeople = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
@@ -1728,6 +1743,7 @@ export function BuzzChatSurface({
         })),
     [conversationIdentities, roomSurface?.members],
   );
+  const availablePeople = useStable(rawAvailablePeople, sameSelectedMembers);
   const selectedMembersRaw = useMemo(
     () =>
       (roomSurface?.members ?? []).map((member) => {
@@ -1784,7 +1800,7 @@ export function BuzzChatSurface({
       speechMessageText,
     ],
   );
-  const personProfiles = useMemo(
+  const rawPersonProfiles = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
@@ -1799,6 +1815,10 @@ export function BuzzChatSurface({
           };
         }),
     [conversationIdentities, roomSurface?.members],
+  );
+  const personProfiles = useStable(rawPersonProfiles, (previous, next) =>
+    previous.length === next.length &&
+    previous.every((profile, index) => shallowEqualRecord(profile, next[index]!)),
   );
   const participantsHydrated = roomSurface !== null;
   const agentByPubkey = useMemo(
@@ -3723,7 +3743,7 @@ export function BuzzChatSurface({
       const messageId = message.relayId ?? message.id;
       if (reactingRef.current.has(messageId)) return;
       reactingRef.current.add(messageId);
-      const previous = optimisticReactions[messageId] ?? message.reactions ?? [];
+      const previous = optimisticReactionsRef.current[messageId] ?? message.reactions ?? [];
       const existing = previous.find((reaction) => reaction.emoji === emoji);
       const next = existing
         ? previous.map((reaction) => reaction.emoji === emoji ? {
@@ -3756,7 +3776,7 @@ export function BuzzChatSurface({
         reactingRef.current.delete(messageId);
       }
     },
-    [applyRoomMessageResult, decodedId, optimisticReactions],
+    [applyRoomMessageResult, decodedId],
   );
 
   const messageIsBookmarked = useCallback(
@@ -4281,6 +4301,10 @@ export function BuzzChatSurface({
     return () => removeViewerConversation(decodedId);
   }, [decodedId, handleSend, isFocused, roomSurface]));
 
+  // A row action needs the latest send state when tapped, without subscribing
+  // every transcript cell to the send handler's draft and Room dependencies.
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
       if (sendInFlightRef.current) return;
@@ -4289,7 +4313,7 @@ export function BuzzChatSurface({
         ...(message.reference ? { reference: message.reference } : {}),
       };
       setCornerProposalAction({ messageId: message.id, decision });
-      void handleSend({
+      void handleSendRef.current({
         text: decision === 'open' ? 'go' : 'cancel',
         replyTarget: proposalReplyTarget,
       }).finally(() =>
@@ -4298,7 +4322,7 @@ export function BuzzChatSurface({
         ),
       );
     },
-    [handleSend, replyTargetForMessage],
+    [replyTargetForMessage],
   );
 
   const pickPhoto = useCallback(async () => {
@@ -5611,11 +5635,13 @@ export function BuzzChatSurface({
         continued: attributionContinued,
         immediatelyPrecedingMessage,
         referencedMessage,
-      }: {
-        continued: boolean;
-        immediatelyPrecedingMessage?: ChatDisplayMessage;
-        referencedMessage?: ChatDisplayMessage;
-      },
+        firstBylineOfDay,
+        untaggedHint,
+        deliveryFailed = false,
+        speakerWorking: rowSpeakerWorking = false,
+        cornerProposalAnswer,
+        cornerProposalAction: rowCornerProposalAction,
+      }: RoomMessageRenderContext,
     ) => {
       // An agent's order or report is ordinary transcript: the recipient leads
       // the text as an @mention and the row keeps its own author's byline.
@@ -5901,7 +5927,7 @@ export function BuzzChatSurface({
       const ledgerMessage = (
         <OrdinaryLedgerMessage
           message={item}
-          firstBylineOfDay={bylineOpeners.has(item.id)}
+          firstBylineOfDay={firstBylineOfDay}
           // The byline shows the agent's model from its profile; an agent
           // with no profile model keeps the plain `AGENT` word.
           agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}
@@ -5911,14 +5937,14 @@ export function BuzzChatSurface({
           participantsHydrated={participantsHydrated}
           {...(personName ? { personName } : {})}
           viewerPubkey={cacheViewerPubkey}
-          speakerWorking={Boolean(item.pubkey && speakerWorking[item.pubkey])}
+          speakerWorking={rowSpeakerWorking}
           continued={attributionContinued}
           {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
           {...(referencedTarget ? { referencedTarget } : {})}
           participantHandles={roomParticipants}
           channelIndex={channelReferenceIndex}
-          untaggedHint={hintMessageIds.has(item.id)}
-          deliveryFailed={failedOutboxIds.has(item.id)}
+          untaggedHint={untaggedHint}
+          deliveryFailed={deliveryFailed}
           onChannelReference={handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
@@ -5940,13 +5966,11 @@ export function BuzzChatSurface({
           !isArchived &&
           !viewerIsAgent &&
           !isReadOnlyDirectMessage &&
-          !answerByMessageId.has(item.relayId ?? item.id)
+          !cornerProposalAnswer
             ? { onCornerProposalDecision: handleCornerProposalDecision }
             : {})}
-          cornerProposalAnswer={answerByMessageId.get(item.relayId ?? item.id) ?? null}
-          cornerProposalAction={
-            cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null
-          }
+          cornerProposalAnswer={cornerProposalAnswer}
+          cornerProposalAction={rowCornerProposalAction}
           onRetry={retryOutboxMessage}
           onDismiss={dismissOutboxMessage}
         />
@@ -5962,17 +5986,9 @@ export function BuzzChatSurface({
     },
     [
       openCorner,
-      hintMessageIds,
-      voice.call,
-      voice.connecting,
-      voice.error,
-      voice.join,
       isDirectMessage,
-      roomSurface?.members,
-      bylineOpeners,
       agentByPubkey,
       agentProfileModelByPubkey,
-      answerByMessageId,
       isDesktop,
       handleWritePermission,
       handleGrantDecision,
@@ -5984,10 +6000,8 @@ export function BuzzChatSurface({
       handleOpenMessageSource,
       handleReactToMessage,
       handleBookmarkMessage,
-      messageIsBookmarked,
       handleReportMessage,
       handleCornerProposalDecision,
-      cornerProposalAction,
       beginForward,
       handleForwardToNewCorner,
       grantActionId,
@@ -5997,7 +6011,6 @@ export function BuzzChatSurface({
       cacheViewerPubkey,
       decodedId,
       handleAcceptConnectorOffer,
-      openConnectorOfferCeremony,
       openWorkbench,
       choiceActionId,
       handleConfirmTargetBranch,
@@ -6007,15 +6020,14 @@ export function BuzzChatSurface({
       personProfileByPubkey,
       cacheViewerPubkey,
       roomRepository,
+      roomName,
       roomParticipants,
       targetBranchActionId,
       targetBranchNotice,
       canManageWorkspace,
       viewerIsAgent,
-      speakerWorking,
       beginReply,
       dismissOutboxMessage,
-      failedOutboxIds,
       replyTargetForMessage,
       retryOutboxMessage,
       channelReferenceIndex,
@@ -6034,8 +6046,19 @@ export function BuzzChatSurface({
       decodedId,
     ],
   );
+  // Resolve changing transcript-wide indexes before the memo boundary. A new
+  // hint, byline opener or working speaker changes only that row's props.
+  const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
+    firstBylineOfDay: bylineOpeners.has(item.id),
+    untaggedHint: hintMessageIds.has(item.id),
+    deliveryFailed: failedOutboxIds.has(item.id),
+    speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
+    cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
+    cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
+  }), [bylineOpeners, hintMessageIds, failedOutboxIds, speakerWorking, answerByMessageId, cornerProposalAction]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
+    presentationForMessage,
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,

@@ -19,7 +19,16 @@ import {
   type TranscriptCardMotionStore,
 } from '@/components/buzz/transcript-card-motion-context';
 
-export type RoomMessageRenderContext = {
+export type RoomMessagePresentation = {
+  firstBylineOfDay?: boolean;
+  untaggedHint?: boolean;
+  deliveryFailed?: boolean;
+  speakerWorking?: boolean;
+  cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
+  cornerProposalAction?: 'open' | 'cancel' | null;
+};
+
+export type RoomMessageRenderContext = RoomMessagePresentation & {
   continued: boolean;
   immediatelyPrecedingMessage?: ChatDisplayMessage;
   referencedMessage?: ChatDisplayMessage;
@@ -40,6 +49,7 @@ export function useRoomMessageRenderItem({
   firstNewMessageId,
   arrivalFlashMessageId = null,
   sourceLandingFlashMessageId = null,
+  presentationForMessage,
 }: {
   render: RoomMessageRenderer;
   continuedIds: ReadonlySet<string>;
@@ -52,12 +62,14 @@ export function useRoomMessageRenderItem({
   arrivalFlashMessageId?: string | null;
   /** The row a settled quote/forward/notification message-source jump just centered, or null. */
   sourceLandingFlashMessageId?: string | null;
+  presentationForMessage?: (item: ChatDisplayMessage) => RoomMessagePresentation;
 }) {
   const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
   return React.useCallback(
     ({ item }: { item: ChatDisplayMessage }) => (
       <RoomMessageCell
+        {...presentationForMessage?.(item)}
         item={item}
         render={render}
         startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
@@ -78,6 +90,7 @@ export function useRoomMessageRenderItem({
       firstNewMessageId,
       messageById,
       precedingMessageById,
+      presentationForMessage,
       render,
       resolvedCardMotionStore,
       sourceLandingFlashMessageId,
@@ -97,7 +110,13 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   cardMotionStore,
   arrivalFlashing = false,
   sourceLandingFlashing = false,
-}: {
+  firstBylineOfDay,
+  untaggedHint,
+  deliveryFailed,
+  speakerWorking,
+  cornerProposalAnswer,
+  cornerProposalAction,
+}: RoomMessagePresentation & {
   item: ChatDisplayMessage;
   render: RoomMessageRenderer;
   continued: boolean;
@@ -122,7 +141,11 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
           tint={sourceLandingFlashing ? 'brass' : 'pointer'}
         >
           {startsNewMessages && <NewMessagesDivider />}
-          {render(item, { continued, immediatelyPrecedingMessage, referencedMessage })}
+          {render(item, {
+            continued, immediatelyPrecedingMessage, referencedMessage,
+            firstBylineOfDay, untaggedHint, deliveryFailed, speakerWorking,
+            cornerProposalAnswer, cornerProposalAction,
+          })}
         </ArrivalFlashGround>,
         ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
       )}

@@ -75,7 +75,10 @@ describe('render-input identity comparators', () => {
       sameSelectedMembers(roster, [
         { pubkey: 'p1', role: 'admin', kind: 'human', identity: { ...identity } },
       ]),
-    ).toBe(false);
+    ).toBe(true);
+    expect(sameSelectedMembers(roster, [
+      { ...roster[0]!, identity: { ...identity, name: 'Renamed' } },
+    ])).toBe(false);
     expect(sameSelectedMembers(roster, [])).toBe(false);
   });
 });

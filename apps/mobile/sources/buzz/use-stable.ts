@@ -121,7 +121,13 @@ function sameSelectedMember(
     previous.pubkey === next.pubkey &&
     previous.role === next.role &&
     previous.kind === next.kind &&
-    previous.identity === next.identity
+    (previous.identity === next.identity ||
+      (previous.identity != null && next.identity != null &&
+        typeof previous.identity === 'object' && typeof next.identity === 'object' &&
+        shallowEqualRecord(
+          previous.identity as Readonly<Record<string, unknown>>,
+          next.identity as Readonly<Record<string, unknown>>,
+        )))
   );
 }
 

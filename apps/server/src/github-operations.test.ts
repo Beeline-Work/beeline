@@ -2327,7 +2327,8 @@ describe('GitHub phone operations', () => {
     ).toBe('other');
     const readsAfterSettlement = readPullRequest.mock.calls.length;
     await operations.refreshStaleMergeability(corner);
-    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement);
+    // An addressed refresh also rechecks a settled verdict against live GitHub.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 1);
     await operations.processWebhook('pull_request', {
       ...unknown,
       pull_request: {
@@ -2345,8 +2346,9 @@ describe('GitHub phone operations', () => {
       ).rows[0]?.lifecycle.pr.mergeability,
     ).toBe('other');
     // The synchronize webhook verifies its check verdict against the live PR
-    // even though the mergeability verdict was already settled.
-    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 1);
+    // even though the mergeability verdict was already settled, in addition
+    // to the explicit addressed refresh above.
+    expect(readPullRequest).toHaveBeenCalledTimes(readsAfterSettlement + 2);
     const newBaseSha = '4'.repeat(40);
     readPullRequest.mockResolvedValueOnce({
       number: 1,

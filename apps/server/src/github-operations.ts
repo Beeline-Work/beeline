@@ -1574,9 +1574,14 @@ export class GitHubOperations {
   /**
    * Retry GitHub's asynchronous mergeability calculation for open corner PRs,
    * and re-read a stored 'dirty' PR so a conflict that GitHub has since
-   * cleared stops re-firing the merge-conflict wake.
+   * cleared stops re-firing the merge-conflict wake. An addressed refresh also
+   * checks previously clean verdicts: checks can finish after the base moves
+   * without a pull-request webhook carrying the new conflict.
    */
-  async refreshStaleMergeability(cornerId?: string): Promise<void> {
+  async refreshStaleMergeability(
+    cornerId?: string,
+    confirmedPr?: Awaited<ReturnType<GitHubAppClient['readPullRequest']>>,
+  ): Promise<void> {
     const rows = await this.database.query<{
       corner_id: string;
       repository: string;
@@ -1605,7 +1610,7 @@ export class GitHubOperations {
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
-         AND fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty')
+         AND ($1::uuid IS NOT NULL OR fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty'))
          AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
          AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND ($1::uuid IS NULL OR fact.corner_id=$1)`,
@@ -1616,7 +1621,9 @@ export class GitHubOperations {
         const token = await this.app.installationToken(Number(row.installation_id), {
           repositoryIds: [Number(row.repository_id)],
         });
-        const pr = await this.app.readPullRequest(token.token, row.repository, row.number);
+        const pr = cornerId && confirmedPr?.number === row.number
+          ? confirmedPr
+          : await this.app.readPullRequest(token.token, row.repository, row.number);
         if (pr.mergeability === 'unknown') continue;
         const staleBase = Boolean(
           row.base_sha &&
@@ -1642,7 +1649,7 @@ export class GitHubOperations {
             current.pr.number !== row.number ||
             current.pr.headSha !== pr.headSha ||
             (current.pr.baseSha ?? null) !== row.base_sha ||
-            (current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty')
+            (!cornerId && current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty')
           )
             return;
           await this.updateLifecycle(
@@ -2415,6 +2422,7 @@ export class GitHubOperations {
   ) {
     const checkHeadSha = check.headSha!;
     let fetchStartedAt = 0;
+    let confirmedPr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>> | undefined;
     try {
         // Use the database clock across server instances, with subsecond precision
         // to order overlapping fetches while keeping updatedAt in epoch seconds.
@@ -2447,6 +2455,7 @@ export class GitHubOperations {
         const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
           ? await retryGitHubRead(() => this.app.readPullRequest(token.token, repository, Number(target.pr_number)))
           : undefined;
+        confirmedPr = livePr;
         if (livePr?.state === 'closed' && !livePr.merged) {
           await this.recordClosedCornerPullRequest(target.corner_id, Number(target.pr_number), database);
           return;
@@ -2630,7 +2639,7 @@ export class GitHubOperations {
       }
       throw error;
     }
-    await this.refreshStaleMergeability(target.corner_id);
+    await this.refreshStaleMergeability(target.corner_id, confirmedPr);
   }
 
   private async lifecycle(

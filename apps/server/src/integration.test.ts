@@ -7460,6 +7460,7 @@ describe('monolith integration', () => {
         headSha: '1'.repeat(40),
         headRef: 'fm/widget',
         merged: false,
+        mergeability: 'clean',
       })),
     });
     githubRollupState = 'failed';

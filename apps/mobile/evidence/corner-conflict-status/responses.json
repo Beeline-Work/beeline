@@ -1,0 +1,263 @@
+{
+  "before": {
+    "room": {
+      "id": "33333333-3333-4333-8333-000000000001",
+      "name": "Checks",
+      "archived": false,
+      "createdAt": 1792803104,
+      "updatedAt": 1792803104,
+      "workspaceId": "11111111-1111-4111-8111-111111111111",
+      "parentId": "22222222-2222-4222-8222-222222222222",
+      "about": "Fix checks",
+      "visibility": "public"
+    },
+    "messages": [],
+    "members": [],
+    "viewer": {
+      "identity": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Owner"
+      },
+      "role": "member",
+      "permissions": {
+        "send": true,
+        "manage": true
+      }
+    },
+    "watchFilters": [
+      {
+        "kinds": [
+          0,
+          9,
+          9000,
+          9001,
+          9002,
+          9007,
+          9008,
+          30078,
+          39000,
+          39001,
+          39002
+        ],
+        "#h": [
+          "11111111-1111-4111-8111-111111111111",
+          "33333333-3333-4333-8333-000000000001",
+          "22222222-2222-4222-8222-222222222222"
+        ]
+      },
+      {
+        "kinds": [
+          0
+        ],
+        "authors": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "kinds": [
+          30078
+        ],
+        "#d": [
+          "agent-draft:33333333-3333-4333-8333-000000000001",
+          "agent-thought:33333333-3333-4333-8333-000000000001",
+          "agent-presence:33333333-3333-4333-8333-000000000001"
+        ]
+      }
+    ],
+    "cornerLifecycle": {
+      "lifecycle": "unknown",
+      "checks": "passing",
+      "checksSummary": {
+        "status": "passing",
+        "total": 1,
+        "failing": [],
+        "updatedAt": 1792803104,
+        "checks": []
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/widgets/pull/1",
+        "title": "Fix checks",
+        "targetBranch": "main",
+        "headSha": "1111111111111111111111111111111111111111",
+        "mergeability": "clean"
+      }
+    }
+  },
+  "conflict": {
+    "room": {
+      "id": "33333333-3333-4333-8333-000000000001",
+      "name": "Checks",
+      "archived": false,
+      "createdAt": 1792803121,
+      "updatedAt": 1792803121,
+      "workspaceId": "11111111-1111-4111-8111-111111111111",
+      "parentId": "22222222-2222-4222-8222-222222222222",
+      "about": "Fix checks",
+      "visibility": "public"
+    },
+    "messages": [],
+    "members": [],
+    "viewer": {
+      "identity": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Owner"
+      },
+      "role": "member",
+      "permissions": {
+        "send": true,
+        "manage": true
+      }
+    },
+    "watchFilters": [
+      {
+        "kinds": [
+          0,
+          9,
+          9000,
+          9001,
+          9002,
+          9007,
+          9008,
+          30078,
+          39000,
+          39001,
+          39002
+        ],
+        "#h": [
+          "11111111-1111-4111-8111-111111111111",
+          "33333333-3333-4333-8333-000000000001",
+          "22222222-2222-4222-8222-222222222222"
+        ]
+      },
+      {
+        "kinds": [
+          0
+        ],
+        "authors": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "kinds": [
+          30078
+        ],
+        "#d": [
+          "agent-draft:33333333-3333-4333-8333-000000000001",
+          "agent-thought:33333333-3333-4333-8333-000000000001",
+          "agent-presence:33333333-3333-4333-8333-000000000001"
+        ]
+      }
+    ],
+    "cornerLifecycle": {
+      "lifecycle": "unknown",
+      "checks": "passing",
+      "checksSummary": {
+        "status": "passing",
+        "total": 1,
+        "failing": [],
+        "updatedAt": 1792803121,
+        "checks": []
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/widgets/pull/1",
+        "title": "Fix checks",
+        "targetBranch": "main",
+        "headSha": "1111111111111111111111111111111111111111",
+        "mergeability": "dirty"
+      }
+    }
+  },
+  "resolved": {
+    "room": {
+      "id": "33333333-3333-4333-8333-000000000001",
+      "name": "Checks",
+      "archived": false,
+      "createdAt": 1792803121,
+      "updatedAt": 1792803121,
+      "workspaceId": "11111111-1111-4111-8111-111111111111",
+      "parentId": "22222222-2222-4222-8222-222222222222",
+      "about": "Fix checks",
+      "visibility": "public"
+    },
+    "messages": [],
+    "members": [],
+    "viewer": {
+      "identity": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Owner"
+      },
+      "role": "member",
+      "permissions": {
+        "send": true,
+        "manage": true
+      }
+    },
+    "watchFilters": [
+      {
+        "kinds": [
+          0,
+          9,
+          9000,
+          9001,
+          9002,
+          9007,
+          9008,
+          30078,
+          39000,
+          39001,
+          39002
+        ],
+        "#h": [
+          "11111111-1111-4111-8111-111111111111",
+          "33333333-3333-4333-8333-000000000001",
+          "22222222-2222-4222-8222-222222222222"
+        ]
+      },
+      {
+        "kinds": [
+          0
+        ],
+        "authors": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      {
+        "kinds": [
+          30078
+        ],
+        "#d": [
+          "agent-draft:33333333-3333-4333-8333-000000000001",
+          "agent-thought:33333333-3333-4333-8333-000000000001",
+          "agent-presence:33333333-3333-4333-8333-000000000001"
+        ]
+      }
+    ],
+    "cornerLifecycle": {
+      "lifecycle": "unknown",
+      "checks": "passing",
+      "checksSummary": {
+        "status": "passing",
+        "total": 1,
+        "failing": [],
+        "updatedAt": 1792803121,
+        "checks": []
+      },
+      "pr": {
+        "number": 1,
+        "url": "https://github.com/owner/widgets/pull/1",
+        "title": "Fix checks",
+        "targetBranch": "main",
+        "headSha": "1111111111111111111111111111111111111111",
+        "mergeability": "clean"
+      }
+    }
+  }
+}

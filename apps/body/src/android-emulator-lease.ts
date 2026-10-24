@@ -1,8 +1,8 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { cp, mkdir, open, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const FIRST_PORT = 5554;
@@ -13,10 +13,14 @@ export interface EmulatorLease {
   port: number;
   serial: string;
   root: string;
+  /** Port marker file. Its contents are `ownership` while this lease holds the port. */
+  marker: string;
+  /** Exact marker text this lease wrote, so a later release does not delete a replacement. */
+  ownership: string;
   release(): Promise<void>;
 }
 
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -26,7 +30,7 @@ function processAlive(pid: number): boolean {
 }
 
 /** Linux process start ticks distinguish a live PID from a reused lease owner. */
-async function processStart(pid: number): Promise<string | undefined> {
+export async function processStart(pid: number): Promise<string | undefined> {
   const raw = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => undefined);
   if (raw) return raw.slice(raw.lastIndexOf(')') + 2).split(' ')[19];
   try { return execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8' }).trim() || undefined; }
@@ -92,6 +96,8 @@ export async function leaseEmulator(root: string, privateRoot: string): Promise<
         port,
         serial: `emulator-${port}`,
         root: instance,
+        marker,
+        ownership,
         release: async () => {
           if ((await readFile(marker, 'utf8').catch(() => '')) === ownership)
             await rm(marker, { force: true });
@@ -108,21 +114,34 @@ export async function leaseEmulator(root: string, privateRoot: string): Promise<
   throw new Error('no Android emulator port is free in the installed 5554–5584 range');
 }
 
-/** The CLI launcher keeps the lease alive until this exact emulator exits. */
-export async function runLeasedEmulator(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
+/** `-help`, `-list-avds` and `-version` print and exit. They must not take a lease. */
+export function emulatorArgsAreInfoOnly(args: readonly string[]): boolean {
+  return !args.includes('-avd') && args.some((arg) =>
+    arg === '-help' || arg === '--help' || arg.startsWith('-help-') ||
+    arg === '-list-avds' || arg === '-version');
+}
+
+export interface SpawnedLeasedEmulator {
+  lease: EmulatorLease;
+  child: ChildProcess;
+  /** Private AVD home passed to the emulator. Its userdata lives for the lease. */
+  localAvdHome: string;
+}
+
+/**
+ * Lease a port, copy AVD metadata, and spawn the emulator.
+ * The caller decides whether the process is allowed to outlive this function.
+ * A missing base AVD returns exit code 1 and takes no lease.
+ */
+export async function spawnLeasedEmulator(
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  options: { detached?: boolean; logPath?: string } = {},
+): Promise<SpawnedLeasedEmulator | { exitCode: number }> {
   const leaseRoot = env.BEELINE_ANDROID_LEASE_ROOT;
   const privateRoot = env.BEELINE_ANDROID_INSTANCE_ROOT;
   const baseAvdHome = env.BEELINE_ANDROID_BASE_AVD_HOME;
   const emulator = env.BEELINE_ANDROID_EMULATOR_BINARY;
-  if (emulator && !args.includes('-avd') && args.some((arg) =>
-    arg === '-help' || arg === '--help' || arg.startsWith('-help-') ||
-    arg === '-list-avds' || arg === '-version')) {
-    return new Promise<number>((done, reject) => {
-      const child = spawn(emulator, args, { env, stdio: 'inherit' });
-      child.once('error', reject);
-      child.once('exit', (code, signal) => done(signal ? 1 : (code ?? 1)));
-    });
-  }
   if (!leaseRoot || !privateRoot || !baseAvdHome || !emulator)
     throw new Error('Beeline emulator lease environment is unavailable');
   const avdIndex = args.indexOf('-avd');
@@ -144,9 +163,10 @@ export async function runLeasedEmulator(args: string[], env: NodeJS.ProcessEnv =
       `Base AVD "${avdName}" is incomplete: ${missing} is missing. ` +
       'Recreate it with `avdmanager create avd`, or pick one from `emulator -list-avds`.',
     );
-    return 1;
+    return { exitCode: 1 };
   }
   const lease = await leaseEmulator(leaseRoot, privateRoot);
+  let child: ChildProcess | undefined;
   try {
     if (env.ANDROID_EMULATOR_HOME)
       await mkdir(env.ANDROID_EMULATOR_HOME, { recursive: true, mode: 0o700 });
@@ -165,20 +185,50 @@ export async function runLeasedEmulator(args: string[], env: NodeJS.ProcessEnv =
     await writeFile(resolve(localAvdHome, `${avdName}.ini`),
       metadata.replace(/^path\s*=.*$/m, `path=${local}`)
         .replace(/^path\.rel\s*=.*\n?/m, ''), { mode: 0o600 });
-    const status = await new Promise<number>((done, reject) => {
-      const child = spawn(emulator,
+    const logPath = options.detached ? resolve(lease.root, 'emulator.log') : options.logPath;
+    const logFd = logPath ? openSync(logPath, 'a') : undefined;
+    try {
+      child = spawn(emulator,
         [...args.filter((arg) => arg !== '-read-only'), '-port', String(lease.port), '-datadir', data],
         {
           env: { ...env, ANDROID_AVD_HOME: localAvdHome, ADB_EMU: '0' },
-          stdio: 'inherit',
+          detached: options.detached === true,
+          stdio: logFd === undefined ? 'inherit' : ['ignore', logFd, logFd],
         });
+    } finally {
+      if (logFd !== undefined) closeSync(logFd);
+    }
+    return { lease, child, localAvdHome };
+  } catch (error) {
+    if (child && child.pid) {
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+    await lease.release();
+    throw error;
+  }
+}
+
+/** The one-shot CLI launcher keeps the lease alive until this exact emulator exits. */
+export async function runLeasedEmulator(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const emulator = env.BEELINE_ANDROID_EMULATOR_BINARY;
+  if (emulator && emulatorArgsAreInfoOnly(args)) {
+    return new Promise<number>((done, reject) => {
+      const child = spawn(emulator, args, { env, stdio: 'inherit' });
       child.once('error', reject);
       child.once('exit', (code, signal) => done(signal ? 1 : (code ?? 1)));
+    });
+  }
+  const started = await spawnLeasedEmulator(args, env);
+  if ('exitCode' in started) return started.exitCode;
+  try {
+    const status = await new Promise<number>((done, reject) => {
+      started.child.once('error', reject);
+      started.child.once('exit', (code, signal) => done(signal ? 1 : (code ?? 1)));
       for (const signal of ['SIGINT', 'SIGTERM'] as const)
-        process.once(signal, () => child.kill(signal));
+        process.once(signal, () => started.child.kill(signal));
     });
     return status;
   } finally {
-    await lease.release();
+    await started.lease.release();
   }
 }

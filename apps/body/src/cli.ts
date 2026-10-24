@@ -57,7 +57,8 @@ import {
 import { runManagedUpdateWorker } from './managed-update.js';
 import { ensureMachineHelper, reloadMachineHelper } from './helper-service.js';
 import { runMachineHelper } from './machine-helper.js';
-import { runLeasedEmulator } from './android-emulator-lease.js';
+import { emulatorArgsAreInfoOnly, runLeasedEmulator } from './android-emulator-lease.js';
+import { requestKeptCornerEmulator } from './corner-emulator.js';
 
 function usage(exitCode = 1): void {
   console.error(`
@@ -136,7 +137,19 @@ async function main(): Promise<void> {
 
   const command = args[0];
   if (command === 'emulator') {
-    process.exitCode = await runLeasedEmulator(args.slice(1));
+    const emulatorArgs = args.slice(1);
+    const socketPath = process.env.BEELINE_CORNER_EMULATOR_SOCKET;
+    const cornerId = process.env.BEELINE_CORNER_ID;
+    // Info flags stay in this process. A boot goes to the helper so the
+    // emulator outlives the turn that asked for it.
+    try {
+      process.exitCode = socketPath && cornerId && !emulatorArgsAreInfoOnly(emulatorArgs)
+        ? await requestKeptCornerEmulator(socketPath, cornerId, emulatorArgs, process.env)
+        : await runLeasedEmulator(emulatorArgs);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
     return;
   }
   if (command === CURSOR_ACP_BRIDGE_FLAG) {

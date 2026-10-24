@@ -35,6 +35,7 @@ import {
   sharedNpmCacheDir,
   sharedPnpmStoreDir,
 } from './warm-node-modules.js';
+import { ANDROID_LEASE_ENV_KEYS, closeCornerEmulatorListeners } from './corner-emulator.js';
 
 /** `core.voice` and `core.tagging` from `prompt-assembly.ts`. */
 const VOICE_RULE =
@@ -51,6 +52,7 @@ const bwrapUsable = Boolean(detectBwrapSandbox().path);
 const execFileAsync = promisify(execFile);
 afterEach(async () => {
   vi.unstubAllEnvs();
+  await closeCornerEmulatorListeners();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -1904,10 +1906,99 @@ describe('corner close-request delivery', () => {
         expect(child.status, child.stderr).toBe(0);
       }
     } finally {
+      await closeCornerEmulatorListeners();
       fixture.abort.abort();
       await fixture.scheduler.dispose();
     }
   }, 30_000);
+
+  it('gives the implementer shell every Android lease variable the reviewer turn has', async () => {
+    const role = async (isReviewer: boolean) => {
+      vi.stubEnv('ANDROID_HOME', '');
+      vi.stubEnv('ANDROID_SDK_ROOT', '');
+      const execute = vi.fn(async (name: string) => {
+        if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false, isReviewer };
+        if (name === 'getWorkspaceRoster') return { members: [] };
+        if (name === 'getCornerRestoreState') return {
+          cornerId: 'corner-id', closeRequested: false,
+          brief: { id: 'corner-id', revision: 1,
+            spec: '## Intent\nBuild\n## User stories\n- user\n## Acceptance criteria\n- done\n## Non-goals\n- none\n## Risks\n- none\n## References\n- none',
+            authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [] },
+        };
+        if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+        return { id: 'write', createdAt: 1 };
+      });
+      const fixture = await cornerHarness(execute, 5);
+      const internal = fixture.loop as unknown as {
+        options: { config: BodyConfig; runtime: AgentRuntimeRecord; worktreePath: string; repository?: { gitCommonDir: string } };
+        activate(): Promise<string>;
+      };
+      const runtimeDir = runtimeDirectory(fixture.root, internal.options.runtime.agent.publicKey);
+      const cornerRoot = join(runtimeDir, 'rooms/corner-id');
+      const worktree = join(fixture.root, 'checkout');
+      await mkdir(worktree, { recursive: true });
+      await execFileAsync('git', ['init', worktree]);
+      internal.options.repository!.gitCommonDir = join(worktree, '.git');
+      internal.options.worktreePath = worktree;
+      await mkdir(runtimeDir, { recursive: true });
+      await writeFile(join(runtimeDir, 'runtime.json'), '{}');
+      Object.assign(internal.options.config, {
+        agentBinary: 'codex-acp', agentCommand: 'codex-acp', agentKind: 'codex',
+        agentEnv: { PATH: process.env.PATH ?? '' },
+        operatorHome: join(fixture.root, 'operator-home'),
+        bwrapPath: '/usr/bin/bwrap',
+        agentSharedAssetRoot: workspaceAssets.workspaceAssetRoot(fixture.root, 'workspace'),
+        agentHomeRoot: join(cornerRoot, 'agent-home'),
+        agentPrivateRoot: join(cornerRoot, 'agent-private'),
+      });
+      const operatorHome = internal.options.config.operatorHome!;
+      await mkdir(join(operatorHome, 'android-sdk/platform-tools'), { recursive: true });
+      await mkdir(join(operatorHome, 'android-sdk/emulator'), { recursive: true });
+      await mkdir(join(operatorHome, '.android/avd/test.avd'), { recursive: true });
+      await writeFile(join(operatorHome, 'android-sdk/platform-tools/adb'), 'operator adb');
+      await writeFile(join(operatorHome, 'android-sdk/emulator/emulator'), 'operator emulator');
+      await writeFile(join(operatorHome, '.android/avd/test.ini'), 'path=/operator/test.avd\n');
+      await writeFile(join(operatorHome, '.android/avd/test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
+      try {
+        await internal.activate();
+        const harness = fixture.clientOptions()!.agentEnv!;
+        const session = vi.mocked(fixture.acp.sessionNew).mock.calls.at(-1)?.[0] as {
+          mcpServers?: { name: string; env?: { name: string; value: string }[] }[];
+        };
+        const shell = session.mcpServers?.find((server) => server.name === 'buzz-dev-mcp')?.env ?? [];
+        return { harness, shell };
+      } finally {
+        await closeCornerEmulatorListeners();
+        fixture.abort.abort();
+        await fixture.scheduler.dispose();
+      }
+    };
+
+    const implementer = await role(false);
+    const reviewer = await role(true);
+    const reviewerLease = ANDROID_LEASE_ENV_KEYS.filter((key) => reviewer.harness[key]);
+    expect(reviewerLease).toEqual(expect.arrayContaining([
+      'BEELINE_ANDROID_LEASE_ROOT',
+      'BEELINE_ANDROID_INSTANCE_ROOT',
+      'BEELINE_ANDROID_BASE_AVD_HOME',
+      'BEELINE_ANDROID_EMULATOR_BINARY',
+      'ANDROID_HOME',
+      'ANDROID_AVD_HOME',
+      'BEELINE_CORNER_EMULATOR_SOCKET',
+      'BEELINE_CORNER_ID',
+    ]));
+    for (const key of reviewerLease) {
+      expect(implementer.harness[key], `implementer harness missing ${key}`).toBeTruthy();
+      expect(implementer.shell, `implementer shell missing ${key}`).toContainEqual({
+        name: key,
+        value: implementer.harness[key],
+      });
+      expect(reviewer.shell, `reviewer shell missing ${key}`).toContainEqual({
+        name: key,
+        value: reviewer.harness[key],
+      });
+    }
+  }, 60_000);
 
   it.each(['context', 'retry', 'first brief'])(
     'Reproduction BP-01: refreshes the next prompt after a revision during %s', async (timing) => {

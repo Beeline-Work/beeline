@@ -79,15 +79,15 @@ try {
       for (let i = 0; i < 4; i++) { adb('shell', 'input', 'swipe', '500', '700', '500', '1850', '120'); await pause(350); }
     });
     if (process.env.TRANSCRIPT_SKIP_HISTORY !== '1') {
-    const oldest = xml => Math.min(...Array.from(xml.matchAll(/Fixture (\d{4})/g), m => Number(m[1])));
-    const oldestBefore = Math.min(970, oldest(dump()));
-    await capture('history-prepend', 25000, async () => {
-      for (let i = 0; i < 30; i++) {
-        adb('shell', 'input', 'swipe', '500', '550', '500', '2000', '90'); await pause(100);
-      }
-    });
-    samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
-    if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
+      const oldest = xml => Math.min(...Array.from(xml.matchAll(/Fixture (\d{4})/g), m => Number(m[1])));
+      const oldestBefore = Math.min(970, oldest(dump()));
+      await capture('history-prepend', 25000, async () => {
+        for (let i = 0; i < 30; i++) {
+          adb('shell', 'input', 'swipe', '500', '550', '500', '2000', '90'); await pause(100);
+        }
+      });
+      samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
+      if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
     }
     open(rooms[1]); await pause(1200); open(rooms[0]); await pause(1200);
     let atNewest = false;
@@ -134,6 +134,7 @@ try {
     if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
+    scenarioOptions: { skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     refreshHz,

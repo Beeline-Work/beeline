@@ -148,6 +148,34 @@ leak.
 
 Android stream visibility uses `tesseract` on retained emulator screenshots outside the timing window; accessibility dumps cannot reliably obtain idle state during streaming. The OCR check requires both stream labels (allowing O for zero), and the images remain available for inspection.
 
+### Isolated redraw comparisons
+
+Only one app may poll a capture channel. An older instrumented emulator can
+otherwise consume commands intended for the measured device. `TRANSCRIPT_CONTROL_PORT`
+selects a private loopback listener for the driver. For an already-built fixture
+APK using port 19886, the leased userdebug emulator can route that endpoint to
+its own ADB reverse (run these only against the explicitly owned emulator):
+
+```sh
+adb -s <owned-serial> root
+# Root can reconnect this emulator under its loopback TCP serial. Select that
+# exact owned serial; capture-android also verifies ro.kernel.qemu=1.
+adb -s <owned-serial> reverse tcp:19886 tcp:19896
+adb -s <owned-serial> shell iptables -t nat -A OUTPUT -p tcp -d 10.0.2.2 \
+  --dport 19886 -j DNAT --to-destination 127.0.0.1:19886
+TRANSCRIPT_CONTROL_PORT=19896 TRANSCRIPT_SKIP_HISTORY=1 \
+  node scripts/transcript-speed/capture-android.mjs <output>
+```
+
+Reset fixture traffic, clear only the leased fixture app's data and sign in
+again before **each** build's capture. This prevents deleted scenario traffic
+in a retained phone cache from changing the next build's starting workload.
+`TRANSCRIPT_SKIP_HISTORY=1` omits the separate long history-prepend experiment;
+it retains typing, scroll/fling, incoming, Room switches, concurrent streams and
+send trials. Both arms must use the same option, recorded in capture metadata.
+The Android driver rejects incoming/stream/send samples with no row commits:
+visibility after sampling alone cannot establish that the action was measured.
+
 ## Persistent host execution on squire
 
 Use `systemd-run --user --wait --pipe --quiet bash -c '<host command>'` from

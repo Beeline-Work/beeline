@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { TokenAuth } from './auth.js';
@@ -47,9 +48,9 @@ beforeAll(async () => {
       [WORKSPACE, identity, role, ROOM, OTHER_ROOM],
     );
   }
-  await seed.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id=$2`, [
+  // ADMIN manages schedules as a Workspace admin; the Room role grants nothing.
+  await seed.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`, [
     ADMIN,
-    ROOM,
   ]);
   await seed.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES('save',$1,$2,'Save daily')`,
@@ -94,7 +95,7 @@ const start = () =>
   );
 
 describe('Reproduction workflow-timer-mutations-1', () => {
-  it.each([ROOM, CORNER])('Room admin cannot delete engine timers in %s', async (surfaceId) => {
+  it.each([ROOM, CORNER])('a Workspace admin cannot delete engine timers in %s', async (surfaceId) => {
     const { runId } = await start();
     if (surfaceId === CORNER) {
       await db.query(
@@ -328,7 +329,7 @@ it('Reproduction schedules-12: resolves Start the daily workflow with… and ski
   );
 });
 
-it('Reproduction schedules-13: Room admin lists and deletes only their Room schedules', async () => {
+it('Reproduction schedules-13: a Workspace admin lists and deletes each Room schedule only through its Room', async () => {
   const input = {
     title: 'Run daily',
     roomId: ROOM,
@@ -353,19 +354,23 @@ it('Reproduction schedules-13: Room admin lists and deletes only their Room sche
   expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules).toEqual([
     expect.objectContaining({ id: created.scheduleId, workflowSlug: 'daily', runCount: 4 }),
   ]);
-  await expect(phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, ADMIN)).rejects.toThrow(
-    'room manager required',
-  );
+  expect(
+    (await phone.execute('listRoomSchedules', { roomId: OTHER_ROOM }, ADMIN)).schedules.map((row) => row.id),
+  ).toEqual([other.scheduleId]);
   await expect(
     phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId: other.scheduleId }, ADMIN),
   ).rejects.toThrow('schedule not found');
+  // A Workspace member is refused even with a Room admin role.
+  await db.query(`UPDATE memberships SET role='member' WHERE identity_id=$1 AND room_id IS NULL`, [ADMIN]);
+  await db.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id=$2`, [ADMIN, OTHER_ROOM]);
   await expect(
     phone.execute(
       'deleteRoomSchedule',
       { roomId: OTHER_ROOM, scheduleId: other.scheduleId },
       ADMIN,
     ),
-  ).rejects.toThrow('room manager required');
+  ).rejects.toThrow('workspace admins only');
+  await db.query(`UPDATE memberships SET role='admin' WHERE identity_id=$1 AND room_id IS NULL`, [ADMIN]);
   await phone.execute(
     'deleteRoomSchedule',
     { roomId: ROOM, scheduleId: created.scheduleId },
@@ -488,8 +493,13 @@ it('Reproduction ebc844ec744260fdaf5b93010d0ffe549b6e30e1a33efbd47cd8b939ef54f16
   const created = await daemon.execute('createAgentSchedule', input, AGENT);
   let rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
   expect(rows).toEqual([expect.objectContaining({ title: 'Play downloads check', maxRuns: 1 })]);
+  // Renaming a saved schedule is a Workspace admin's edit.
+  const ask = randomBytes(32).toString('hex');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Rename it')`, [ask, ROOM, ADMIN]);
+  const renameCommand = await createAgentCommand(db, { roomId: ROOM, agentId: AGENT, sourceMessageId: ask, reason: 'human_message' });
+  await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: renameCommand!.id, generationId: 'rename' }, AGENT);
   await daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,
-    title: 'Downloads check' }, AGENT);
+    title: 'Downloads check', requestId: renameCommand!.turn_request_id, generationId: 'rename' }, AGENT);
   rows = (await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules;
   expect(rows[0]).toMatchObject({ title: 'Downloads check', maxRuns: 1, cadence: input.cadence });
   await expect(daemon.execute('updateAgentSchedule', { roomId: ROOM, scheduleId: created.scheduleId,

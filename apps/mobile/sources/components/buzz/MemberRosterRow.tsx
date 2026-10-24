@@ -53,7 +53,7 @@ export function memberRosterTitle(identity: { handle?: string; pubkey: string })
   return `@${identity.handle ?? fallbackMemberHandle(identity.pubkey)}`;
 }
 
-/** The second line: a person's Room role, or an agent's owner when it has a handle. */
+/** The second line: a person's Workspace role, or an agent's owner when it has a handle. */
 export function memberRosterSubtitle(
   member: { kind: 'human'; role?: string } | { kind: 'agent'; ownerHandle?: string },
 ): string | undefined {

@@ -154,6 +154,16 @@ async function commandFor(agentId: string, sourceMessageId?: string): Promise<Co
   return command;
 }
 
+/** Editing or archiving a saved workflow is workspace-admin-only: run it from a human Workspace owner's message. */
+async function adminCommand(): Promise<CommandRow> {
+  await database.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')
+     ON CONFLICT DO NOTHING`,
+    [WORKSPACE, OWNER],
+  );
+  return commandFor(IMPLEMENTER, await rootMessage(OWNER));
+}
+
 async function pendingCommandsFor(agentId: string): Promise<number> {
   const rows = await database.query<{ count: string }>(
     `SELECT count(*)::text count FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='pending'`,
@@ -244,7 +254,10 @@ describe('save_workflow', () => {
     );
     expect(row.rows[0]).toEqual({ kind: 'workflow', state: 'active', current_version: 1 });
     const changed = { ...CONTRACT, description: 'Updated description' };
-    const second = await saveWorkflow(database, command, { contract: describedWorkflow(changed)});
+    // Changing a saved workflow is a Workspace admin's call, not its saving agent's.
+    await expect(saveWorkflow(database, command, { contract: describedWorkflow(changed)})).rejects.toThrow('workspace admins only');
+    expect((await database.query(`SELECT current_version FROM workspace_skills WHERE workspace_id=$1 AND slug='corner'`, [WORKSPACE])).rows[0]).toEqual({ current_version: 1 });
+    const second = await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow(changed)});
     expect(second).toEqual({ slug: 'corner', version: 2 });
   });
 
@@ -1502,7 +1515,9 @@ describe('archive_workflow', () => {
   it('archives a workflow so a later start_workflow refuses it', async () => {
     const command = await commandFor(IMPLEMENTER);
     await saveWorkflow(database, command, { contract: describedWorkflow(CONTRACT)});
-    const archived = await archiveWorkflow(database, command, { name: 'corner' });
+    // Its saving agent may not archive it; a Workspace admin may.
+    await expect(archiveWorkflow(database, command, { name: 'corner' })).rejects.toThrow('workspace admins only');
+    const archived = await archiveWorkflow(database, await adminCommand(), { name: 'corner' });
     expect(archived).toEqual({ slug: 'corner', archived: true });
     await expect(
       startWorkflow(database, command, {
@@ -1515,7 +1530,7 @@ describe('archive_workflow', () => {
   it('keeps a run in flight on its pinned version after the workflow is archived', async () => {
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER);
-    await archiveWorkflow(database, command, { name: 'corner' });
+    await archiveWorkflow(database, await adminCommand(), { name: 'corner' });
     const result = await handoff(database, command, {
       runId,
       outcome: 'pushed',
@@ -2149,8 +2164,8 @@ describe('agent workflow run reads and cancellation', () => {
   it('reads the pinned contract, current holder, requirements and complete history after an edit and archive', async () => {
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER);
-    await saveWorkflow(database, command, { contract: describedWorkflow({ ...CONTRACT, description: 'New definition' })});
-    await archiveWorkflow(database, command, { name: 'corner' });
+    await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow({ ...CONTRACT, description: 'New definition' })});
+    await archiveWorkflow(database, await adminCommand(), { name: 'corner' });
     expect(await getWorkflowRun(database, ROOM, runId)).toMatchObject({
       runId, workflowSlug: 'corner', workflowVersion: 1, state: 'implement', status: 'live',
       role: 'implementer', boundAgentId: IMPLEMENTER, requiredFields: ['summary', 'prUrl'],
@@ -2227,8 +2242,9 @@ describe('agent workflow run reads and cancellation', () => {
     expect((await cancelWorkflowRun(database, command, { runId, reason: 'Owner withdrew' })).status).toBe('abandoned');
   });
 
-  it('allows a human Room admin and records that human as the actor', async () => {
+  it('allows a human Workspace admin and records that human as the actor', async () => {
     await database.query(`UPDATE identities SET handle='owner' WHERE id=$1`, [OWNER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     const { runId } = await startedRun();
     const command = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
     await cancelWorkflowRun(database, command, { runId, reason: 'Admin stopped' });
@@ -2241,7 +2257,6 @@ describe('agent workflow run reads and cancellation', () => {
     expect(notice.author_id).toBe(SYSTEM_IDENTITY_ID);
     expect(notice.text).toBe(`@owner cancelled workflow corner · run ${runId.slice(0, 8)}`);
     expect(notice.actor_id).toBe(OWNER);
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     const room = await new PhoneService(database, 'http://localhost').readRoom(ROOM, OWNER);
     const displayedNotice = room?.messages.find(message => message.text === notice.text);
     expect(displayedNotice?.author).toMatchObject({ pubkey: SYSTEM_IDENTITY_ID, name: 'System' });
@@ -2917,7 +2932,8 @@ describe('gates with a timeout and a default', () => {
     expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('sign_off');
   });
 
-  it('sends the notice to the Room admins when the owner has left the Room', async () => {
+  it('sends the notice to the Workspace admins when the owner has left the Room', async () => {
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, OUTSIDER]);
     const runId = await startedGatedRun(await commandFor(WORKER_A, await rootMessage(OUTSIDER, 'please run gated')));
     expect((await runCards(runId))[0]!.card.ownerId).toBe(OUTSIDER);
@@ -2973,6 +2989,7 @@ describe('run owner', () => {
   });
 
   it('is null for an older agent-made schedule with no recorded owner, so notices go to admins', async () => {
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, [WORKSPACE, OWNER]);
     await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(GATED) });
     await database.query(
       `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_slug)
@@ -3293,7 +3310,7 @@ describe('legacy run timer recovery', () => {
     const gateTimer = (await timersFor(runId))[1]!;
     await database.query(`DELETE FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [runId]);
     await database.query(`UPDATE messages SET created_at=now()-interval '1 hour',card=card-'deadlineSeconds' WHERE id=$1`, [runId]);
-    await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow({ ...GATED, deadlineSeconds: 14_400 }) });
+    await saveWorkflow(database, await adminCommand(), { contract: describedWorkflow({ ...GATED, deadlineSeconds: 14_400 }) });
     const versions = (await database.query(`SELECT markdown,content_hash FROM workspace_skill_versions ORDER BY version`)).rows;
     const recorded = new RecordingDatabase(database);
     expect(await backfillWorkflowRunTimers(recorded)).toBe(1);

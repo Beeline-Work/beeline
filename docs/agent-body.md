@@ -43,7 +43,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ### Tagged control commands
 
-- **An exact tagged lifecycle command is server control, never a model prompt.** `routeHumanMessage` treats a whole message `@agent restart|status|stop|retry|debug|help|login` (or `@agent /restart`, `/login`) as control. Status/help follow access policy; debug/restart need the agent owner or a Room manager; stop/retry also allow the requester; login is owner-only. Restarts coalesce per agent in `agent_commands` until `ConnectionPresence` sees a new lifecycle id.
+- **An exact tagged lifecycle command is server control, never a model prompt.** `routeHumanMessage` treats a whole message `@agent restart|status|stop|retry|debug|help|login` (or `@agent /restart`, `/login`) as control. Status/help follow access policy; restart, stop, retry and debug are open to anyone in the Room (debug reports only this Room's turn); login is owner-only. Restarts coalesce per agent in `agent_commands` until `ConnectionPresence` sees a new lifecycle id.
 
 ### Model catalog
 

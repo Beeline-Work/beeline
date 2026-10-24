@@ -14,7 +14,7 @@ export interface GrantRequestCardProps {
   agent?: AgentPresentation;
   viewerIsAgent: boolean;
   viewerPubkey: string;
-  viewerRole: 'owner' | 'admin' | 'member' | 'spectator' | null;
+  /** The server's Workspace owner/admin decision (`viewer.permissions.manage`). */
   viewerCanManageWorkspace?: boolean;
   actionId: string | null;
   onDecision(grantId: string, decision: GrantDecision): void;
@@ -27,8 +27,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   agent,
   viewerIsAgent,
   viewerPubkey,
-  viewerRole,
-  viewerCanManageWorkspace,
+  viewerCanManageWorkspace = false,
   actionId,
   onDecision,
   onOpenSource,
@@ -43,10 +42,9 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   const canDecide =
     !viewerIsAgent &&
     (repositoryRequest
-      ? (viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner'))
+      ? viewerCanManageWorkspace
       : sharedAssetRequest
-        ? Boolean(viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner')) ||
-          viewerPubkey === request.owner.pubkey
+        ? viewerCanManageWorkspace || viewerPubkey === request.owner.pubkey
       : viewerPubkey === request.owner.pubkey);
   const anyPending = request.grants.some((grant) => grant.status === 'pending');
   return (

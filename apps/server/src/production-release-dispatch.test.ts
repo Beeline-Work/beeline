@@ -219,11 +219,18 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
           scheduleId: saved.scheduleId, title: 'Nightly release',
         }, agent);
       }
-      if (edited) await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
-      if (edited) await service.execute('updateAgentSchedule', {
-        roomId: room, requestId: input.requestId, generationId: input.generationId,
-        scheduleId: saved.scheduleId, prompt: 'Run a different release task.',
-      }, agent);
+      if (edited) {
+        // A turn with no Workspace admin behind it cannot edit the saved schedule
+        // at all, so its human approval survives untouched.
+        await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
+        await expect(service.execute('updateAgentSchedule', {
+          roomId: room, requestId: input.requestId, generationId: input.generationId,
+          scheduleId: saved.scheduleId, prompt: 'Run a different release task.',
+        }, agent)).rejects.toThrow('workspace admins only');
+        expect((await db.query(`SELECT message FROM agent_schedules WHERE id=$1`, [saved.scheduleId])).rows[0])
+          .toEqual({ message: 'Run the explicitly commanded nightly production release with dispatch_release.' });
+        edited = false;
+      }
       const authorization = (await db.query<{ human_command_message_id: string | null }>(
         `SELECT human_command_message_id FROM agent_schedules WHERE id=$1`, [saved.scheduleId],
       )).rows[0]!;
@@ -258,11 +265,11 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
     expect(dispatch).toHaveBeenCalledTimes(2);
     await scheduledRun(false);
     await scheduledRun(true, true);
-    expect(dispatch).toHaveBeenCalledTimes(2);
-    await scheduledRun(true, false, true);
     expect(dispatch).toHaveBeenCalledTimes(3);
+    await scheduledRun(true, false, true);
+    expect(dispatch).toHaveBeenCalledTimes(4);
 
-    console.log('Demonstrated R-RELEASE-CARD: built dispatch_release → authenticated daemon → committed audit receipt + one stub dispatch, zero grants/cards; scheduled human provenance accepted after schedule expiry; unapproved or edited schedules refused. No production release.');
+    console.log('Demonstrated R-RELEASE-CARD: built dispatch_release → authenticated daemon → committed audit receipt + one stub dispatch, zero grants/cards; scheduled human provenance accepted after schedule expiry; unapproved schedules refused and non-admin schedule edits refused. No production release.');
   } finally {
     await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
     await rm(dir, { recursive: true, force: true });

@@ -341,6 +341,8 @@ export type ChatDisplayMessage = {
     decider?: RoomViewIdentity;
     requester?: RoomViewIdentity;
     decidedAt?: number;
+    /** Squire spending only: the spending agent's owner, the one person who decides. */
+    ownerPubkey?: string;
     status: 'pending' | 'allowed' | 'denied' | 'expired' | 'failed';
     subchannelId?: string;
   };
@@ -488,6 +490,7 @@ export function displayRoomMessage(
             status: message.permission.status,
             ...(message.permission.repository ? { repository: message.permission.repository } : {}),
             ...(message.permission.purpose ? { purpose: message.permission.purpose } : {}),
+            ...(message.permission.ownerId ? { ownerPubkey: message.permission.ownerId } : {}),
             ...(message.permission.cornerId ? { subchannelId: message.permission.cornerId } : {}),
           },
         }

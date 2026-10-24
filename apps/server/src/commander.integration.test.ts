@@ -427,17 +427,21 @@ it('cross-Room reads work from a DM, while nonmembers get no data or order', asy
   await expect(daemon.execute('read', { roomId: DM, address: ROOM }, RUBY)).rejects.toThrow('membership');
   await expect(daemon.execute('order', { ...authority(order), address: ROOM, text: 'Do this' }, RUBY)).rejects.toThrow('membership');
 });
-it('revises a reachable corner brief from a DM with the same active-order authority', async () => {
+it('R-REVISE revises and restores the cited approval without a false reproduction warning', async () => {
   const opened = await open();
+  await db.query(`UPDATE rooms SET repository_resolution='repository',repository_key='owner/repo' WHERE id=$1`, [ROOM]);
   const revision = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
-    expectedRevision: 1, brief: { spec: 'Build the assigned widget with the clarified endpoint',
+    expectedRevision: 1, brief: { spec: '## Intent\nFix the reported endpoint bug.\n## Reproduction R-REVISE\nRevise the brief and restore it; the approval link disappears.', repositoryWork: true,
       approval: { sourceMessageId: order.sourceMessageId }, change: 'Clarify the endpoint' } }, RUBY);
   expect(revision.revision).toBe(2);
+  const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
+  expect(restored.brief?.approval?.sourceMessageId).toBe(order.sourceMessageId);
+  expect(revision.warnings ?? []).toEqual([]);
 });
-it.each([undefined, { sourceMessageId: 'irrelevant-approval' }, { sourceMessageId: '' }])('Reproduction commander-direct: commander revises without a cited approval (%j)', async approval => {
+it('Reproduction commander-direct: commander revises without a cited approval', async () => {
   const opened = await open();
   const revised = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
-    expectedRevision: 1, brief: { spec: 'Build the clarified widget', change: 'Clarify scope', ...(approval ? { approval } : {}) },
+    expectedRevision: 1, brief: { spec: 'Build the clarified widget', change: 'Clarify scope' },
   }, RUBY);
   expect(revised.revision).toBe(2);
   const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);

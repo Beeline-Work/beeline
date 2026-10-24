@@ -35,7 +35,7 @@ call. It does **not** play uncommitted text or remove the final routing wait.
 | --- | --- | --- | --- |
 | Opening TTS overlap | TTS starts at 200 ms; sound publication at 300 ms | TTS at 40 ms; sound publication at 200 ms | `after.sql`: private prefetch and first voiced publication |
 | Eager brain start | 200 ms brain work after final | 50 ms after final with 150 ms useful eager lead | `after.sql`: first content and voiced publication |
-| Speech tempo | Original PCM duration; first complete frame at 110 ms | Voiced duration / 1.15; leading silence unchanged; first frame still at 110 ms | `after.sql`: first voiced publication; waveform test checks ratio |
+| Speech tempo | Original PCM duration; first complete frame at 110 ms | Voiced duration / 1.15; leading quiet padding unchanged; first frame still at 110 ms | `after.sql`: first voiced publication; waveform test checks ratio |
 | Leading-silence regression (`VOICE-SPEED-ONSET`) | Reviewed tempo: first voiced frame at 80 ms after one silent frame, 140 ms after five | First voiced frame at 40 ms / 120 ms, respectively; equals provider arrival | `after.sql`: first voiced publication |
 
 `VOICE-SPEED-1` uses a 40 ms first sentence, 200 ms final answer, and 100 ms TTS.
@@ -56,8 +56,8 @@ every 20 ms, one initial silent frame followed by a 220 Hz tone reproduced an
 the 120 ms provider arrival. Both assertions failed before the repair.
 
 The same runtime tests now pass at 40 ms and 120 ms. The transform passes
-initial digital-silence frames unchanged and starts WSOLA with the first
-non-silent frame, which passes immediately. The speed ratio applies to that
+initial quiet frames (absolute sample amplitude at most 150) unchanged and starts WSOLA with the first
+above-threshold frame, which passes immediately. The speed ratio applies to that
 suffix; initial provider padding is preserved. An odd-byte-boundary test checks
 that padding remains exact and the voiced suffix matches the unpadded transform.
 These controlled-provider runtime tests prove publication timing, not a new
@@ -174,3 +174,19 @@ playback code or production feature flag is added for this comparison.
 Validation: five focused server suites pass (248 tests), including the full
 runtime/provider regressions; root workspace/mobile/scripts typecheck and
 workflow-path checks pass. `local-results.json` records deterministic values.
+
+### Quiet-padding regression coverage
+
+The exact-zero guard also delayed quiet nonzero provider padding. Expanded
+`VOICE-SPEED-ONSET` exercises padding values 0, ±1, and ±150 for one and five
+frames through the same runtime path. Before this repair, the two zero-padding
+cases passed and all eight nonzero cases failed (80 / 140 ms instead of
+40 / 120 ms). Tempo now shares the runtime's voiced threshold (>150 absolute
+sample amplitude), preserving the first voiced frame at provider arrival.
+The same five padding values also verify byte-exact prefix preservation and
+voiced-suffix equivalence across odd byte boundaries.
+
+| Provider padding | Previous head first voiced (one / five frames) | Repaired first voiced | Original playback / provider arrival |
+| --- | --- | --- | --- |
+| Digital zero | 40 / 120 ms | 40 / 120 ms | 40 / 120 ms |
+| Quiet nonzero (±1, ±150) | 80 / 140 ms | 40 / 120 ms | 40 / 120 ms |

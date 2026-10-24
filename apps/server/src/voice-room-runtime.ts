@@ -1,4 +1,4 @@
-import { voiceTempo } from './voice-tempo.js';
+import { voiceTempo, VOICE_PCM_THRESHOLD } from './voice-tempo.js';
 import { VoiceEagerReply } from './voice-eager-reply.js';
 import { VoiceSpeechPrefetch } from './voice-speech-prefetch.js';
 import { cleanVoiceReply } from './voice-reply.js';
@@ -1000,7 +1000,7 @@ export class VoiceRoomRuntime {
           pending = pending.subarray(frameBytes);
           this.markCallActivity();
           this.touch();
-          const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+          const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
           if (voiced) { first = false; await onFirstVoicedFrame?.(); }
           if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
@@ -1013,7 +1013,7 @@ export class VoiceRoomRuntime {
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
         this.markCallActivity();
         this.touch();
-        const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+        const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
         if (voiced) { first = false; await onFirstVoicedFrame?.(); }
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
         await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));

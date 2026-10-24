@@ -26,8 +26,9 @@ it('publishes the first PCM frame without reading ahead or awaiting a timer', as
   await output.return(undefined);
 });
 
-it('preserves leading silence across odd byte boundaries and speeds only the voiced suffix', async () => {
+it.each([0, 1, -1, 150, -150])('preserves quiet padding (%s) across odd byte boundaries and speeds only the voiced suffix', async padding => {
   const silence = Buffer.alloc(960 * 5);
+  for (let i = 0; i < silence.length / 2; i++) silence.writeInt16LE(padding, i * 2);
   const tone = Buffer.alloc(24000 * 2);
   for (let i = 0; i < 24000; i++) tone.writeInt16LE(Math.round(12000 * Math.sin(2 * Math.PI * 220 * i / 24000)), i * 2);
   async function* chunks(pcm: Buffer) {

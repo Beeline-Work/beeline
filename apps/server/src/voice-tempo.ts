@@ -1,6 +1,9 @@
-/** Streaming WSOLA for 24 kHz mono PCM. Leading silence and the first voiced
- * 20 ms frame pass immediately; silence is not included in the speed change.
- * later windows advance 1.15 hops, aligned by waveform correlation, rather
+// Shared with runtime publication timing so quiet padding cannot consume the opening frame.
+export const VOICE_PCM_THRESHOLD = 150;
+
+/** Streaming WSOLA for 24 kHz mono PCM. Leading quiet padding and the first voiced
+ * 20 ms frame pass immediately; padding is not included in the speed change.
+ * Later windows advance 1.15 hops, aligned by waveform correlation, rather
  * than changing the sample rate (and therefore pitch). */
 export async function* voiceTempo(input: AsyncIterable<Uint8Array>): AsyncIterable<Uint8Array> {
   const hop = 480, search = 120, speed = 1.15;
@@ -14,8 +17,8 @@ export async function* voiceTempo(input: AsyncIterable<Uint8Array>): AsyncIterab
   };
   function* available(final: boolean) {
     // Do not spend the no-lookahead opening frame on provider padding. Keep
-    // passing silent frames until speech arrives, then start WSOLA there.
-    if (!step && total >= hop && samples.slice(0, hop).every(value => value === 0)) {
+    // passing below-threshold frames until speech arrives, then start WSOLA there.
+    if (!step && total >= hop && samples.slice(0, hop).every(value => Math.abs(value) <= VOICE_PCM_THRESHOLD)) {
       yield encode(samples.slice(0, hop));
       samples = samples.slice(hop); total -= hop;
       return;

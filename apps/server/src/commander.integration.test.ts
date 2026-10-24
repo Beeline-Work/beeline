@@ -826,7 +826,7 @@ it.each(['primary reviewer', 'fallback reviewer', 'commander'])('Reproduction re
   console.log(`[reviewer-handback-2471] ${role} → own corner worker: repair order delivered privately`);
 });
 
-it('renders current worker/commander goals on every surface without changing System messages or cards', async () => {
+it('keeps Room opening facts historical while current worker and commander goals update', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await db.query(`UPDATE rooms SET about='Legacy version 1.1.17 goal' WHERE id=$1`, [opened.cornerId]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
@@ -845,7 +845,7 @@ it('renders current worker/commander goals on every surface without changing Sys
     expect((await db.query(`SELECT objective FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
       .toMatchObject({ objective });
     expect((await db.query(`SELECT * FROM messages ORDER BY id`)).rows).toEqual(stored);
-    const currentCard = { type: 'corner-open', cornerId: opened.cornerId, name, objective };
+    const currentCard = { type: 'corner-open', cornerId: opened.cornerId, name: 'Widget', objective: 'Widget' };
     for (const page of [
       await phone.readRoom(ROOM, HUMAN),
       await phone.readHistory(ROOM, HUMAN),
@@ -898,14 +898,14 @@ it('makes an owner-approved systemctl user-bus command available in a subsequent
 
 it('does not resolve an opening card against a corner belonging to another parent Room', async () => {
   const opened = await open();
-  // Exercise a visible call-site marker; source-free subscription records stay hidden.
+  // Exercise a resident call-site marker without resolving another Room’s private goal.
   await db.query(`UPDATE messages SET card=card||'{"sourceMessageId":"source"}'::jsonb
     WHERE room_id=$1 AND card->>'cornerId'=$2`, [ROOM, opened.cornerId]);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, DM]);
   await db.query(`UPDATE corner_facts SET objective='Private goal in another Room' WHERE corner_id=$1`, [opened.cornerId]);
   const view = await phone.readRoom(ROOM, HUMAN);
   expect(view?.messages.find(message => message.daemonFact?.cornerId === opened.cornerId)?.daemonFact)
-    .toMatchObject({ objective: 'Build the widget' });
+    .toMatchObject({ name: 'Widget', objective: 'Widget' });
 });
 
 it('the same corner can order and report privately to its parent Room commander', async () => {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { TurnStepsLine } from '../sources/components/buzz/ActivityTimeline';
@@ -102,3 +102,51 @@ export function DisclosureRowsProof() {
 }
 
 export const repositoryId = repository.id;
+
+/** Reproduction SYSTEM-FIRST-LINE: replay the reported schedule notice. */
+export function SystemRowsProof() {
+  const { theme } = useUnistyles();
+  const [action, setAction] = useState('No action');
+  return (
+    <View style={{ padding: 24, backgroundColor: theme.buzz.bgBase }}>
+      <Text style={{ ...theme.buzz.type.hero, color: theme.buzz.textPrimary }}>#beeline</Text>
+      <View testID="system-proof" style={{ marginTop: 24 }}>
+        <LedgerSystemLine id="short-proof" text="Speedy joined the corner" stamp="09:00" />
+        <LedgerSystemLine
+          id="long-proof"
+          text=""
+          stamp="09:01"
+          event={{
+            subject: { kind: 'agent', id: 'scheduler', name: '@scheduler' },
+            verb: 'ran a schedule for',
+            object: { id: 'ruby', text: '@ruby' },
+            consequence:
+              'Daily 9am owner morning card (approved by lunchboxfortwo; replaces the 7pm velocity audit and the 9am digest). Read the procedure and post one card in #beeline. '.repeat(
+                4,
+              ),
+          }}
+          onOpenIdentity={(id) => setAction(`Identity: ${id}`)}
+        />
+        <LedgerSystemLine
+          id="link-proof"
+          text=""
+          stamp="09:02"
+          event={{
+            subject: { kind: 'system', name: 'Beeline' },
+            verb: 'posted',
+            object: { text: 'the receipt', url: 'https://example.test/receipt' },
+            consequence:
+              'Read the complete receipt and preserve all of its original details. '.repeat(8),
+          }}
+          onOpenUrl={(url) => setAction(`URL: ${url}`)}
+        />
+        <Text
+          testID="system-proof-action"
+          style={{ ...theme.buzz.type.meta, color: theme.buzz.textPrimary }}
+        >
+          {action}
+        </Text>
+      </View>
+    </View>
+  );
+}

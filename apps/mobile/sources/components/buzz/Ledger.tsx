@@ -779,7 +779,14 @@ export function LedgerSystemLine({
     <Text
       key={`${subject.id ?? subject.name}-${index}`}
       style={styles.systemLineName}
-      onPress={subject.id && onOpenIdentity ? () => onOpenIdentity(subject.id!) : undefined}
+      onPress={
+        subject.id && onOpenIdentity
+          ? (event) => {
+              event.stopPropagation();
+              onOpenIdentity(subject.id!);
+            }
+          : undefined
+      }
       testID={`system-line-name-${id}-${index}`}
     >
       {subject.name}
@@ -801,7 +808,10 @@ export function LedgerSystemLine({
             key="object"
             style={styles.systemLineLink}
             accessibilityRole="link"
-            onPress={onOpenBrief}
+            onPress={(event) => {
+              event.stopPropagation();
+              onOpenBrief();
+            }}
             testID={`system-line-object-${id}`}
           >
             {object.text}
@@ -812,7 +822,14 @@ export function LedgerSystemLine({
           <Text
             key="object"
             style={styles.systemLineName}
-            onPress={onOpenIdentity ? () => onOpenIdentity(object.id!) : undefined}
+            onPress={
+              onOpenIdentity
+                ? (event) => {
+                    event.stopPropagation();
+                    onOpenIdentity(object.id!);
+                  }
+                : undefined
+            }
             testID={`system-line-object-${id}`}
           >
             {object.text}
@@ -823,7 +840,14 @@ export function LedgerSystemLine({
           <Text
             key="object"
             style={styles.systemLineLink}
-            onPress={onOpenUrl ? () => onOpenUrl(object.url!) : undefined}
+            onPress={
+              onOpenUrl
+                ? (event) => {
+                    event.stopPropagation();
+                    onOpenUrl(object.url!);
+                  }
+                : undefined
+            }
             testID={`system-line-object-${id}`}
           >
             {object.text}
@@ -835,6 +859,16 @@ export function LedgerSystemLine({
     }
     if (event.consequence) spans.push(` · ${event.consequence}`);
   }
+  const body = (
+    <Text
+      style={styles.systemLineText}
+      numberOfLines={expanded ? undefined : 2}
+      ellipsizeMode="tail"
+      testID={`system-line-text-${id}`}
+    >
+      {event ? spans : text}
+    </Text>
+  );
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>
       <View>
@@ -862,33 +896,38 @@ export function LedgerSystemLine({
             {fullText}
           </Text>
         </View>
-        <Text
-          style={styles.systemLineText}
-          numberOfLines={expanded ? undefined : 2}
-          ellipsizeMode="tail"
-          testID={`system-line-text-${id}`}
-        >
-          {event ? spans : text}
-        </Text>
+        {overflows ? (
+          <LedgerDisclosure
+            firstLine
+            expanded={expanded}
+            accessibilityState={{ expanded }}
+            accessibilityLabel={
+              expanded ? 'Show less of system message' : 'Show full system message'
+            }
+            onPress={() => setExpanded((value) => !value)}
+            rowTestID={`system-line-toggle-${id}`}
+          >
+            {body}
+          </LedgerDisclosure>
+        ) : (
+          body
+        )}
         {callerMessage !== undefined ? (
           <>
             <Text style={styles.systemLineText} testID={`system-line-caller-label-${id}`}>
               Caller's message:
             </Text>
-            <Text selectable dataDetectorType="none" style={styles.systemLineText}
-              testID={`system-line-caller-message-${id}`}>
+            <Text
+              selectable
+              dataDetectorType="none"
+              style={styles.systemLineText}
+              testID={`system-line-caller-message-${id}`}
+            >
               {`“${callerMessage}”`}
             </Text>
           </>
         ) : null}
       </View>
-      {overflows && (
-        <LedgerDisclosure expanded={expanded} accessibilityState={{ expanded }}
-          accessibilityLabel={expanded ? 'Show less of system message' : 'Show full system message'}
-          onPress={() => setExpanded(value => !value)} rowTestID={`system-line-toggle-${id}`}>
-          {null}
-        </LedgerDisclosure>
-      )}
       <Text numberOfLines={1} style={styles.roomUpdateStamp} testID={`system-line-stamp-${id}`}>
         {stamp}
       </Text>

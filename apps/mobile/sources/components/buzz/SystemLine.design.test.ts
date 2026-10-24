@@ -88,7 +88,9 @@ describe('the system line', () => {
     }));
     const object = renderer.root.findByProps({ testID: 'system-line-object-brief-revision' });
     expect(object.props.accessibilityRole).toBe('link');
-    object.props.onPress();
+    const press = { stopPropagation: vi.fn() };
+    object.props.onPress(press);
+    expect(press.stopPropagation).toHaveBeenCalledTimes(1);
     expect(onOpenBrief).toHaveBeenCalledTimes(1);
     expect(onOpenIdentity).not.toHaveBeenCalled();
   });
@@ -140,11 +142,15 @@ describe('the system line', () => {
     );
     const subject = renderer.root.findByProps({ testID: 'system-line-name-yolo-0' });
     expect(subject.props.style).toMatchObject({ color: '#b08a4a' });
-    subject.props.onPress();
+    const subjectPress = { stopPropagation: vi.fn() };
+    subject.props.onPress(subjectPress);
+    expect(subjectPress.stopPropagation).toHaveBeenCalledTimes(1);
     expect(onOpenIdentity).toHaveBeenCalledWith('o'.repeat(64));
     const object = renderer.root.findByProps({ testID: 'system-line-object-yolo' });
     expect(object.props.style).toMatchObject({ color: '#b08a4a' });
-    object.props.onPress();
+    const press = { stopPropagation: vi.fn() };
+    object.props.onPress(press);
+    expect(press.stopPropagation).toHaveBeenCalledTimes(1);
     expect(onOpenIdentity).toHaveBeenLastCalledWith('b'.repeat(64));
   });
 
@@ -164,7 +170,9 @@ describe('the system line', () => {
       }),
     );
     const object = renderer.root.findByProps({ testID: 'system-line-object-pr' });
-    object.props.onPress();
+    const press = { stopPropagation: vi.fn() };
+    object.props.onPress(press);
+    expect(press.stopPropagation).toHaveBeenCalledTimes(1);
     expect(onOpenUrl).toHaveBeenCalledWith('https://github.com/acme/w/pull/7');
     // A subject with no identity (GitHub) is named but not tappable.
     expect(

@@ -1,9 +1,9 @@
 import React from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
-import { DisclosureRowsProof, repositoryId } from './disclosure-rows-proof';
+import { DisclosureRowsProof, SystemRowsProof, repositoryId } from './disclosure-rows-proof';
 
-createRoot(document.getElementById('root')!).render(<DisclosureRowsProof />);
+createRoot(document.getElementById('root')!).render(location.search.includes('system') ? <SystemRowsProof /> : <DisclosureRowsProof />);
 const pause = () => new Promise((resolve) => setTimeout(resolve, 80));
 const get = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
 const assert = (ok: unknown, why: string) => {
@@ -12,6 +12,7 @@ const assert = (ok: unknown, why: string) => {
 async function main() {
   await document.fonts.ready;
   await pause();
+  if (location.search.includes('system')) return systemRows();
   const before = location.search.includes('before');
   const theme = location.search.includes('bone') ? 'bone' : 'obsidian';
   const rows = [
@@ -124,3 +125,91 @@ async function main() {
 main().catch((error) => {
   document.getElementById('result')!.textContent = `FAIL: ${error.message}`;
 });
+
+async function systemRows() {
+  const baseline = location.search.includes('baseline');
+  const short = get('system-line-short-proof').getBoundingClientRect();
+  const shortText = get('system-line-text-short-proof').getBoundingClientRect();
+  const metrics = {
+    x: short.x,
+    y: short.y,
+    height: short.height,
+    textX: shortText.x,
+    textY: shortText.y,
+  };
+  assert(!get('system-line-toggle-short-proof'), 'short row gained a chevron');
+  for (const id of ['long-proof', 'link-proof']) {
+    const control = () => get(`system-line-toggle-${id}`);
+    const text = () => get(`system-line-text-${id}`);
+    assert(control(), `${id}: no disclosure`);
+    const checkAlignment = () => {
+      const mark = control().querySelector('svg')!.getBoundingClientRect();
+      const box = text().getBoundingClientRect();
+      const centre = mark.y + mark.height / 2;
+      const onFirstLine =
+        centre >= box.y && centre <= box.y + parseFloat(getComputedStyle(text()).lineHeight);
+      assert(baseline ? !onFirstLine : onFirstLine, `${id}: chevron is not on first line`);
+      if (!baseline) {
+        assert(control().contains(text()), `${id}: separate chevron-only row`);
+        assert(
+          Math.abs(box.x - control().getBoundingClientRect().x - 22) < 1,
+          `${id}: wrong text indent`,
+        );
+      }
+      assert(control().getBoundingClientRect().height >= 44, `${id}: tap height`);
+    };
+    checkAlignment();
+    assert(getComputedStyle(text()).webkitLineClamp === '2', `${id}: not clamped`);
+    const measuredWidth = get(`system-line-measurement-${id}`).getBoundingClientRect().width;
+    if (!baseline)
+      assert(
+        Math.abs(measuredWidth - control().getBoundingClientRect().width) < 1,
+        `${id}: measurement lost full width`,
+      );
+    const closedHeight = text().getBoundingClientRect().height;
+    const closedText = text().textContent;
+    if (baseline) control().click();
+    else {
+      const box = control().getBoundingClientRect();
+      document
+        .elementFromPoint(box.right - 2, box.top + 2)!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+    await pause();
+    assert(text().textContent === closedText, `${id}: original text changed`);
+    assert(text().getBoundingClientRect().height > closedHeight, `${id}: did not expand`);
+    assert(control().getAttribute('aria-expanded') === 'true', `${id}: expanded state`);
+    assert(
+      control().querySelector('polyline')?.getAttribute('points') === '6 9 12 15 18 9',
+      `${id}: down chevron`,
+    );
+    checkAlignment();
+    control().click();
+    await pause();
+    const target = get(
+      id === 'long-proof' ? 'system-line-name-long-proof-0' : 'system-line-object-link-proof',
+    );
+    target.click();
+    await pause();
+    assert(
+      get('system-proof-action').textContent ===
+        (id === 'long-proof' ? 'Identity: scheduler' : 'URL: https://example.test/receipt'),
+      `${id}: nested action lost`,
+    );
+    assert(control().getAttribute('aria-expanded') === 'false', `${id}: nested action toggled row`);
+    assert(
+      control().querySelector('polyline')?.getAttribute('points') === '9 6 15 12 9 18',
+      `${id}: right chevron`,
+    );
+    assert(
+      get(`system-line-measurement-${id}`).getBoundingClientRect().width === measuredWidth,
+      `${id}: measurement width changed`,
+    );
+    if (location.search.includes('opened')) {
+      control().click();
+      await pause();
+    }
+  }
+  document.getElementById('result')!.textContent =
+    `PASS SYSTEM-FIRST-LINE ${JSON.stringify(metrics)}`;
+}

@@ -133,9 +133,9 @@ nothing_to_build with the same fields. Do not alter Sentry routing in this workf
 
 ## verify
 
-Before pulling new reports, read the morning-card dispatch record's signals ledger
-and every earlier dispatch handoff's signals ledger. New fix entries come from
-the morning-card dispatch record; keep reading legacy handoffs for earlier fixes.
+Before pulling new reports, read every earlier dispatch handoff's signals ledger.
+Verify these legacy entries only; do not create a new entry for each dispatched fix.
+Experiment tracking is managed outside this workflow, with at most 10 active experiments.
 Each entry has cornerId, itemIds, signature or Sentry id or redacted workspace
 symptom, dispatchedAt, fix PR, release/version/time evidence and observedThrough.
 Check the same signal through now, including resolved items and occurrences on
@@ -178,5 +178,4 @@ fail on the old prompt and pass with the fix, and every other case must pass.
 The reviewer does not pass the pull request without that table.
 For a skill fix, the brief names the skill and the missing or wrong steps, and requires
 the pull request to change that skill and keep `apps/body/src/beeline-skill.test.ts`
-and `apps/body/src/prompt-layers.test.ts` passing. The morning-card dispatch record lists each corner's
-`cornerId` (from `open_corner`), its name and its item ids. Include signals with the stable signature, Sentry id or redacted workspace symptom for every dispatched item, dispatch time, item ids and cornerId; later sweeps append PR and release evidence. Fix work goes to Jellybean, never the triager.
+and `apps/body/src/prompt-layers.test.ts` passing. Fix work goes to Jellybean, never the triager.

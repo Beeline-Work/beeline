@@ -132,7 +132,11 @@ describe('feedback-triage workflow', () => {
     expect(FEEDBACK_TRIAGE_CONTRACT.handoffs).not.toHaveProperty('dispatch');
     expect(FEEDBACK_TRIAGE_STEPS).not.toMatch(/^## (approve|dispatch)$/m);
     expect(FEEDBACK_TRIAGE_STEPS).toContain('every earlier dispatch handoff');
-    expect(FEEDBACK_TRIAGE_STEPS).toContain('New fix entries come from');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('do not create a new entry for each dispatched fix');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('at most 10 active experiments');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toContain('New fix entries come from');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toContain('Include signals');
+    expect(FEEDBACK_TRIAGE_STEPS).not.toContain('morning-card dispatch record');
   });
 
   it('calculates the next 07:00 in both backfills before and at the boundary in winter and summer', async () => {

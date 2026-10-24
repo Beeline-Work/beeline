@@ -52,7 +52,7 @@ describe('observed corner states', () => {
     ],
     [
       'checks failed without worker',
-      { lifecycle: { lifecycle: 'in-review', checks: 'failing' } },
+      { lifecycle: { lifecycle: 'in-review', checks: 'failing' }, ciStartedAt: undefined },
       'idle',
     ],
     ['human merge yes', { owed: true, lifecycle: { ...pushed, checks: 'passing' } }, 'waiting'],
@@ -85,6 +85,80 @@ describe('observed corner states', () => {
 
 it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) => {
   expect(deriveCornerState({...facts,lastTurnEndedAt:1000-Number(age)}).state).toBe(state);
+});
+it('failing checks past the repair window are idle', () => {
+  expect(deriveCornerState({
+    ...facts,
+    ciStartedAt: 1000 - 1801,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  })).toEqual({ state: 'idle' });
+});
+it('a repair turn still running past 30 minutes without a push is idle', () => {
+  expect(deriveCornerState({
+    ...facts,
+    turnRunning: true,
+    ciStartedAt: 1000 - 1801,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  })).toEqual({ state: 'idle' });
+  expect(deriveCornerState({
+    ...facts,
+    turnRunning: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('working');
+});
+it('checks pending for 45 minutes, with no blocker and no turn running, stay review', () => {
+  expect(deriveCornerState({
+    ...facts,
+    owed: false,
+    turnRunning: false,
+    ciStartedAt: 1000 - 45 * 60,
+    lifecycle: { lifecycle: 'in-review', checks: 'pending' },
+  })).toEqual({ state: 'review' });
+});
+it('a fresh failing repair window is working', () => {
+  expect(deriveCornerState({
+    ...facts,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('working');
+});
+it('a blocked report while checks are pending or unreported is idle', () => {
+  const unreported = {
+    lifecycle: 'in-review' as const,
+    checks: 'unknown' as const,
+    pr: { number: 1, url: 'https://github.com/o/r/pull/1', title: 'Fix', targetBranch: 'main', headSha: '2'.repeat(40) },
+    checksSummary: { status: 'unknown' as const, total: 0, failing: [], checks: [], updatedAt: 1 },
+  };
+  expect(deriveCornerState({
+    ...facts,
+    stallReport: true,
+    owed: true,
+    agentCommanderReport: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'pending' },
+  }).state).toBe('idle');
+  expect(deriveCornerState({
+    ...facts,
+    stallReport: true,
+    owed: true,
+    agentCommanderReport: true,
+    lifecycle: unreported,
+  }).state).toBe('idle');
+});
+it('a blocked report during a fresh failing repair window stays working', () => {
+  expect(deriveCornerState({
+    ...facts,
+    stallReport: true,
+    owed: true,
+    agentCommanderReport: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('working');
+});
+it('a running reviewer does not keep a red head in review', () => {
+  expect(deriveCornerState({
+    ...facts,
+    reviewerActive: true,
+    ciStartedAt: undefined,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('idle');
 });
 it.each([
   ['pending', 'review'],

@@ -35,7 +35,7 @@ const checks = {
         updatedBy: 'check',
         url: 'https://github.com/Beeline-Work/beeline/actions/runs/1',
       },
-      { id: 'check-2', kind: 'check', state: 'Checks passed', kindLine: 'Checks', title: 'Typecheck', actor: 'system', updatedBy: 'check-2' },
+      { id: 'check-2', kind: 'check', state: 'Checks passed', kindLine: 'Checks', title: 'Typecheck', actor: 'system', updatedBy: 'check-2', cornerId: 'proof-corner' },
     ],
   },
 } as ChatDisplayMessage;
@@ -78,7 +78,8 @@ export function DisclosureRowsProof() {
         />
       </View>
       <View>
-        <NotificationLifecycleCard message={checks} onOpenCorner={() => {}} onOpenUrl={() => {}} />
+        {/* Drawn inside its own corner: no row links back to the open corner. */}
+        <NotificationLifecycleCard message={checks} cornerId="proof-corner" onOpenCorner={() => {}} onOpenUrl={() => {}} />
       </View>
       <View>
         <NotificationLifecycleCard message={{ id: 'payments', notificationLifecycleRun: { subline: '', items: [

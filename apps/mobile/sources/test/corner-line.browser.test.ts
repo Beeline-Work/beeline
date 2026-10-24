@@ -48,7 +48,7 @@ function Proof() {
       <div data-line="room">{card([opened])}</div>
       <div data-line="merged-short">{card([pr])}</div>
       <p style={{...body, marginTop:24}}>@ruby open a corner with a long name.</p>
-      <div data-line="long"><CornerOpenedMarker title="call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron" onOpen={() => destination = 'corner:long'}/></div>
+      <div data-line="long"><CornerOpenedMarker title="call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron-even-at-the-thirteen-pixel-system-row-size" onOpen={() => destination = 'corner:long'}/></div>
     </section>
     <section data-surface="dm">
       <p style={label}>DM with Ruby</p>

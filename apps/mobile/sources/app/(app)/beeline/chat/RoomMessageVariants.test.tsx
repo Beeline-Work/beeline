@@ -4010,3 +4010,25 @@ it('links a corner-local PR notice to the current corner when the note has no co
   act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-local-pr' }).props.onPress());
   expect(onOpenCorner).toHaveBeenCalledWith('current-corner');
 });
+
+it('opens a corner check from its whole row without a corner link back to the same corner', () => {
+  const onOpenCorner = vi.fn();
+  const onOpenUrl = vi.fn();
+  const checks = ['PROMPT CASES', 'README PARITY'].map((title, index) => ({
+    id: `check-${index}`, title, kind: 'check' as const, kindLine: 'Check',
+    state: index ? 'Checks running' : 'Checks passed', actor: 'github', updatedBy: `check-${index}`,
+    url: `https://github.com/acme/repo/commit/${'b'.repeat(40)}/checks`,
+    ...(index ? { cornerId: 'current-corner' } : {}),
+  }));
+  const item = message({ notificationLifecycleRun: { subline: '', items: checks } });
+  const renderer = render(<NotificationLifecycleCard message={item} cornerId="current-corner"
+    onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
+  act(() => renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress());
+  const words = JSON.stringify(renderer.toJSON());
+  expect(words).not.toContain('Corner →');
+  expect(words).not.toContain('Check →');
+  expect(renderer.root.findAll((node: any) => String(node.props.testID).startsWith('notification-run-cell-corner-'))).toHaveLength(0);
+  act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-check-1' }).props.onPress());
+  expect(onOpenUrl).toHaveBeenCalledWith(checks[1].url);
+  expect(onOpenCorner).not.toHaveBeenCalled();
+});

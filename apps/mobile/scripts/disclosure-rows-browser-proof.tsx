@@ -102,6 +102,18 @@ async function main() {
   };
   assert(Math.abs(arrowX('corner-status-line') - arrowX('notification-run-cell-check')) < 1, 'status chevron column differs');
   assert(Math.abs(get('corner-status-line').getBoundingClientRect().left - get('notification-run-cell-check').getBoundingClientRect().left) < 1, 'status left edge differs');
+  // Rows under a summary label are the label's size and face (Reproduction R1).
+  for (const [summary, ids] of [['notification-run-expand-checks', ['notification-run-cell-check', 'notification-run-cell-check-2']], [`notification-run-expand-${repositoryId}`, [merged.getAttribute('data-testid')!]]] as const) {
+    const label = getComputedStyle(get(summary).querySelector('[dir="auto"]')!);
+    assert(label.fontSize === '13px', `${summary}: label is ${label.fontSize}`);
+    for (const id of ids)
+      for (const node of get(id).querySelectorAll('[dir="auto"]')) {
+        const style = getComputedStyle(node);
+        assert(style.fontSize === label.fontSize, `${id}: row text ${style.fontSize} beside a ${label.fontSize} label`);
+        assert(style.fontFamily.includes('SpaceGrotesk'), `${id}: row font ${style.fontFamily}`);
+      }
+  }
+  assert(!document.querySelector('[data-testid^="notification-run-cell-corner-check"]'), 'corner check links back to its own corner');
   const card = get('script-card').getBoundingClientRect();
   assert(getComputedStyle(get('script')).marginBottom === '0px', 'script body margin differs from main');
   assert(Math.abs(card.height - 147) < 1, 'open script card height differs from main');

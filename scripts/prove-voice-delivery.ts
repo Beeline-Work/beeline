@@ -16,6 +16,9 @@ import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { AuraSpeech, OpenRouterVoiceBrain } from '../apps/server/src/voice-providers.js';
 import type { FluxEvent } from '../apps/server/src/voice-providers.js';
 async function main() {
+const httpPort = Number(process.env.VOICE_PROOF_PORT ?? 18097);
+const rtcPort = Number(process.env.VOICE_PROOF_LIVEKIT_PORT ?? 17890);
+const phoneOrigin = `http://10.0.2.2:${httpPort}`;
 const B = 'c'.repeat(64);
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), W = '509a0dfc-ee35-4b11-bd34-014794153d20', R = '375ebf52-b493-4982-bd6d-f3b8fe814a62';
 const db = new PgliteDatabase();
@@ -27,7 +30,7 @@ await db.query(`INSERT INTO agents(agent_id,owner_id,soul) VALUES($1,$2,'{}')`,[
 await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline')`,[W]);
 await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Experiments')`,[R,W]);
 for (const id of [H,SECOND,A,B]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`,[W,id,R]);
-const phone=new PhoneService(db,'http://10.0.2.2:18097');
+const phone=new PhoneService(db,phoneOrigin);
 const inputs: ((event: FluxEvent) => void)[] = [];
 const operations: string[] = [];
 const microphoneFrames: number[] = [];
@@ -52,7 +55,7 @@ if (process.env.VOICE_DELIVERY_BASELINE === '1') {
 const Brain: typeof OpenRouterVoiceBrain = process.env.VOICE_CONTEXT_BASELINE === '1'
   ? (await import('../apps/server/src/' + '.voice-context-baseline-providers.js')).OpenRouterVoiceBrain : OpenRouterVoiceBrain;
 const live=new LiveHub();
-const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'devkey',apiSecret:'secret',
+const service = new VoiceService(db,live,{url:`ws://127.0.0.1:${rtcPort}`,apiKey:'devkey',apiSecret:'secret',
   brain:new Brain('local-proof', async (_url, init) => {
     const input = JSON.parse(String(init!.body));
     brainHistories.push(input.messages);
@@ -116,6 +119,11 @@ const connectPartner = async (joined: Awaited<ReturnType<VoiceService['join']>>)
 await connectPartner(first);
 const callRow = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0];
 const runtime = (await service.ensureRuntime(callRow))!;
+// Optional paired tempo proof keeps one Android/RTC connection for both paths.
+// The baseline source is generated from the recorded main commit, never shipped.
+const baselinePlay = process.env.VOICE_COMPARE_PLAYBACK === '1'
+  ? (await import('../apps/server/src/' + '.voice-delivery-baseline.js')).VoiceRoomRuntime.prototype.play
+  : undefined;
 await runtime.utterance(partner,'Ruby, ready?');
 const server = createServer((req,res)=> { void (async()=>{
   let raw=''; for await (const chunk of req) raw+=String(chunk);
@@ -178,8 +186,18 @@ const server = createServer((req,res)=> { void (async()=>{
   else if(req.url==='/result') value={brainHistories,commandDetails:(await db.query(`SELECT id,turn_request_id,source_message_id,agent_id,state,reason FROM agent_commands WHERE room_id=$1`,[R])).rows,decisionRequests,synthesis,deliveries,orders:(await db.query(`SELECT o.*,m.text FROM voice_orders o JOIN messages m ON m.id=o.source_message_id`)).rows,transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey})),pid:process.pid,callId:runtime.callId,dispatchAttempts,frameCounts,commands:(await db.query(`SELECT count(*)::int count FROM agent_commands WHERE room_id=$1`,[R])).rows[0],activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
     secondMicrophone:[...(client.remoteParticipants.get(SECOND)?.trackPublications.values() ?? [])].map(p=>({muted:p.muted,kind:p.kind})),
     participants:(await db.query(`SELECT identity_id,parked_at,left_at FROM voice_participants WHERE call_id=$1`,[first.call.id])).rows};
-  else if(req.url==='/say') { speechMs=body.speechMs??100; const current=await service.current(R,H); if(!current)throw new Error('No active call'); const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0]; await (await service.ensureRuntime(row))!.utterance(body.human === 'partner' ? partner : H,body.text??'How are you doing today?'); speechMs=100; }
-  else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman,body.expectedCallId); value={...joined,url:'ws://10.0.2.2:17890'}; }
+  else if(req.url==='/say') {
+    speechMs=body.speechMs??100;
+    const current=await service.current(R,H); if(!current)throw new Error('No active call');
+    const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0];
+    const target=(await service.ensureRuntime(row))!;
+    const playback=target as unknown as {play: (...args: unknown[]) => Promise<void>};
+    const saved=playback.play;
+    if (body.baselinePlayback && baselinePlay) playback.play=baselinePlay;
+    try { await target.utterance(body.human === 'partner' ? partner : H,body.text??'How are you doing today?'); }
+    finally { playback.play=saved; speechMs=100; }
+  }
+  else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman,body.expectedCallId); value={...joined,url:`ws://10.0.2.2:${rtcPort}`}; }
   else if(req.url?.endsWith('/idle')) value=await service.idle(first.call.id,nativeHuman,body.sessionId);
   else if(req.url?.includes('/state')) value=await service.idleState(url.pathname.split('/').at(-2)!,nativeHuman,db,url.searchParams.get('sessionId')??undefined);
   else if(req.url?.endsWith('/resume')) await service.resume(first.call.id,nativeHuman,body.sessionId);
@@ -193,7 +211,7 @@ sockets.on('connection',socket=>{socket.on('message',raw=>{const m=JSON.parse(St
  if(m.type==='subscribe')for(const roomId of m.roomIds??[m.roomId])if(roomId)socket.send(JSON.stringify({type:'subscribed',roomId}));
  });});
 live.subscribeAll(event=>{for(const socket of sockets.clients)if(socket.readyState===1)socket.send(JSON.stringify(event));});
-server.listen(18097,'127.0.0.1',()=>console.log('DELIVERY-2 ready'));
+server.listen(httpPort,'127.0.0.1',()=>console.log('DELIVERY-2 ready'));
 async function close(){ server.close(); await client.disconnect(); await service.close(); await db.close(); process.exit(); }
 process.on('SIGTERM',()=>void close()); process.on('SIGINT',()=>void close());
 

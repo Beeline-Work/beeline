@@ -1,0 +1,663 @@
+{
+  "window": [
+    "2026-10-17T16:00:00Z",
+    "2026-10-24T16:00:00Z"
+  ],
+  "rows": [
+    {
+      "trace_id": "87c1421a-0831-40a9-8b0e-d5996e869636",
+      "call_id": "dce993a1-73a7-415a-95b0-ee964e4268ed",
+      "at": "2026-10-24 02:47:28.479381+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 42.013120003044605,
+      "token": 10681.87837300077,
+      "complete": 10977.170514002442,
+      "tts": 7161.341075003147,
+      "audio": 7709.849516000599
+    },
+    {
+      "trace_id": "d55d8af7-46eb-4cdf-b77d-4b1dca582840",
+      "call_id": "dce993a1-73a7-415a-95b0-ee964e4268ed",
+      "at": "2026-10-24 02:42:53.257695+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 37.466847997158766,
+      "token": 7575.083451997489,
+      "complete": 8328.351560998708,
+      "tts": 1690.7170759998262,
+      "audio": 1897.5847049988806
+    },
+    {
+      "trace_id": "5d0131a3-6b02-49a6-b55e-0b49ecbf444e",
+      "call_id": "55c9b1c9-4af3-4d0a-8c97-473139449dd1",
+      "at": "2026-10-24 00:30:55.936293+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 33.73490599915385,
+      "token": 7078.308674000204,
+      "complete": 7851.832002999261,
+      "tts": 2881.344993999228,
+      "audio": 3274.331880999729
+    },
+    {
+      "trace_id": "56d7ee27-087e-4a4c-b9c3-eb8289e1d962",
+      "call_id": "dce993a1-73a7-415a-95b0-ee964e4268ed",
+      "at": "2026-10-24 02:36:46.941646+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 35.79973700270057,
+      "token": 6581.045817002654,
+      "complete": 7016.2636339999735,
+      "tts": 2024.4648940004408,
+      "audio": 2258.5918060019612
+    },
+    {
+      "trace_id": "886fe0c3-8a2b-4622-b3f3-26af40b55f43",
+      "call_id": "dce993a1-73a7-415a-95b0-ee964e4268ed",
+      "at": "2026-10-24 02:38:29.247674+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 39.004298999905586,
+      "token": 5912.478468999267,
+      "complete": 6501.032780002803,
+      "tts": 1706.3828340023756,
+      "audio": 1940.6873150020838
+    },
+    {
+      "trace_id": "a2fc4d1a-69bd-49c5-900d-a07eabeb0745",
+      "call_id": "45dade81-a953-481f-9113-a31a3d1eb2e2",
+      "at": "2026-10-22 00:38:54.310971+00",
+      "release": "79f989e1e587ccdfe20c19be2a3b7e76f4f4b876",
+      "request": 42.38088699989021,
+      "token": 5871.073129999917,
+      "complete": 7412.242257999955,
+      "tts": 3088.338526000036,
+      "audio": 3660.0135319998953
+    },
+    {
+      "trace_id": "81c9e27d-b06d-4803-854d-003547ddff48",
+      "call_id": "7b1882ac-de2c-4c95-8f16-9509335ce3f8",
+      "at": "2026-10-22 21:21:17.148815+00",
+      "release": "b82f0f7fbcf524bf0f92d18345cd83754983869a",
+      "request": 32.54009599983692,
+      "token": 5761.965187996626,
+      "complete": 8021.739425998181,
+      "tts": 1391.985933996737,
+      "audio": 1639.2627919986844
+    },
+    {
+      "trace_id": "2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff",
+      "call_id": "5bfa0c90-282d-4d50-959a-b351aa200e6c",
+      "at": "2026-10-22 18:23:15.832983+00",
+      "release": "b82f0f7fbcf524bf0f92d18345cd83754983869a",
+      "request": 37.63005799986422,
+      "token": 5489.49896299839,
+      "complete": 6935.48920699954,
+      "tts": 1708.6786789987236,
+      "audio": 1961.2612239997834
+    },
+    {
+      "trace_id": "337b6046-1f29-445e-ab78-15a6b4b34b27",
+      "call_id": "dce993a1-73a7-415a-95b0-ee964e4268ed",
+      "at": "2026-10-24 02:44:16.24252+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 45.075371000915766,
+      "token": 5462.368164002895,
+      "complete": 6140.82039700076,
+      "tts": 1256.5975780002773,
+      "audio": 1437.1213250011206
+    },
+    {
+      "trace_id": "4bb86278-59a9-4811-a4c9-9b0db0873a7e",
+      "call_id": "4b81a92b-9e88-4b7a-874d-c52a353f5aa5",
+      "at": "2026-10-22 10:15:03.040109+00",
+      "release": "c58a92aedb503c4e2f055b9d0a3b54ebb2aa1a61",
+      "request": 32.63891500234604,
+      "token": 5118.618710000068,
+      "complete": 5756.194823998958,
+      "tts": 1215.6588289998472,
+      "audio": 1401.772828001529
+    },
+    {
+      "trace_id": "67a221bc-bc1b-4d96-afe9-a4fe90df950a",
+      "call_id": "dce993a1-73a7-415a-95b0-ee964e4268ed",
+      "at": "2026-10-24 02:37:42.84326+00",
+      "release": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+      "request": 63.600749999284744,
+      "token": 5100.728721000254,
+      "complete": 5608.808063000441,
+      "tts": 1454.4598440006375,
+      "audio": 1640.1562820002437
+    }
+  ],
+  "logs": [
+    {
+      "trace": "87c1421a-0831-40a9-8b0e-d5996e869636",
+      "logs": [
+        {
+          "at": "2026-10-24T02:47:28.476906919Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"flux_final\",\"elapsedMs\":0.38441000133752823}"
+        },
+        {
+          "at": "2026-10-24T02:47:28.517838037Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"human_committed\",\"elapsedMs\":41.77189000323415}"
+        },
+        {
+          "at": "2026-10-24T02:47:28.517994089Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_request\",\"elapsedMs\":42.013120003044605}"
+        },
+        {
+          "at": "2026-10-24T02:47:35.630037053Z",
+          "message": "[voice-router-decision] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"search_web\"}"
+        },
+        {
+          "at": "2026-10-24T02:47:35.637463844Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_request\",\"elapsedMs\":7161.341075003147}"
+        },
+        {
+          "at": "2026-10-24T02:47:35.851928582Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_first_byte\",\"elapsedMs\":7375.78201700002}"
+        },
+        {
+          "at": "2026-10-24T02:47:35.853592472Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_audio_published\",\"elapsedMs\":7377.495318002999}"
+        },
+        {
+          "at": "2026-10-24T02:47:36.186580433Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"87c1421a-0831-40a9-8b0e-d5996e869636\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":7709.849516000599}"
+        }
+      ],
+      "next": {
+        "next_token": "1792810057999001787"
+      }
+    },
+    {
+      "trace": "d55d8af7-46eb-4cdf-b77d-4b1dca582840",
+      "logs": [
+        {
+          "at": "2026-10-24T02:42:53.255731752Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"flux_final\",\"elapsedMs\":0.5679299980401993}"
+        },
+        {
+          "at": "2026-10-24T02:42:53.291918222Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"human_committed\",\"elapsedMs\":37.19303799793124}"
+        },
+        {
+          "at": "2026-10-24T02:42:53.292109974Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_request\",\"elapsedMs\":37.466847997158766}"
+        },
+        {
+          "at": "2026-10-24T02:42:54.939581743Z",
+          "message": "[voice-router-decision] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"search_history\"}"
+        },
+        {
+          "at": "2026-10-24T02:42:54.945479904Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_request\",\"elapsedMs\":1690.7170759998262}"
+        },
+        {
+          "at": "2026-10-24T02:42:55.151167696Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1896.4244240000844}"
+        },
+        {
+          "at": "2026-10-24T02:42:55.152062957Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_audio_published\",\"elapsedMs\":1897.3914449997246}"
+        },
+        {
+          "at": "2026-10-24T02:42:55.152240049Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"d55d8af7-46eb-4cdf-b77d-4b1dca582840\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1897.5847049988806}"
+        }
+      ],
+      "next": {
+        "next_token": "1792809780294690987"
+      }
+    },
+    {
+      "trace": "5d0131a3-6b02-49a6-b55e-0b49ecbf444e",
+      "logs": [
+        {
+          "at": "2026-10-24T00:30:55.935425731Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"flux_final\",\"elapsedMs\":0.4187899995595217}"
+        },
+        {
+          "at": "2026-10-24T00:30:55.967819196Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"human_committed\",\"elapsedMs\":33.541735999286175}"
+        },
+        {
+          "at": "2026-10-24T00:30:55.967989908Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"brain_request\",\"elapsedMs\":33.73490599915385}"
+        },
+        {
+          "at": "2026-10-24T00:30:58.810731821Z",
+          "message": "[voice-router-decision] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"decision\":\"search_history\"}"
+        },
+        {
+          "at": "2026-10-24T00:30:58.81565536Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"tts_request\",\"elapsedMs\":2881.344993999228}"
+        },
+        {
+          "at": "2026-10-24T00:30:58.96889255Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"tts_first_byte\",\"elapsedMs\":3034.5702069997787}"
+        },
+        {
+          "at": "2026-10-24T00:30:58.969434106Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"first_audio_published\",\"elapsedMs\":3035.1649069990963}"
+        },
+        {
+          "at": "2026-10-24T00:30:59.209326516Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":3274.331880999729}"
+        },
+        {
+          "at": "2026-10-24T00:31:03.012718299Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"brain_first_token\",\"elapsedMs\":7078.308674000204}"
+        },
+        {
+          "at": "2026-10-24T00:31:03.786180306Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"stage\":\"brain_complete\",\"elapsedMs\":7851.832002999261}"
+        },
+        {
+          "at": "2026-10-24T00:31:03.786305977Z",
+          "message": "[voice-router-decision] {\"traceId\":\"5d0131a3-6b02-49a6-b55e-0b49ecbf444e\",\"callId\":\"55c9b1c9-4af3-4d0a-8c97-473139449dd1\",\"decision\":\"answer\"}"
+        }
+      ],
+      "next": {
+        "next_token": "1792801866542320661"
+      }
+    },
+    {
+      "trace": "56d7ee27-087e-4a4c-b9c3-eb8289e1d962",
+      "logs": [
+        {
+          "at": "2026-10-24T02:36:46.939991486Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"flux_final\",\"elapsedMs\":1.129280000925064}"
+        },
+        {
+          "at": "2026-10-24T02:36:46.973861492Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"human_committed\",\"elapsedMs\":35.554307002574205}"
+        },
+        {
+          "at": "2026-10-24T02:36:46.974052535Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_request\",\"elapsedMs\":35.79973700270057}"
+        },
+        {
+          "at": "2026-10-24T02:36:48.957495276Z",
+          "message": "[voice-router-decision] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"search_history\"}"
+        },
+        {
+          "at": "2026-10-24T02:36:48.963740523Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_request\",\"elapsedMs\":2024.4648940004408}"
+        },
+        {
+          "at": "2026-10-24T02:36:49.19597475Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_first_byte\",\"elapsedMs\":2257.643924999982}"
+        },
+        {
+          "at": "2026-10-24T02:36:49.196681539Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_audio_published\",\"elapsedMs\":2258.435175999999}"
+        },
+        {
+          "at": "2026-10-24T02:36:49.196836171Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"56d7ee27-087e-4a4c-b9c3-eb8289e1d962\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":2258.5918060019612}"
+        }
+      ],
+      "next": {
+        "next_token": "1792809412268691732"
+      }
+    },
+    {
+      "trace": "886fe0c3-8a2b-4622-b3f3-26af40b55f43",
+      "logs": [
+        {
+          "at": "2026-10-24T02:38:29.246397155Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"flux_final\",\"elapsedMs\":0.2820800021290779}"
+        },
+        {
+          "at": "2026-10-24T02:38:29.284408987Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"human_committed\",\"elapsedMs\":38.53277800232172}"
+        },
+        {
+          "at": "2026-10-24T02:38:29.284564869Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_request\",\"elapsedMs\":39.004298999905586}"
+        },
+        {
+          "at": "2026-10-24T02:38:30.94457947Z",
+          "message": "[voice-router-decision] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"search_web\"}"
+        },
+        {
+          "at": "2026-10-24T02:38:30.952015741Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_request\",\"elapsedMs\":1706.3828340023756}"
+        },
+        {
+          "at": "2026-10-24T02:38:31.185435739Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1939.759224999696}"
+        },
+        {
+          "at": "2026-10-24T02:38:31.186156838Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_audio_published\",\"elapsedMs\":1940.5439850017428}"
+        },
+        {
+          "at": "2026-10-24T02:38:31.18629033Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1940.6873150020838}"
+        },
+        {
+          "at": "2026-10-24T02:38:35.158299182Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_first_token\",\"elapsedMs\":5912.478468999267}"
+        },
+        {
+          "at": "2026-10-24T02:38:35.74680867Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_complete\",\"elapsedMs\":6501.032780002803}"
+        },
+        {
+          "at": "2026-10-24T02:38:35.747123194Z",
+          "message": "[voice-router-decision] {\"traceId\":\"886fe0c3-8a2b-4622-b3f3-26af40b55f43\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"answer\"}"
+        }
+      ],
+      "next": {
+        "next_token": "1792809517822073871"
+      }
+    },
+    {
+      "trace": "a2fc4d1a-69bd-49c5-900d-a07eabeb0745",
+      "logs": [
+        {
+          "at": "2026-10-22T00:38:54.308441943Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"flux_final\",\"elapsedMs\":0.6240399999078363}"
+        },
+        {
+          "at": "2026-10-22T00:38:54.349768465Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"human_committed\",\"elapsedMs\":41.98205700004473}"
+        },
+        {
+          "at": "2026-10-22T00:38:54.35005069Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"brain_request\",\"elapsedMs\":42.38088699989021}"
+        },
+        {
+          "at": "2026-10-22T00:38:57.387159237Z",
+          "message": "[voice-router-decision] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"decision\":\"search_history\"}"
+        },
+        {
+          "at": "2026-10-22T00:38:57.396145443Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"tts_request\",\"elapsedMs\":3088.338526000036}"
+        },
+        {
+          "at": "2026-10-22T00:38:57.65300391Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"tts_first_byte\",\"elapsedMs\":3345.1340310000814}"
+        },
+        {
+          "at": "2026-10-22T00:38:57.654390418Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"first_audio_published\",\"elapsedMs\":3346.6510409999173}"
+        },
+        {
+          "at": "2026-10-22T00:38:57.968452289Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":3660.0135319998953}"
+        },
+        {
+          "at": "2026-10-22T00:39:00.179238759Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"brain_first_token\",\"elapsedMs\":5871.073129999917}"
+        },
+        {
+          "at": "2026-10-22T00:39:01.72036192Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"stage\":\"brain_complete\",\"elapsedMs\":7412.242257999955}"
+        },
+        {
+          "at": "2026-10-22T00:39:01.72037227Z",
+          "message": "[voice-router-decision] {\"traceId\":\"a2fc4d1a-69bd-49c5-900d-a07eabeb0745\",\"callId\":\"45dade81-a953-481f-9113-a31a3d1eb2e2\",\"decision\":\"answer\"}"
+        }
+      ],
+      "next": {
+        "next_token": "1792629547392823732"
+      }
+    },
+    {
+      "trace": "81c9e27d-b06d-4803-854d-003547ddff48",
+      "logs": [
+        {
+          "at": "2026-10-22T21:21:17.145007728Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"flux_final\",\"elapsedMs\":0.5882209986448288}"
+        },
+        {
+          "at": "2026-10-22T21:21:17.176395665Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"human_committed\",\"elapsedMs\":32.316195998340845}"
+        },
+        {
+          "at": "2026-10-22T21:21:17.176536366Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"brain_request\",\"elapsedMs\":32.54009599983692}"
+        },
+        {
+          "at": "2026-10-22T21:21:18.531524613Z",
+          "message": "[voice-router-decision] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"decision\":\"search_web\"}"
+        },
+        {
+          "at": "2026-10-22T21:21:18.536928394Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"tts_request\",\"elapsedMs\":1391.985933996737}"
+        },
+        {
+          "at": "2026-10-22T21:21:18.782367101Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1638.2734719999135}"
+        },
+        {
+          "at": "2026-10-22T21:21:18.78314765Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"first_audio_published\",\"elapsedMs\":1639.116871997714}"
+        },
+        {
+          "at": "2026-10-22T21:21:18.783275232Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1639.2627919986844}"
+        },
+        {
+          "at": "2026-10-22T21:21:22.90621324Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"brain_first_token\",\"elapsedMs\":5761.965187996626}"
+        },
+        {
+          "at": "2026-10-22T21:21:25.166130702Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"stage\":\"brain_complete\",\"elapsedMs\":8021.739425998181}"
+        },
+        {
+          "at": "2026-10-22T21:21:25.166140703Z",
+          "message": "[voice-router-decision] {\"traceId\":\"81c9e27d-b06d-4803-854d-003547ddff48\",\"callId\":\"7b1882ac-de2c-4c95-8f16-9509335ce3f8\",\"decision\":\"answer\"}"
+        }
+      ],
+      "next": {
+        "next_token": "1792704090523900382"
+      }
+    },
+    {
+      "trace": "2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff",
+      "logs": [
+        {
+          "at": "2026-10-22T18:23:15.826364575Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"flux_final\",\"elapsedMs\":1.4660099986940622}"
+        },
+        {
+          "at": "2026-10-22T18:23:15.862125499Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"human_committed\",\"elapsedMs\":37.3815379999578}"
+        },
+        {
+          "at": "2026-10-22T18:23:15.862275191Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"brain_request\",\"elapsedMs\":37.63005799986422}"
+        },
+        {
+          "at": "2026-10-22T18:23:17.527348538Z",
+          "message": "[voice-router-decision] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"decision\":\"search_web\"}"
+        },
+        {
+          "at": "2026-10-22T18:23:17.533477358Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"tts_request\",\"elapsedMs\":1708.6786789987236}"
+        },
+        {
+          "at": "2026-10-22T18:23:17.784292432Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1959.4947539996356}"
+        },
+        {
+          "at": "2026-10-22T18:23:17.785726661Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"first_audio_published\",\"elapsedMs\":1960.9887039996684}"
+        },
+        {
+          "at": "2026-10-22T18:23:17.785953625Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1961.2612239997834}"
+        },
+        {
+          "at": "2026-10-22T18:23:21.314771236Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"brain_first_token\",\"elapsedMs\":5489.49896299839}"
+        },
+        {
+          "at": "2026-10-22T18:23:22.760987637Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"stage\":\"brain_complete\",\"elapsedMs\":6935.48920699954}"
+        },
+        {
+          "at": "2026-10-22T18:23:22.760998657Z",
+          "message": "[voice-router-decision] {\"traceId\":\"2c143b3a-1e72-4bd2-ae90-f3db16fcc1ff\",\"callId\":\"5bfa0c90-282d-4d50-959a-b351aa200e6c\",\"decision\":\"answer\"}"
+        }
+      ],
+      "next": {
+        "next_token": "1792693421714459569"
+      }
+    },
+    {
+      "trace": "337b6046-1f29-445e-ab78-15a6b4b34b27",
+      "logs": [
+        {
+          "at": "2026-10-24T02:44:16.239876385Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"flux_final\",\"elapsedMs\":0.410630002617836}"
+        },
+        {
+          "at": "2026-10-24T02:44:16.283754248Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"human_committed\",\"elapsedMs\":44.39102100208402}"
+        },
+        {
+          "at": "2026-10-24T02:44:16.284341015Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_request\",\"elapsedMs\":45.075371000915766}"
+        },
+        {
+          "at": "2026-10-24T02:44:17.490548387Z",
+          "message": "[voice-router-decision] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"search_history\"}"
+        },
+        {
+          "at": "2026-10-24T02:44:17.495922332Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_request\",\"elapsedMs\":1256.5975780002773}"
+        },
+        {
+          "at": "2026-10-24T02:44:17.675439076Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1436.0767240002751}"
+        },
+        {
+          "at": "2026-10-24T02:44:17.676279826Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_audio_published\",\"elapsedMs\":1436.993723999709}"
+        },
+        {
+          "at": "2026-10-24T02:44:17.676389397Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1437.1213250011206}"
+        },
+        {
+          "at": "2026-10-24T02:44:21.702113002Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_first_token\",\"elapsedMs\":5462.368164002895}"
+        },
+        {
+          "at": "2026-10-24T02:44:22.38023165Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_complete\",\"elapsedMs\":6140.82039700076}"
+        },
+        {
+          "at": "2026-10-24T02:44:22.380380422Z",
+          "message": "[voice-router-decision] {\"traceId\":\"337b6046-1f29-445e-ab78-15a6b4b34b27\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"answer\"}"
+        }
+      ],
+      "next": {
+        "next_token": "1792809863722922620"
+      }
+    },
+    {
+      "trace": "4bb86278-59a9-4811-a4c9-9b0db0873a7e",
+      "logs": [
+        {
+          "at": "2026-10-22T10:15:03.037497764Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"flux_final\",\"elapsedMs\":1.3014700002968311}"
+        },
+        {
+          "at": "2026-10-22T10:15:03.070290806Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"human_committed\",\"elapsedMs\":32.55172500014305}"
+        },
+        {
+          "at": "2026-10-22T10:15:03.070297986Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"brain_request\",\"elapsedMs\":32.63891500234604}"
+        },
+        {
+          "at": "2026-10-22T10:15:04.246779542Z",
+          "message": "[voice-router-decision] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"decision\":\"search_web\"}"
+        },
+        {
+          "at": "2026-10-22T10:15:04.251836894Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"tts_request\",\"elapsedMs\":1215.6588289998472}"
+        },
+        {
+          "at": "2026-10-22T10:15:04.436098902Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1399.7877270020545}"
+        },
+        {
+          "at": "2026-10-22T10:15:04.438740564Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"first_audio_published\",\"elapsedMs\":1401.7214980013669}"
+        },
+        {
+          "at": "2026-10-22T10:15:04.438746684Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1401.772828001529}"
+        },
+        {
+          "at": "2026-10-22T10:15:08.155353755Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"brain_first_token\",\"elapsedMs\":5118.618710000068}"
+        },
+        {
+          "at": "2026-10-22T10:15:08.792667144Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"stage\":\"brain_complete\",\"elapsedMs\":5756.194823998958}"
+        },
+        {
+          "at": "2026-10-22T10:15:08.792676105Z",
+          "message": "[voice-router-decision] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"decision\":\"answer\"}"
+        },
+        {
+          "at": "2026-10-22T10:15:22.625806577Z",
+          "message": "[voice-draft-cancelled] {\"traceId\":\"4bb86278-59a9-4811-a4c9-9b0db0873a7e\",\"callId\":\"4b81a92b-9e88-4b7a-874d-c52a353f5aa5\",\"reason\":\"call closed\",\"elapsedMs\":19589.169009000063}"
+        }
+      ],
+      "next": {
+        "next_token": "1792664147470090315"
+      }
+    },
+    {
+      "trace": "67a221bc-bc1b-4d96-afe9-a4fe90df950a",
+      "logs": [
+        {
+          "at": "2026-10-24T02:37:42.840232609Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"flux_final\",\"elapsedMs\":0.38509999960660934}"
+        },
+        {
+          "at": "2026-10-24T02:37:42.903243504Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"human_committed\",\"elapsedMs\":63.232050001621246}"
+        },
+        {
+          "at": "2026-10-24T02:37:42.903392806Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_request\",\"elapsedMs\":63.600749999284744}"
+        },
+        {
+          "at": "2026-10-24T02:37:44.28876743Z",
+          "message": "[voice-router-decision] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"decision\":\"search_history\"}"
+        },
+        {
+          "at": "2026-10-24T02:37:44.294317608Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_request\",\"elapsedMs\":1454.4598440006375}"
+        },
+        {
+          "at": "2026-10-24T02:37:44.479284754Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"tts_first_byte\",\"elapsedMs\":1639.3794619999826}"
+        },
+        {
+          "at": "2026-10-24T02:37:44.479910961Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_audio_published\",\"elapsedMs\":1640.0814619995654}"
+        },
+        {
+          "at": "2026-10-24T02:37:44.480039493Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"first_voiced_audio_published\",\"elapsedMs\":1640.1562820002437}"
+        },
+        {
+          "at": "2026-10-24T02:37:47.940972861Z",
+          "message": "[voice-turn-timing] {\"traceId\":\"67a221bc-bc1b-4d96-afe9-a4fe90df950a\",\"callId\":\"dce993a1-73a7-415a-95b0-ee964e4268ed\",\"stage\":\"brain_first_token\",\"elapsedMs\":5100.728721000254}"
+        }
+      ],
+      "next": {
+        "next_token": "1792809468405473829"
+      }
+    }
+  ]
+}

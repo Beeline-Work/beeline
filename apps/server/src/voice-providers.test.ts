@@ -504,3 +504,16 @@ it('VOICE-TAG-1: the voice prompt exposes Room handles with no added tool', asyn
   expect(body.tools.map((tool:any)=>tool.function.name)).toEqual(['order','search_web','search_history','read_posted_item']);
   expect(reply).toEqual({text:'@baby what are you up to?',order:false});
 });
+
+it('records provider/tool-delta timing without retaining conversation text', async () => {
+  const diagnostic = vi.fn();
+  const brain = new OpenRouterVoiceBrain('test', async () => new Response('data: '+JSON.stringify({
+    id:'generation-test',provider:'Test provider',model:'test-model',choices:[{delta:{tool_calls:[{index:0,function:{name:'order',arguments:'{}'}}]}}],
+  })+'\n\n'));
+  await brain.answer({id:'ruby',name:'Ruby',handle:'ruby',soul:'',voice:'luna'},
+    [{role:'user',content:'private request'}],()=>{},new AbortController().signal,
+    {agents:[],diagnostic,announce:async()=>{},search:async()=>''});
+  expect(diagnostic).toHaveBeenCalledOnce();
+  expect(diagnostic.mock.calls[0]![0]).toMatchObject({generationId:'generation-test',provider:'Test provider',model:'test-model',historyMessages:1,historyCharacters:15,searched:false,firstDeltaMs:expect.any(Number)});
+  expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private request');
+});

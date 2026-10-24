@@ -17,6 +17,7 @@ let sent: readonly { name?: string }[] | undefined;
 const uploader = createChatAttachmentUploader();
 let uploads = 0;
 const client = { uploadMedia: async () => { uploads++; return { url: 'https://example.invalid/document.txt', sha256: 'proof', size: 4 }; } } as never;
+const agentName = new URLSearchParams(location.search).has('long') ? 'Jellybean with an exceptionally long agent display name' : 'Jellybean';
 const theme = new URLSearchParams(location.search).get('theme') ?? 'obsidian';
 function Proof() {
   const [phase, changePhase] = useState('silence'); setPhase = changePhase;
@@ -26,7 +27,7 @@ function Proof() {
   const [target, setTarget] = useState<string | null>(null);
   const aim = (agent: string) => setTarget(current => current === agent ? null : agent);
   const voice = { call: phase === 'ended' ? null : { id: 'proof' }, connecting: phase === 'connecting',
-    agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }, { kind: 'agent', pubkey: 'goose', name: 'Goosey', face: null }],
+    agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: agentName, face: null }, { kind: 'agent', pubkey: 'goose', name: 'Goosey', face: null }],
     speaker: phase === 'speaking' ? 'ruby' : null, target, level: phase === 'silence' ? 0 : 0.4,
     muted: false, toggleMute: async () => {}, humans: 2, error: null, quotaExhausted: false, firstAudioMs: null, join: async () => {},
     aim, end: async () => changePhase('ended') } as unknown as VoiceCallState;
@@ -45,14 +46,29 @@ function Proof() {
 createRoot(document.getElementById('root')!).render(<Proof />);
 async function run() {
   await pause();
-  const selected = () => document.querySelector<HTMLElement>('[aria-label="Speak to Jellybean"]');
+  const selected = () => document.querySelector<HTMLElement>(`[aria-label="Speak to ${agentName}"]`);
   selected()!.click(); await pause();
   const pinnedFace = () => byID('voice-pin-jellybean')?.parentElement;
   const pinned = () => !!pinnedFace() &&
     getComputedStyle(pinnedFace()!).backgroundColor !== 'rgba(0, 0, 0, 0)';
   check('CONVERSATION-2: tap pins Jellybean with a filled tile and badge', pinned());
-  check('CONVERSATION-2: pin caption names Jellybean', !!byID('voice-pin-line')?.textContent?.includes('Pinned to Jellybean'));
-  const selectedLabel = Array.from(selected()!.parentElement!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
+  check('CONVERSATION-2: pin caption names Jellybean', !!byID('voice-pin-line')?.textContent?.includes(`Pinned to ${agentName}`));
+  const line = byID('voice-pin-line')!;
+  const label = line.firstElementChild as HTMLElement;
+  const unpin = document.querySelector<HTMLElement>('[aria-label="Unpin agent"]')!;
+  const row = line.getBoundingClientRect();
+  const caption = label.getBoundingClientRect();
+  const action = unpin.getBoundingClientRect();
+  const controls = byID('voice-bar')!;
+  const inset = parseFloat(getComputedStyle(controls).paddingLeft);
+  check('PIN-ROW-1: caption and Unpin sit inside the controls inset', caption.left >= row.left + inset && Math.abs(action.right - (row.right - inset)) < 1);
+  check('PIN-ROW-1: both labels share a center line', Math.abs((caption.top + caption.bottom) - (action.top + action.bottom)) < 2);
+  check('PIN-ROW-1: pin row has top padding inside the border', parseFloat(getComputedStyle(line).paddingTop) >= 8);
+  check('PIN-ROW-1: long caption cannot move or wrap Unpin', caption.right <= action.left && getComputedStyle(label).whiteSpace === 'nowrap' && getComputedStyle(label).textOverflow === 'ellipsis' && action.width >= 44 && action.height >= 44);
+  unpin.click(); await pause();
+  check('PIN-ROW-1: Unpin clears the pinned row', !byID('voice-pin-line'));
+  selected()!.click(); await pause();
+  const selectedLabel = Array.from(selected()!.parentElement!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === agentName);
   check('CONVERSATION-2: pinned name has no underline', !!selectedLabel && !getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
   selected()!.click(); await pause();
   check('CONVERSATION-2: second tap unpins', !byID('voice-pin-jellybean') && !byID('voice-pin-line'));

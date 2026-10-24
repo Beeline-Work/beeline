@@ -282,7 +282,7 @@ it('single-use gap deadlines survive restart and a resume inside the gap sends n
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
-it('CI failure and the stuck-CI deadline each open exactly one Idle stretch', async () => {
+it('CI failure opens one Idle stretch, and pending CI past 30 minutes stays review', async () => {
   await ci('pending');
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(0);
@@ -299,24 +299,26 @@ it('CI failure and the stuck-CI deadline each open exactly one Idle stretch', as
   );
   await runCornerAttention(db);
   await runCornerAttention(db);
-  expect(await commanderFlags()).toHaveLength(2);
-  expect(await state()).toBe('idle');
+  expect(await commanderFlags()).toHaveLength(1);
+  expect(await state()).toBe('review');
 });
-it('CI progress cannot reset its safety deadline; a new head resets it', async () => {
+it('pending CI past 30 minutes schedules no expiry, including after a new head', async () => {
   await ci('pending');
   await db.query(
-    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '29 minutes' WHERE corner_id=$1`,
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
     [C],
   );
-  await ci('pending');
   const before = await refreshCornerAttention(db, C);
-  expect(before!.deadlines[0]! - Date.now()).toBeLessThan(61000);
+  expect(before!.deadlines).toEqual([]);
+  expect(await state()).toBe('review');
+  expect(await commanderFlags()).toHaveLength(0);
   await db.query(
     `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"next"') WHERE corner_id=$1`,
     [C],
   );
   const after = await refreshCornerAttention(db, C);
-  expect(after!.deadlines[0]! - Date.now()).toBeGreaterThan(29 * 60000);
+  expect(after!.deadlines).toEqual([]);
+  expect(await state()).toBe('review');
 });
 it.each([WORKER, REVIEWER])(
   'self subscriptions and schedules never suppress Idle (%s)',
@@ -457,19 +459,23 @@ it('recovers and fires the gap deadline once across two server instances', async
     vi.useRealTimers();
   }
 });
-it('recovers and fires the stuck CI deadline without a repeating timer', async () => {
+it('pending CI does not arm a deadline or an idle alert', async () => {
   await ci('pending');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
   vi.useFakeTimers();
   const live = new LiveHub();
   const errors: unknown[] = [];
   const deadlines = new CornerAttentionDeadlines(db, live, (error) => errors.push(error));
   try {
     await deadlines.start();
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(1801000);
     await db.query('SELECT 1');
-    expect(await state()).toBe('idle');
-    expect(await commanderFlags()).toHaveLength(1);
+    expect(await state()).toBe('review');
+    expect(await commanderFlags()).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
     expect(errors).toEqual([]);
   } finally {

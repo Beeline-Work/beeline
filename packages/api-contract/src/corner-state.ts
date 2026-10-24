@@ -17,19 +17,24 @@ export type CornerStateFacts = {
   readonly workerQueued?: boolean;
   readonly now?: number;
   readonly lastTurnEndedAt?: number;
+  /** When this head was first seen pending. It does not end review. */
   readonly ciStartedAt?: number;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
   readonly lifecycle?: CornerLifecycleView;
   /**
-   * Whether an unresolved blocking item is addressed to a person.
-   * A workflow stage or an ordinary tag alone never establishes a blocker.
+   * Whether an unresolved blocker is present. Who it is owed to is
+   * `agentCommanderReport`. A workflow stage or an ordinary tag alone never
+   * establishes a blocker.
    */
   readonly owed?: boolean;
   /**
-   * The only blocker is a blocked or needs-decision report to the agent
-   * commander. Pending checks within the review window stay review.
+   * Every unresolved blocker is a blocked or needs-decision report to the
+   * agent commander, taken from that report's recipient. Pending checks on
+   * the current head stay review until a final result or a new push. A
+   * human-owed blocker leaves this unset, including when an agent-commander
+   * report is also open.
    */
   readonly agentCommanderReport?: boolean;
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
@@ -81,7 +86,22 @@ export function cornerRunFromLifecycle(input: {
   return { state: 'implement' };
 }
 
-/** Observed work and unanswered human blockers; workflow stages only identify closure. */
+/**
+ * Precedence, first match. Workflow stages do not add activity of their own.
+ *
+ * 1. `archived` — the corner is archived, or its run or lifecycle is landed or closed.
+ * 2. `review` — a reviewer turn is active.
+ * 3. `working` — a worker turn is running. A queued worker is not running.
+ * 4. `waiting` — at least one unresolved blocker (a human-owed item or an
+ *    agent-commander report), unless checks are pending on the current head and
+ *    every blocker is owed to an agent (`agentCommanderReport`). A question,
+ *    grant, connect step, human report, or merge hold stays waiting during CI.
+ * 5. `review` — checks are pending on the current head: a pending rollup, or a
+ *    push whose checks are not reported yet. There is no time cap. This lasts
+ *    until a final check result or a new push.
+ * 6. `working` — the last turn ended within 30 seconds and checks are not failing.
+ * 7. `idle`.
+ */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
   if (facts.archived || terminal.state === 'landed' || terminal.state === 'closed' ||
@@ -92,10 +112,7 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.turnRunning) return { state: 'working' };
   const lifecycle = facts.lifecycle;
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
-  const started = facts.ciStartedAt ?? lifecycle?.checksSummary?.updatedAt;
-  const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle)) &&
-    started !== undefined && now - started < 30 * 60;
-  // A report to the agent commander leaves pending checks as review. A human blocker still waits.
+  const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
   if ((facts.blocker || facts.owed === true) && !(facts.agentCommanderReport && pendingCi))
     return { state: 'waiting', ...facts.blocker };
   if (pendingCi) return { state: 'review' };

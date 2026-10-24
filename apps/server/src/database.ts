@@ -2394,6 +2394,8 @@ CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occ
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS screen text NOT NULL DEFAULT '';
 -- Latest revisit of a screen_shown row within the first session; NULL otherwise.
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
+-- Screen events stored on a screen_shown row (first visit plus revisits); 1 otherwise.
+ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS visits integer NOT NULL DEFAULT 1;
 DO $$ BEGIN
   IF (SELECT array_length(conkey,1) FROM pg_constraint
       WHERE conrelid='signin_funnel_events'::regclass AND contype='p') <> 5 THEN

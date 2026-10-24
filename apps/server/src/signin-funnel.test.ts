@@ -243,7 +243,7 @@ it('compacts expired raw events into anonymous daily counts without retaining in
 });
 it('rate limits IPs in bounded memory and resets on request without a timer', () => {
   const limit = new FunnelRateLimit();
-  for (let i = 0; i < 60; i++) expect(limit.allow('one', 1000)).toBe(true);
+  for (let i = 0; i < 128; i++) expect(limit.allow('one', 1000)).toBe(true);
   expect(limit.allow('one', 1001)).toBe(false);
   expect(limit.allow('two', 1001)).toBe(true);
   expect(limit.allow('one', 61000)).toBe(true);
@@ -313,6 +313,7 @@ it('keeps first-session screens only for a new signup within 10 minutes, and rea
       date: today(),
       signups: 2,
       withScreens: 2,
+      capped: 0,
       screens: [
         { screen: 'beeline/tray', reached: 2, last: 1 },
         { screen: 'beeline/chat/[channelId]', reached: 1, last: 1 },
@@ -330,7 +331,7 @@ it('reads zero screens for signups from builds that send none', async () => {
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, ['c'.repeat(64)]);
   await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', 'c'.repeat(64));
   const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
-  expect(result.firstSession.days).toEqual([{ date: today(), signups: 1, withScreens: 0, screens: [] }]);
+  expect(result.firstSession.days).toEqual([{ date: today(), signups: 1, withScreens: 0, capped: 0, screens: [] }]);
 });
 it('upgrades a ledger keyed without screen so each screen gets its own row', async () => {
   await db.query(`ALTER TABLE signin_funnel_events DROP CONSTRAINT signin_funnel_events_pkey`);
@@ -341,4 +342,50 @@ it('upgrades a ledger keyed without screen so each screen gets its own row', asy
   const key = (await db.query(`SELECT pg_get_constraintdef(oid) def FROM pg_constraint
     WHERE conrelid='signin_funnel_events'::regclass AND contype='p'`)).rows[0];
   expect(key?.def).toBe('PRIMARY KEY (install_id, attempt_id, event, provider, screen)');
+});
+
+const newSignup = async (identity: string) => {
+  const event = make({ event: 'provider_tapped', provider: 'github' });
+  await recordSigninFunnelEvent(db, event, 'server');
+  await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '1 minute' WHERE install_id=$1`, [event.installId]);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, [identity]);
+  await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', identity);
+  return (screen: SigninFunnelEvent['screen']) =>
+    recordSigninFunnelEvent(db, { ...event, provider: undefined, event: 'screen_shown', screen }, 'client', identity);
+};
+it('ends A, B, A on A with one stored row per screen and its last-seen time updated', async () => {
+  const show = await newSignup('d'.repeat(64));
+  await show('beeline/tray');
+  const first = (await db.query(`SELECT last_seen_at FROM signin_funnel_events WHERE screen='beeline/tray'`)).rows[0];
+  await show('beeline/channels');
+  await show('beeline/tray');
+  const rows = (await db.query(`SELECT screen,visits,last_seen_at FROM signin_funnel_events WHERE event='screen_shown' ORDER BY screen`)).rows;
+  expect(rows.map(r => [r.screen, r.visits])).toEqual([['beeline/channels', 1], ['beeline/tray', 2]]);
+  expect(new Date(rows[1].last_seen_at).getTime()).toBeGreaterThan(new Date(first?.last_seen_at ?? 0).getTime());
+  const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
+  expect(result.firstSession.days[0]).toEqual({
+    date: today(), signups: 1, withScreens: 1, capped: 0,
+    screens: [
+      { screen: 'beeline/channels', reached: 1, last: 0 },
+      { screen: 'beeline/tray', reached: 1, last: 1 },
+    ],
+  });
+});
+it('counts a person who reaches the send cap as capped, with reach but no last screen', async () => {
+  const capped = await newSignup('e'.repeat(64));
+  for (let i = 0; i < 70; i++) await capped(i % 2 ? 'beeline/channels' : 'beeline/tray');
+  const other = await newSignup('f'.repeat(64));
+  await other('beeline/members');
+  const stored = (await db.query(`SELECT sum(visits)::int n,count(*)::int rows FROM signin_funnel_events
+    WHERE event='screen_shown' AND screen<>'beeline/members'`)).rows[0];
+  expect(stored).toEqual({ n: 64, rows: 2 });
+  const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
+  expect(result.firstSession.days[0]).toEqual({
+    date: today(), signups: 2, withScreens: 2, capped: 1,
+    screens: [
+      { screen: 'beeline/channels', reached: 1, last: 0 },
+      { screen: 'beeline/members', reached: 1, last: 1 },
+      { screen: 'beeline/tray', reached: 1, last: 0 },
+    ],
+  });
 });

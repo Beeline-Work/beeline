@@ -269,7 +269,7 @@ describe('private operator dashboard', () => {
       const value = await (await get('?platforms=android')).json();
       const today = new Date().toISOString().slice(0, 10);
       expect(value.signinFunnel.firstSession.days).toEqual([{
-        date: today, signups: 1, withScreens: 1,
+        date: today, signups: 1, withScreens: 1, capped: 0,
         screens: [
           { screen: 'beeline/chat/[channelId]', reached: 1, last: 0 },
           { screen: 'beeline/tray', reached: 1, last: 1 },
@@ -298,7 +298,7 @@ describe('private operator dashboard', () => {
     expect(JSON.stringify(rows)).not.toContain('private@example.com');
     expect(JSON.stringify(rows)).not.toContain('funnel-proof');
     // Invalid input also spends the per-IP budget, before body parsing or storage.
-    for(let i=0;i<60;i++)expect((await send({},'rate-proof')).status).toBe(400);
+    for(let i=0;i<128;i++)expect((await send({},'rate-proof')).status).toBe(400);
     expect((await send({},'rate-proof')).status).toBe(429);
   });
 

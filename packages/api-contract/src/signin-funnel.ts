@@ -63,6 +63,8 @@ export const FUNNEL_SCREENS = [
 export type FunnelScreen = (typeof FUNNEL_SCREENS)[number];
 /** Screen events are sent and kept only within this long after `signed_in`. */
 export const FUNNEL_FIRST_SESSION_MS = 10 * 60_000;
+/** At most this many screen events per install in that window; a person who reaches it is "capped". */
+export const FUNNEL_SCREEN_SEND_CAP = 64;
 /** Maps expo-router segment patterns to an allowlisted screen, or null. */
 export function funnelScreenFromSegments(segments: readonly string[]): FunnelScreen | null {
   const parts = segments.filter((segment) => !segment.startsWith('('));

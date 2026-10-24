@@ -1,6 +1,7 @@
 import {
   parseSigninFunnelEvent,
   FUNNEL_FIRST_SESSION_MS,
+  FUNNEL_SCREEN_SEND_CAP,
   FUNNEL_UUID,
 } from '@beeline/api-contract/signin-funnel';
 import type { FunnelScreen, SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
@@ -176,7 +177,8 @@ export function createSigninFunnelClient(input: {
       serial(() => step('signed_in', undefined, undefined, undefined, authorization)),
     /**
      * Each screen change in the 10 minutes after sign-in, so the server knows
-     * both which screens were reached and which one came last. Route pattern only.
+     * both which screens were reached and which one came last. Route pattern only,
+     * at most FUNNEL_SCREEN_SEND_CAP sends.
      */
     screenShown: (screen: FunnelScreen, authorization: () => Promise<string | undefined>) =>
       serial(async () => {
@@ -185,7 +187,7 @@ export function createSigninFunnelClient(input: {
         if (!pending?.signedInAt) return;
         const elapsed = now() - pending.signedInAt;
         if (elapsed < 0 || elapsed >= FUNNEL_FIRST_SESSION_MS) return;
-        if (pending.lastScreen === screen || pending.screenSends >= 64) return;
+        if (pending.lastScreen === screen || pending.screenSends >= FUNNEL_SCREEN_SEND_CAP) return;
         const token = await authorization().catch(() => undefined);
         if (!token) return;
         pending.lastScreen = screen;

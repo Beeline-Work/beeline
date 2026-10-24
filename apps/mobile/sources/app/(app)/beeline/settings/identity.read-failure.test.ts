@@ -1,3 +1,7 @@
+vi.mock('@/components/buzz/Button', async () => {
+  const React = await import('react');
+  return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
+});
 vi.mock('@/components/buzz/WorkspaceSettingsPanel', async () => { const React = await import('react'); return { WORKSPACE_VISIBILITY_LABELS: { public: 'Public', 'invite-only': 'Invite-only' }, default: React.forwardRef((props: object, _ref) => React.createElement('WorkspaceSettings', props)) }; });
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });

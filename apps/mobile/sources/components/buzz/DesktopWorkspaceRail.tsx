@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import * as React from 'react';
 import { Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -244,7 +245,7 @@ export function DesktopWorkspaceRail({
               );
             })}
             <View style={styles.separator} />
-            <Pressable
+            <Button
               accessibilityLabel="Create or join a Workspace"
               accessibilityRole="menuitem"
               onBlur={() => setAddFocused(false)}
@@ -256,11 +257,11 @@ export function DesktopWorkspaceRail({
               ref={(node) => {
                 tileRefs.current[workspaces.length] = node;
               }}
-              style={[styles.tile, styles.addTile, addFocused && styles.focusedTile]}
               testID="desktop-workspace-add"
-            >
-              <Text style={styles.addGlyph}>+</Text>
-            </Pressable>
+              label="" icon={<Text style={styles.addGlyph}>{"+"}</Text>}
+              variant="quiet"
+              iconOnly
+            />
             <View style={styles.separator} />
             {/* The account hub. The rail's scrim covers the navigation pane
                 that also names it, so without this the rail is a dead end for

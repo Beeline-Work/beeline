@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -704,15 +705,8 @@ export default function BuzzIdentitySettings() {
               <PixelLoader compact />
             </View>
           ) : (
-            <TouchableOpacity
-              accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
-              disabled={!Updates.isEnabled}
-              onPress={() => void checkForUpdate()}
-              style={!Updates.isEnabled ? styles.disabled : undefined}
-              testID="ota-update-check"
-            >
-              <Text style={styles.check}>Check</Text>
-            </TouchableOpacity>
+            <Button label="Check" variant="quiet" accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
+              disabled={!Updates.isEnabled} onPress={() => void checkForUpdate()} testID="ota-update-check" />
           )}
         </View>
         </>

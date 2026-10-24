@@ -1,0 +1,632 @@
+[
+  {
+    "file": "app/(app)/beeline/chat/_chat-surface.tsx",
+    "line": 7172,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "32e028ced05af00e9fa5",
+    "control": "<HullDialogActions style={styles.roomRenameControls} actions={[{ disabled: renameBusy, label: \"Cancel\", onPress: () => { setRenameEditing(false); setRenameError(null); }, variant: \"quiet\" }, { disabled: renameBusy || !validRoomSlug(renameDraft.trim()), label: renameBusy ? 'Renaming…' : 'Save', loading: renameBusy, onPress: () => void handleRenameRoom(), testID: \"apply-room-rename\", variant: 'prima",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "line": 755,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "895673884d0c695a52f5",
+    "control": "<Pressable accessibilityLabel={`Open attachment ${attachment.name}`} accessibilityRole={attachment.mimeType.startsWith('image/') ? 'button' : 'link'} delayLongPress={450} onLongPress={ attachment.mimeType.startsWith('image/') ? (event) => { event.stopPropagation(); showPictureActions(attachment); } : undefined } onPress={open} style={styles.attachmentCard} testID={`chat-attachment-${attachment.nam",
+    "reason": "Message content navigation or emoji reaction, not a standalone text button."
+  },
+  {
+    "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "line": 930,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "6eaa7d885df2100706b2",
+    "control": "<Pressable accessibilityLabel={`React with ${emoji}`} accessibilityRole=\"button\" key={emoji} onPress={() => { onReact(emoji); setReactionPickerVisible(false); }} style={({ pressed }) => [ styles.reactionPickerChoice, pressed && styles.replyDesktopPressed, ]} testID={`reaction-choice-${messageId}-${emoji}`} > <Text style={styles.reactionEmoji}>{emoji}</Text> </Pressable>",
+    "reason": "Message content navigation or emoji reaction, not a standalone text button."
+  },
+  {
+    "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
+    "line": 1612,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "2c0d44bf0a5d41251fab",
+    "control": "<Pressable accessibilityLabel=\"Open original forwarded message\" accessibilityRole=\"button\" onPress={() => onOpenSource(forwardSource.roomId, forwardSource.messageId)} testID={`forward-source-caption-${message.id}`} > <Text style={styles.forwardCaption} testID={`forward-caption-${message.id}`}> {forwarded.caption} </Text> </Pressable>",
+    "reason": "Message content navigation or emoji reaction, not a standalone text button."
+  },
+  {
+    "file": "app/(app)/beeline/human-profile.tsx",
+    "line": 330,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "7e44db1620b3b7cac6e7",
+    "control": "<TouchableOpacity accessibilityRole=\"radio\" accessibilityState={{ checked: selected, disabled: busy }} disabled={busy} key={choice} onPress={() => setRole(choice)} style={[styles.roleChoice, selected && styles.roleChoiceSelected]} testID={`person-role-${choice}`} > <Text style={[styles.roleLabel, selected && styles.roleLabelSelected]}> {choice === 'admin' ? 'Admin' : 'Member'} </Text> </TouchableO",
+    "reason": "Radio selection preserves checked state and option semantics."
+  },
+  {
+    "file": "app/(app)/beeline/settings/identity.tsx",
+    "line": 668,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "764ad8e3878424eca3c4",
+    "control": "<HullDialogActions actions={[ { label: 'Cancel', accessibilityLabel: 'Cancel account deletion', disabled: deleteBusy, onPress: () => setConfirmDelete(false), testID: 'delete-account-cancel', }, { label: 'Delete account', variant: 'destructive', accessibilityLabel: 'Yes, delete account', disabled: deleteBusy, onPress: () => void deleteAccount(), testID: 'delete-account-yes', }, ]} />",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "app/(app)/beeline/settings/workbench/connection.tsx",
+    "line": 283,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "5deaa0833c32bd61c2f9",
+    "control": "<HullDialogActions actions={[ { label: 'Cancel', disabled: revoking, onPress: () => setConfirmRevoke(false), testID: 'connection-revoke-confirm-no', }, { label: revoking ? 'Revoking…' : 'Revoke', variant: 'destructive', disabled: revoking, busy: revoking, onPress: () => void revoke(), testID: 'connection-revoke-confirm-yes', }, ]} />",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "app/(app)/beeline/settings/workflows.tsx",
+    "line": 125,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "e3f8da55c305b9a3148e",
+    "control": "<TouchableOpacity accessibilityLabel={`Run ${workflow.name}`} accessibilityRole=\"button\" disabled={Boolean(running)} key={workflow.name} onPress={() => void run(workflow)} style={styles.workflowRow} testID={`room-workflow-${workflow.name}`} > <View style={styles.workflowCopy}> <Text style={styles.workflowName}>{workflow.name}</Text> <Text style={styles.workflowMeta}>{lastRun}</Text> </View> <View ",
+    "reason": "Workflow list entry includes workflow identity and metadata; navigable content row."
+  },
+  {
+    "file": "app/(app)/beeline/workflow-run.tsx",
+    "line": 185,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "57be9515c1a856b9a0a5",
+    "control": "<Pressable accessibilityLabel={`Open ${workflowDisplayName(other.workflowSlug)}, ${workflowStateLabel(other.state)}`} accessibilityRole=\"link\" key={other.runId} onPress={() => router.replace(workflowRunHref(other))} style={({ pressed }) => [styles.alsoRunningRow, pressed && styles.pressed]} testID={`workflow-run-also-running-${other.runId}`} > <View style={styles.alsoRunningCopy}> <Text numberOfLi",
+    "reason": "Related-run content link includes workflow identity and execution metadata."
+  },
+  {
+    "file": "app/(app)/beeline/workflow.tsx",
+    "line": 87,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "af92b5b7b071f1653ff1",
+    "control": "<Pressable key={run.runId} accessibilityRole=\"button\" style={styles.run} onPress={() => router.push(workflowRunHref(run)) } > <Text style={styles.title}> {run.status === 'live' ? 'Running' : run.status === 'done' ? 'Completed' : run.status === 'abandoned' ? 'Abandoned' : 'Failed'} </Text> <Text style={styles.meta}>{workflowStarterLine(run)}</Text> <Text selectable style={styles.id}> {run.runId} </",
+    "reason": "Run history content row retains its title and state metadata."
+  },
+  {
+    "file": "app/(app)/join/[token].tsx",
+    "line": 203,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "59de9f641bef8e49b053",
+    "control": "<View style={styles.failureBlock} testID=\"invite-unreachable\"> <ErrorBanner title=\"Couldn’t reach Beeline\" description=\"Your invite may still be fine — we could not ask the server about it. Check your connection and try again.\" /> {error ? <Text style={styles.meta}>{error}</Text> : null} <Button label=\"Retry\" onPress={retry} style={styles.primary} testID=\"invite-retry\" variant=\"secondary\" /> <Butt",
+    "reason": "Container already renders ErrorBanner; following buttons are invite navigation/retry controls."
+  },
+  {
+    "file": "components/buzz/AgentProfileView.tsx",
+    "line": 241,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "6a413a96aee0ecc2ff94",
+    "control": "<HullDialogActions actions={[ { label: 'Cancel', variant: 'quiet', disabled: saving, onPress: onCancel, testID: 'cancel-agent-edit', }, { label: saving ? 'Saving…' : 'Save', variant: 'primary', loading: saving, disabled: saving, onPress: onSave, testID: 'save-agent-soul', }, ]} />",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/AgentVoiceSection.tsx",
+    "line": 188,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "909ea0fad8a5328d0fe4",
+    "control": "<HullDialogActions actions={[ { label: 'Cancel', variant: 'quiet', disabled: saving, onPress: () => { stop(); setOpen(false); }, testID: 'cancel-agent-voice', }, { label: saving ? 'Saving…' : 'Save', variant: 'primary', loading: saving, disabled: saving, onPress: () => void save(), testID: 'save-agent-voice', }, ]} />",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/ArtifactCard.tsx",
+    "line": 165,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "c138ceea09365ea0f5b5",
+    "control": "<Pressable accessibilityLabel={`Open ${title} full screen`} accessibilityRole=\"button\" onPress={openFull} style={styles.previewPress} testID={`artifact-preview-${activeAttachment.name}`} > {format === 'markdown' ? ( <ArtifactMarkdownPreview attachment={activeAttachment} /> ) : format === 'text' ? ( <View style={styles.preview}> <ArtifactText attachment={activeAttachment} crop testID=\"artifact-prev",
+    "reason": "Whole artifact preview target opens its reader; content navigation."
+  },
+  {
+    "file": "components/buzz/Button.tsx",
+    "line": 77,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "f6e01c4ab5962f087359",
+    "control": "<EmergencyPressable {...props} accessibilityRole=\"button\" accessibilityState={{ ...accessibilityState, disabled: isDisabled }} disabled={isDisabled} onPress={onPress} style={[ { minHeight: 44, minWidth: 44, paddingHorizontal: emergencyTheme.space.md, justifyContent: 'center', alignItems: 'center', borderRadius: emergencyTheme.radius, }, style, ]} > <EmergencyText style={{ ...emergencyTheme.type.bo",
+    "reason": "Shared Button implementation, including provider-free recovery path."
+  },
+  {
+    "file": "components/buzz/Button.tsx",
+    "line": 125,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "b79a4c664493b23a1df0",
+    "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true }} disabled={isDisabled} onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(event); }} style={({ pressed }) => [ styles.frame, primary ? styles.primary : styles[variant], pressed",
+    "reason": "Shared Button implementation, including provider-free recovery path."
+  },
+  {
+    "file": "components/buzz/CodeBlock.tsx",
+    "line": 140,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "9e5247ace700a3a0996c",
+    "control": "<Pressable accessibilityLabel={`Open ${sheetTitle}, ${hidden}`} accessibilityRole=\"button\" onPress={openReader} style={({ pressed }) => [styles.peek, pressed && styles.peekPressed]} testID=\"code-open\" > {body} <View style={styles.moreRow}> <ChevronGlyph color={styles.openVerb.color} direction=\"down\" size={CHEVRON_ROW_SIZE} /> <Text style={styles.openVerb}>open</Text> <Text style={styles.moreCount}",
+    "reason": "Code preview disclosure opens the full machine-text reader."
+  },
+  {
+    "file": "components/buzz/CommunityRail.tsx",
+    "line": 155,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "046ba8eaf3a2e17b3ab1",
+    "control": "<TouchableOpacity accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} onPress={onPress} style={[styles.railCommand, column && styles.columnCommand]} testID={testID} > {glyph ? <Text style={styles.railCommandGlyph}>{glyph}</Text> : children} <Text style={styles.railCommandLabel}>{label}</Text> </TouchableOpacity>",
+    "reason": "Shared workspace navigation chrome; command tile and workspace switcher keep composite identity layout."
+  },
+  {
+    "file": "components/buzz/CommunityRail.tsx",
+    "line": 351,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "bd75811d7fb69d779551",
+    "control": "<TouchableOpacity accessibilityLabel={ showingPickerTitle ? `Close ${pickerTitle}` : `${community?.name ?? WORKSPACE_LABEL} — switch ${WORKSPACE_LABEL}` } accessibilityRole=\"button\" accessibilityState={{ expanded }} onPress={onPress} style={styles.drawerTrigger} testID=\"workspace-avatar-trigger\" > {!showingPickerTitle && ( <View style={styles.drawerTriggerPlate} testID=\"workspace-header-plate\"> <V",
+    "reason": "Shared workspace navigation chrome; command tile and workspace switcher keep composite identity layout."
+  },
+  {
+    "file": "components/buzz/ComputerSession.tsx",
+    "line": 146,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "dae8b1f3e11f3d33bff6",
+    "control": "<Pressable onPress={() => void open()} accessibilityRole=\"button\" accessibilityLabel={`Open ${session.title} browser`}> <View style={styles.preview} pointerEvents=\"none\"><ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /></View> <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text> <Text style={styles.kind}>Live browser</Te",
+    "reason": "Browser-session preview opens the session; composite content target."
+  },
+  {
+    "file": "components/buzz/ConversationComposer.tsx",
+    "line": 372,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "674f89f6c8e72aee943b",
+    "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
+    "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
+  },
+  {
+    "file": "components/buzz/ConversationComposer.tsx",
+    "line": 379,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "7695cae7e85757b07ad6",
+    "control": "<View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numberOfLines={1} style={styles.replyLabel}> <Text style={styles.replyGlyph}>↩</Text> Replying to{' '} <Text style={styles.replyHandle}>@{reply.handle}</Text> </Text> <Text numberOfLines={1} ellipsizeMode=\"tail\" sty",
+    "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
+  },
+  {
+    "file": "components/buzz/ConversationComposer.tsx",
+    "line": 403,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "680e2791a5dac0137388",
+    "control": "<View key={`${attachment.uri}:${index}`} style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]} testID={`pending-chat-attachment-${index}`} > <View style={styles.attachmentCopy}> <Text numberOfLines={1} ellipsizeMode=\"tail\" style={styles.attachmentName}> {attachment.name} </Text> <Text numberOfLines={1} style={styles.attachmentMeta} testID={`pending-chat-attachment-meta-${index",
+    "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
+  },
+  {
+    "file": "components/buzz/ConversationComposer.tsx",
+    "line": 699,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "291e01e1d985c9135a8f",
+    "control": "<TouchableOpacity accessibilityLabel={statusLine} accessibilityLiveRegion=\"polite\" accessibilityRole={speech.state === 'permission-denied' && Platform.OS !== 'web' ? 'button' : 'text'} activeOpacity={speech.state === 'permission-denied' && Platform.OS !== 'web' ? 0.7 : 1} disabled={speech.state !== 'permission-denied' || Platform.OS === 'web'} onPress={ speech.state === 'permission-denied' && Plat",
+    "reason": "Live speech status with a contextual permission target; not a standalone action label."
+  },
+  {
+    "file": "components/buzz/ConversationRow.tsx",
+    "line": 113,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "b70c7ac26be892116f36",
+    "control": "<Pressable onPress={onPress} onLongPress={onPin} accessibilityRole=\"button\" accessibilityHint=\"Long press to toggle this conversation's pin\" accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`} accessibilityState={selected ? { selected: true } : undefined} accessibilityActions={[ { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin convers",
+    "reason": "Shared conversation content row with long-press pin interaction."
+  },
+  {
+    "file": "components/buzz/CornerAppScreen.tsx",
+    "line": 75,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "314d85b4800bf1c0b9b0",
+    "control": "<Pressable accessibilityLabel={`Open Corner App ${title}`} accessibilityRole=\"button\" onPress={onOpen} style={({ pressed }) => [styles.appRow, pressed && styles.actionPressed]} testID=\"corner-app-row\" > <View style={styles.appRowCopy}> <Text style={styles.appRowLabel}>CORNER APP</Text> <Text numberOfLines={1} style={styles.appRowTitle}> {title} </Text> </View> <Text style={styles.actionArrow}>OPEN",
+    "reason": "Corner App preview content target; action blocks use Button."
+  },
+  {
+    "file": "components/buzz/CornerObjectiveLine.tsx",
+    "line": 145,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "28897d198c8d4c444f68",
+    "control": "<Pressable accessibilityLabel={`Open workflow, ${label}`} accessibilityRole=\"link\" onPress={onPress} style={({ pressed }) => [styles.workflow, pressed && styles.briefLinkPressed]} testID={testID} > <WorkflowGlyph size={CORNER_META_SIZE} /> <Text numberOfLines={1} style={styles.workflowCopy} testID={`${testID}-copy`}> {label} </Text> </Pressable>",
+    "reason": "Workflow identity/status line opens workflow details."
+  },
+  {
+    "file": "components/buzz/CreatePollSheet.tsx",
+    "line": 58,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "c598330bf6d7f84355de",
+    "control": "<HullDialogActions style={styles.submitInset} actions={[ { label: 'Cancel', disabled: busy, onPress: onClose }, { label: 'Create poll', variant: 'primary', disabled: busy || !ready, busy, testID: 'create-poll-submit', onPress: async () => { const clearPrompt = promptDraft.capture(); const clearOptions = optionsDraft.capture(); const succeeded = await onCreate({ prompt: prompt.trim(), options: opti",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/CreatePollSheet.tsx",
+    "line": 136,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "4cdc8bbae6b92571cefc",
+    "control": "<Pressable key={time.seconds} accessibilityRole=\"radio\" accessibilityState={{ selected: ttlSeconds === time.seconds }} onPress={() => setTtlSeconds(time.seconds)} style={[styles.time, ttlSeconds === time.seconds && styles.timeSelected]} > <Text style={styles.actionText}>{time.label}</Text> </Pressable>",
+    "reason": "Poll duration radio options preserve mutually exclusive selection semantics."
+  },
+  {
+    "file": "components/buzz/DesktopMessageAction.tsx",
+    "line": 32,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "e1c925e385f6dea1c2a1",
+    "control": "<Pressable accessibilityLabel={label} accessibilityRole=\"button\" accessibilityState={action === 'bookmark' ? { selected } : undefined} onPress={onPress} onFocus={() => { setNamed(true); onFocus(); }} onBlur={() => { setNamed(false); onBlur(); }} onHoverIn={() => setNamed(true)} onHoverOut={() => setNamed(false)} style={({ pressed }) => [styles.button, named && styles.hover, pressed && styles.press",
+    "reason": "Shared icon action with hover tooltip; descendant text is the tooltip, not its button label."
+  },
+  {
+    "file": "components/buzz/DesktopWorkspaceStrip.tsx",
+    "line": 69,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "001eb2a9c061bce091c9",
+    "control": "<Pressable accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'} accessibilityRole=\"button\" onPress={onAccount} onHoverIn={() => setAccountLabelVisible(true)} onHoverOut={() => setAccountLabelVisible(false)} onFocus={() => setAccountLabelVisible(true)} onBlur={() => setAccountLabelVisible(false)} style={styles.account} testID=\"desktop-strip-account\" > <IdentityMark avatarUrl={v",
+    "reason": "Account avatar target includes a hover tooltip, not a visible button label."
+  },
+  {
+    "file": "components/buzz/ErrorBanner.tsx",
+    "line": 35,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "b4fe50cf3613b74646c9",
+    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={styles.banner} testID={testID}> <Text style={styles.title} testID={titleTestID}>{title}</Text> {description ? <Text style={styles.description}>{description}</Text> : null} {onRetry || secondaryAction ? ( <View style={secondaryAction ? styles.actions : styles.retry}> {onRetry ? ( <Button label={retryLabel} loading={retrying} on",
+    "reason": "Shared ErrorBanner implementation owns the bordered failure notice."
+  },
+  {
+    "file": "components/buzz/ErrorBanner.tsx",
+    "line": 39,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "12e9483a966a15804db1",
+    "control": "<View style={secondaryAction ? styles.actions : styles.retry}> {onRetry ? ( <Button label={retryLabel} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button label={secondaryAction.label} icon={secondaryAction.icon} iconOnly={secondaryAction.iconOnly} accessibilityLabel={secondaryAction.",
+    "reason": "Shared ErrorBanner implementation owns the bordered failure notice."
+  },
+  {
+    "file": "components/buzz/HullActionSheet.tsx",
+    "line": 140,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "10822c269bd971741400",
+    "control": "<Pressable accessibilityLabel={titleAccessibilityLabel} accessibilityRole=\"button\" onPress={onTitlePress} testID={titleTestID} > <Text numberOfLines={1} style={styles.title}>{title}</Text> </Pressable>",
+    "reason": "Shared action-sheet title navigation target."
+  },
+  {
+    "file": "components/buzz/HullDialog.tsx",
+    "line": 369,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "9d2643fd937110b99291",
+    "control": "<HullDialogActions actions={actions.map((action, index) => action.variant === 'primary' && index !== primaryIndex ? { ...action, variant: 'quiet' as const } : action, )} style={styles.dialogActions} />",
+    "reason": "Shared dialog primitive renders its own dialog actions."
+  },
+  {
+    "file": "components/buzz/IndexRow.tsx",
+    "line": 416,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "ddbce1efc8fd132d63ff",
+    "control": "<Pressable accessibilityLabel={descriptionAction.accessibilityLabel ?? descriptionAction.label} accessibilityRole=\"button\" hitSlop={DESCRIPTION_ACTION_SLOP} onPress={descriptionAction.onPress} testID={descriptionAction.testID} > <Text style={styles.descriptionAction}>{descriptionAction.label}</Text> </Pressable>",
+    "reason": "Shared row primitive owns its inline description action."
+  },
+  {
+    "file": "components/buzz/LedgerDisclosure.tsx",
+    "line": 24,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "261c53bd92fb396e7130",
+    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel={accessibilityLabel} accessibilityState={accessibilityState} aria-expanded={expanded} onPress={onPress} style={styles.row} testID={rowTestID} > <View style={styles.chevron}> <ChevronGlyph color={theme.buzz.textMuted} direction={expanded ? 'down' : 'right'} size={CHEVRON_ROW_SIZE} /> </View> <Text style={styles.label}>{children}</Text> </Pres",
+    "reason": "Shared expandable row primitive; geometry remains unchanged under revision six."
+  },
+  {
+    "file": "components/buzz/MemberPickerSheet.tsx",
+    "line": 115,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "d7d288afb88f747811df",
+    "control": "<View style={styles.footer}> {error && ( <Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\"> ! {error} </Text> )} {!agentConnectOnly && ( <View style={styles.addInset}> <Button disabled={chosen.length === 0} label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'} loading={busy} onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))} testID=\"member-picke",
+    "reason": "Real member-picker form footer; its error text and Add decision are not a retry notice."
+  },
+  {
+    "file": "components/buzz/MemberPickerSheet.tsx",
+    "line": 190,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "bcc382fb7326b4f1d0f2",
+    "control": "<TouchableOpacity accessibilityLabel=\"Copy connect command\" onPress={() => onCopyPairCommand?.(pairCommand)} style={styles.commandRow} > <Text selectable style={styles.command} testID=\"pair-agent-command\"> {pairCommand} </Text> <Text style={styles.copyLabel}>Copy</Text> </TouchableOpacity>",
+    "reason": "Selectable machine command row supports copying its displayed command."
+  },
+  {
+    "file": "components/buzz/MentionSuggestionMenu.tsx",
+    "line": 110,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "2870bd4c80591bd60181",
+    "control": "<TouchableOpacity accessibilityLabel={ participant.pubkey === SYSTEM_MENTION_PUBKEY ? `${SYSTEM_MENTION_LABEL}, @${participant.handle}` : !reserved ? [`@${participant.handle}`, model, subtitle, participant.kind] .filter(Boolean) .join(', ') : `${participant.name}, @${participant.handle}, ${participant.kind}` } accessibilityRole={checkedHandles ? 'checkbox' : 'button'} accessibilityState={checkedHa",
+    "reason": "Structured suggestion options retain identity, selection and keyboard semantics."
+  },
+  {
+    "file": "components/buzz/MentionSuggestionMenu.tsx",
+    "line": 255,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "07c0ba05dfe404390d5c",
+    "control": "<TouchableOpacity accessibilityLabel={[`#${suggestion.token}`, subtitle, suggestion.kind] .filter(Boolean) .join(', ')} accessibilityRole=\"button\" accessibilityState={{ selected }} key={suggestion.id} onPress={() => onSelect(suggestion)} style={[styles.mentionRow, selected && styles.mentionRowSelected]} testID={`channel-suggestion-${suggestion.token}`} > <View style={styles.mentionChannelGlyph}> {",
+    "reason": "Structured suggestion options retain identity, selection and keyboard semantics."
+  },
+  {
+    "file": "components/buzz/MessageReactionRoster.tsx",
+    "line": 84,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "9fc588a2464128ab06f3",
+    "control": "<Pressable accessibilityHint={ rosterAvailable ? desktop ? 'Hover or focus to see who reacted' : 'Long press to see who reacted' : undefined } accessibilityLabel={reactionLabel} accessibilityRole=\"button\" accessibilityState={{ selected: reaction.reacted }} hitSlop={8} onBlur={() => setFocused(false)} onFocus={() => setFocused(true)} onLongPress={ !desktop && rosterAvailable ? () => { suppressPress",
+    "reason": "Reaction chip supports hover/long-press roster rather than a standalone action label."
+  },
+  {
+    "file": "components/buzz/MessageReactionStrip.tsx",
+    "line": 27,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "1815bbde629c6b5a4318",
+    "control": "<Pressable accessibilityLabel={`React with ${emoji}`} accessibilityRole=\"button\" key={emoji} onPress={() => onReact(emoji)} style={({ pressed }) => [styles.choice, pressed && styles.choicePressed]} testID={`message-reaction-${emoji}`} > <Text style={styles.emoji}>{emoji}</Text> </Pressable>",
+    "reason": "Emoji reaction picker options, not textual command buttons."
+  },
+  {
+    "file": "components/buzz/MessageSearchResults.tsx",
+    "line": 95,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "b34118d8d52ff79fefcf",
+    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel={`${result.authorName} in ${sigil}${room}: ${text}`} onPress={() => onOpen(result)} style={({ pressed }) => [styles.row, pressed && styles.pressed]} testID={`message-search-result-${result.messageId}`} > <View style={styles.meta}> <Text numberOfLines={1} style={styles.room}> <Text style={styles.sigil}>{sigil}</Text> {room} </Text> <Text styl",
+    "reason": "Search result content target includes highlighted transcript text."
+  },
+  {
+    "file": "components/buzz/NewRoomDialog.tsx",
+    "line": 187,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "2dadf712735df3d1e042",
+    "control": "<HullDialogActions style={styles.actions} actions={[{ label: showRepoPicker ? 'Back' : 'Cancel', variant: \"quiet\", disabled: busy, onPress: () => (showRepoPicker ? handleToggleRepoPicker() : onClose()), testID: \"create-room-cancel\" }, ...(step === 'form' ? [{ disabled: submitDisabled, label: busy ? 'Creating…' : 'Create Room', loading: busy, onPress: () => void submit(), testID: \"create-room-submi",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/ProfileActions.tsx",
+    "line": 43,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "aad98cbcf71386957d96",
+    "control": "<HullDialogActions actions={actions .filter((action) => action.label !== 'Message') .map((action) => ({ ...action, variant: action.label === 'Cancel' ? 'quiet' : 'primary', }))} />",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/RepoPicker.tsx",
+    "line": 263,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "04c2961781c2d025171c",
+    "control": "<HullDialogActions style={styles.instructionActions} actions={[{ label: \"Cancel\", variant: \"quiet\", onPress: () => setPendingLinkage(null) }, { label: pendingLinkage.kind === 'owner-grant' ? 'Share install link →' : 'Continue to GitHub →', variant: \"primary\", onPress: () => { const plan = pendingLinkage; setPendingLinkage(null); if (plan.kind === 'manage') onManageInstallation?.(plan.installation)",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/RepoPicker.tsx",
+    "line": 314,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "aaa0181f435bf41f47ac",
+    "control": "<HullDialogActions actions={[{ label: 'CREATE', variant: 'primary', disabled: busy || !createInstallationId || !/^[A-Za-z0-9._-]{1,100}$/.test(newName), onPress: () => { if (!createInstallationId) return; const clearRepository = repositoryDraft.capture(); void Promise.resolve(onCreateRepository(createInstallationId, newName)) .then(() => { clearRepository(); setCreating(false); }) .catch(() => und",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/RoomContextPreamble.tsx",
+    "line": 52,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "fd7d406775ce98920673",
+    "control": "<Pressable accessibilityLabel={ expanded ? 'Collapse the Room discussion this corner came from' : `${count} earlier ${count === 1 ? 'message' : 'messages'} from the Room. Expand` } accessibilityRole=\"button\" onPress={() => setExpanded((open) => !open)} style={styles.disclosureRow} testID={`${testID}-disclosure`} > {/* Two Texts, one line, exactly as `LedgerGhostLine` does it: a single truncating T",
+    "reason": "Context transcript preview disclosure; preserves existing reader layout."
+  },
+  {
+    "file": "components/buzz/RoomCornersList.tsx",
+    "line": 221,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "bacab502deef0d4d764d",
+    "control": "<Pressable accessibilityLabel={`${label}. ${display.word}${objective ? `. ${objective}` : ''}`} accessibilityRole=\"button\" onPress={() => openCorner(item)} style={({ pressed }) => [styles.cell, pressed && styles.cellPressed]} testID={`room-corner-${item.corner.id}`} > <View style={styles.cellRail} testID={`room-corner-rail-${item.corner.id}`} /> <View style={styles.cellTitle}> {ownerMark(item)} <T",
+    "reason": "Corner content navigation or archived-section disclosure; standalone More now uses Button."
+  },
+  {
+    "file": "components/buzz/RoomCornersList.tsx",
+    "line": 259,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "a4c71d54f99d0f346d3a",
+    "control": "<Pressable accessibilityLabel={`${label}. ${display.word}. ${line}`} accessibilityRole=\"button\" onPress={() => openCorner(item)} style={styles.row} testID={`room-corner-${item.corner.id}`} > {ownerMark(item)} <View style={styles.rowCopy}> {/* Captain 2026-09-20: a corner's name is never truncated. It wraps to as many lines as it needs and the row grows with it; uneven row heights are the accepted ",
+    "reason": "Corner content navigation or archived-section disclosure; standalone More now uses Button."
+  },
+  {
+    "file": "components/buzz/RoomCornersList.tsx",
+    "line": 296,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "1f24bb8a70060de28d07",
+    "control": "<Pressable accessibilityLabel={label} accessibilityRole=\"button\" accessibilityState={{ expanded: open, busy }} disabled={busy} onPress={onPress} style={styles.more} testID={`room-corners-${key}`} > <Text style={styles.moreLabel}>{label}</Text> {busy ? ( <SurfaceGlyphLoader compact testID={`room-corners-${key}-loading`} /> ) : ( <ChevronGlyph color={styles.chevron.color} direction={open ? 'up' : 'd",
+    "reason": "Corner content navigation or archived-section disclosure; standalone More now uses Button."
+  },
+  {
+    "file": "components/buzz/RoomCornerSummary.tsx",
+    "line": 22,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "119db3cfe2fa733f1267",
+    "control": "<Pressable onPress={onPress} accessibilityRole=\"button\" accessibilityLabel={`${expanded === undefined ? 'Open' : expanded ? 'Hide' : 'Show'} ${label}`} accessibilityState={expanded === undefined ? undefined : { expanded }} style={[styles.row, expanded !== undefined && styles.desktopRow]} testID={testID} > <Text style={[styles.text, Boolean(waiting) && styles.waiting]}>{label}</Text> <ChevronGlyph ",
+    "reason": "Shared compact corner-summary disclosure content row."
+  },
+  {
+    "file": "components/buzz/RoomListSectionHeader.tsx",
+    "line": 79,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "04be74edb9ac7d234523",
+    "control": "<Pressable accessibilityLabel={wordAction.accessibilityLabel ?? wordAction.label} accessibilityRole=\"button\" accessibilityState={{ disabled: wordAction.disabled }} disabled={wordAction.disabled} hitSlop={WORD_HIT_SLOP} onPress={wordAction.onPress} style={({ pressed }) => [ styles.wordAction, pressed && styles.pressed, wordAction.disabled && styles.disabled, ]} testID={wordAction.testID} > <Text st",
+    "reason": "Shared list-header primitive owns its word action."
+  },
+  {
+    "file": "components/buzz/RoomListToolbar.tsx",
+    "line": 71,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "95926f29fe08b83414f0",
+    "control": "<Pressable key={value} accessibilityRole=\"button\" accessibilityLabel={`${value} conversations`} accessibilityState={{ selected: value === filter }} onPress={() => onFilter(value)} style={[styles.filter, desktop && styles.desktopFilter]} testID={`room-filter-${value}`} > <Text style={[styles.label, value === filter && styles.selected]}> {value === 'pinned' ? 'Pinned' : value === 'all' ? 'All' : 'Un",
+    "reason": "Conversation filter selection options retain selected-state semantics."
+  },
+  {
+    "file": "components/buzz/RoomRepositoryChoice.tsx",
+    "line": 209,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "830eb174d35d51d41379",
+    "control": "<HullDialogActions style={styles.actions} actions={[{ label: listOpen ? 'Back' : 'Cancel', variant: \"quiet\", disabled: busy && !listOpen, onPress: () => (listOpen ? setListOpen(false) : onCancel()), testID: \"room-actions-close\" }, ...(canManage && !listOpen ? [{ disabled: !canSave, label: busy ? 'Saving…' : 'Save', loading: busy, onPress: save, testID: \"room-repo-save\", variant: 'primary' as const",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/RoomUnreadControls.tsx",
+    "line": 49,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "8da9e64f63b2638f42d9",
+    "control": "<Pressable accessibilityLabel={ badgeShown ? `${badgeCount} new ${badgeCount === 1 ? 'message' : 'messages'}. Jump to newest message` : 'Jump to newest message' } accessibilityRole=\"button\" onPress={onJumpToNewest} style={({ pressed }) => [ styles.hitTarget, bottomInset !== undefined && { bottom: bottomInset + 4 }, pressed && styles.pressed, ]} testID=\"newest-jump-disc\" > <View style={styles.disc}",
+    "reason": "Shared floating unread-count navigation control."
+  },
+  {
+    "file": "components/buzz/SettingsScopeTabs.tsx",
+    "line": 57,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "e639f81b91dbc7b492e3",
+    "control": "<TouchableOpacity key={key} accessibilityHint={action?.accessibilityHint} accessibilityLabel={tab.accessibilityLabel} accessibilityRole=\"tab\" accessibilityState={{ selected }} activeOpacity={selected && !action ? 1 : 0.7} onPress={() => (selected ? action?.onPress() : onScopeChange(key))} style={[styles.tab, selected && styles.tabSelected]} testID={tab.testID} > <View style={[styles.tile, selected",
+    "reason": "Shared tab control retains tab accessibility and selection."
+  },
+  {
+    "file": "components/buzz/ShowMoreRow.tsx",
+    "line": 33,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "3a5bab6fe55786bdb7aa",
+    "control": "<Pressable accessibilityLabel={accessibilityLabel ?? label} accessibilityRole=\"button\" accessibilityState={{ disabled, ...(expanded !== undefined ? { expanded } : {}) }} disabled={disabled} onPress={onPress} style={({ pressed }) => [ styles.row, inset === 'row' && styles.rowInset, inset === 'sheet' && styles.sheetInset, pressed && styles.pressed, disabled && styles.disabled, ]} testID={testID} > <",
+    "reason": "Shared reader disclosure primitive; no row-height changes in this sweep."
+  },
+  {
+    "file": "components/buzz/SlashVerbPicker.tsx",
+    "line": 83,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "1937c044ea200e31df76",
+    "control": "<TouchableOpacity accessibilityLabel={`/${command.name}. ${command.description ?? 'Advertised command'}`} accessibilityRole={command.toggle === undefined ? 'button' : 'switch'} accessibilityState={ command.toggle === undefined ? { selected } : { selected, checked: command.toggle } } key={`command:${command.name}`} onPress={() => onSelectCommand(command.name)} style={[styles.row, styles.commandRow,",
+    "reason": "Structured command suggestion options retain command descriptions and selection."
+  },
+  {
+    "file": "components/buzz/SlashVerbPicker.tsx",
+    "line": 128,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "ca319c7763574e5dadb3",
+    "control": "<TouchableOpacity accessibilityLabel={`/${app.command}. Open ${app.title}`} accessibilityRole=\"button\" accessibilityState={{ selected }} key={`app:${app.slug}`} onPress={() => onSelectApp?.(app.slug)} style={[styles.row, styles.commandRow, selected && styles.rowSelected]} testID={`slash-corner-app-${app.slug}`} > <Text numberOfLines={1} style={[styles.command, styles.agentCommand]}> /{app.command}",
+    "reason": "Structured command suggestion options retain command descriptions and selection."
+  },
+  {
+    "file": "components/buzz/SlashVerbPicker.tsx",
+    "line": 158,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "aaff59da7ee0b21481ca",
+    "control": "<TouchableOpacity accessibilityLabel={`/${verb.command}. ${verb.description}`} accessibilityRole=\"button\" accessibilityState={{ selected }} key={verb.id} onPress={() => onSelect(verb.id)} style={[styles.row, selected && styles.rowSelected]} testID={`slash-verb-${verb.id}`} > <Text numberOfLines={1} style={styles.command}> /{verb.command} </Text> <View style={styles.copy}> <Text numberOfLines={1} s",
+    "reason": "Structured command suggestion options retain command descriptions and selection."
+  },
+  {
+    "file": "components/buzz/TurnProgressLine.tsx",
+    "line": 117,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "adeb9cdbe9ead871089b",
+    "control": "<Pressable accessibilityLabel={stopping ? 'Stopping this turn' : 'Stop this turn'} accessibilityRole=\"button\" accessibilityState={{ busy: stopping, disabled: stopping }} disabled={stopping} hitSlop={STOP_HIT_SLOP} onPress={stopping ? undefined : onStop} style={({ pressed }) => [ styles.stop, pressed && !stopping && styles.stopPressed, stopping && styles.stopStopping, ]} testID={testID ? `${testID}",
+    "reason": "Thinking-line Stop retains main’s 24px visible row and existing 44px hit-slop target; replacing it with a 44px visible Button changes the expressly held row geometry."
+  },
+  {
+    "file": "components/buzz/WorkflowRunLine.tsx",
+    "line": 261,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "fbc42044a97b4e685b88",
+    "control": "<Pressable accessibilityLabel={`Open corner ${named.name}`} accessibilityRole=\"link\" onPress={() => onOpenCorner(named)} style={({ pressed }) => [styles.cornerLink, pressed && styles.pressed]} testID={`workflow-run-corner-${corner.id}`} > <CornerGlyph size={CORNER_META_SIZE} /> <Text numberOfLines={1} style={styles.cornerName}> {named.name} </Text> <Text style={styles.cornerArrow}>→</Text> </Press",
+    "reason": "Workflow step content disclosure or corner identity navigation."
+  },
+  {
+    "file": "components/buzz/WorkflowRunLine.tsx",
+    "line": 344,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "8d47d59668bed3dc5499",
+    "control": "<Pressable accessibilityHint={hasDetail ? (expanded ? 'Hides this step’s output' : 'Shows this step’s output') : undefined} accessibilityLabel={label} accessibilityRole={hasDetail ? 'button' : undefined} accessibilityState={hasDetail ? { expanded } : undefined} aria-expanded={hasDetail ? expanded : undefined} onPress={hasDetail ? () => setExpanded((value) => !value) : undefined} style={({ pressed ",
+    "reason": "Workflow step content disclosure or corner identity navigation."
+  },
+  {
+    "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+    "line": 515,
+    "rule": "6c",
+    "detail": "dialog action row",
+    "id": "e49d5cd143f112826bbb",
+    "control": "<HullDialogActions style={styles.inlineEditorControls} actions={[{ disabled: workingKey === 'name', label: \"Cancel\", onPress: () => setRenamingWorkspace(false), variant: \"quiet\" }, { disabled: !workspaceName.trim() || workspaceName.trim() === workspace?.name || workingKey === 'name', label: workingKey === 'name' ? 'Saving…' : 'Save', loading: workingKey === 'name', onPress: () => void saveWorkspac",
+    "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
+  },
+  {
+    "file": "components/buzz/WritePermissionOutcome.tsx",
+    "line": 53,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "26fce8016e75e7403440",
+    "control": "<Pressable accessibilityRole=\"link\" accessibilityLabel=\"Corner approved. View corner\" testID=\"write-permission-open-corner\" onPress={props.onOpen} style={({ pressed }) => [styles.outcome, styles.link, pressed && styles.linkPressed]} > <CornerGlyph size={CORNER_STATUS_SIZE} /> <Text style={styles.linkLead}>Corner approved ·</Text> <Text style={styles.linkAction}>View corner</Text> </Pressable>",
+    "reason": "Permission outcome content link opens the approved corner."
+  },
+  {
+    "file": "components/SidebarView.tsx",
+    "line": 522,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "6ddf2d7794f3bbee92e2",
+    "control": "<Pressable key={workspace.id} accessibilityRole=\"button\" accessibilityState={{ selected }} onPress={() => selectWorkspace(workspace.id)} style={[styles.workspaceButton, selected && styles.workspaceSelected]} testID={`desktop-workspace-${workspace.id}`} > <Text numberOfLines={1} style={[styles.workspaceText, selected && styles.workspaceTextSelected]} > {workspace.name} </Text> </Pressable>",
+    "reason": "Workspace identity selector or account avatar navigation; composite content targets."
+  },
+  {
+    "file": "components/SidebarView.tsx",
+    "line": 657,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "53eeaf196b24bda43973",
+    "control": "<Pressable accessibilityLabel={ viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings' } accessibilityRole=\"button\" accessibilityState={{ selected: profileSettingsSelected }} onPress={() => router.push('/beeline/settings' as Href)} style={({ pressed }) => [ styles.settingsRow, (profileSettingsSelected || pressed) && styles.roomRowSelected, ]} testID=\"profile-settings-navigation\" >",
+    "reason": "Workspace identity selector or account avatar navigation; composite content targets."
+  },
+  {
+    "file": "components/UpdateReadyPrompt.tsx",
+    "line": 24,
+    "rule": "6a",
+    "detail": "raw text target",
+    "id": "b6ad61f322680614fddb",
+    "control": "<Pressable accessibilityRole=\"button\" accessibilityLabel=\"Update ready — tap to restart\" onPress={() => void reloadApp()} style={styles.prompt} testID=\"ota-update-restart\" > <Ionicons name=\"download-outline\" size={22} color={theme.colors.textLink} /> <View style={styles.copy}> <Text style={styles.title}>Update ready</Text> <Text style={styles.subtitle}>Tap to restart</Text> </View> <Pressable acce",
+    "reason": "Whole update-ready notification target; not a failure/retry notice."
+  }
+]

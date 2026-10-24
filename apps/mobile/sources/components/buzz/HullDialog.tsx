@@ -1,3 +1,4 @@
+import { ButtonRow } from './ButtonRow';
 import React from 'react';
 import {
   Modal,
@@ -386,30 +387,9 @@ export function HullDialogActions({
   actions: readonly HullDialogAction[];
   style?: StyleProp<ViewStyle>;
 }) {
-  return (
-    <View style={[styles.actionRow, style]}>
-      {actions.map((action) => (
-        <View
-          key={`${action.testID ?? action.label}:${action.variant ?? 'quiet'}`}
-          style={styles.actionSlot}
-        >
-          <Button
-            {...(action.accessibilityRole ? { accessibilityRole: action.accessibilityRole } : {})}
-            label={action.label}
-            labelTone={action.labelTone}
-            variant={action.variant ?? 'quiet'}
-            accessibilityLabel={action.accessibilityLabel ?? action.label}
-            accessibilityState={{ busy: action.busy === true }}
-            loading={action.loading}
-            disabled={action.disabled}
-            onPress={action.onPress}
-            testID={action.testID}
-          />
-          {action.description}
-        </View>
-      ))}
-    </View>
-  );
+  return <ButtonRow actions={actions}
+          style={style}
+          />;
 }
 
 export const HullDialogInput = React.forwardRef<

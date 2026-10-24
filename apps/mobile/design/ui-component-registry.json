@@ -60,7 +60,8 @@
       "MARK_VIEWBOX"
     ],
     "components/buzz/BeelineMarkSpinner.tsx": ["BeelineMarkSpinner", "MARK_CELL"],
-    "components/buzz/Button.tsx": ["Button"],
+    "components/buzz/ButtonRow.tsx": ["ButtonRow"],
+    "components/buzz/Button.tsx": ["Button", "ButtonFrame", "RecoveryButton"],
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],
     "components/buzz/ChoicePlate.tsx": ["TranscriptCardChoicePlate", "inner"],
@@ -177,7 +178,7 @@
     "components/buzz/HullSwitch.tsx": ["HullSwitch"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
     "components/buzz/IndexRow.tsx": ["IndexRow",
-      "TranscriptFactRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron"],
+      "TranscriptFactRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron", "ContentTarget"],
     "components/buzz/Ledger.tsx": [
       "Byline",
       "Container",

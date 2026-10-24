@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
@@ -305,17 +306,15 @@ export default function ConnectionDetailScreen() {
           </Text>
         ) : null}
         {error || loadError ? (
-          <View style={styles.error} testID="connection-error-state">
-            <Text accessibilityRole="alert" style={styles.errorText} testID="connection-error">
-              {error ?? (loadError?.includes('Key not found')
+          <ErrorBanner
+            title={error ?? (loadError?.includes('Key not found')
                 ? 'Key not found — it belongs to another member or no longer exists'
                 : 'Key unavailable right now')}
-            </Text>
-            {!detail ? (
-              <Button label="Retry" variant="secondary" onPress={() => void retry()}
-                testID="connection-retry" style={{ alignSelf: 'flex-end' }} />
-            ) : null}
-          </View>
+            titleTestID="connection-error"
+            testID="connection-error-state"
+            retryLabel="Retry"
+            retryTestID="connection-retry"
+            onRetry={!detail ? () => void retry() : undefined} />
         ) : null}
       </ScrollView>
     </View>

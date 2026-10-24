@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -105,17 +106,14 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
                 : `Could not send · ${outcome.reason}`}
         </Text>
       ) : null}
-      <Pressable
+      <Button
         accessibilityRole="button"
         disabled={sending || !amount || !to}
         onPress={send}
-        style={styles.sendPress}
         testID="wallet-send-confirm"
-      >
-        <Text style={[styles.sendButton, (sending || !amount || !to) && styles.sendDisabled]}>
-          Send
-        </Text>
-      </Pressable>
+        label={'Send'}
+        variant="quiet"
+      />
       <HullActionSheetModal
         onClose={() => setPickerOpen(false)}
         testID="wallet-chain-picker"

@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -76,19 +77,16 @@ export default function TextSelectionScreen() {
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <PageHeader
                 action={
-                    <Pressable
-                        accessibilityLabel={"Copy"}
+                    <Button
+            accessibilityLabel={"Copy"}
                         accessibilityRole="button"
                         disabled={copyDisabled}
                         onPress={handleCopyAll}
-                        style={({ pressed }) => [
-                            styles.copyButton,
-                            pressed && styles.copyButtonPressed,
-                        ]}
-                        testID="text-selection-copy"
-                    >
-                        <Text style={[styles.copyGlyph, copyDisabled && styles.copyGlyphDisabled]}>⧉</Text>
-                    </Pressable>
+            testID="text-selection-copy"
+            label="" icon={<Text style={[styles.copyGlyph, copyDisabled && styles.copyGlyphDisabled]}>{"⧉"}</Text>}
+            variant="quiet"
+            iconOnly
+          />
                 }
                 backAccessibilityLabel={"Back"}
                 onBack={() => router.back()}

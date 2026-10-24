@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -18,15 +19,18 @@ export function PinnedConversationsEmpty({
       <Text style={styles.copy}>
         No pinned conversations yet.{'\n'}Long press a Room to pin it here.
       </Text>
-      <Pressable
+      <Button
         accessibilityRole="button"
         onPress={onShowAll}
-        style={({ pressed }) => [styles.action, pressed && styles.pressed]}
         testID={desktop ? 'desktop-show-all-conversations' : 'show-all-conversations'}
-      >
-        <Text style={styles.actionText}>Show all conversations</Text>
+        label={'Show all conversations'}
+        variant="quiet"
+        icon={
+          <>
         <ChevronGlyph direction="right" size={18} color={styles.actionText.color} />
-      </Pressable>
+      </>
+        }
+      />
     </View>
   );
 }

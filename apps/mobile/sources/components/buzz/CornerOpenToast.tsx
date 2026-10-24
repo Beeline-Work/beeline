@@ -1,6 +1,8 @@
-import { Button } from '@/components/buzz/Button';
+import Svg, { Path } from 'react-native-svg';
+import { InlineRow } from './IndexRow';
+import { ErrorBanner } from './ErrorBanner';
 import React, { useEffect, useState } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -48,38 +50,38 @@ export function CornerOpenToast() {
   const { theme } = useUnistyles();
   if (status.status === 'idle') return null;
   if (status.status === 'pending' && cornerOpensListed(status.roomId)) return null;
-  const failed = status.status === 'failed';
+  if (status.status === 'failed')
+    return (
+      <View pointerEvents="box-none" style={[styles.dock, { bottom: insets.bottom + theme.buzz.space.md }]}>
+        <ErrorBanner
+          title="Couldn't reach Beeline"
+          description='Check your connection, then retry.'
+          retryLabel="Retry"
+          onRetry={status.retry}
+          retryTestID="corner-open-retry"
+          secondaryAction={{ label: '', accessibilityLabel: 'Dismiss', iconOnly: true, onPress: cornerOpenEnded,
+            icon: <Svg width={18} height={18} viewBox="0 0 18 18"><Path d="M4 4L14 14M14 4L4 14" stroke={theme.buzz.textPrimary} strokeWidth={1.5} /></Svg> }}
+          testID="corner-open-failed"
+        />
+      </View>
+    );
   return (
     <View pointerEvents="box-none" style={[styles.dock, { bottom: insets.bottom + theme.buzz.space.md }]}>
-      <View
+      <InlineRow
         accessibilityLiveRegion="polite"
         accessibilityRole="alert"
         style={styles.plate}
-        testID={failed ? 'corner-open-failed' : 'corner-open-pending'}
+        testID='corner-open-pending'
       >
-        <TouchableOpacity
-          accessibilityLabel={failed ? 'Dismiss' : undefined}
-          disabled={!failed}
-          onPress={cornerOpenEnded}
-          style={styles.message}
-        >
+        <View style={styles.message}>
           <Text style={styles.title}>
-            {failed ? "Couldn't reach Beeline" : `Opening ${CORNER_LABEL}…`}
+            {`Opening ${CORNER_LABEL}…`}
           </Text>
           <Text style={styles.detail}>
-            {failed ? 'Check your connection, then retry.' : cornerOpenWaitLine(status, seconds)}
+            {cornerOpenWaitLine(status, seconds)}
           </Text>
-        </TouchableOpacity>
-        {failed && (
-          <Button
-            label="Retry"
-            variant="secondary"
-            accessibilityLabel={`Retry opening the ${CORNER_LABEL}`}
-            onPress={status.retry}
-            testID="corner-open-retry"
-          />
-        )}
-      </View>
+        </View>
+      </InlineRow>
     </View>
   );
 }

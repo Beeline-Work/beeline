@@ -13,31 +13,52 @@ export function ErrorBanner({
   onRetry,
   retryLabel = 'Try again',
   retrying = false,
+  retryTestID,
   retryVariant = 'secondary',
   testID,
+  secondaryAction,
   title,
+  titleTestID,
 }: {
   description?: string;
   onRetry?: () => void;
   retryLabel?: string;
   retrying?: boolean;
+  retryTestID?: string;
   retryVariant?: ButtonVariant;
   testID?: string;
+  secondaryAction?: { label: string; onPress(): void; disabled?: boolean; testID?: string; icon?: React.ReactNode; iconOnly?: boolean; accessibilityLabel?: string };
   title: string;
+  titleTestID?: string;
 }) {
   return (
     <View accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.banner} testID={testID}>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={styles.title} testID={titleTestID}>{title}</Text>
       {description ? <Text style={styles.description}>{description}</Text> : null}
-      {onRetry ? (
-        <Button
-          label={retryLabel}
-          loading={retrying}
-          onPress={onRetry}
-          style={styles.retry}
-          testID={testID ? `${testID}-retry` : undefined}
-          variant={retryVariant}
-        />
+      {onRetry || secondaryAction ? (
+        <View style={secondaryAction ? styles.actions : styles.retry}>
+          {onRetry ? (
+            <Button
+              label={retryLabel}
+              loading={retrying}
+              onPress={onRetry}
+              testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)}
+              variant={retryVariant}
+            />
+          ) : null}
+          {secondaryAction ? (
+            <Button
+              label={secondaryAction.label}
+              icon={secondaryAction.icon}
+              iconOnly={secondaryAction.iconOnly}
+              accessibilityLabel={secondaryAction.accessibilityLabel}
+              onPress={secondaryAction.onPress}
+              disabled={secondaryAction.disabled}
+              testID={secondaryAction.testID ?? (testID ? `${testID}-secondary` : undefined)}
+              variant="quiet"
+            />
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
@@ -57,5 +78,6 @@ const styles = StyleSheet.create((theme) => {
     title: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     description: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     retry: { marginTop: hull.space.sm },
+    actions: { flexDirection: 'row', flexWrap: 'wrap', gap: hull.space.sm, marginTop: hull.space.sm },
   };
 });

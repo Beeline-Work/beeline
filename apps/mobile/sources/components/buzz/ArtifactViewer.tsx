@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -93,7 +94,7 @@ export function ArtifactViewerScreen({
           {format === 'game' ? `Game · ${title}` : title}
         </Text>
         {format === 'code' && document ? (
-          <Pressable
+          <Button
             accessibilityLabel="Copy code"
             accessibilityRole="button"
             onPress={() =>
@@ -105,14 +106,13 @@ export function ArtifactViewerScreen({
                 () => showCopyFailed("Couldn't copy code"),
               )
             }
-            style={styles.headerAction}
             testID="artifact-viewer-copy"
-          >
-            <Text style={styles.headerActionText}>Copy</Text>
-          </Pressable>
+            label={'Copy'}
+            variant="quiet"
+          />
         ) : format === 'image' ? (
           <>
-            <Pressable
+            <Button
               accessibilityLabel="Copy image"
               accessibilityRole="button"
               onPress={() =>
@@ -122,31 +122,29 @@ export function ArtifactViewerScreen({
                     : showCopyFailed("Couldn't copy image"),
                 )
               }
-              style={styles.headerAction}
               testID="artifact-viewer-copy"
-            >
-              <Text style={styles.headerActionText}>Copy</Text>
-            </Pressable>
-            <Pressable
+              label={'Copy'}
+              variant="quiet"
+            />
+              <Button
               accessibilityLabel="Share image"
               accessibilityRole="button"
               onPress={() => void sharePicture(attachment!)}
-              style={styles.headerAction}
               testID="artifact-viewer-share"
-            >
-              <Text style={styles.headerActionText}>Share</Text>
-            </Pressable>
+              label={'Share'}
+              variant="quiet"
+            />
           </>
         ) : null}
-        <Pressable
+        <Button
           accessibilityLabel="Close artifact viewer"
           accessibilityRole="button"
           onPress={onClose}
-          style={styles.headerAction}
           testID="artifact-viewer-close"
-        >
-          <Text style={styles.headerClose}>✕</Text>
-        </Pressable>
+          label="" icon={<Text style={styles.closeGlyph}>{"✕"}</Text>}
+          variant="quiet"
+          iconOnly
+        />
       </View>
       <View style={styles.body}>
         {format === 'code' && document ? (
@@ -356,7 +354,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
-  headerClose: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  closeGlyph: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
   headerAction: {
     minWidth: 44,
     minHeight: 44,

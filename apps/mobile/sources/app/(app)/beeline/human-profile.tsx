@@ -344,18 +344,16 @@ export function HumanProfile({
                   })}
                 </View>
                 {canRemove && (
-                  <TouchableOpacity
+                  <Button
                     accessibilityLabel="Remove from Workspace"
                     accessibilityRole="button"
                     disabled={busy}
                     onPress={() => void removeMember()}
-                    style={styles.removeMemberControl}
                     testID="remove-person"
-                  >
-                    <Text style={styles.removeMemberText}>
-                      {busy ? 'Removing…' : 'Remove from Workspace'}
-                    </Text>
-                  </TouchableOpacity>
+                    label={busy ? 'Removing…' : 'Remove from Workspace'}
+                    variant="danger"
+                  fullWidth
+                  />
                 )}
               </View>
             )}

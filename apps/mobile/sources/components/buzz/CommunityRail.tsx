@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useIsDesktop } from '@/utils/responsive';
 import React, { createContext, useCallback, useContext, useState } from 'react';
 import { Pressable, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -111,15 +112,15 @@ function RailButton({
         {children}
       </TouchableOpacity>
       {exitArmed && (
-        <TouchableOpacity
+        <Button
           accessibilityRole="button"
           accessibilityLabel={`Exit ${label}`}
           testID={`workspace-exit-${testID?.replace('community-rail-', '') ?? ''}`}
           onPress={onExitPress}
-          style={styles.exitAffordance}
-        >
-          <Text style={styles.exitAffordanceGlyph}>×</Text>
-        </TouchableOpacity>
+          label="" icon={<Text style={styles.exitAffordanceGlyph}>{"×"}</Text>}
+          variant="quiet"
+          iconOnly
+        />
       )}
     </View>
   );

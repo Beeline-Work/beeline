@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -95,15 +96,14 @@ function OtherWorkflowRuns({ runs, onOpenWorkflow, testID }: {
   const [open, setOpen] = React.useState(false);
   return (
     <>
-      <Pressable
+      <Button
         accessibilityLabel={`Show ${runs.length} other running workflows`}
         accessibilityRole="button"
         onPress={() => setOpen(true)}
-        style={({ pressed }) => [styles.briefLink, pressed && styles.briefLinkPressed]}
         testID={`${testID}-workflow-more`}
-      >
-        <Text style={styles.briefLinkText}>{`+${runs.length} running`}</Text>
-      </Pressable>
+        label={`+${runs.length} running`}
+        variant="quiet"
+      />
       <HullActionSheetModal
         accessibilityLabel="Close running workflows"
         onClose={() => setOpen(false)}
@@ -166,15 +166,14 @@ export function CornerBriefLink({
   testID?: string;
 }) {
   return (
-    <Pressable
+    <Button
       accessibilityLabel="Read brief"
       accessibilityRole="link"
       onPress={onPress}
-      style={({ pressed }) => [styles.briefLink, pressed && styles.briefLinkPressed]}
       testID={testID}
-    >
-      <Text style={styles.briefLinkText}>Read brief</Text>
-    </Pressable>
+      label={'Read brief'}
+      variant="quiet"
+    />
   );
 }
 

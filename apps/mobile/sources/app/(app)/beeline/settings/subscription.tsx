@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useState } from 'react';
@@ -59,26 +60,16 @@ export default function Subscription() {
         title="Subscription"
       />
       {stopFailed ? (
-        <View accessibilityRole="alert" style={styles.error} testID="subscription-stop-error">
-          <Text style={styles.errorText}>Could not stop this subscription.</Text>
-          <Button
-            label="Try again"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={() => void stop()}
-            testID="subscription-stop-error-retry"
-          />
-        </View>
+        <ErrorBanner
+          title="Could not stop this subscription."
+          retryLabel="Try again"
+          onRetry={() => void stop()}
+          retryTestID="subscription-stop-error-retry"
+          testID="subscription-stop-error"
+        />
       ) : error ? (
-        <View style={styles.error}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button
-            label="Retry"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={retry}
+        <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
           />
-        </View>
       ) : null}
       {loading && !work ? (
         <View style={styles.loading}><SurfaceGlyphLoader testID="subscription-loader" /></View>

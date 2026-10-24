@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -87,17 +88,8 @@ export default function WorkflowRun() {
         title={run ? workflowDisplayName(run.workflowSlug) : 'Workflow'}
 
       />
-      {error && (
-        <View style={styles.error}>
-          <Text style={styles.errorText}>{error}</Text>
-          <Button
-            label="Retry"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={retry}
-          />
-        </View>
-      )}
+      {error && <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
+          />}
       {loading && !detail ? (
         <View style={styles.loading}>
           <SurfaceGlyphLoader testID="workflow-run-loader" />
@@ -108,9 +100,12 @@ export default function WorkflowRun() {
           testID="workflow-run-page"
         >
           {roomId ? (
-            <Pressable accessibilityRole="button" style={styles.allRuns} onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: run.workflowSlug } })}>
-              <Text style={styles.allRunsText}>All runs</Text>
-            </Pressable>
+            <Button
+              accessibilityRole="button"
+              onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: run.workflowSlug } })}
+              label={'All runs'}
+              variant="quiet"
+            />
           ) : null}
           <View style={styles.plate} testID="workflow-run-summary">
             <View style={styles.status}>

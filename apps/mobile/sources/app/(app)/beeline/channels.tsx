@@ -946,19 +946,14 @@ export default function BuzzChannels() {
           visible={agentConnectVisible}
         />
         {!!deletedWorkspaceNotice && (
-          <TouchableOpacity
+          <Button
+            label={deletedWorkspaceNotice}
+            variant="quiet"
             onPress={() => setDeletedWorkspaceNotice(null)}
-            style={styles.errorBar}
             testID="workspace-deleted-notice"
-          >
-            <Text style={styles.error}>{deletedWorkspaceNotice}</Text>
-          </TouchableOpacity>
+          />
         )}
-        {!!error && (
-          <TouchableOpacity onPress={refreshNow} style={styles.errorBar}>
-            <Text style={styles.error}>{error}</Text>
-          </TouchableOpacity>
-        )}
+        {!!error && <Button label={error} variant="quiet" onPress={refreshNow} />}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions

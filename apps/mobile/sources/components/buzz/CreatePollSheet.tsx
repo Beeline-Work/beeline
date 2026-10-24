@@ -111,26 +111,24 @@ export function CreatePollSheet({
               />
             </View>
             {options.length > 2 ? (
-              <Pressable
+              <Button
                 accessibilityRole="button"
                 accessibilityLabel={`Remove option ${index + 1}`}
                 onPress={() => setOptions((current) => current.filter((_, i) => i !== index))}
-                style={styles.remove}
-              >
-                <Text style={styles.actionText}>Remove</Text>
-              </Pressable>
+                label={'Remove'}
+                variant="quiet"
+              />
             ) : null}
           </View>
         ))}
         {options.length < 4 ? (
-          <Pressable
+          <Button
             accessibilityRole="button"
             onPress={() => setOptions((current) => [...current, ''])}
-            style={styles.add}
             testID="create-poll-add-option"
-          >
-            <Text style={styles.actionText}>Add option</Text>
-          </Pressable>
+            label={'Add option'}
+            variant="quiet"
+          />
         ) : null}
         <Text style={styles.label}>Closes after</Text>
         <View style={styles.times}>

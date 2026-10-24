@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -57,15 +58,14 @@ export function MessageSearchResults({
               testID="message-search-more-retry"
             />
           ) : search.hasMore ? (
-            <Pressable
+            <Button
               accessibilityRole="button"
               disabled={search.loadingMore}
               onPress={search.loadMore}
-              style={({ pressed }) => [styles.more, pressed && styles.pressed]}
               testID="message-search-more"
-            >
-              <Text style={styles.action}>{search.loadingMore ? 'Loading…' : 'Show more'}</Text>
-            </Pressable>
+              label={search.loadingMore ? 'Loading…' : 'Show more'}
+              variant="quiet"
+            />
           ) : null}
         </>
       )}
@@ -123,12 +123,7 @@ function MessageSearchRow({
 }
 
 function Retry({ label, onPress, testID }: { label: string; onPress: () => void; testID: string }) {
-  return (
-    <View style={styles.retryLine}>
-      <Text style={styles.note}>{label}</Text>
-      <Button label="Retry" variant="secondary" onPress={onPress} testID={testID} style={{ alignSelf: 'flex-end' }} />
-    </View>
-  );
+  return <ErrorBanner title={label} retryLabel="Retry" onRetry={onPress} retryTestID={testID} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

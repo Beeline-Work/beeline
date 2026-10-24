@@ -143,7 +143,7 @@ function render(
 
 function pressable(tree: ReactTestRenderer, testID: string) {
   return tree.root
-    .findAllByType('Pressable' as any)
+    .findAll((node: any) => node.type === 'Pressable' || node.type === 'Button')
     .find((node: any) => node.props.testID === testID);
 }
 
@@ -698,7 +698,7 @@ describe('RoomCornersList archived footer', () => {
       ),
     );
     expect(pressable(tree, 'room-corners-archived-more').props.disabled).toBe(true);
-    expect(tree.root.findByProps({ testID: 'room-corners-archived-more-loading' })).toBeTruthy();
+    expect(pressable(tree, 'room-corners-archived-more').props.loading).toBe(true);
 
     act(() =>
       tree.update(

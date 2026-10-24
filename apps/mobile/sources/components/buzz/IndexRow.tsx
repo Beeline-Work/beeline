@@ -4,6 +4,7 @@ import {
   Text,
   View,
   type ViewProps,
+  type PressableProps,
   type AccessibilityRole,
   type AccessibilityState,
 } from 'react-native';
@@ -16,6 +17,11 @@ import { Button } from './Button';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 import { HullSwitch } from './HullSwitch';
 import { StateDot } from './StateDot';
+
+/** Shared rich-content target: preserves the content surface's layout and nested actions. */
+export function ContentTarget(props: PressableProps) {
+  return <Pressable {...props} />;
+}
 
 /** A horizontal composition for inline navigation and non-index layout.
  * Unlike an index entry, its children retain their own typography and targets.

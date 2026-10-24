@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { CornerActionsSheet } from '@/components/buzz/CornerActionsSheet';
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
@@ -6074,18 +6075,8 @@ export function BuzzChatSurface({
               <HeaderMetaCaps>HISTORY UNAVAILABLE</HeaderMetaCaps>
             </View>
           </View>
-          <View accessibilityRole="alert" style={styles.hydrationErrorBody}>
-            <Text style={styles.errorLabel}>! ERROR</Text>
-            <Text style={styles.hydrationErrorText}>
-              {transcriptHydrationError ?? 'Could not load this conversation.'}
-            </Text>
-            <Button
-              label="Retry"
-              onPress={retryHydration}
-              style={styles.hydrationErrorRetry}
-              variant="secondary"
-            />
-          </View>
+          <ErrorBanner title="! ERROR" description={transcriptHydrationError ?? 'Could not load this conversation.'}
+            retryLabel="Retry" onRetry={retryHydration} />
         </View>
       );
     }
@@ -6672,34 +6663,20 @@ export function BuzzChatSurface({
                         query={activeChannel?.query ?? ''}
                       />
                     )}
-                    {cornerOpenRepoPrompt && (
+                    {cornerOpenRepoPrompt && (roomRepoAccessIssue ? (
+                      <ErrorBanner title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}
+                        description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}
+                        retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation →' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
+                        onRetry={() => void handleReconnectRoomRepository()} retryTestID="corner-open-repo-connect"
+                        secondaryAction={{ label: 'DISMISS', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID="corner-open-repo-prompt" />
+                    ) : (
                       <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
                         <Text style={styles.repoPromptTitle}>
-                          {roomRepoAccessIssue
-                            ? roomRepoAccessIssue.reason === 'revoked'
-                              ? 'ACCESS TO THIS REPO WAS REVOKED'
-                              : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'
-                            : `THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
+                          {`THIS ${ROOM_LABEL.toUpperCase()} ISN’T LINKED TO A REPO`}
                         </Text>
                         <Text style={styles.repoPromptHint}>
-                          {roomRepoAccessIssue
-                            ? `${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`
-                            : `Pick one to open a ${CORNER_LABEL}.`}
+                          {`Pick one to open a ${CORNER_LABEL}.`}
                         </Text>
-                        {roomRepoAccessIssue && (
-                          <TouchableOpacity
-                            accessibilityRole="button"
-                            onPress={() => void handleReconnectRoomRepository()}
-                            style={styles.repoPromptConnect}
-                            testID="corner-open-repo-connect"
-                          >
-                            <Text style={styles.repoPromptConnectText}>
-                              {roomRepoAccessIssue.reason === 'not_granted'
-                                ? 'Add this repo to the Beeline installation →'
-                                : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
-                            </Text>
-                          </TouchableOpacity>
-                        )}
                         {canManageWorkspace ? (
                           <RepoPicker
                             draftContext={decodedId}
@@ -6724,17 +6701,10 @@ export function BuzzChatSurface({
                             Ask a {ROOM_LABEL} admin to link one.
                           </Text>
                         )}
-                        <TouchableOpacity
-                          accessibilityLabel="Dismiss"
-                          accessibilityRole="button"
-                          onPress={() => setCornerOpenRepoPrompt(false)}
-                          style={styles.repoPromptDismiss}
-                          testID="corner-open-repo-prompt-dismiss"
-                        >
-                          <Text style={styles.repoPromptDismissText}>DISMISS</Text>
-                        </TouchableOpacity>
+                        <Button label="DISMISS" variant="quiet" accessibilityLabel="Dismiss"
+                          onPress={() => setCornerOpenRepoPrompt(false)} testID="corner-open-repo-prompt-dismiss" />
                       </View>
-                    )}
+                    ))}
                     {desktopExperience ? (
                       <View
                         style={styles.desktopStatusSlot}

@@ -219,7 +219,7 @@ it.each([
   try {
     await act(async () => press(tree, stopId));
     await act(async () => press(tree, `${stopId}-confirm`));
-    const banner = tree.root.findByProps({ testID: `${kind}-stop-error` });
+    const banner = tree.root.findAllByType('View').find((node: any) => node.props.testID === `${kind}-stop-error`)!;
     expect(banner.props.accessibilityRole).toBe('alert');
     expect(words(tree)).toContain(`Could not stop this ${kind}.`);
     expect(words(tree)).not.toMatch(/MonolithPhoneOperationError|deleteRoom|\(\d{3}\)|not found/);

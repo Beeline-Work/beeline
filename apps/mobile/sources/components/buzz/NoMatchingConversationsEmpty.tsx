@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
@@ -21,15 +22,18 @@ export function NoMatchingConversationsEmpty({ onShowAll }: { onShowAll: () => v
       </Svg>
       <Text style={styles.title}>No matching conversations</Text>
       <Text style={styles.copy}>Try a different search or filter.</Text>
-      <Pressable
+      <Button
         accessibilityRole="button"
         onPress={onShowAll}
-        style={({ pressed }) => [styles.action, pressed && styles.pressed]}
         testID="no-match-show-all-conversations"
-      >
-        <Text style={styles.actionText}>Show all conversations</Text>
+        label={'Show all conversations'}
+        variant="quiet"
+        icon={
+          <>
         <ChevronGlyph direction="right" size={18} color={styles.actionText.color} />
-      </Pressable>
+      </>
+        }
+      />
     </View>
   );
 }

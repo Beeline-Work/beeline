@@ -119,6 +119,11 @@ const connectPartner = async (joined: Awaited<ReturnType<VoiceService['join']>>)
 await connectPartner(first);
 const callRow = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0];
 const runtime = (await service.ensureRuntime(callRow))!;
+// Optional paired tempo proof keeps one Android/RTC connection for both paths.
+// The baseline source is generated from the recorded main commit, never shipped.
+const baselinePlay = process.env.VOICE_COMPARE_PLAYBACK === '1'
+  ? (await import('../apps/server/src/' + '.voice-delivery-baseline.js')).VoiceRoomRuntime.prototype.play
+  : undefined;
 await runtime.utterance(partner,'Ruby, ready?');
 const server = createServer((req,res)=> { void (async()=>{
   let raw=''; for await (const chunk of req) raw+=String(chunk);
@@ -181,7 +186,17 @@ const server = createServer((req,res)=> { void (async()=>{
   else if(req.url==='/result') value={brainHistories,commandDetails:(await db.query(`SELECT id,turn_request_id,source_message_id,agent_id,state,reason FROM agent_commands WHERE room_id=$1`,[R])).rows,decisionRequests,synthesis,deliveries,orders:(await db.query(`SELECT o.*,m.text FROM voice_orders o JOIN messages m ON m.id=o.source_message_id`)).rows,transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey})),pid:process.pid,callId:runtime.callId,dispatchAttempts,frameCounts,commands:(await db.query(`SELECT count(*)::int count FROM agent_commands WHERE room_id=$1`,[R])).rows[0],activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
     secondMicrophone:[...(client.remoteParticipants.get(SECOND)?.trackPublications.values() ?? [])].map(p=>({muted:p.muted,kind:p.kind})),
     participants:(await db.query(`SELECT identity_id,parked_at,left_at FROM voice_participants WHERE call_id=$1`,[first.call.id])).rows};
-  else if(req.url==='/say') { speechMs=body.speechMs??100; const current=await service.current(R,H); if(!current)throw new Error('No active call'); const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0]; await (await service.ensureRuntime(row))!.utterance(body.human === 'partner' ? partner : H,body.text??'How are you doing today?'); speechMs=100; }
+  else if(req.url==='/say') {
+    speechMs=body.speechMs??100;
+    const current=await service.current(R,H); if(!current)throw new Error('No active call');
+    const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0];
+    const target=(await service.ensureRuntime(row))!;
+    const playback=target as unknown as {play: (...args: unknown[]) => Promise<void>};
+    const saved=playback.play;
+    if (body.baselinePlayback && baselinePlay) playback.play=baselinePlay;
+    try { await target.utterance(body.human === 'partner' ? partner : H,body.text??'How are you doing today?'); }
+    finally { playback.play=saved; speechMs=100; }
+  }
   else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman,body.expectedCallId); value={...joined,url:`ws://10.0.2.2:${rtcPort}`}; }
   else if(req.url?.endsWith('/idle')) value=await service.idle(first.call.id,nativeHuman,body.sessionId);
   else if(req.url?.includes('/state')) value=await service.idleState(url.pathname.split('/').at(-2)!,nativeHuman,db,url.searchParams.get('sessionId')??undefined);

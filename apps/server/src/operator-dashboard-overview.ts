@@ -129,6 +129,13 @@ export async function dashboardOverview(
     SELECT id, (created_at AT TIME ZONE 'UTC')::date joined FROM eligible
     WHERE created_at >= $3::timestamptz-interval '28 days'
       AND created_at < $3::timestamptz-interval '7 days'
+  ), first_agents AS (
+    SELECT DISTINCT ON (a.owner_id) a.owner_id,
+      CASE WHEN f.agent_id IS NULL THEN 'addedOwnAgent' ELSE 'freeAgent' END source
+    FROM agents a JOIN cohort c ON c.id=a.owner_id
+    JOIN identities ai ON ai.id=a.agent_id
+    LEFT JOIN free_agents f ON f.agent_id=a.agent_id AND f.owner_id=a.owner_id
+    ORDER BY a.owner_id,ai.created_at,a.agent_id
   ), returned_people AS (
     SELECT DISTINCT msg.author_id FROM messages msg JOIN cohort c ON c.id=msg.author_id
     JOIN rooms r ON r.id=msg.room_id JOIN production_workspaces w ON w.id=r.workspace_id
@@ -136,7 +143,15 @@ export async function dashboardOverview(
       AND msg.created_at >= (c.joined+7)::timestamp AT TIME ZONE 'UTC'
       AND msg.created_at < (c.joined+8)::timestamp AT TIME ZONE 'UTC'
       AND msg.presentation='message' AND msg.deleted_at IS NULL
-  ) SELECT count(*) cohort,count(r.author_id) retained FROM cohort c LEFT JOIN returned_people r ON r.author_id=c.id`,
+  ) SELECT count(*) cohort,count(r.author_id) retained,
+    count(*) FILTER(WHERE f.source='addedOwnAgent') own_cohort,
+    count(r.author_id) FILTER(WHERE f.source='addedOwnAgent') own_retained,
+    count(*) FILTER(WHERE f.source='freeAgent') free_cohort,
+    count(r.author_id) FILTER(WHERE f.source='freeAgent') free_retained,
+    count(*) FILTER(WHERE f.source IS NULL) none_cohort,
+    count(r.author_id) FILTER(WHERE f.source IS NULL) none_retained
+    FROM cohort c LEFT JOIN returned_people r ON r.author_id=c.id
+    LEFT JOIN first_agents f ON f.owner_id=c.id`,
     [values[0], values[1], utcToday + 'T00:00:00.000Z'],
     (rows) => {
       const cohort = Number(rows[0]?.cohort),
@@ -145,6 +160,11 @@ export async function dashboardOverview(
         cohort,
         retained,
         rate: cohort ? retained / cohort : null,
+        byFirstAgentSource: {
+          addedOwnAgent: { cohort: Number(rows[0]?.own_cohort), retained: Number(rows[0]?.own_retained) },
+          freeAgent: { cohort: Number(rows[0]?.free_cohort), retained: Number(rows[0]?.free_retained) },
+          noAgent: { cohort: Number(rows[0]?.none_cohort), retained: Number(rows[0]?.none_retained) },
+        },
         day: 7,
         from: dates(utcToday, 29)[0],
         through: dates(utcToday, 9)[0],

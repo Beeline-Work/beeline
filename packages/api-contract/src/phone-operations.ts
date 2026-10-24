@@ -87,6 +87,8 @@ export type PhoneOperationMap = {
   /** Explicitly return a live browser to its agent; closing a viewer is not a handback. */
   handbackComputerSession: { input: { id: string }; output: void };
   endComputerSession: { input: { id: string }; output: void };
+  revealWebhookToken: { input: { roomId: string; subscriptionId: string }; output: { token: string } };
+  rotateWebhookToken: { input: { roomId: string; subscriptionId: string }; output: { token: string } };
   listRoomSubscriptions: { input: { roomId: string }; output: RoomSubscriptionListResult };
   readScheduledWork: { input: RoomInput; output: ScheduledWorkResult };
   deleteRoomSubscription: { input: { roomId: string; subscriptionId: string }; output: void };
@@ -276,6 +278,7 @@ export type PhoneOperationMap = {
  */
 export const PHONE_READ_OPERATIONS = [
   'openComputerSession',
+  'revealWebhookToken',
   'listRoomSubscriptions',
   'readScheduledWork',
   'readWelcomeCards',

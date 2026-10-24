@@ -6,7 +6,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
-import { scheduleRuns, scheduleWhere, stopSchedule, useScheduledWork } from '@/buzz/scheduled-work';
+import { scheduleTitle, scheduleRuns, scheduleWhere, stopSchedule, useScheduledWork } from '@/buzz/scheduled-work';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import {
   ScheduledWorkDoes,
@@ -59,7 +59,7 @@ export default function PromptSchedule() {
         eyebrow="Schedules and subscriptions"
         onBack={() => router.back()}
         testID="schedule-header"
-        title="Schedule"
+        title={schedule ? scheduleTitle(schedule) : 'Schedule'}
       />
       {stopFailed ? (
         <ErrorBanner

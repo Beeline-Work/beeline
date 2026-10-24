@@ -1346,3 +1346,28 @@ describe('expandable system notices', () => {
     expect(controls()).toHaveLength(0);
   });
 });
+
+
+describe('webhook caller preview', () => {
+  it('labels and caps caller words as plain native text without actionable markup', () => {
+    const caller = ('**bold** [link](https://example.test) @ruby https://example.test ' + 'x'.repeat(1000)).slice(0, 1000);
+    const renderer = render(React.createElement(LedgerSystemLine, {
+      id: 'hook', text: 'Beeline received a webhook call', stamp: '10:42',
+      event: { subject: { kind: 'system', name: 'Beeline' }, verb: 'received',
+        object: { text: 'a webhook call' }, kind: 'subscription-fired',
+        payload: { source: 'webhook', body: { message: caller } } },
+      onOpenIdentity: vi.fn(), onOpenUrl: vi.fn(),
+    }));
+    const label = renderer.root.findByProps({ testID: 'system-line-caller-label-hook' });
+    expect(label.props.children).toBe("Caller's message:");
+    const quote = renderer.root.findByProps({ testID: 'system-line-caller-message-hook' }).findByType('Text');
+    expect(quote.type).toBe('Text');
+    expect(quote.props.children).toBe(`“${caller.slice(0, 279)}…”`);
+    expect(Array.from(quote.props.children.slice(1, -1))).toHaveLength(280);
+    expect(quote.props.dataDetectorType).toBe('none');
+    expect(quote.props.onPress).toBeUndefined();
+    expect(quote.props.accessibilityRole).toBeUndefined();
+    expect(quote.findAllByType('Text')).toHaveLength(1);
+    expect(quote.findAllByType('Pressable')).toHaveLength(0);
+  });
+});

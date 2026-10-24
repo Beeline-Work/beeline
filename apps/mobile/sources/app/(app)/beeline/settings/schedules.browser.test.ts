@@ -305,7 +305,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
   it('opens a prompt schedule with When, Agent, Where, Does, then Stop', async () => {
     const page = await proof('?page=schedule&roomId=room-1&scheduleId=daily');
     expect(page.text[0]).toBe('Schedules and subscriptions');
-    expect(page.text[1]).toBe('Schedule');
+    expect(page.text[1]).toBe('Morning card');
     expect(page.text.slice(2)).toEqual([
       'When',
       expect.stringMatching(/^Weekdays at \d{2}:\d{2} .+ · next /),
@@ -389,7 +389,7 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
 
   it('opens a subscription: its event and source, with the same stop control', async () => {
     const page = await proof('?page=subscription&roomId=room-1&subscriptionId=sub-1');
-    expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Subscription']);
+    expect(page.text.slice(0, 2)).toEqual(['Schedules and subscriptions', 'Review pull requests']);
     expect(page.text.slice(2)).toEqual([
       'When',
       'On new pull request',

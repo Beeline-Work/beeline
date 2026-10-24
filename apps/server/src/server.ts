@@ -21,6 +21,7 @@ import { handleFreeAgentModelRequest, type FreeAgentModelProxyOptions } from './
 import { isAppSignInLink } from './composio-apps.js';
 import type { ComposioApps } from './composio-apps.js';
 import { ingestComposioDelivery } from './composio-delivery.js';
+import { ingestSubscriptionWebhook, WEBHOOK_BODY_LIMIT } from './subscription-webhooks.js';
 import { ingestProviderWebhook } from './provider-webhooks.js';
 import { ingestWalletWebhook } from './wallet-webhooks.js';
 import { acceptedJsonEncoding, encodeJsonBody, type JsonEncoding } from './json-response.js';
@@ -2085,6 +2086,26 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const accepted = await ingestWalletWebhook(options.database, raw, request.headers, secret);
     json(response, accepted ? 200 : 401,
       accepted ? { accepted: true } : { error: 'invalid_wallet_webhook' });
+    return;
+  }
+
+  const subscriptionHook = /^\/hooks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(url.pathname);
+  if (method === 'POST' && subscriptionHook) {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let retained = 0;
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.length;
+      const keep = buffer.subarray(0, Math.max(0, WEBHOOK_BODY_LIMIT + 1 - retained));
+      if (keep.length) { chunks.push(keep); retained += keep.length; }
+    }
+    const result = await ingestSubscriptionWebhook(options.database, subscriptionHook[1]!,
+      Buffer.concat(chunks), { ...request.headers,
+        'x-beeline-signature': request.headers['x-beeline-signature'] ?? url.searchParams.get('signature') ?? undefined,
+        'x-beeline-delivery': request.headers['x-beeline-delivery'] ?? url.searchParams.get('delivery') ?? undefined,
+      }, size);
+    json(response, result.status, { outcome: result.outcome });
     return;
   }
 

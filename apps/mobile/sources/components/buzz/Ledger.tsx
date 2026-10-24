@@ -1,4 +1,5 @@
 import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
+import { webhookCallerMessage } from '@/buzz/system-lines';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Platform,
@@ -756,6 +757,7 @@ export function LedgerSystemLine({
   /** Opens the corner's latest brief; a revision notice links to it. */
   onOpenBrief?: () => void;
 }) {
+  const callerMessage = webhookCallerMessage(event);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const measurementRef = useRef<Text>(null);
@@ -868,6 +870,17 @@ export function LedgerSystemLine({
         >
           {event ? spans : text}
         </Text>
+        {callerMessage !== undefined ? (
+          <>
+            <Text style={styles.systemLineText} testID={`system-line-caller-label-${id}`}>
+              Caller's message:
+            </Text>
+            <Text selectable dataDetectorType="none" style={styles.systemLineText}
+              testID={`system-line-caller-message-${id}`}>
+              {`“${callerMessage}”`}
+            </Text>
+          </>
+        ) : null}
       </View>
       {overflows && (
         <LedgerDisclosure expanded={expanded} accessibilityState={{ expanded }}

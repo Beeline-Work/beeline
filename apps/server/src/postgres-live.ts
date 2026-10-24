@@ -540,8 +540,8 @@ export class PostgresLiveListener {
   private pushWake?: () => void;
 
   setPushWake(wake: () => void): void { this.pushWake = wake; }
-  private owedWake?: () => void;
-  setOwedWake(wake: () => void): void { this.owedWake = wake; }
+  private owedWake?: (source: 'sentry' | 'owed') => void;
+  setOwedWake(wake: (source: 'sentry' | 'owed') => void): void { this.owedWake = wake; }
   private stopped = false;
   private active?: LivePgClient;
   private connected = false;
@@ -631,7 +631,7 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     if (payload.table === 'sentry_wake_state') {
-      this.owedWake?.();
+      this.owedWake?.('sentry');
       return;
     }
     const pushOnly = payload.table === 'push_devices' ||
@@ -911,7 +911,7 @@ export class PostgresLiveListener {
         this.live.publish({ type: 'invalidate', roomId: payload.cornerParentId,
           reason: 'corner-status' });
       // A new owed item may expire before the leader's next cycle.
-      if (payload.table === 'corner_owed') this.owedWake?.();
+      if (payload.table === 'corner_owed') this.owedWake?.('owed');
       return;
     }
     if (payload.table === 'github_installations' || payload.table === 'github_repositories') {

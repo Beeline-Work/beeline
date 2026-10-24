@@ -131,6 +131,7 @@ describe('Postgres live fanout', () => {
     await database.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
       JSON.stringify({ table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' })]);
     await eventually(() => wake.mock.calls.length === 1);
+    expect(wake).toHaveBeenCalledWith('sentry');
     expect(received).toEqual([]);
   });
 

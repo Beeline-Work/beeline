@@ -337,6 +337,61 @@ it.each(['working', 'activity', 'other-place', 'optimistic'])(
   },
 );
 
+it('Reproduction reported-stall: delivered done survives loss of terminal receipt', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: widget complete' }, WORKER);
+  const { ConnectionPresence } = await import('./connection-presence.js');
+  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, turn.turnRequestId]);
+  const presence = new ConnectionPresence(db, new LiveHub());
+  try {
+    await presence.start();
+    await vi.waitFor(async () => expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+      [opened.cornerId, turn.turnRequestId])).rows[0]?.status).toBe('complete'));
+  } finally { await presence.stop(); }
+  expect((await db.query(`SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+    [opened.cornerId, turn.turnRequestId])).rows).toEqual([{ status: 'complete', failure_reason: null }]);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report').map(c => c.source.body))
+    .toEqual(['done: widget complete']);
+  expect((await db.query(`SELECT state,hiccup_attempts FROM agent_commands WHERE id=$1`, [turn.id])).rows)
+    .toEqual([{ state: 'complete', hiccup_attempts: 0 }]);
+  console.info('Demonstrated reported-stall: commander retains done; worker complete; no failure or retry');
+});
+
+it.each(['unclaimed', 'disconnected', 'connected'])('Reproduction explained-stall: %s reaches the corner or commander with its cause', async kind => {
+  const opened = await open();
+  const turn = (await commands(opened.cornerId, WORKER))[0]!;
+  if (kind !== 'unclaimed') {
+    await claim(turn);
+    await db.query(`UPDATE agent_commands SET hiccup_attempts=3 WHERE id=$1`, [turn.id]);
+  }
+  if (kind === 'connected') {
+    await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('proof') ON CONFLICT(instance_id) DO UPDATE SET renewed_at=now()`);
+    await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+      VALUES($1,1,'proof','proof')`, [WORKER]);
+  }
+  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`, [opened.cornerId]);
+  const { ConnectionPresence } = await import('./connection-presence.js');
+  const presence = new ConnectionPresence(db, new LiveHub());
+  try {
+    await presence.start();
+    await vi.waitFor(async () => expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1`, [opened.cornerId])).rows[0]?.status).toBe('failed'));
+  } finally {
+    await presence.stop();
+    if (kind === 'connected') {
+      await db.query(`DELETE FROM agent_connections WHERE connection_id='proof' AND agent_id=$1`, [WORKER]);
+      await db.query(`DELETE FROM live_server_instances WHERE instance_id='proof'`);
+    }
+  }
+  const failure = (await db.query<{ failure_reason: string }>(`SELECT failure_reason FROM agent_turns WHERE room_id=$1`, [opened.cornerId])).rows[0]!.failure_reason;
+  expect(failure).toContain(kind === 'unclaimed' ? 'did not claim the queued turn within 90 seconds' :
+    kind === 'connected' ? 'connected but stopped reporting' : 'helper disconnected');
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports.some(c => c.source.body.includes(failure))).toBe(true);
+  if (kind === 'unclaimed') expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [turn.id])).rows[0]?.state).toBe('pending');
+  console.info(`Demonstrated explained-stall (${kind}): ${failure}`);
+});
+
 it('Reproduction named-stall: exhausted corner stall names its source in the commander inbox', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await db.query('UPDATE agent_commands SET hiccup_attempts=3 WHERE id=$1', [turn.id]);
@@ -427,17 +482,21 @@ it('cross-Room reads work from a DM, while nonmembers get no data or order', asy
   await expect(daemon.execute('read', { roomId: DM, address: ROOM }, RUBY)).rejects.toThrow('membership');
   await expect(daemon.execute('order', { ...authority(order), address: ROOM, text: 'Do this' }, RUBY)).rejects.toThrow('membership');
 });
-it('revises a reachable corner brief from a DM with the same active-order authority', async () => {
+it('R-REVISE revises and restores the cited approval without a false reproduction warning', async () => {
   const opened = await open();
+  await db.query(`UPDATE rooms SET repository_resolution='repository',repository_key='owner/repo' WHERE id=$1`, [ROOM]);
   const revision = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
-    expectedRevision: 1, brief: { spec: 'Build the assigned widget with the clarified endpoint',
+    expectedRevision: 1, brief: { spec: '## Intent\nFix the reported endpoint bug.\n## Reproduction R-REVISE\nRevise the brief and restore it; the approval link disappears.', repositoryWork: true,
       approval: { sourceMessageId: order.sourceMessageId }, change: 'Clarify the endpoint' } }, RUBY);
   expect(revision.revision).toBe(2);
+  const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
+  expect(restored.brief?.approval?.sourceMessageId).toBe(order.sourceMessageId);
+  expect(revision.warnings ?? []).toEqual([]);
 });
-it.each([undefined, { sourceMessageId: 'irrelevant-approval' }, { sourceMessageId: '' }])('Reproduction commander-direct: commander revises without a cited approval (%j)', async approval => {
+it('Reproduction commander-direct: commander revises without a cited approval', async () => {
   const opened = await open();
   const revised = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
-    expectedRevision: 1, brief: { spec: 'Build the clarified widget', change: 'Clarify scope', ...(approval ? { approval } : {}) },
+    expectedRevision: 1, brief: { spec: 'Build the clarified widget', change: 'Clarify scope' },
   }, RUBY);
   expect(revised.revision).toBe(2);
   const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
@@ -832,6 +891,10 @@ it('keeps Room opening facts historical while current worker and commander goals
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
     VALUES('goal-card',$1,$2,'Opened','daemon-fact',$3::jsonb)`,
     [ROOM, RUBY, JSON.stringify({ type: 'corner-open', cornerId: opened.cornerId, name: 'Widget', objective: 'Build the widget', sourceMessageId: 'source' })]);
+  // Model a historical parent record explicitly; new DM opens no longer write it.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card,created_at)
+    VALUES('legacy-opening',$1,$2,'Opened','daemon-fact',$3::jsonb,now()-interval '1 minute')`,
+    [ROOM,RUBY,JSON.stringify({type:'corner-open',cornerId:opened.cornerId,name:'Widget',objective:'Widget'})]);
   const stored = (await db.query(`SELECT * FROM messages ORDER BY id`)).rows;
   const openingId = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1
     AND card->>'cornerId'=$2 AND id<>'goal-card' AND card->>'type'='corner-open' LIMIT 1`,
@@ -898,9 +961,10 @@ it('makes an owner-approved systemctl user-bus command available in a subsequent
 
 it('does not resolve an opening card against a corner belonging to another parent Room', async () => {
   const opened = await open();
-  // Exercise a resident call-site marker without resolving another Room’s private goal.
-  await db.query(`UPDATE messages SET card=card||'{"sourceMessageId":"source"}'::jsonb
-    WHERE room_id=$1 AND card->>'cornerId'=$2`, [ROOM, opened.cornerId]);
+  // A resident call-site marker must not resolve another Room's private goal.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+    VALUES('resident-opening',$1,$2,'Opened','daemon-fact',$3::jsonb)`,
+    [ROOM,RUBY,JSON.stringify({type:'corner-open',cornerId:opened.cornerId,name:'Widget',objective:'Widget',sourceMessageId:'source'})]);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, DM]);
   await db.query(`UPDATE corner_facts SET objective='Private goal in another Room' WHERE corner_id=$1`, [opened.cornerId]);
   const view = await phone.readRoom(ROOM, HUMAN);

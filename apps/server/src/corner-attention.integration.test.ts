@@ -148,6 +148,17 @@ async function ci(checks: string) {
     }),
   ]);
 }
+async function unreportedHead() {
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    C,
+    JSON.stringify({
+      lifecycle: 'in-review',
+      checks: 'unknown',
+      pr: { number: 1, url: 'https://github.com/o/r/pull/1', headSha: 'head', title: 'Fix', targetBranch: 'main' },
+      checksSummary: { status: 'unknown', total: 0, failing: [], checks: [], updatedAt: Date.now() / 1000 },
+    }),
+  ]);
+}
 it('Reproduction CORNER-STATE: the Room list and corner inspection agree that CI is Review without human attention', async () => {
   await turn();
   expect(await state()).toBe('working');
@@ -173,9 +184,14 @@ it('Reproduction CORNER-STATE: the Room list and corner inspection agree that CI
   expect(deck).toMatchObject({ waitingCornerCount: 0, agentState: null });
   expect(deck!.openCorners[0]).not.toHaveProperty('attention', true);
   await ci('failing');
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
   expect(await state()).toBe('idle');
   console.info(
-    'Demonstrated Reproduction CORNER-STATE: list + inspection Working, Review, Review for CI without human attention, then Idle after failure',
+    'Demonstrated Reproduction CORNER-STATE: list + inspection Working, Review, Review for CI without human attention, Working during the red-check repair window, then Idle',
   );
 });
 it.each(['pending', 'passing'])(
@@ -194,6 +210,63 @@ it.each(['pending', 'passing'])(
     expect(deck!.openCorners[0]).toMatchObject({ state: 'waiting', blocker: { kind: 'message' } });
   },
 );
+it.each([
+  ['agent', 'pending', 'review'],
+  ['human', 'pending', 'waiting'],
+  ['agent', 'unreported', 'review'],
+  ['human', 'unreported', 'waiting'],
+] as const)(
+  'Reproduction R1: a %s commander blocked report during %s checks is %s',
+  async (kind, checks, expected) => {
+    if (checks === 'pending') await ci('pending');
+    else await unreportedHead();
+    const recipient = kind === 'agent' ? COMMANDER : HUMAN;
+    await db.query(
+      `UPDATE agent_commands SET private_payload=jsonb_build_object('kind','order','text','Work','authorId',$1::text,'fromRoomId',$2::text) WHERE id='opening-order'`,
+      [recipient, ROOM],
+    );
+    const { reportToCommander } = await import('./commander.js');
+    await reportToCommander(db, C, WORKER, 'blocked: awaiting CI and review');
+    expect(await state()).toBe(expected);
+    const row = (await phone.readCorners(ROOM, HUMAN))!.corners[0]!;
+    expect(row.state).toBe(expected);
+    expect(
+      (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]
+        ?.state,
+    ).toBe(expected);
+    const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
+    expect(deck!.openCorners[0]?.state).toBe(expected);
+    if (expected === 'review') {
+      expect(row.blocker).toBeUndefined();
+      expect(deck).toMatchObject({ waitingCornerCount: 0 });
+    } else {
+      expect(deck).toMatchObject({ waitingCornerCount: 1 });
+    }
+    console.info(
+      `Demonstrated Reproduction R1: ${kind} commander blocked report during ${checks} checks is ${expected}`,
+    );
+  },
+);
+it('Reproduction R1: a human hold still waits when an older agent-commander report sits under pending CI', async () => {
+  await ci('pending');
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'blocked: awaiting CI and review');
+  await db.query(
+    `UPDATE corner_report_blockers SET created_at=now()-interval '1 minute' WHERE corner_id=$1`,
+    [C],
+  );
+  await phone.execute('setCornerHold', { cornerId: C }, HUMAN);
+  expect(await state()).toBe('waiting');
+  const row = (await phone.readCorners(ROOM, HUMAN))!.corners[0]!;
+  expect(row).toMatchObject({ state: 'waiting' });
+  expect(
+    (await phone.readChats(WS, HUMAN))!.chats.find((chat) => chat.room.id === ROOM)?.openCorners?.[0]
+      ?.state,
+  ).toBe('waiting');
+  console.info(
+    'Demonstrated Reproduction R1: human hold stays waiting while an older agent-commander report sits under pending CI',
+  );
+});
 it('single-use gap deadlines survive restart and a resume inside the gap sends no alert', async () => {
   await turn();
   await runCornerAttention(db);
@@ -214,11 +287,23 @@ it('single-use gap deadlines survive restart and a resume inside the gap sends n
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
-it('CI failure opens one Idle stretch, and pending checks stay review after 45 minutes', async () => {
+it('CI failure stays working for 30 minutes, then one idle alert, and pending checks stay review', async () => {
   await ci('pending');
-  await runCornerAttention(db);
+  const pending = await refreshCornerAttention(db, C);
+  expect(pending!.deadlines).toEqual([]);
   expect(await commanderFlags()).toHaveLength(0);
   await ci('failing');
+  const repair = await refreshCornerAttention(db, C);
+  expect(await state()).toBe('working');
+  expect(repair!.deadlines).toHaveLength(1);
+  expect(repair!.deadlines[0]! - Date.now()).toBeGreaterThan(29 * 60 * 1000);
+  expect(repair!.deadlines[0]! - Date.now()).toBeLessThan(31 * 60 * 1000);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
@@ -234,21 +319,23 @@ it('CI failure opens one Idle stretch, and pending checks stay review after 45 m
   expect(await commanderFlags()).toHaveLength(1);
   expect(await state()).toBe('review');
 });
-it('CI progress cannot reset its safety deadline; a new head resets it', async () => {
+it('pending CI past 30 minutes schedules no expiry, including after a new head', async () => {
   await ci('pending');
   await db.query(
-    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '29 minutes' WHERE corner_id=$1`,
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
     [C],
   );
-  await ci('pending');
   const before = await refreshCornerAttention(db, C);
-  expect(before!.deadlines[0]! - Date.now()).toBeLessThan(61000);
+  expect(before!.deadlines).toEqual([]);
+  expect(await state()).toBe('review');
+  expect(await commanderFlags()).toHaveLength(0);
   await db.query(
     `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"next"') WHERE corner_id=$1`,
     [C],
   );
   const after = await refreshCornerAttention(db, C);
-  expect(after!.deadlines[0]! - Date.now()).toBeGreaterThan(29 * 60000);
+  expect(after!.deadlines).toEqual([]);
+  expect(await state()).toBe('review');
 });
 it.each([WORKER, REVIEWER])(
   'self subscriptions and schedules never suppress Idle (%s)',
@@ -389,16 +476,20 @@ it('recovers and fires the gap deadline once across two server instances', async
     vi.useRealTimers();
   }
 });
-it('a pending-check deadline refresh stays review and does not repeat', async () => {
+it('pending CI does not arm a deadline or an idle alert', async () => {
   await ci('pending');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
   vi.useFakeTimers();
   const live = new LiveHub();
   const errors: unknown[] = [];
   const deadlines = new CornerAttentionDeadlines(db, live, (error) => errors.push(error));
   try {
     await deadlines.start();
-    expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(45 * 60 * 1000);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1801000);
     await db.query('SELECT 1');
     expect(await state()).toBe('review');
     expect(await commanderFlags()).toHaveLength(0);
@@ -576,15 +667,14 @@ it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer whi
   expect(stalls[0]!.source.body).toContain('30 minutes');
 });
 
-it('Reproduction RED-STALL-1: a worker blocked while checks are pending is idle and wakes the commander once', async () => {
+it('Reproduction RED-STALL-1: a worker blocked while checks are pending stays review', async () => {
   await ci('pending');
   const { reportToCommander } = await import('./commander.js');
   await reportToCommander(db, C, WORKER, 'blocked: Waiting on the reviewer until checks are green.');
-  expect(await state()).toBe('idle');
+  expect(await state()).toBe('review');
   await runCornerAttention(db);
   await runCornerAttention(db);
-  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('checks are not green'));
-  expect(stalls).toHaveLength(1);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
   const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
   expect(reviewer.filter((command) =>
     command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);

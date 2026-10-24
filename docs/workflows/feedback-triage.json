@@ -36,33 +36,6 @@
       },
       "timeoutSeconds": 1800
     },
-    "approve": {
-      "does": "A person approves dispatching the ranked problems, or skips them.",
-      "kind": "gate",
-      "role": "triager",
-      "requires": [
-        "decision"
-      ],
-      "on": {
-        "dispatch": "dispatch",
-        "skip": "done"
-      },
-      "timeoutSeconds": 43200,
-      "default": "skip"
-    },
-    "dispatch": {
-      "does": "Open a fix corner for each approved problem.",
-      "role": "triager",
-      "requires": [
-        "corners",
-        "signals"
-      ],
-      "on": {
-        "dispatched": "done",
-        "timeout": "failed"
-      },
-      "timeoutSeconds": 1800
-    },
     "done": {
       "does": "The sweep finished.",
       "kind": "terminal",
@@ -108,7 +81,7 @@
         "walkRunId"
       ],
       "on": {
-        "presented": "approve",
+        "presented": "done",
         "nothing_to_build": "done",
         "timeout": "failed"
       },

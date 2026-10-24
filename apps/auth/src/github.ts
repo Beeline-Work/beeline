@@ -1035,6 +1035,10 @@ export class GitHubAppClient {
         );
       } catch (error) {
         if (error instanceof GitHubHttpError && error.status === 404) continue;
+        // Private repositories on GitHub Free cannot configure branch protection.
+        if (error instanceof GitHubHttpError && error.status === 403 &&
+          (error.message.includes('Upgrade to GitHub Pro') ||
+            error.message.includes('make this repository public'))) continue;
         throw error;
       }
       for (const required of requiredChecks(body)) {
@@ -1050,6 +1054,12 @@ export class GitHubAppClient {
   /** Empty rollups can precede registration; establish absence independently. */
   async confirmNoChecks(accessToken: string, fullName: string, headSha: string): Promise<boolean> {
     if (!/^[a-f0-9]{40,64}$/i.test(headSha)) throw new Error('invalid GitHub commit check target');
+    try {
+      const permissions = await this.readRepositoryJson(accessToken, fullName, 'actions/permissions');
+      if (permissions.enabled === false) return true;
+    } catch {
+      // Permission reads are optional; retain the workflow registration proof.
+    }
     const workflows = await this.readRepositoryJson(accessToken, fullName, 'actions/workflows?per_page=1');
     if (typeof workflows.total_count !== 'number' || workflows.total_count < 0)
       throw new Error('GitHub workflow count is invalid');

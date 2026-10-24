@@ -68,6 +68,15 @@ afterEach(() => {
 });
 
 describe('minimal agent surface', () => {
+  it('advertises the retained fact-write rules before a save', () => {
+    const description = agentToolsFor(true, false).find(tool => tool.name === 'remember')!.description;
+    for (const rule of ['1-16', 'non-deleted', 'this Room', 'root source partition',
+      'DM facts', 'Profile facts need a requester-started turn', '200 UTF-8 bytes',
+      'person_asked must be a boolean', 'attaches this turn']) {
+      expect(description).toContain(rule);
+    }
+  });
+
   it('advertises every shared artifact MIME, including runnable games', () => {
     const schema = agentToolsFor(true, false).find(tool => tool.name === 'post_artifact')!.inputSchema;
     const properties = schema.properties as Record<string, { enum: string[] }>;
@@ -200,6 +209,9 @@ describe('minimal agent surface', () => {
       change: 'Synthetic correction',
       brief: { spec: 'Synthetic spec', approval: { sourceMessageId: 'synthetic-message' } },
     };
+    expect(tool.inputSchema.anyOf).toBeUndefined();
+    expect(tool.inputSchema.properties).toHaveProperty('address');
+    expect(tool.inputSchema.properties).toHaveProperty('brief');
     expect(Check(tool.inputSchema, input)).toBe(true);
     expect(JSON.parse(await callAgentTool('revise_corner', input, 'R1'))).toEqual({
       ok: true,
@@ -217,6 +229,13 @@ describe('minimal agent surface', () => {
         }),
       }),
     });
+  });
+
+  it('R-REVISE names an invalid nested field before side effects', async () => {
+    await expect(callAgentTool('revise_corner', { action: 'brief', address: 'target',
+      expectedRevision: 1, change: 'Correction', brief: { spec: 42 } }, 'invalid'))
+      .rejects.toThrow('/brief/spec');
+    expect(calls).toEqual([]);
   });
 
   it('posts a public note without dispatching any wake/order/report', async () => {

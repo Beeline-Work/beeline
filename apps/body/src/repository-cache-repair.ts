@@ -64,6 +64,8 @@ function git(gitDir: string, args: readonly string[], options: { env?: NodeJS.Pr
         else done(stdout);
       },
     );
+    // Git may exit before reading stdin; its callback still owns the result.
+    child.stdin?.on('error', () => {});
     child.stdin?.end(options.input ?? '');
   });
 }

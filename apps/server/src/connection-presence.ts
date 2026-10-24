@@ -556,8 +556,10 @@ export class ConnectionPresence {
         status: string;
         created_at: Date;
         generation_id: string | null;
+        connected: boolean;
       }>(
-        `SELECT status,created_at,generation_id FROM agent_turns
+        `SELECT status,created_at,generation_id,EXISTS(SELECT 1 FROM agent_connections
+           WHERE agent_id=$3 AND released_at IS NULL) connected FROM agent_turns
          WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
         [turn.room_id, turn.request_id, turn.agent_id],
       )
@@ -581,7 +583,15 @@ export class ConnectionPresence {
            AND status='working' AND generation_id=$4 AND created_at=$5`,
         [turn.room_id, turn.request_id, turn.agent_id, current.generation_id, current.created_at],
       );
-      if (removed.rowCount) this.live.publish({ type: 'invalidate', roomId: turn.room_id, reason: 'turn' });
+      if (removed.rowCount) {
+        this.live.publish({ type: 'invalidate', roomId: turn.room_id, reason: 'turn' });
+        if ((await this.database.query(`SELECT 1 FROM corner_facts WHERE corner_id=$1`, [turn.room_id])).rowCount)
+          await noteFirstSilence(this.database, this.live, {
+            roomId: turn.room_id, requestId: turn.request_id, agentId: turn.agent_id,
+            reason: `the helper did not claim the queued turn within ${Math.floor(this.pickupWindowMs / 1000)} seconds`,
+            reasonKind: 'hiccup',
+          });
+      }
       return;
     }
     await noteFirstSilence(this.database, this.live, {
@@ -589,7 +599,8 @@ export class ConnectionPresence {
       requestId: turn.request_id,
       agentId: turn.agent_id,
       generationId: current.generation_id,
-      reason: 'the turn stalled',
+      reason: `no turn receipt for ${Math.floor((Date.now() - current.created_at.getTime()) / 1000)} seconds; ` +
+        (current.connected ? 'the helper is connected but stopped reporting this turn' : 'the helper disconnected'),
       reasonKind: 'hiccup',
       stalled: true,
     });

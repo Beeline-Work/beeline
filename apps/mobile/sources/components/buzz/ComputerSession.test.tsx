@@ -44,7 +44,7 @@ import { Modal } from '@/modal';
 import { ComputerSessionCard, ComputerSessionViewer, WarmComputerSessionHost, openComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 
 const session = {
-  id: 'session-1', title: 'Browser', url: 'https://computer.usebeeline.app/s/session-1/',
+  id: 'session-1', title: 'Browser', url: 'https://server.usebeeline.app/s/session-1/',
   status: 'live' as const, access: 'old-token',
 } as ComputerSessionView;
 
@@ -88,7 +88,7 @@ it('mints a fresh steering token before opening the system browser', async () =>
     await vi.waitFor(() => expect(openExternalUrl).toHaveBeenCalledOnce());
   });
   expect(phoneOperation).toHaveBeenCalledWith('openComputerSession', { id: 'session-1' });
-  expect(openExternalUrl).toHaveBeenCalledWith('https://computer.usebeeline.app/s/session-1/?access=fresh-token');
+  expect(openExternalUrl).toHaveBeenCalledWith('https://server.usebeeline.app/s/session-1/?access=fresh-token');
   expect(phoneOperation).not.toHaveBeenCalledWith('handbackComputerSession', expect.anything());
   await act(async () => tree!.unmount());
 });
@@ -253,7 +253,7 @@ it('reveals and closes the preloaded native WebView without a mount or URL chang
 
 it('keeps only one preloaded full viewer and releases it when its last card unmounts', async () => {
   let tree: ReturnType<typeof create>;
-  const newer = { ...session, id: 'session-2', url: 'https://computer.usebeeline.app/s/session-2/' };
+  const newer = { ...session, id: 'session-2', url: 'https://server.usebeeline.app/s/session-2/' };
   await act(async () => { tree = create(<><ComputerSessionCard session={session} /><ComputerSessionCard session={newer} /><WarmComputerSessionHost /></>); });
   const host = () => tree!.root.findByProps({ testID: 'computer-session-warm-host' });
   expect(host().findAllByType('WebView')).toHaveLength(1);

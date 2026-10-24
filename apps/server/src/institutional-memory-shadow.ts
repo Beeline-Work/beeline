@@ -597,18 +597,17 @@ async function memoryWriteAuthority(
     input.sourceMessageIds.length === 0 ||
     input.sourceMessageIds.length > 16
   ) {
-    throw new Error('institutional memory source messages are invalid');
-  }
-  if (requesterTurn && !input.sourceMessageIds.includes(command.root_source_message_id)) {
-    throw new Error('institutional memory changes must cite their root requester message');
+    throw new Error('institutional memory needs 1 to 16 source messages');
   }
   const validSources = await db.query<{ id: string }>(
     `SELECT id FROM messages WHERE room_id=$1 AND id=ANY($2::text[])
-       AND deleted_at IS NULL AND presentation='message'`,
+       AND deleted_at IS NULL`,
     [command.room_id, input.sourceMessageIds],
   );
   if (validSources.rowCount !== new Set(input.sourceMessageIds).size) {
-    throw new Error('institutional memory change cites an unavailable source');
+    throw new Error(
+      'institutional memory change cites an unavailable source; sources must be non-deleted messages in this Room',
+    );
   }
   return {
     workspaceId: authority.workspace_id,
@@ -708,10 +707,14 @@ async function insertMemoryItem(
       options.explicitSave,
     ],
   );
+  // Root provenance is server-owned and does not consume the caller's source limit.
+  // Cross-Room event roots stay outside this Room's source partition.
   await db.query(
     `INSERT INTO institutional_memory_item_sources(item_id,message_id)
-     SELECT $1,source_id FROM unnest($2::text[]) source_id`,
-    [itemId, proposal.source.messageIds],
+     SELECT $1::uuid,source_id FROM unnest($2::text[]) source_id
+     UNION
+     SELECT $1::uuid,id FROM messages WHERE id=$3 AND room_id=$4 AND deleted_at IS NULL`,
+    [itemId, proposal.source.messageIds, command.root_source_message_id, command.room_id],
   );
   if (options.predecessorId) {
     await db.query(

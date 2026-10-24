@@ -2,8 +2,10 @@
 
 The procedure for the `feedback-triage` workflow (`docs/workflows/feedback-triage.json`).
 Discover `app_tool(app:beeline:workflow)`, then use `tool:start` and bind `triager`
-to yourself. Advance each step with `tool:advance`. The
-`approve` step is a card a person answers.
+to yourself. Advance each step with `tool:advance`. Run daily at 07:00
+America/New_York, after the 06:00 walk. The run ends after presenting its ranked
+list (or nothing to build), having checked earlier fixes in verify. The 09:00
+morning card is the only place the owner approves follow-up work.
 
 End every step with its handoff in the same turn. A turn that ends without one hands
 the step on, and once nobody is left the run takes `timeout` and fails.
@@ -104,7 +106,7 @@ host program or refused unauthenticated session is a finding with that precise
 limit, not evidence of a broken logged-in turn. Report each failing check with
 `report_feedback(category:bug)` naming the adapter/version and the observed
 stage, attach the returned item id, and add it to `adapterFindings`. Assess and
-propose fixes through the same approve/dispatch path as other findings; a local
+propose fixes through the same morning-card approval path as other findings; a local
 missing install calls for that concrete setup step rather than an unrelated code
 fix. Never hide an authentication requirement by injecting a key.
 
@@ -119,7 +121,7 @@ connection compatibility only, not model availability or a logged-in turn.
 
 The workspace-browse-sweep procedure enforces the effective date and opt-out on every page.
 
-At 10:00 America/New_York, read this morning's completed workspace-walk run,
+At 07:00 America/New_York, read this morning's completed workspace-walk run,
 including every receipt, and merge its findings with feedback and adapter results
 into one ranked list. Use distinct affected humans first, then agent occurrences.
 Show counts, first/last seen, eligibility, build/hold/drop and the traced cause.
@@ -132,6 +134,8 @@ nothing_to_build with the same fields. Do not alter Sentry routing in this workf
 ## verify
 
 Before pulling new reports, read every earlier dispatch handoff's signals ledger.
+Verify these legacy entries only; do not create a new entry for each dispatched fix.
+Experiment tracking is managed outside this workflow, with at most 10 active experiments.
 Each entry has cornerId, itemIds, signature or Sentry id or redacted workspace
 symptom, dispatchedAt, fix PR, release/version/time evidence and observedThrough.
 Check the same signal through now, including resolved items and occurrences on
@@ -146,15 +150,13 @@ fixed. Use followUp from scripts/feedback-signals.mjs for timestamp classificati
 Carry forward every unfinished entry; never drop an item because its row resolved.
 Advance checked with signalChecks, including queried window and release evidence.
 
-## approve
+## Morning-card follow-up (outside this workflow)
 
-Use the single ranked list from present on the card. The card offers **dispatch** or **skip** for the listed build problems. Nothing is
-dispatched until a person answers. **dispatch** approves every listed problem;
-**skip** ends the run.
+Present supplies the ranked list to the 09:00 morning card and ends the run.
+After the owner's yes on that card, Ruby opens fix corners as an existing agent
+action outside this workflow, using the guidance below.
 
-## dispatch
-
-Only repeated agent signals or problems a person actually felt are eligible. Check for an existing corner by signal and item ids and reuse it. For each approved eligible problem, call `open_corner` in this Room. Give it a brief that
+Only repeated agent signals or problems a person actually felt are eligible. Check for an existing corner by signal and item ids and reuse it. For each problem approved on the morning card, Ruby calls `open_corner` in this Room. Give it a brief that
 describes the problem in your own words, lists its item ids, and requires the fix
 pull request body to carry the line `Feedback items: <ids>`. The repository is
 public: the brief and the pull request must never quote a report, and never name
@@ -176,5 +178,4 @@ fail on the old prompt and pass with the fix, and every other case must pass.
 The reviewer does not pass the pull request without that table.
 For a skill fix, the brief names the skill and the missing or wrong steps, and requires
 the pull request to change that skill and keep `apps/body/src/beeline-skill.test.ts`
-and `apps/body/src/prompt-layers.test.ts` passing. Hand off `dispatched` with `corners` listing each corner's
-`cornerId` (from `open_corner`), its name and its item ids. Include signals with the stable signature, Sentry id or redacted workspace symptom for every dispatched item, dispatch time, item ids and cornerId; later sweeps append PR and release evidence. Fix work goes to Jellybean, never the triager.
+and `apps/body/src/prompt-layers.test.ts` passing. Fix work goes to Jellybean, never the triager.

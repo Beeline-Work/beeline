@@ -17,6 +17,7 @@ import {
   type RoomRepositoryStateResult,
 } from '@beeline/api-contract/daemon';
 import { GrantCommandRunner, GrantRunnerServer, type GrantRunnerEndpoint } from './grant-runner.js';
+import { reapKeptCornerEmulators, stopKeptCornerEmulator } from './corner-emulator.js';
 import { ConnectorUsageRecorder } from './connector-runner.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
@@ -1020,6 +1021,8 @@ export class RoomRuntimeCoordinator {
     this.noteReconciliationStage('archived-corner-storage');
     await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
     if (this.stopped) return 'member';
+    await this.reapClosedCornerEmulators(desired);
+    if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -1104,6 +1107,9 @@ export class RoomRuntimeCoordinator {
       this.unwatchCorner(roomId);
       this.surfaceHealth.remove(roomId);
       if (!this.running.has(roomId)) this.monolithCornerParents.delete(roomId);
+      await stopKeptCornerEmulator(this.runtime.supervisorRoot, roomId).catch((error) => {
+        console.error(`[thin-core] corner ${roomId} emulator stop failed:`, error);
+      });
       return;
     }
     this.roomRemovalConfirmations.delete(roomId);
@@ -1848,6 +1854,25 @@ export class RoomRuntimeCoordinator {
   }
 
   /**
+   * Helper start and each reconcile: an emulator whose corner is not open
+   * stays only until a member confirms the corner is archived or gone.
+   * A failed lookup keeps it, so one agent's partial view cannot stop
+   * another agent's live corner.
+   */
+  private async reapClosedCornerEmulators(liveCornerIds: ReadonlySet<string>): Promise<void> {
+    await reapKeptCornerEmulators(this.runtime.supervisorRoot, liveCornerIds, async (cornerId) => {
+      try {
+        const restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
+        return restore.archived === true;
+      } catch (error) {
+        return error instanceof DaemonApiError && (error.status === 404 || error.status === 410);
+      }
+    }).catch((error) => {
+      console.error('[thin-core] corner emulator reap failed:', error);
+    });
+  }
+
+  /**
    * Startup/reconcile recovery for worktrees no current process remembers.
    * Archived server state names the exact corner; local discovery is limited
    * to that exact directory and the host's bare-repository cache.
@@ -1885,6 +1910,7 @@ export class RoomRuntimeCoordinator {
         // these restore fields. A new server can omit them from the active-only
         // list; cleanup then requires its explicit archive and parent facts.
         if (restore.archived === false) continue;
+        await stopKeptCornerEmulator(this.runtime.supervisorRoot, cornerId);
         if (!corner) {
           if (restore.archived !== true || !restore.parentRoomId) continue;
           corner = { cornerId, parentRoomId: restore.parentRoomId };
@@ -2050,14 +2076,16 @@ export class RoomRuntimeCoordinator {
   /** Archive cleanup runs on each authoritative reconciliation. Open private
    * folders are reconsidered every six hours; no file-age decision is made. */
   private async sweepRoomPrivateStorage(states: readonly StorageRoomState[]): Promise<void> {
-    for (const owner of await discoverLegacyStorageOwners(this.runtime.supervisorRoot, this.runtime.communityId, states))
+    for (const owner of await discoverLegacyStorageOwners(this.runtime.supervisorRoot, this.runtime.communityId, states, () => this.yieldReconciliation()))
       await rememberStorageOwner(this.runtime.supervisorRoot, owner);
     await this.reclaimPrivateStorage(states);
     await pruneOpenCheckoutObjects(this.runtime.supervisorRoot, states, {
+      progress: () => this.yieldReconciliation(),
       log: entry => console.log(`[body] open checkout storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
     });
     const archived = new Set(states.filter(state => state.archived).map(state => state.roomId));
     for (const owner of await readStorageOwners(this.runtime.supervisorRoot)) {
+      await this.yieldReconciliation();
       if (!archived.has(owner.roomId)) continue;
       const state = states.find(state => state.roomId === owner.roomId)!;
       await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
@@ -2065,6 +2093,7 @@ export class RoomRuntimeCoordinator {
       await this.scheduler.withIdleStorage(owner.roomId, async () => {
         await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, {
           landedHeadSha: state.landedHeadSha,
+          progress: () => this.yieldReconciliation(),
           log: entry => console.log(`[body] Room ${owner.roomId} checkout deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
         });
       });

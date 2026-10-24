@@ -127,6 +127,50 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 }
 
 describe('corner message attribution', () => {
+  it('REVIEW-SOURCE-1 reads only current brief citations during an assigned review', async () => {
+    const source = '44444444-4444-4444-8444-444444444444';
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Brief source')`, [source,W]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,presentation,text) VALUES
+      ('review-approval',$1,$2,'message','Approved scope'),
+      ('review-intent',$1,$2,'message','Original intent'),
+      ('review-private',$1,$2,'message','Unrelated private message')`, [source,H]);
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,
+      source_room_id,source_message_id,approval_basis,intent_verbatim) VALUES
+      ($1,1,'Review scope','Review scope',$2,$3,'review-approval',
+      '{"sourceMessageId":"review-approval"}',
+      '[{"sourceMessageId":"review-intent","snapshot":"Original intent"}]')`, [C,H,source]);
+    await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R,B]);
+    await greenHead(7, 'a'.repeat(40));
+    const [review] = await commands(B,C);
+    expect(review).toBeDefined();
+    await claim(review!);
+    const read = (messageId: string, agent = B) => daemon.execute('getRoomMessage', {roomId:C,messageId}, agent);
+    await expect(read('review-approval')).resolves.toMatchObject({body:'Approved scope'});
+    await expect(read('review-intent')).resolves.toMatchObject({body:'Original intent'});
+    await expect(daemon.execute('getRoomMessage', {roomId:C,messageId:'review-intent',offset:9},B))
+      .resolves.toMatchObject({body:'intent'});
+    await expect(read('review-private')).rejects.toThrow('message access denied');
+    await expect(read('review-approval',A)).rejects.toThrow('message access denied');
+    await expect(daemon.execute('getRoomMessage', {roomId:source,messageId:'review-approval'},B)).rejects.toThrow();
+    expect((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2`, [source,B])).rowCount).toBe(0);
+    await daemon.execute('postAgentTurnReceipt', {roomId:C,requestId:review!.turnRequestId,
+      generationId:'g1',status:'complete'}, B);
+    await expect(read('review-approval')).rejects.toThrow('message access denied');
+    await db.query(`UPDATE agent_commands SET state='claimed',completed_at=NULL WHERE id=$1`, [review!.id]);
+    await expect(read('review-approval')).resolves.toMatchObject({body:'Approved scope'});
+    await db.query(`UPDATE agent_commands SET state='cancelled' WHERE id=$1`, [review!.id]);
+    await expect(read('review-approval')).rejects.toThrow('message access denied');
+    await db.query(`UPDATE agent_commands SET state='claimed' WHERE id=$1`, [review!.id]);
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [C]);
+    await expect(read('review-approval')).rejects.toThrow('message access denied');
+    await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [C]);
+    await db.query(`UPDATE corner_brief_revisions SET revision=2 WHERE corner_id=$1`, [C]);
+    await expect(read('review-approval')).rejects.toThrow('message access denied');
+    await db.query(`UPDATE corner_brief_revisions SET revision=1 WHERE corner_id=$1`, [C]);
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"') WHERE corner_id=$1`, [C]);
+    await expect(read('review-approval')).rejects.toThrow('message access denied');
+    await db.query(`DELETE FROM rooms WHERE id=$1`, [source]);
+  });
   it.each([
     {reason:'ACP error -32000: Authentication required',free:false},
     {reason:'model selection unavailable',free:false},

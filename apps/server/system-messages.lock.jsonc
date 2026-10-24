@@ -1,4 +1,5 @@
 // Red-check repair wakes and cause-named idle alerts approved by lunchboxfortwo in brief revision 1 (message 7547104df3860284d19c5bec939a9a5e1647e3b56a3d5dd7493b30353a9b56f1); corner-attention idle wrapper and GitHub check-rollup wrapper only.
+// Immutable call-site Opened rows approved by lunchboxfortwo, messages d331599d and 6d2140eb, brief revision 3 (mock approved in 2b6b6f66); remove only the two merge/close opening-card UPDATE producers.
 // Webhook receipt System line approved by lunchboxfortwo, message 2f876a4d (option 1), relayed by Ruby; this producer entry only.
 // Repository subscription GitHub item links approved by lunchboxfortwo, message 3a86f53dcb0ae80cb1b8c88c23d8c9a3cfb4efaeb3ff2157735300ef212b20b0 (brief revision 1); repository producer and transitive GitHub service-name literal snapshots only.
 // Static Room openings and ordinary corner PR events approved by lunchboxfortwo, messages d331599d and 810c1361 (go), brief revision 2; opening metadata, PR corner destinations, and replacement of the Room completion producer only. Existing wording unchanged.
@@ -1268,10 +1269,8 @@
       "'hex'",
       "'idle'",
       "'merge-hold'",
-      "'pending'",
       "'report'",
       "'sha256'",
-      "'unknown'",
       "'working'",
       "`agent-command-card:${row.waiting_item_id}`",
       "`blocked: Corner ${row.name} is idle. Checks are failing and nothing has been pushed for 30 minutes.`",
@@ -1280,14 +1279,6 @@
       "`corner-hold:${row.waiting_item_id}`",
       "`corner-idle:${cornerId}:${episode}`"
     ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-close.ts:closeCornerState:message-write:e24a6d43943208d1",
-    "file": "apps/server/src/corner-close.ts",
-    "kind": "message-write",
-    "template": "UPDATE messages card=card | | '{\"type\":\"corner-complete\",\"outcome\":\"abandoned\"}' :: jsonb",
-    "literals": [],
     "occurrences": 1
   },
   {
@@ -3393,17 +3384,6 @@
     "template": "closeFreeAgentTurn(db, { roomId: row.room_id, requestId: row.turn_request_id,\n    agentId: row.agent_id, reason: 'free-agent-time-limit' })",
     "literals": [
       "'free-agent-time-limit'"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/github-operations.ts:GitHubOperations.mergeCorner:message-write:5222d510a1eecb28",
-    "file": "apps/server/src/github-operations.ts",
-    "kind": "message-write",
-    "template": "UPDATE messages card=card | | JSON.stringify({ type: 'corner-complete', outcome: 'landed',\n    pullRequest: { number: pullRequest.number, title: pullRequest.title, url: pullRequest.url } }) :: jsonb",
-    "literals": [
-      "'corner-complete'",
-      "'landed'"
     ],
     "occurrences": 1
   },

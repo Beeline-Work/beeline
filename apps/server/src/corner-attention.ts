@@ -93,7 +93,8 @@ BEGIN
       ci_started_at=CASE
         WHEN pending THEN CASE WHEN ci_head IS DISTINCT FROM head OR ci_started_at IS NULL
           THEN clock_timestamp() ELSE ci_started_at END
-        WHEN failing AND was_failing AND same_head THEN ci_started_at
+        WHEN failing THEN CASE WHEN was_failing AND same_head AND ci_started_at IS NOT NULL
+          THEN ci_started_at ELSE clock_timestamp() END
         ELSE NULL END,ci_head=head WHERE corner_id=corner;
   END IF;
   IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND parent_id IS NOT NULL) THEN
@@ -137,6 +138,7 @@ function attentionSql() {
     activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
+    blocker.agent_commander,blocker.human_blocker,
     ${blockedReportSql('c')} blocked_report,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
@@ -159,9 +161,9 @@ export async function refreshCornerAttention(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
       [cornerId, state, episode.toString()],
     );
+    const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
     if (state === 'idle' && row.last_state !== 'idle') {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
-      const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
       const stalledReport = row.waiting_kind === 'report' && row.blocked_report === true;
       const repairExpired = Boolean(
         row.ci_started_at && Date.now() - new Date(row.ci_started_at).getTime() >= 30 * 60_000,
@@ -182,9 +184,13 @@ export async function refreshCornerAttention(
       );
     }
     const now = Date.now();
+    // Pending checks stay review until a final result or a new push.
+    // Only a red head arms the 30-minute repair deadline.
     const deadlines = [
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
-      row.ci_started_at ? new Date(row.ci_started_at).getTime() + 30 * 60_000 : 0,
+      checks === 'failing' && row.ci_started_at
+        ? new Date(row.ci_started_at).getTime() + 30 * 60_000
+        : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };
   });
@@ -200,7 +206,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** Two single-use deadlines per corner, reconstructed after startup or listener reconnect. */
+/** The turn-gap deadline, plus one 30-minute deadline while checks are failing. Pending checks have none. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

@@ -36,6 +36,7 @@ let pullBaseSha: string | undefined;
 let mainHead: string;
 let failMergeabilityRead: boolean;
 let workflowCount: number;
+let actionsEnabled: boolean;
 let registeredCount: number;
 let onWorkflowRead: (() => Promise<void>) | undefined;
 let workflowStatus: string;
@@ -43,6 +44,7 @@ let suiteStatus: string;
 let suiteRuns: number | undefined;
 let associatedPulls: Record<string, unknown>[];
 let requiredContexts: string[] | null;
+let protectionForbidden: string | undefined;
 let requests: string[];
 let registrationForbidden: boolean;
 let server: Server | undefined;
@@ -105,6 +107,7 @@ beforeEach(async () => {
   mainHead = 'd'.repeat(40);
   failMergeabilityRead = false;
   workflowCount = 0;
+  actionsEnabled = true;
   registeredCount = 1;
   onWorkflowRead = undefined;
   workflowStatus = 'completed';
@@ -112,6 +115,7 @@ beforeEach(async () => {
   suiteRuns = undefined;
   associatedPulls = [];
   requiredContexts = null;
+  protectionForbidden = undefined;
   requests = [];
   registrationForbidden = false;
   app = new GitHubAppClient({
@@ -134,12 +138,14 @@ beforeEach(async () => {
       { message: 'Resource not accessible by integration' },
       { status: 403, headers: { 'x-github-request-id': 'sentry-1d', 'x-accepted-github-permissions': 'actions=read' } },
     );
+    if (url.endsWith('/actions/permissions')) return Response.json({ enabled: actionsEnabled });
     if (url.endsWith('/actions/workflows?per_page=1')) {
       await onWorkflowRead?.();
       return Response.json({ total_count: workflowCount });
     }
     if (url.includes('/commits/') && url.includes('/pulls')) return Response.json(associatedPulls);
     if (url.includes('/protection/required_status_checks')) {
+      if (protectionForbidden) return Response.json({ message: protectionForbidden }, { status: 403 });
       if (requiredContexts === null) return new Response('not protected', { status: 404 });
       return Response.json({
         contexts: requiredContexts,
@@ -267,6 +273,46 @@ async function ownPr() {
 }
 
 describe('PR-scoped check gate', () => {
+  it.each(['Upgrade to GitHub Pro', 'make this repository public'])(
+    'Reproduction PROTECTION-403: plan refusal (%s) lets real checks decide the gate', async message => {
+      associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+      protectionForbidden = message;
+      expect(await gate()).toMatchObject({ checks: 'passed', stage: 'waiting_for_yes', mergeAllowed: false });
+      rollupState = 'FAILURE';
+      expect(await gate()).toMatchObject({ checks: 'failed', mergeAllowed: false });
+      rollupState = 'PENDING';
+      expect(await gate()).toMatchObject({ checks: 'pending', mergeAllowed: false });
+    },
+  );
+
+  it('Reproduction PROTECTION-403: permission refusals still fail the checks command', async () => {
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    protectionForbidden = 'Resource not accessible by integration';
+    await expect(gate()).rejects.toThrow(/required_status_checks.*HTTP 403: Resource not accessible by integration/);
+  });
+
+  it('Reproduction PROTECTION-403: green checks wake review and an approved head can merge', async () => {
+    await ownPr();
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
+    await db.query(
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      [AUTHOR],
+    );
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    protectionForbidden = 'Upgrade to GitHub Pro or make this repository public to enable this feature.';
+    await operations.processWebhook('check_run', {
+      action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      check_run: {
+        name: 'test', status: 'completed', conclusion: 'success', head_sha: SHA,
+        check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA },
+      },
+    });
+    expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(1);
+    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', mergeAllowed: false });
+    await daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, REVIEWER);
+    expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approved: true, mergeAllowed: true });
+  });
+
   it.each(['queued', 'in_progress', 'waiting', 'pending', 'requested'])('Reproduction CHECK-HEAD-1: a %s workflow keeps the live gate pending after existing jobs pass', async status => {
     workflowStatus = status;
     expect(await gate()).toMatchObject({ checks: 'pending', stage: 'checking', mergeAllowed: false });
@@ -980,6 +1026,25 @@ describe('zero-check worker completion', () => {
     expect(after.reviewer).toEqual(['subscribed_event']);
     expect(after.worker).toEqual([]);
   });
+
+  it('Reproduction ACTIONS-OFF: disabled Actions with workflow files reaches review and merge approval', async () => {
+    rollupState = null;
+    workflowCount = 2;
+    actionsEnabled = false;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
+    expect(after.reviewer).toEqual(['subscribed_event']);
+    await daemon.execute('approveCornerMerge', { cornerId: C, headSha: SHA }, REVIEWER);
+    expect(await gate()).toMatchObject({ checkCount: 0, approved: true, mergeAllowed: true });
+    rollupState = 'SUCCESS';
+    rollupContexts = { totalCount: 0, nodes: [] };
+    associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
+    requiredContexts = ['external-ci'];
+    expect(await gate()).toMatchObject({ checks: 'pending', mergeAllowed: false });
+    console.info('ACTIONS-OFF: worker handoff reaches review; approved zero-check head mergeable; missing external CI blocks');
+  }, 20_000);
 
   it('Reproduction ZC-REGISTRATION: does not wake review before delayed checks register', async () => {
     rollupState = null;

@@ -640,7 +640,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "remember",
-    "description": "Maintain sourced facts or versioned procedures. Search first; update stale facts, delete disproved ones. Requester facts stay private; person_asked requires an explicit human instruction and protects standing orders. Mark only relied-on facts used before ending.",
+    "description": "Maintain sourced facts or versioned procedures. Search first; update stale facts, delete disproved ones. Fact writes need 1-16 non-deleted source messages in this Room (reports and cards allowed); the server also attaches this turn’s root message when it is in this Room. Requester-started writes must stay in the root source partition. DM facts cannot enter shared Workspace memory. Profile facts need a requester-started turn and stay private. Fact bodies must be nonempty and at most 200 UTF-8 bytes. person_asked must be a boolean; true requires an explicit human instruction and protects standing orders. Mark only relied-on facts used before ending.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -850,7 +850,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       },
       "required": ["address", "action"],
       "additionalProperties": false,
-      "anyOf": [
+      "allOf": [{"anyOf": [
         {
           "properties": {"action": {"const": "metadata"}},
           "required": ["action", "name"],
@@ -861,7 +861,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "required": ["action", "brief", "expectedRevision", "change"]
         },
         {"properties": {"action": {"const": "install_brief"}}, "required": ["action", "brief", "name"]}
-      ]
+      ]}]
     }
   },
   {

@@ -101,11 +101,8 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
     return { state: 'idle' };
   }
   if (stall) return { state: 'idle' };
-  const started = facts.ciStartedAt ?? lifecycle?.checksSummary?.updatedAt;
-  if ((checks === 'pending' || checksNotReported(lifecycle)) &&
-      started !== undefined && now - started < 30 * 60) {
-    return { state: 'review' };
-  }
+  // Pending checks stay review until a final result or a new push.
+  if (checks === 'pending' || checksNotReported(lifecycle)) return { state: 'review' };
   if (facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
     return { state: 'working' };
   return { state: 'idle' };

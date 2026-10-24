@@ -86,8 +86,21 @@ describe('observed corner states', () => {
 it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) => {
   expect(deriveCornerState({...facts,lastTurnEndedAt:1000-Number(age)}).state).toBe(state);
 });
-it.each(['pending','failing'] as const)('CI %s with an expired deadline is idle', checks => {
-  expect(deriveCornerState({...facts,ciStartedAt:1000-1801,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state:'idle'});
+it('failing checks past the repair window are idle', () => {
+  expect(deriveCornerState({
+    ...facts,
+    ciStartedAt: 1000 - 1801,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  })).toEqual({ state: 'idle' });
+});
+it('checks pending for 45 minutes, with no blocker and no turn running, stay review', () => {
+  expect(deriveCornerState({
+    ...facts,
+    owed: false,
+    turnRunning: false,
+    ciStartedAt: 1000 - 45 * 60,
+    lifecycle: { lifecycle: 'in-review', checks: 'pending' },
+  })).toEqual({ state: 'review' });
 });
 it('a fresh failing repair window is working', () => {
   expect(deriveCornerState({

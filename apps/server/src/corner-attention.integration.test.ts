@@ -214,7 +214,7 @@ it('single-use gap deadlines survive restart and a resume inside the gap sends n
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
-it('CI failure and the stuck-CI deadline each open exactly one Idle stretch', async () => {
+it('CI failure opens one Idle stretch, and pending checks stay review after 45 minutes', async () => {
   await ci('pending');
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(0);
@@ -226,13 +226,13 @@ it('CI failure and the stuck-CI deadline each open exactly one Idle stretch', as
   await ci('pending');
   await runCornerAttention(db);
   await db.query(
-    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '45 minutes' WHERE corner_id=$1`,
     [C],
   );
   await runCornerAttention(db);
   await runCornerAttention(db);
-  expect(await commanderFlags()).toHaveLength(2);
-  expect(await state()).toBe('idle');
+  expect(await commanderFlags()).toHaveLength(1);
+  expect(await state()).toBe('review');
 });
 it('CI progress cannot reset its safety deadline; a new head resets it', async () => {
   await ci('pending');
@@ -389,7 +389,7 @@ it('recovers and fires the gap deadline once across two server instances', async
     vi.useRealTimers();
   }
 });
-it('recovers and fires the stuck CI deadline without a repeating timer', async () => {
+it('a pending-check deadline refresh stays review and does not repeat', async () => {
   await ci('pending');
   vi.useFakeTimers();
   const live = new LiveHub();
@@ -398,10 +398,10 @@ it('recovers and fires the stuck CI deadline without a repeating timer', async (
   try {
     await deadlines.start();
     expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(1801000);
+    await vi.advanceTimersByTimeAsync(45 * 60 * 1000);
     await db.query('SELECT 1');
-    expect(await state()).toBe('idle');
-    expect(await commanderFlags()).toHaveLength(1);
+    expect(await state()).toBe('review');
+    expect(await commanderFlags()).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);
     expect(errors).toEqual([]);
   } finally {

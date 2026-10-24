@@ -1158,7 +1158,7 @@ const styles = StyleSheet.create((theme) => ({
   roomUpdateStamp: {
     ...theme.buzz.type.machine,
     position: 'absolute',
-    top: 7,
+    top: theme.buzz.space.xs,
     right: 0,
     color: theme.buzz.ledgerGhost,
     textAlign: 'right',

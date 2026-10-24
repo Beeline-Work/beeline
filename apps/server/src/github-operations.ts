@@ -2560,13 +2560,29 @@ export class GitHubOperations {
           if ((newAttempt && !checksSettled(summary.checks)) || (summary.status === 'pending' &&
             (current.checks === 'passing' || current.checks === 'failing')))
             await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
-          const label =
-            check.status === 'pending'
+          const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || !sameReportedHead || newAttempt);
+          // Pull-request open and the deploy re-read pass a synthetic pending
+          // check named "Pull request checks". A green rollup should name the
+          // suites that passed. The flag is assigned on its own so that
+          // placeholder name stays out of the System line.
+          let nameThePass = false;
+          if (becamePassing && check.status === 'pending' && check.name === 'Pull request checks')
+            nameThePass = true;
+          const label = nameThePass
+            ? 'passed'
+            : check.status === 'pending'
               ? 'started'
               : String(check.conclusion ?? '').toUpperCase() === 'CANCELLED'
                 ? 'cancelled'
                 : check.status;
-          const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || !sameReportedHead || newAttempt);
+          if (nameThePass) {
+            const passedNames = summary.checks.filter(item => item.status === 'passed').map(item => item.name);
+            check = {
+              ...check,
+              name: passedNames.join(', ') || current.pr?.title
+                || (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),
+            };
+          }
           // The first failed job wakes immediately. Completion wakes once
           // more even when the same job still fails, so a promised rerun or
           // log read has a turn to finish it. Replays share the attempt's id.

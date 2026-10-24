@@ -669,7 +669,10 @@ async function checksReported(
   )).rows[0];
   if (source?.head_sha && source.head_sha !== corner.lifecycle.pr?.headSha)
     return no('checks event belongs to an old head');
-  if (await cornerReportWaiting(db, cornerId)) return no('the corner is waiting for an answer');
+  // A passing head still wakes the reviewer. A report filed while checks were
+  // pending is not a code verdict, and a rejected green event is not retried.
+  if (event.result !== 'passing' && await cornerReportWaiting(db, cornerId))
+    return no('the corner is waiting for an answer');
   // A fact replayed after the checks moved on is stale.
   if (corner.lifecycle.checks !== event.result) return no(`checks are ${corner.lifecycle.checks}`);
   const from = transition.state;
@@ -833,6 +836,8 @@ async function noteReviewDispatchFailure(
  * active reviewer command since the run's newest card counts. A completed
  * review without PASS returns the unresolved review to the implementer once
  * its current work ends; only a new push automatically repeats that review.
+ * A report filed while the gate was still pending is not that review, so it
+ * does not swallow the one wake for this head.
  */
 async function ensureReviewDispatch(
   db: SqlDatabase,
@@ -840,7 +845,6 @@ async function ensureReviewDispatch(
   corner: CornerRow,
   transition: Transition,
 ): Promise<Applied> {
-  if (await cornerReportWaiting(db, cornerId)) return no('the corner is waiting for an answer');
   const pr = corner.lifecycle.pr;
   if (transition.state !== 'review' || corner.lifecycle.checks !== 'passing' || !pr?.headSha)
     return OK;

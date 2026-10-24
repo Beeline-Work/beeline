@@ -556,7 +556,7 @@ it('commits terminal failure when the commander has left', async () => {
     ).rows[0],
   ).toMatchObject({ status: 'failed' });
 });
-it('the commander revises from its DM with direct attribution after a check wake', async () => {
+it.each([false, true])('the commander revises from its DM after a check wake (cited approval: %s)', async citedApproval => {
   const opened = await open();
   const head = '9'.repeat(40);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
@@ -584,7 +584,7 @@ it('the commander revises from its DM with direct attribution after a check wake
       expectedRevision: 1,
       brief: {
         spec: 'Build the widget with the necessary CI repair',
-        approval: { sourceMessageId: stored.approval!.sourceMessageId },
+        ...(citedApproval ? { approval: { sourceMessageId: stored.approval!.sourceMessageId } } : {}),
         change: 'Repair CI',
       },
     },
@@ -598,7 +598,12 @@ it('the commander revises from its DM with direct attribution after a check wake
       )
     ).rows[0],
   ).toMatchObject({
-    approval_basis: {
+    approval_basis: citedApproval ? {
+      kind: 'initiating-command',
+      approvedBy: HUMAN,
+      sourceMessageId: stored.approval!.sourceMessageId,
+      snapshot: 'Build the widget in the target Room',
+    } : {
       kind: 'commander-direct',
       approvedBy: RUBY,
       sourceMessageId: '',

@@ -2745,13 +2745,16 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
     const required = tool.inputSchema.required as string[] | undefined;
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));
-    const diagnosticSchema = tool.name === 'wake'
-      ? { ...tool.inputSchema, anyOf: (tool.inputSchema.anyOf as JsonObject[]).filter(schema => {
+    const branches = tool.name === 'revise_corner'
+      ? (tool.inputSchema.allOf as JsonObject[])[0]!.anyOf
+      : tool.inputSchema.anyOf;
+    const diagnosticSchema = tool.name === 'wake' || tool.name === 'revise_corner'
+      ? { ...tool.inputSchema, allOf: undefined, anyOf: (branches as JsonObject[]).filter(schema => {
         const action = asObject(schema.properties).action;
         return !action || Check(action, requestedAction);
       }) }
       : tool.inputSchema;
-    const details = tool.name === 'wake'
+    const details = tool.name === 'wake' || tool.name === 'revise_corner'
       ? Errors(diagnosticSchema, args).filter(error => error.keyword !== 'anyOf')
         .map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
       : '';

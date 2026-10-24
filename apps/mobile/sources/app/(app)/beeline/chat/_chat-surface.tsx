@@ -2841,9 +2841,8 @@ export function BuzzChatSurface({
           ),
           canManageSchedules: Boolean(
             !isCorner &&
-            !isDirectMessage &&
             !viewerIsAgent &&
-            canManageWorkspace,
+            (isDirectMessage ? Boolean(roomSurface?.viewer.permissions.send) : canManageWorkspace),
           ),
           canRunWorkflows: Boolean(
             !isCorner &&
@@ -7283,6 +7282,21 @@ export function BuzzChatSurface({
           }}
           testID="dm-push-mute"
         />
+        {!viewerIsAgent && roomSurface?.viewer.permissions.send && (
+          <HullActionSheetRow
+            accessibilityLabel="View conversation schedules and subscriptions"
+            chevron="right"
+            label="Schedules and subscriptions"
+            onPress={() => {
+              setDmActionsVisible(false);
+              router.push({
+                pathname: '/beeline/settings/schedules',
+                params: { roomId: decodedId, workspaceId: activeCommunityId },
+              } as unknown as Href);
+            }}
+            testID="dm-schedules-action"
+          />
+        )}
         {membershipError && (
           <View accessibilityRole="alert" style={styles.membershipError}>
             <Text style={styles.membershipErrorText}>! {membershipError}</Text>

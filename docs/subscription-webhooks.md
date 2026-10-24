@@ -1,13 +1,16 @@
 # Incoming subscription webhooks
 
-A Workspace admin asks an agent to create an event subscription with `source: webhook`,
+A Workspace admin in a Room, or a human member in a DM, asks an agent to create an event subscription with `source: webhook`,
 `event: webhook.called`, a title, `when: On webhook call`, and a prompt or saved workflow.
 Creation uses the existing `wake` tool in the target Room or corner. Tokens are never
 returned to that tool or posted in chat.
 
-Open Room → Schedules and subscriptions → the subscription. Workspace admins can copy
+Open the Room or DM menu → Schedules and subscriptions → the subscription. Workspace admins
+in Rooms and human members in their own DMs can copy
 the link, Show and copy its token, Rotate it, inspect recent calls, or Stop it. Rotation
-invalidates the old token immediately. Other viewers receive no link or token metadata.
+invalidates the old token immediately. Delivery rechecks the current token owner: Workspace
+admin for a Room, human DM participant with current membership for a DM. Other viewers
+receive no link or token metadata.
 
 Send `POST /hooks/<subscription UUID>` on the server host with
 `Authorization: Bearer <token>`. The token begins `bl_whk_` and contains 32 random bytes.

@@ -44,7 +44,8 @@ export function orderScheduledWork(
   });
 }
 
-function ListAttribution({ agent, corner, roomName }: {
+function ListAttribution({ agent, corner, roomName, isDirectMessage }: {
+  isDirectMessage?: boolean;
   roomName?: string | null;
   agent: string;
   corner?: { id: string; name: string } | null;
@@ -52,7 +53,7 @@ function ListAttribution({ agent, corner, roomName }: {
   return <>
     <Text numberOfLines={1} style={styles.listAgent}>@{agent}</Text>
     <Text style={styles.listDot}>{' · '}</Text>
-    <ScheduledWorkWhere corner={corner ? { ...corner, name: cornerShortTitle(roomName, corner.name, corner.id) } : undefined} />
+    <ScheduledWorkWhere isDirectMessage={isDirectMessage} corner={corner ? { ...corner, name: cornerShortTitle(roomName, corner.name, corner.id) } : undefined} />
   </>;
 }
 
@@ -86,9 +87,9 @@ export default function ScheduledWork() {
       chevron="right"
       description={scheduleTrigger(schedule)}
       descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{scheduleTrigger(schedule)}</Text>}
-      descriptionDetail={`@${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName)}`}
+      descriptionDetail={`@${work?.agentNames.get(schedule.agentId) ?? 'Agent'} · ${scheduleWhere(schedule, work?.roomName, work?.isDirectMessage)}`}
       descriptionDetailContent={<ListAttribution
-        roomName={work?.roomName} agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'} corner={schedule.corner} />}
+        isDirectMessage={work?.isDirectMessage} roomName={work?.roomName} agent={work?.agentNames.get(schedule.agentId) ?? 'Agent'} corner={schedule.corner} />}
       key={schedule.id}
       onPress={() => openSchedule(schedule)}
       testID={`scheduled-work-${schedule.id}`}
@@ -99,11 +100,11 @@ export default function ScheduledWork() {
   const renderSubscription = (subscription: RoomSubscriptionView) => (
     <SettingsRow
       chevron="right"
-      description={subscriptionWhen(subscription)}
-      descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{subscriptionWhen(subscription)}</Text>}
-      descriptionDetail={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${scheduleWhere(subscription, work?.roomName)}`}
+      description={subscriptionWhen(subscription, work?.isDirectMessage)}
+      descriptionContent={<Text numberOfLines={1} style={styles.listTrigger}>{subscriptionWhen(subscription, work?.isDirectMessage)}</Text>}
+      descriptionDetail={`@${work?.agentNames.get(subscription.agentId) ?? 'Agent'} · ${scheduleWhere(subscription, work?.roomName, work?.isDirectMessage)}`}
       descriptionDetailContent={<ListAttribution
-        roomName={work?.roomName} agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'} corner={subscription.corner} />}
+        isDirectMessage={work?.isDirectMessage} roomName={work?.roomName} agent={work?.agentNames.get(subscription.agentId) ?? 'Agent'} corner={subscription.corner} />}
       key={subscription.id}
       onPress={() =>
         router.push({
@@ -119,8 +120,8 @@ export default function ScheduledWork() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <PageHeader
-        backAccessibilityLabel="Back to Room"
-        eyebrow={roomTitle(work?.roomName) ?? 'Room'}
+        backAccessibilityLabel={work?.isDirectMessage ? 'Back to DM' : 'Back to Room'}
+        eyebrow={work?.isDirectMessage ? 'DM' : roomTitle(work?.roomName) ?? 'Room'}
         onBack={() => router.back()}
         testID="scheduled-work-header"
         title="Schedules and subscriptions"
@@ -142,7 +143,7 @@ export default function ScheduledWork() {
               <Ionicons color={styles.emptyIcon.color} name="time-outline" size={22} />
               <Text style={styles.emptyTitle}>Nothing wakes agents here yet</Text>
               <Text style={styles.empty}>
-                Agents set up schedules and subscriptions. Ask an agent in this Room to add one.
+                Agents set up schedules and subscriptions. Ask an agent in {work?.isDirectMessage ? 'this DM' : 'this Room'} to add one.
               </Text>
             </View>
           ) : (

@@ -36,7 +36,28 @@ function secret(): string {
   return value;
 }
 
-/** One Workspace authority check for both the commanding human and phone operations. */
+/** Humans manage their own DMs; Rooms retain Workspace admin authority. */
+export async function requireScheduledWorkManager(db: SqlDatabase, roomId: string, viewerId: string, allowCorner = false, denialMessage = 'workspace admins only'): Promise<void> {
+  const room = (await db.query<{ parent_id: string | null; archived_at: Date | null }>(
+    'SELECT parent_id,archived_at FROM rooms WHERE id=$1', [roomId])).rows[0];
+  if (!room) throw new Error('room not found');
+  if (room.parent_id && !allowCorner) throw new Error('room lifecycle cannot target a corner');
+  if (room.archived_at) throw new Error('room is archived');
+  const allowed = await db.query(
+    `SELECT 1 FROM rooms room
+     JOIN identities person ON person.id=$2 AND person.kind='human' AND NOT person.hidden_from_roster
+     WHERE room.id=$1 AND (room.parent_id IS NULL OR $3) AND room.archived_at IS NULL AND (
+       (room.direct_participants IS NOT NULL AND room.direct_participants ? $2
+         AND EXISTS (SELECT 1 FROM memberships member WHERE member.room_id=room.id
+           AND member.identity_id=$2 AND member.removed_at IS NULL))
+       OR (room.direct_participants IS NULL AND EXISTS (
+         SELECT 1 FROM memberships member WHERE member.workspace_id=room.workspace_id
+           AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL
+           AND member.role IN ('owner','admin'))))`, [roomId, viewerId, allowCorner]);
+  if (!allowed.rowCount) throw new Error(denialMessage);
+}
+
+/** One authority check for both the commanding human and phone operations. */
 export async function requireWebhookAdmin(db: SqlDatabase, roomId: string, viewerId?: string,
   command?: { agentId: string; requestId?: string }): Promise<string> {
   const human = viewerId ?? (command?.requestId ? (await db.query<{ author_id: string }>(
@@ -45,15 +66,8 @@ export async function requireWebhookAdmin(db: SqlDatabase, roomId: string, viewe
      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
      ORDER BY command.created_at DESC LIMIT 1`, [roomId, command.agentId, command.requestId],
   )).rows[0]?.author_id : undefined);
-  const allowed = human && (await db.query(
-    `SELECT 1 FROM rooms room JOIN memberships member ON member.workspace_id=room.workspace_id
-       AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL
-       AND member.role IN ('owner','admin')
-     JOIN identities person ON person.id=member.identity_id AND person.kind='human'
-       AND NOT person.hidden_from_roster
-     WHERE room.id=$1 AND room.archived_at IS NULL`, [roomId, human],
-  )).rowCount;
-  if (!allowed) throw new Error('Workspace admin required');
+  if (!human) throw new Error('Workspace admin required');
+  await requireScheduledWorkManager(db, roomId, human, Boolean(command), 'Workspace admin required');
   return human!;
 }
 
@@ -73,7 +87,7 @@ function callView(row: CallRow): WebhookCallView {
     ...(row.repeat_at ? { repeatAt: row.repeat_at.getTime() / 1000 } : {}) };
 }
 
-/** No secret enters a cached projection. Only current Workspace admins receive link metadata. */
+/** No secret enters a cached projection. Only authorized human managers receive link metadata. */
 export async function webhookDetails(db: SqlDatabase, roomId: string, id: string, viewerId: string,
   origin: string): Promise<Pick<RoomSubscriptionView, 'webhook' | 'recentCalls'>> {
   await requireWebhookAdmin(db, roomId, viewerId);
@@ -156,9 +170,16 @@ export async function ingestSubscriptionWebhook(db: SqlDatabase, id: string, raw
        JOIN agents actor ON actor.agent_id=agent.id
        JOIN memberships agent_owner ON agent_owner.workspace_id=room.workspace_id AND agent_owner.room_id IS NULL
          AND agent_owner.identity_id=actor.owner_id AND agent_owner.removed_at IS NULL
-       JOIN memberships owner ON owner.workspace_id=room.workspace_id AND owner.room_id IS NULL
-         AND owner.identity_id=$3 AND owner.removed_at IS NULL AND owner.role IN ('owner','admin')
-       WHERE room.id=$1 AND room.archived_at IS NULL`, [row.room_id, row.agent_id, row.webhook_owner_id]);
+       WHERE room.id=$1 AND room.archived_at IS NULL AND (
+         (room.direct_participants IS NULL AND EXISTS (
+           SELECT 1 FROM memberships owner WHERE owner.workspace_id=room.workspace_id
+             AND owner.room_id IS NULL AND owner.identity_id=$3 AND owner.removed_at IS NULL
+             AND owner.role IN ('owner','admin')))
+         OR (room.direct_participants IS NOT NULL AND room.direct_participants ? $3
+           AND room.direct_participants ? $2 AND EXISTS (
+             SELECT 1 FROM memberships owner JOIN identities person ON person.id=owner.identity_id
+               AND person.kind='human' AND NOT person.hidden_from_roster
+             WHERE owner.room_id=room.id AND owner.identity_id=$3 AND owner.removed_at IS NULL)))`, [row.room_id, row.agent_id, row.webhook_owner_id]);
     if (!current.rowCount) return record('refused', 403, 'Agent, Room or owner is no longer available');
     const delivery = headers['x-beeline-delivery'];
     if (delivery !== undefined && (typeof delivery !== 'string' || !delivery || delivery.length > 200))

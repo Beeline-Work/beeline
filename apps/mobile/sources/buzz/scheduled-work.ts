@@ -46,10 +46,11 @@ export function promptLead(message: string): string {
 export function scheduleWhere(
   work: Pick<RoomScheduleView, 'corner'>,
   roomName: string | null | undefined,
+  isDirectMessage = false,
 ): string {
   return work.corner
     ? `corner ${cornerShortTitle(roomName, work.corner.name, work.corner.id)}`
-    : 'this Room';
+    : isDirectMessage ? 'this DM' : 'this Room';
 }
 
 /** The longest a derived schedule title runs before it stops at a word boundary. */
@@ -109,7 +110,7 @@ export function subscriptionTitle(subscription: RoomSubscriptionView): string {
     : promptLead(subscription.prompt ?? '') || 'React to this event';
 }
 
-export function subscriptionWhen(subscription: RoomSubscriptionView): string {
+export function subscriptionWhen(subscription: RoomSubscriptionView, isDirectMessage = false): string {
   if (subscription.registrationStatus === 'error')
     return `Setup failed · ${subscription.when ?? subscription.event}`;
   if (subscription.registrationStatus === 'registering')
@@ -131,29 +132,32 @@ export function subscriptionWhen(subscription: RoomSubscriptionView): string {
     };
     return `On ${action[subscription.event] ?? `an event in ${repository}`}`;
   }
+  const place = isDirectMessage ? 'this DM' : 'this Room';
   const action: Record<string, string> = {
-    joined: 'someone joining this Room',
-    'schedule-ran': 'a schedule running in this Room',
-    'corner-opened': 'a corner opening in this Room',
+    joined: `someone joining ${place}`,
+    'schedule-ran': `a schedule running in ${place}`,
+    'corner-opened': `a corner opening in ${place}`,
     'check-passed': 'corner checks passing',
     'check-failed': 'corner checks failing',
     'workflow-handoff': 'a workflow moving to its next step',
   };
-  return `On ${action[subscription.event] ?? 'an event in this Room'}`;
+  return `On ${action[subscription.event] ?? `an event in ${place}`}`;
 }
 
 export function subscriptionWhere(
   subscription: RoomSubscriptionView,
   roomName: string | null | undefined,
+  isDirectMessage = false,
 ): string {
-  return scheduleWhere(subscription, roomName);
+  return scheduleWhere(subscription, roomName, isDirectMessage);
 }
 
-export function subscriptionRuns(subscription: RoomSubscriptionView): string {
-  return subscriptionWhen(subscription);
+export function subscriptionRuns(subscription: RoomSubscriptionView, isDirectMessage = false): string {
+  return subscriptionWhen(subscription, isDirectMessage);
 }
 
 export type ScheduledWork = {
+  isDirectMessage: boolean;
   roomName: string | null;
   agentNames: ReadonlyMap<string, string>;
   schedules: readonly RoomScheduleView[];
@@ -164,6 +168,7 @@ const isScheduledWork = (value: unknown): value is ScheduledWorkResult => {
   if (!value || typeof value !== 'object') return false;
   const view = value as Partial<ScheduledWorkResult>;
   return (view.roomName === null || typeof view.roomName === 'string') &&
+    (view.isDirectMessage === undefined || typeof view.isDirectMessage === 'boolean') &&
     Array.isArray(view.agentNames) && Array.isArray(view.schedules) &&
     Array.isArray(view.subscriptions);
 };
@@ -208,6 +213,7 @@ export function useScheduledWork(roomId: string | undefined) {
   useEffect(() => { if (roomId && address) holdScheduledWork(roomId, address); }, [address, roomId]);
   const work = useMemo<ScheduledWork | null>(() => value && ({
     roomName: value.roomName,
+    isDirectMessage: value.isDirectMessage === true,
     agentNames: new Map(value.agentNames),
     schedules: value.schedules,
     subscriptions: value.subscriptions,

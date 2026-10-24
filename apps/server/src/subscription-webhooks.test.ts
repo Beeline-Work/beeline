@@ -150,3 +150,97 @@ describe('agent-created webhook subscription', () => {
     } finally { await db.close(); }
   });
 });
+
+// Reproduction 1: the phone's DM scheduled-work path, including secret controls.
+describe('human DM scheduled-work management', () => {
+  it('allows a human participant without Workspace admin and rejects outsiders and agents', async () => {
+    const { db, create, phone } = await fixture();
+    try {
+      const hook = await create();
+      await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`,
+        [ROOM, JSON.stringify([MEMBER, AGENT])]);
+      const input = { roomId: ROOM, subscriptionId: hook.id };
+      const scheduleId = randomUUID();
+      await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+        VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}','Check results',now())`,
+        [scheduleId, WORKSPACE, ROOM, AGENT, MEMBER]);
+      for (const actor of [OWNER, AGENT]) {
+        await expect(phone.execute('readScheduledWork', { roomId: ROOM }, actor)).rejects.toThrow();
+        await expect(phone.execute('listRoomSchedules', { roomId: ROOM }, actor)).rejects.toThrow();
+        await expect(phone.execute('listRoomSubscriptions', { roomId: ROOM }, actor)).rejects.toThrow();
+        await expect(phone.execute('revealWebhookToken', input, actor)).rejects.toThrow();
+        await expect(phone.execute('rotateWebhookToken', input, actor)).rejects.toThrow();
+        await expect(phone.execute('deleteRoomSubscription', input, actor)).rejects.toThrow();
+        await expect(phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId }, actor)).rejects.toThrow();
+      }
+      const view = await phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER);
+      expect(view.isDirectMessage).toBe(true);
+      expect(view.subscriptions.map(s => s.id)).toContain(hook.id);
+      expect(view.subscriptions[0]!.webhook?.url).toContain(`/hooks/${hook.id}`);
+      expect(view.subscriptions[0]!.recentCalls).toEqual([]);
+      expect((await phone.execute('listRoomSubscriptions', { roomId: ROOM }, MEMBER)).subscriptions).toHaveLength(1);
+      expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, MEMBER)).schedules.map(s => s.id)).toEqual([scheduleId]);
+      await phone.execute('deleteRoomSchedule', { roomId: ROOM, scheduleId }, MEMBER);
+      expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, MEMBER)).schedules).toEqual([]);
+      // Group DMs grant the same authority to each human participant.
+      await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`,
+        [ROOM, JSON.stringify([MEMBER, OWNER, AGENT])]);
+      expect((await phone.execute('readScheduledWork', { roomId: ROOM }, OWNER)).subscriptions).toHaveLength(1);
+      const revealed = await phone.execute('revealWebhookToken', input, MEMBER);
+      expect(revealed.token).toMatch(/^bl_whk_/);
+      expect(JSON.stringify(view)).not.toContain(revealed.token);
+      const rotated = await phone.execute('rotateWebhookToken', input, MEMBER);
+      expect(rotated.token).not.toBe(revealed.token);
+      await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+      await expect(phone.execute('revealWebhookToken', input, MEMBER)).rejects.toThrow();
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+      await phone.execute('deleteRoomSubscription', input, MEMBER);
+      expect((await phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER)).subscriptions).toEqual([]);
+    } finally { await db.close(); }
+  });
+});
+
+
+it('Reproduction 1: phone DM token rotation preserves HTTP delivery for a non-admin human member', async () => {
+  const { db, create, phone } = await fixture();
+  const server = createBeelineServer({ database: db, phone, live: new LiveHub(), auth: {}, daemon: {}, mediaMaximumBytes: 1 } as ServerOptions);
+  try {
+    const hook = await create();
+    await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`,
+      [ROOM, JSON.stringify([MEMBER, AGENT])]);
+    const input = { roomId: ROOM, subscriptionId: hook.id };
+    const original = await phone.execute('revealWebhookToken', input, MEMBER);
+    const rotated = await phone.execute('rotateWebhookToken', input, MEMBER);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/hooks/${hook.id}`;
+    const post = (token = rotated.token) => fetch(endpoint, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` }, body: '{"result":"done"}',
+    });
+    expect((await post(original.token)).status).toBe(401);
+    const delivered = await post();
+    expect(delivered.status).toBe(200);
+    expect(await delivered.json()).toEqual({ outcome: 'woke' });
+    const view = await phone.execute('readScheduledWork', { roomId: ROOM }, MEMBER);
+    expect(view.subscriptions[0]!.recentCalls?.some(call => call.outcome === 'woke')).toBe(true);
+    // Both the participant list and current membership must continue to authorize the token owner.
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+    expect((await post()).status).toBe(403);
+    await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, MEMBER]);
+    await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [ROOM, JSON.stringify([OWNER, AGENT])]);
+    expect((await post()).status).toBe(403);
+    await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [ROOM, JSON.stringify([MEMBER, AGENT])]);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+    expect((await post()).status).toBe(403);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); await db.close(); }
+});
+
+it('review reproduction: DM human can rotate and the resulting webhook still fires', async () => {
+ const {db, create, phone} = await fixture();
+ try {
+  const hook=await create();
+  await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [ROOM, JSON.stringify([MEMBER, AGENT])]);
+  const {token}=await phone.execute('rotateWebhookToken', {roomId:ROOM,subscriptionId:hook.id}, MEMBER);
+  const result=await ingestSubscriptionWebhook(db, hook.id, Buffer.from('{}'), {authorization:`Bearer ${token}`});
+  expect(result).toEqual({status:200,outcome:'woke'});
+ } finally {await db.close();}
+});

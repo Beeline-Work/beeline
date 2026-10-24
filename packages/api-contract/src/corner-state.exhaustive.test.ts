@@ -9,10 +9,12 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  * 2. `review` iff a reviewer turn is active and checks are not failing, or
  *    checks are pending on the current head with no human-owed blocker and
  *    no worker turn running.
- * 3. `working` is a running worker turn, the 30-minute repair window after
- *    checks start failing with no blocker, or the 30-second grace after a
- *    non-failing turn. It does not override archived. A live reviewer beats
- *    it only while checks are not failing.
+ * 3. `working` is a running worker turn, unless failing checks are past the
+ *    30-minute repair window; the repair window itself after checks start
+ *    failing with no blocker; or the 30-second grace after a non-failing
+ *    turn. It does not override archived. A live reviewer beats it only
+ *    while checks are not failing. An expired repair with a still-running
+ *    turn is idle when nothing is owed, and waiting when a blocker is.
  * 4. `waiting` iff there is a blocker and it is not the case that checks are
  *    pending on the current head and every blocker is owed to an agent.
  *    This scan leaves `stallReport` unset, so an agent-commander report on a
@@ -191,10 +193,11 @@ function scan(
                         const failing = checks === 'failing';
                         const repairOpen =
                           facts.ciStartedAt !== undefined && NOW - facts.ciStartedAt < 30 * 60;
+                        const repairExpired = failing && facts.ciStartedAt !== undefined && !repairOpen;
                         let expected: CornerState;
                         if (closed) expected = 'archived';
                         else if (reviewerActive && !failing) expected = 'review';
-                        else if (turnRunning) expected = 'working';
+                        else if (turnRunning && !repairExpired) expected = 'working';
                         else if (failing && !anyBlocker) expected = repairOpen ? 'working' : 'idle';
                         else if (anyBlocker && !(pending && agentOnly)) expected = 'waiting';
                         else if (pending) expected = 'review';

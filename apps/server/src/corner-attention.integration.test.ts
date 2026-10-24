@@ -593,6 +593,26 @@ it('Reproduction RED-STALL-1: four pushes, a blocked stop, and red checks wake t
   expect(await state()).toBe('idle');
 });
 
+it('Reproduction RED-STALL-RUNNING: a repair turn still running 30 minutes after red checks is idle and wakes the commander once', async () => {
+  await ci('failing');
+  await wake(WORKER, 'repair-still-running');
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
+  await runCornerAttention(db);
+  expect(await state()).toBe('idle');
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'));
+  expect(stalls).toHaveLength(1);
+  expect(stalls[0]!.source.body).toContain('30 minutes');
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'))).toHaveLength(1);
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+});
+
 it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer while five shards are still pending', async () => {
   const heads = [1, 2, 3, 4].map((n) => n.toString(16).padStart(40, '0'));
   for (const sha of heads) await checksHead(sha, 'pending');

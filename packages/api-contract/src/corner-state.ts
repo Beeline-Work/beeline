@@ -100,7 +100,10 @@ export function cornerRunFromLifecycle(input: {
  *
  * 1. `archived` — the corner is archived, or its run or lifecycle is landed or closed.
  * 2. `review` — a reviewer turn is active and checks are not failing.
- * 3. `working` — a worker turn is running. A queued worker is not running.
+ * 3. `working` — a worker turn is running, unless failing checks are past
+ *    the 30-minute repair window. A queued worker is not running. After that
+ *    window the failing-check rules below apply, so a still-running repair
+ *    with no push is `idle`.
  * 4. Failing checks with `stallReport`: `working` for 30 minutes from
  *    `ciStartedAt`, otherwise `idle`. A blocked report does not keep a red
  *    head waiting.
@@ -127,8 +130,12 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const now = facts.now ?? Date.now() / 1000;
   const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
   const repairOpen = facts.ciStartedAt !== undefined && now - facts.ciStartedAt < 30 * 60;
+  // A claimed or just-dispatched repair turn stays working only inside the
+  // window. Once it expires, the same failing-check rules apply while that
+  // turn is still running.
+  const repairExpired = checks === 'failing' && facts.ciStartedAt !== undefined && !repairOpen;
   if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
-  if (facts.turnRunning) return { state: 'working' };
+  if (facts.turnRunning && !repairExpired) return { state: 'working' };
   if (checks === 'failing' && facts.stallReport === true)
     return repairOpen ? { state: 'working' } : { state: 'idle' };
   if (facts.stallReport === true && pendingCi) return { state: 'idle' };

@@ -93,6 +93,19 @@ it('failing checks past the repair window are idle', () => {
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
   })).toEqual({ state: 'idle' });
 });
+it('a repair turn still running past 30 minutes without a push is idle', () => {
+  expect(deriveCornerState({
+    ...facts,
+    turnRunning: true,
+    ciStartedAt: 1000 - 1801,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  })).toEqual({ state: 'idle' });
+  expect(deriveCornerState({
+    ...facts,
+    turnRunning: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
+  }).state).toBe('working');
+});
 it('checks pending for 45 minutes, with no blocker and no turn running, stay review', () => {
   expect(deriveCornerState({
     ...facts,

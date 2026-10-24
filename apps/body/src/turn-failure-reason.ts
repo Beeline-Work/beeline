@@ -54,6 +54,11 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
           : error == null
             ? ''
             : String(error);
+  // ACP -32000 is the harness's explicit authentication-required refusal.
+  // Unlike a provider token-refresh race, retrying it cannot sign the agent in.
+  if (/^ACP error -32000: Authentication required(?:[.;]|$)/i.test(raw.trim())) {
+    return { text: 'Authentication required: the agent needs to sign in again', kind: 'not-signed-in' };
+  }
   const informative = raw
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -73,7 +78,7 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
       : clean;
   // A transient token-refresh race on the harness's own provider connection
   // (claude-agent-acp mid-OAuth-refresh, say) can read identically to a
-  // genuinely expired/missing credential. Report every auth-shaped failure as
+  // genuinely expired/missing credential. Report other auth-shaped failures as
   // an ordinary retryable hiccup here — the server's existing bounded hiccup
   // budget (packages/api-contract/src/turn-silence.ts's escalateExhaustedHiccup)
   // settles it into the standing not-signed-in verdict only once those

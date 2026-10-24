@@ -1,3 +1,6 @@
+import { voiceTempo, VOICE_PCM_THRESHOLD } from './voice-tempo.js';
+import { VoiceEagerReply } from './voice-eager-reply.js';
+import { VoiceSpeechPrefetch } from './voice-speech-prefetch.js';
 import { cleanVoiceReply } from './voice-reply.js';
 import { readVoiceContext } from './voice-context.js';
 import { captureServerError } from './sentry.js';
@@ -9,7 +12,7 @@ import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
 import { VOICE_DATA_TOPIC, type VoiceSignal, type VoiceBudget } from '@beeline/api-contract/phone';
 import type { VoiceService } from './voice-service.js';
-import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent } from './voice-providers.js';
+import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent, type VoiceBrain } from './voice-providers.js';
 
 import { VoiceRequestAssembler, voiceNameOnly } from './voice-request-assembler.js';
 import { namedVoiceTarget, openingVoiceName } from './voice-target.js';
@@ -110,6 +113,7 @@ export class VoiceRoomRuntime {
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
+  private readonly eager = new Map<string, { turn: number; text: string; reply?: VoiceEagerReply }>();
   private readonly assembler = new VoiceRequestAssembler();
   private spokenWrites = Promise.resolve();
   private readonly shutdown = new AbortController();
@@ -213,6 +217,7 @@ export class VoiceRoomRuntime {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
         if (data.type !== 'target' && data.type !== 'unpin' && data.type !== 'resume' && data.type !== 'park') return;
         await this.retry(() => this.service.access(this.roomId, participant.identity));
+        if (data.type === 'target' || data.type === 'unpin') this.cancelEager(participant.identity);
         if (data.type === 'unpin') {
           this.explicitTargets.delete(participant.identity);
           this.assembler.clearAddress(participant.identity);
@@ -317,6 +322,7 @@ export class VoiceRoomRuntime {
       this.task(async () => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
+      if (event.event === 'TurnResumed' || event.event === 'StartOfTurn') this.cancelEager(human);
       if (event.event === 'EndOfTurn') this.humanQuiet(human);
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
       let input = this.inputSpeech.get(human);
@@ -336,7 +342,7 @@ export class VoiceRoomRuntime {
       // Filter partials too: a confident stray word must never pause or barge in.
       // Final rejection consumes the turn before it can enter request assembly.
       if (strayWord) {
-        if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
+        if (event.event === 'EndOfTurn') { this.cancelEager(human); this.turnIndices.set(human, event.turn_index); }
         return;
       }
       if (event.event === 'EndOfTurn' && words.length && !confirmedVoiceSpeech(event))
@@ -345,8 +351,11 @@ export class VoiceRoomRuntime {
       const recognized = event.event === 'EndOfTurn' ? words.length > 0 : confirmedVoiceSpeech(event);
       if (!recognized || voicePlaybackEcho(event.transcript, context) ||
           (context && acknowledgment && !event.words?.length)) {
-        if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
+        if (event.event === 'EndOfTurn') { this.cancelEager(human); this.turnIndices.set(human, event.turn_index); }
         return;
+      }
+      if (event.event === 'EagerEndOfTurn') {
+        this.task(() => this.prepareEager(human, event), human); return;
       }
       this.markCallActivity();
       if (event.event !== 'EndOfTurn') this.humanSpeaking.add(human);
@@ -376,6 +385,7 @@ export class VoiceRoomRuntime {
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
       if (stop) {
+        this.cancelEager(human);
         this.assembler.cancel(human);
         this.speaking?.abort(); this.clearAudioQueue();
         return;
@@ -397,6 +407,7 @@ export class VoiceRoomRuntime {
     } finally { if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
   }
   private stopInput(human: string) {
+    this.cancelEager(human);
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
     const input = this.inputs.get(human);
@@ -585,10 +596,48 @@ export class VoiceRoomRuntime {
     return refresh;
   }
 
+  private cancelEager(human: string) {
+    const draft = this.eager.get(human);
+    if (draft) {
+      draft.reply?.cancel(); this.eager.delete(human);
+      console.info('[voice-eager]', JSON.stringify({ callId: this.callId, outcome: 'cancelled' }));
+    }
+  }
+
+  private async prepareEager(human: string, event: FluxEvent) {
+    // Continuation assembly and pending dispatch retries retain their existing path.
+    if (this.assembler.current(human) || this.assembler.retryable(human) || this.closed) return;
+    const existing = this.eager.get(human);
+    if (existing?.turn === event.turn_index && existing.text === event.transcript) return;
+    this.cancelEager(human);
+    const draft: { turn: number; text: string; reply?: VoiceEagerReply } = { turn: event.turn_index, text: event.transcript };
+    this.eager.set(human, draft);
+    const agents = await this.retry(() => this.service.agents(this.roomId, human));
+    const humans = await this.retry(() => this.service.humanCount(this.callId));
+    const named = openingVoiceName(event.transcript, agents);
+    const pinned = agents.find(agent => agent.id === this.explicitTargets.get(human));
+    const tapped = agents.find(agent => agent.id === this.assembler.target(human));
+    const selected = humans === 1 && !named && !pinned && !tapped
+      ? await this.retry(() => this.service.lastActiveAgent(this.roomId, agents)) ?? this.targets.get(human)
+      : this.targets.get(human);
+    const agent = pinned ?? named ?? tapped ?? (humans === 1 ? namedVoiceTarget(event.transcript, agents, selected, humans) : undefined);
+    if (!agent || voiceNameOnly(event.transcript, agents)) { if (this.eager.get(human) === draft) this.cancelEager(human); return; }
+    const history = await this.retry(() => readVoiceContext(this.service.db, this.roomId, '', agent.id));
+    const pending = [...this.pendingWork.values()].filter(work => work.agent_id === agent.id && work.human_id === human);
+    if (pending.length) history.push({ role: 'user', content:
+      'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.map(row => row.text)) });
+    history.push({ role: 'user', content: event.transcript });
+    if (this.eager.get(human) !== draft || this.closed || event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
+    draft.reply = new VoiceEagerReply(this.service.config.brain, agent, history, agents.map(({ name, handle }) => ({ name, handle })));
+    console.info('[voice-eager]', JSON.stringify({ callId: this.callId, outcome: 'started' }));
+  }
+
   async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true, confirmedSpeech = true) {
+    const eager = this.eager.get(human);
+    this.eager.delete(human);
     this.markCallActivity();
     if (!interrupts && !this.assembler.current(human) && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1 &&
-        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) return;
+        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) { eager?.reply?.cancel(); return; }
     if (interrupts) this.interruptPlayback();
     let playbackVersion = this.playbackVersion;
     const traceId = randomUUID();
@@ -628,6 +677,7 @@ export class VoiceRoomRuntime {
     const completions: Promise<void>[] = [];
     let answerToRecord: { agentId: string; text: string } | undefined;
     let answerRecorded = false;
+    let opening: VoiceSpeechPrefetch | undefined;
     let committedSourceId: string | undefined;
     let finalRoutesMentions = true;
     const recordSpoken = (agentId: string, text: string, final = false) => {
@@ -694,12 +744,42 @@ export class VoiceRoomRuntime {
       brainHistory.push({ role: 'user', content: request.text });
       request.state = 'classifying';
       timing('brain_request');
-      // Deltas cannot announce work before the final decision has committed it.
+      // Synthesis overlaps generation, but audio stays private until the final
+      // route and exact cleaned phrase are known. Work still commits before sound.
+      const openingStream = new MarkdownSpeechStream(members);
+      let openingText = '';
+      let openingSkipped = false;
       let streamed = false;
       let firstAudio = false;
+      const brain: VoiceBrain = { answer: (selectedAgent, selectedHistory, delta, signal, search) => {
+        if (eager?.text === request.text && search && eager.reply?.matches(selectedAgent, selectedHistory, search.agents)) {
+          console.info('[voice-eager]', JSON.stringify({ traceId, callId: this.callId, outcome: 'used' }));
+          return eager.reply.consume(delta, search, signal);
+        }
+        eager?.reply?.cancel();
+        return this.service.config.brain.answer(selectedAgent, selectedHistory, delta, signal, search);
+      } };
       const reply = retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
-        await this.service.config.brain.answer(agent, brainHistory, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal, {
+        await brain.answer(agent, brainHistory, delta => {
+          if (!delta) return;
+          streamed = true; timing('brain_first_token');
+          if (opening || openingSkipped || generation.signal.aborted) return;
+          openingText += delta;
+          if (openingText.length > 240 || /[\[\]()*_`~@#>|\n]/.test(openingText)) { openingSkipped = true; return; }
+          const phrase = openingStream.push(delta)[0];
+          if (!phrase || phrase.length > 240) return;
+          const text = markdownToSpeech(cleanVoiceReply(phrase, agent.name), members);
+          if (!text) return;
+          const service = this.service; const thisRoom = this.roomId;
+          opening = new VoiceSpeechPrefetch(text, AbortSignal.any([generation.signal, controller.signal]), async function* (signal) {
+            const speech = await service.speech(thisRoom);
+            signal.throwIfAborted();
+            timing('tts_prefetch_request');
+            yield* speech.synthesize(text, agent.voice, signal);
+          });
+        }, generation.signal, {
           agents: agents.map(({ name, handle }) => ({ name, handle })),
+          diagnostic: metadata => console.info('[voice-brain-trace]', JSON.stringify({ traceId, callId: this.callId, ...metadata })),
           search: (search, signal) => {
             console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: search.name }));
             return this.service.search(this.callId, sourceId, agent.id, search, signal);
@@ -767,6 +847,9 @@ export class VoiceRoomRuntime {
       }
       const stream = new MarkdownSpeechStream(members);
       const phrases = streamed ? [...stream.push(answer), stream.finish()] : [answer];
+      if (opening?.text !== markdownToSpeech(cleanVoiceReply(phrases[0] ?? '', agent.name), members)) {
+        opening?.cancel(); opening = undefined;
+      }
       try {
         for (const phrase of phrases) {
           if (!phrase.trim()) continue;
@@ -776,7 +859,8 @@ export class VoiceRoomRuntime {
             if (firstAudio) return;
             firstAudio = true; timing('first_voiced_audio_published');
             this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-          }, commitReply, timing, members);
+          }, commitReply, timing, members, opening);
+          opening = undefined;
         }
       } catch (error) {
         if (reply.order && !generation.signal.aborted && !this.closed && !this.humanSpeaking.has(human)) await commitReply();
@@ -793,6 +877,8 @@ export class VoiceRoomRuntime {
       if (delivered && !(error instanceof Error && error.name === 'AbortError')) throw new DeliveredVoicePlaybackError(error);
       throw error;
     } finally {
+      eager?.reply?.cancel();
+      opening?.cancel();
       controller.abort();
       try {
         if (this.speaking === controller) {
@@ -882,7 +968,7 @@ export class VoiceRoomRuntime {
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
-    onFirstVoicedFrame?: () => void | Promise<void>, timing?: (stage: string) => void, members?: SpeechMember[]) {
+    onFirstVoicedFrame?: () => void | Promise<void>, timing?: (stage: string) => void, members?: SpeechMember[], opening?: VoiceSpeechPrefetch) {
     text = markdownToSpeech(cleanVoiceReply(text, agent.name), members);
     if (!text) return;
     let pending = Buffer.alloc(0); let first = true; let firstByte = true; let firstPublished = true;
@@ -895,12 +981,15 @@ export class VoiceRoomRuntime {
     const current = playbackAgents.find(a => a.id === agent.id);
     const voice = current?.voice ?? agent.voice;
     if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
+    const cancelOpening = () => opening?.cancel();
+    signal.addEventListener('abort', cancelOpening, { once: true });
     const spoken = { text: text.trim(), until: Infinity };
     this.recentSpeech.push(spoken);
     if (this.recentSpeech.length > 12) this.recentSpeech.shift();
     try {
       timing?.('tts_request');
-      for await (const bytes of speech.synthesize(spoken.text, voice, signal)) {
+      if (voice !== agent.voice) { opening?.cancel(); opening = undefined; }
+      for await (const bytes of voiceTempo(opening ? opening.read() : speech.synthesize(spoken.text, voice, signal))) {
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
         if (firstByte && bytes.length) { firstByte = false; timing?.('tts_first_byte'); }
         pending = Buffer.concat([pending, bytes]);
@@ -911,7 +1000,7 @@ export class VoiceRoomRuntime {
           pending = pending.subarray(frameBytes);
           this.markCallActivity();
           this.touch();
-          const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+          const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
           if (voiced) { first = false; await onFirstVoicedFrame?.(); }
           if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
@@ -924,7 +1013,7 @@ export class VoiceRoomRuntime {
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
         this.markCallActivity();
         this.touch();
-        const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+        const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
         if (voiced) { first = false; await onFirstVoicedFrame?.(); }
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
         await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
@@ -933,6 +1022,8 @@ export class VoiceRoomRuntime {
       }
       await this.audio.waitForPlayout();
     } finally {
+      signal.removeEventListener('abort', cancelOpening);
+      opening?.cancel();
       spoken.until = performance.now() + 1500;
     }
   }
@@ -961,6 +1052,7 @@ export class VoiceRoomRuntime {
     clearTimeout(this.leaseExpiry);
     clearInterval(this.quietCheck);
     this.shutdown.abort();
+    for (const human of this.eager.keys()) this.cancelEager(human);
     this.assembler.close();
     const cleanup = async (work: () => unknown) => {
       try { await work(); } catch (error) { captureServerError(error, { surface: 'voice-cleanup' }); }

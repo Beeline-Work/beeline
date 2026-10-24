@@ -1,0 +1,43 @@
+{
+  "separateConnections": {
+    "baseline": {
+      "turns": 24,
+      "p50Ms": 351.0658664703369,
+      "p90Ms": 356.73611698150637,
+      "minMs": 320.50259590148926,
+      "maxMs": 422.34157848358154,
+      "oneSoundOnsetPerTurn": true,
+      "onePublicationBurstPerTurn": true
+    },
+    "after": {
+      "turns": 24,
+      "p50Ms": 369.1279788017273,
+      "p90Ms": 375.9169230937958,
+      "minMs": 341.6658205986023,
+      "maxMs": 378.7962131500244,
+      "oneSoundOnsetPerTurn": true,
+      "onePublicationBurstPerTurn": true
+    }
+  },
+  "sameConnection": {
+    "baseline": {
+      "turns": 20,
+      "p50Ms": 347.50283694267273,
+      "p90Ms": 351.49720039367674,
+      "minMs": 340.0660409927368,
+      "maxMs": 356.68705701828003,
+      "oneSoundOnsetPerTurn": true,
+      "onePublicationBurstPerTurn": true
+    },
+    "tempo": {
+      "turns": 20,
+      "p50Ms": 348.63083505630493,
+      "p90Ms": 351.1439666748047,
+      "minMs": 343.40782928466797,
+      "maxMs": 354.44815254211426,
+      "oneSoundOnsetPerTurn": true,
+      "onePublicationBurstPerTurn": true
+    }
+  },
+  "pairedMedianDifferenceMs": 1.1279981136322021
+}

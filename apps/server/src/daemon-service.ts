@@ -1505,7 +1505,8 @@ export class DaemonService {
         if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
           'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
           'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
-          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed'].includes(command.reason))
+          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
+          'corner_background_tool', 'corner_brief_revision'].includes(command.reason))
           throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
         await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
@@ -8639,7 +8640,7 @@ export class DaemonService {
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
-      command.room_id === input.cornerId ? command : undefined);
+      command.room_id === input.cornerId.toLowerCase() ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event)
@@ -8652,7 +8653,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);
-    const delivery = await routeAgentResult(this.database, { ...command, room_id: input.cornerId }, saved.id);
+    const delivery = await routeAgentResult(this.database, command, saved.id, { roomId: input.cornerId, agentId });
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,

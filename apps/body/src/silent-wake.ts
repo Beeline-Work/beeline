@@ -5,5 +5,6 @@ export function nonhumanSilentWake(reason: unknown): boolean {
     'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
     'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
     'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
+    'corner_background_tool', 'corner_brief_revision',
   ].includes(reason);
 }

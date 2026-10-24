@@ -68,6 +68,8 @@ one resumed/cancelled eager attempt followed by a final turn two. In production,
 count distinct `requestId` values from `[voice-brain-provider]` for the release
 window, including cancelled calls, and divide by final turns from
 `voice_turn_timings` (`stage='flux_final'`). Do not count the trace copy again.
+`jq -s -f calls.jq release-logs.jsonl` supplies the exact request-count aggregation
+for Fly JSON log rows whose `.message` contains the log line, as in `tail.json`.
 Legacy logs have no per-provider-request counter; neither the production call
 increase nor after-release savings can be honestly measured before deployment.
 If search remains the tail after this change, compare `searched=true/false`
@@ -75,6 +77,35 @@ request timings before considering a separate change to stream tool-free
 search answers during the existing acknowledgement.
 
 ## Android measurement method
+
+Measured first published PCM to emulator output onset:
+
+| Run | Turns | p50 (ms) | p90 (ms) |
+| --- | ---: | ---: | ---: |
+| Original runtime, separate connection | 24 | 351.07 | 356.74 |
+| Revised runtime, separate connection | 24 | 369.13 | 375.92 |
+| Original playback, shared connection | 20 | 347.50 | 351.50 |
+| Revised playback, shared connection | 20 | 348.63 | 351.14 |
+
+The separate runs differed by about 18 ms. Alternating both playback methods
+on one connection reduced the median difference to 1.13 ms, with overlapping
+ranges and a slightly lower revised p90. This supports connection/buffering
+variation rather than a tempo-induced frame delay; it does not establish a
+phone latency improvement. The deterministic provider test separately proves
+that tempo adds no input-frame lookahead to the first published frame.
+
+No two-second playback delay was reproduced, so the phone buffer is unchanged.
+Every measured turn had one publication burst and one output onset; there were
+no additional onsets separated by over 500 ms of silence. This is not a claim
+that a tone test detects every speech artifact or sub-frame dropout. The
+sample-duration and pitch checks cover the server transform separately.
+
+`android-summary.json` uses linearly interpolated percentiles over the retained
+`android-*.jsonl` samples. Raw event files also contain setup publications/tap
+sounds; the measurement driver associates only events occurring after each
+trial starts. The native fixture/state captures and `android-paired.png` show
+the real Android hook and transport in the controlled call. Production-after
+server numbers still require release and the `after.sql` query.
 
 Use the existing debug APK with the temporary `voice-delivery-android-proof`
 entry and its production `useVoiceCall`/native LiveKit transport. The disposable
@@ -114,3 +145,13 @@ Linux monotonic clock as PCM publication. The script fails on missing sound.
 It also retains onset and publication-burst counts so interrupted playback
 cannot silently pass as a faster result. Restore the production mobile entry
 after the proof.
+
+For a paired check, set `VOICE_COMPARE_PLAYBACK=1` on the revised fixture and
+pass `--alternate` after the driver's count. This selects the original or
+revised `play` method in the disposable service per request while retaining
+one native connection, jitter buffer and output device. No application
+playback code or production feature flag is added for this comparison.
+
+Validation: five focused server suites pass (248 tests), including the full
+runtime/provider regressions; root workspace/mobile/scripts typecheck and
+workflow-path checks pass. `local-results.json` records deterministic values.

@@ -110,14 +110,19 @@ describe('institutional memory proposal contract', () => {
     ).toThrow(/body/);
   });
 
-  it('trims bloat at save time: one terse sentence, 1 to 6 keywords, no reserved key', () => {
+  it('keeps keyword and reserved-key rules without prose gates', () => {
     const rejects = (patch: Record<string, unknown>, pattern: RegExp) =>
       expect(() => parseInstitutionalMemoryProposal({ ...workspaceFact, ...patch })).toThrow(
         pattern,
       );
-    rejects({ body: 'The user prefers short replies.' }, /filler opening/);
-    rejects({ body: 'Deploys run on Friday. Nobody merges after noon.' }, /one sentence/);
-    rejects({ body: 'Deploys probably run on Friday.' }, /hedge/);
+    for (const body of [
+      'The user prefers short replies.',
+      'Deploys run on Friday. Nobody merges after noon.',
+      'Deploys probably run on Friday.',
+      'Note that deploys might run on Friday.\nConfirm the schedule.',
+    ]) {
+      expect(parseInstitutionalMemoryProposal({ ...workspaceFact, body }).body).toBe(body);
+    }
     rejects({ keywords: [] }, /1 to 6 keywords/);
     rejects({ keywords: ['a', 'b', 'c', 'd', 'e', 'f', 'g'] }, /1 to 6 keywords/);
     rejects({ keywords: ['the'] }, /distinctive/);

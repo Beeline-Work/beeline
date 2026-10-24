@@ -134,4 +134,22 @@ describe.each(['obsidian', 'bone'] as const)('Room list header colour in %s', (n
     expect(circle.backgroundColor).toBe(hull.accent);
     expect(circle.height).toBe(NEEDS_COUNT_SIZE);
   });
+
+  // The Android screenshot showed this style centres the digit within 1 px.
+  // A line box equal to the circle with font padding off moved it about 1 dp low.
+  it('keeps the count text style that centres the digit on device', () => {
+    const tree = header(1);
+    const count = tree.root.findByProps({ testID: 'tray-needs-you-count' });
+    const circle = Object.assign({}, ...[count.props.style].flat());
+    expect(circle).toMatchObject({ alignItems: 'center', justifyContent: 'center' });
+    const text = Object.assign({}, ...[count.findByType('Text' as never).props.style].flat());
+    expect(text).toEqual({
+      ...hull.type.sectionHead,
+      letterSpacing: 0,
+      color: hull.textInverted,
+      fontVariant: ['tabular-nums'],
+    });
+    expect(text).not.toHaveProperty('includeFontPadding');
+    expect(text).not.toHaveProperty('textAlignVertical');
+  });
 });

@@ -2562,18 +2562,27 @@ export class GitHubOperations {
             await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
           const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || !sameReportedHead || newAttempt);
           // Pull-request open and the deploy re-read pass a synthetic pending
-          // check. A green rollup posts that result. A real suite keeps its own
-          // name, so the note does not turn into the jobs inside the rollup.
-          const syntheticPending = check.status === 'pending' && check.name === 'Pull request checks';
-          const greenFromPlaceholder = becamePassing && syntheticPending;
-          const passedNames = summary.checks.filter(item => item.status === 'passed').map(item => item.name);
-          const label = greenFromPlaceholder
+          // check named "Pull request checks". A green rollup should name the
+          // suites that passed. The flag is assigned on its own so that
+          // placeholder name stays out of the System line.
+          let nameThePass = false;
+          if (becamePassing && check.status === 'pending' && check.name === 'Pull request checks')
+            nameThePass = true;
+          const label = nameThePass
             ? 'passed'
             : check.status === 'pending'
               ? 'started'
               : String(check.conclusion ?? '').toUpperCase() === 'CANCELLED'
                 ? 'cancelled'
                 : check.status;
+          if (nameThePass) {
+            const passedNames = summary.checks.filter(item => item.status === 'passed').map(item => item.name);
+            check = {
+              ...check,
+              name: passedNames.join(', ') || current.pr?.title
+                || (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),
+            };
+          }
           // The first failed job wakes immediately. Completion wakes once
           // more even when the same job still fails, so a promised rerun or
           // log read has a turn to finish it. Replays share the attempt's id.
@@ -2604,18 +2613,11 @@ export class GitHubOperations {
                     ...(current.pr?.url ? { url: current.pr.url } : {}),
                     ...(check.headSha ? { headSha: check.headSha } : {}),
                   }
-                : greenFromPlaceholder
-                  ? {
-                      text: passedNames.join(', ') || current.pr?.title
-                        || (current.pr?.number ? `pull request #${current.pr.number}` : 'pull request checks'),
-                      ...(current.pr?.url ? { url: current.pr.url } : {}),
-                      ...(check.headSha ? { headSha: check.headSha } : {}),
-                    }
-                  : {
-                      text: check.name,
-                      ...(check.url ? { url: check.url } : {}),
-                      ...(check.headSha ? { headSha: check.headSha } : {}),
-                    },
+                : {
+                    text: check.name,
+                    ...(check.url ? { url: check.url } : {}),
+                    ...(check.headSha ? { headSha: check.headSha } : {}),
+                  },
               ...(becameFailing
                 ? { consequence: `failing ${failing.join(', ')}` }
                 : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'

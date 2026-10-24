@@ -1,0 +1,74 @@
+{
+  "humans": 2,
+  "frameCounts": {
+    "received": 2458
+  },
+  "decisionRequests": 25,
+  "observations": [
+    {
+      "at": 1792861489004,
+      "nativeAudio": [
+        {
+          "bytesReceived": 318840,
+          "packetsReceived": 1662,
+          "totalAudioEnergy": 0.10491708320663205,
+          "jitterBufferDelay": 85392,
+          "jitterBufferEmittedCount": 1595520,
+          "concealedSamples": 960
+        }
+      ]
+    },
+    {
+      "at": 1792861489055,
+      "nativeAudio": [
+        {
+          "bytesReceived": 318840,
+          "packetsReceived": 1662,
+          "totalAudioEnergy": 0.10491708320663205,
+          "jitterBufferDelay": 85392,
+          "jitterBufferEmittedCount": 1595520,
+          "concealedSamples": 960
+        }
+      ]
+    },
+    {
+      "at": 1792861489056,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9744,
+          "packetsReceived": 336,
+          "totalAudioEnergy": 7.987509911380062e-08,
+          "jitterBufferDelay": 15667.2,
+          "jitterBufferEmittedCount": 322560,
+          "concealedSamples": 0
+        }
+      ]
+    },
+    {
+      "at": 1792861489124,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9800,
+          "packetsReceived": 337,
+          "totalAudioEnergy": 7.99682370558643e-08,
+          "jitterBufferDelay": 15667.2,
+          "jitterBufferEmittedCount": 322560,
+          "concealedSamples": 0
+        }
+      ]
+    },
+    {
+      "at": 1792861489126,
+      "nativeAudio": [
+        {
+          "bytesReceived": 318846,
+          "packetsReceived": 1664,
+          "totalAudioEnergy": 0.10491708641057726,
+          "jitterBufferDelay": 85488,
+          "jitterBufferEmittedCount": 1597440,
+          "concealedSamples": 960
+        }
+      ]
+    }
+  ]
+}

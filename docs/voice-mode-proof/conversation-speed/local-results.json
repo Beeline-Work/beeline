@@ -1,0 +1,32 @@
+{
+  "tests": 248,
+  "testFiles": 5,
+  "rootTypecheck": "passed",
+  "workflowPaths": "passed",
+  "opening": {
+    "baselineSynthesisMs": 200,
+    "afterSynthesisMs": 40,
+    "baselineAudioMs": 300,
+    "afterAudioMs": 200
+  },
+  "eager": {
+    "baselineAfterFinalMs": 200,
+    "afterFinalMs": 50,
+    "usefulLeadMs": 150,
+    "baselineCalls": 1,
+    "reusedCalls": 1,
+    "resumedThenFinalCalls": 2
+  },
+  "tempo": {
+    "speed": 1.15,
+    "inputSamples": 72000,
+    "outputSamples": 62609,
+    "testToneHz": 220,
+    "acceptedPitchHz": [
+      218,
+      222
+    ],
+    "baselineFirstFrameMs": 110,
+    "afterFirstFrameMs": 110
+  }
+}

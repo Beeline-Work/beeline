@@ -14,9 +14,10 @@ import { VoiceBar, VoiceAgentStrip } from '../sources/components/buzz/VoiceBar';
 import { Button } from '../sources/components/buzz/Button';
 LogBox.ignoreAllLogs();
 import Constants from 'expo-constants';
+const origin = process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL ?? 'http://10.0.2.2:18097';
 if (Constants.expoConfig) {
   Constants.expoConfig.extra ??= {};
-  Constants.expoConfig.extra.app = { buzzyMonolithUrl: 'http://10.0.2.2:18097' };
+  Constants.expoConfig.extra.app = { buzzyMonolithUrl: origin };
 }
 import { monolithSession } from '../sources/auth/monolith-session';
 monolithSession.fetch = (input, init = {}, options = {}) => (options.fetchImpl ?? fetch)(input, init);
@@ -26,13 +27,13 @@ const emit = Room.prototype.emit;
 (Room.prototype as any).emit = function (event: string, ...args: any[]) {
   const track = args[0];
   if ([RoomEvent.LocalTrackPublished, RoomEvent.AudioPlaybackStatusChanged, RoomEvent.Connected].includes(event as any))
-    void fetch('http://10.0.2.2:18097/observe', {method:'POST',body:JSON.stringify({at:Date.now(),event,canPlaybackAudio:this.canPlaybackAudio})});
+    void fetch(origin+'/observe', {method:'POST',body:JSON.stringify({at:Date.now(),event,canPlaybackAudio:this.canPlaybackAudio})});
   if (event === RoomEvent.TrackSubscribed && track.kind === 'audio') {
     const timer = setInterval(() => {
       void track.getRTCStatsReport().then((stats: any) => {
         const audio: unknown[] = [];
-        stats?.forEach((row: any) => { if (row.type === 'inbound-rtp') audio.push({ bytesReceived: row.bytesReceived, packetsReceived: row.packetsReceived, totalAudioEnergy: row.totalAudioEnergy }); });
-        return fetch('http://10.0.2.2:18097/observe', { method: 'POST', body: JSON.stringify({ at: Date.now(), nativeAudio: audio }) });
+        stats?.forEach((row: any) => { if (row.type === 'inbound-rtp') audio.push({ bytesReceived: row.bytesReceived, packetsReceived: row.packetsReceived, totalAudioEnergy: row.totalAudioEnergy, jitterBufferDelay: row.jitterBufferDelay, jitterBufferEmittedCount: row.jitterBufferEmittedCount, concealedSamples: row.concealedSamples }); });
+        return fetch(origin+'/observe', { method: 'POST', body: JSON.stringify({ at: Date.now(), nativeAudio: audio }) });
       }).catch(() => {});
     }, 50);
     this.once(RoomEvent.Disconnected, () => clearInterval(timer));
@@ -40,7 +41,6 @@ const emit = Room.prototype.emit;
   return emit.apply(this, [event, ...args] as any);
 };
 
-const origin='http://10.0.2.2:18097';
 function Call({roomId}:{roomId:string}) {
   const voice=useVoiceCall(roomId,true);
   const [card,setCard]=React.useState<any>();

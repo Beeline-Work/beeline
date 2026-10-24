@@ -60,6 +60,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const mutePending = React.useRef(false);
   const [connecting, setConnecting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const transientReplyError = React.useRef(false);
   const [quotaExhausted, setQuotaExhausted] = React.useState(false);
   const quotaRef = React.useRef(false);
   const [budgetWarning, setBudgetWarning] = React.useState<string | null>(null);
@@ -88,6 +89,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
     mutedRef.current = false; setMuted(false);
     setEndingDeadline(null); setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
+    transientReplyError.current = false;
     setJoinedAgents(null); setTarget(null); targetRef.current = null; setHumans(1);
     speakerRef.current = null;
     if (cancelJoin) await cancelJoin();
@@ -116,7 +118,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     if (session.current || pending.current) return;
     if (!enabled) { setError('You cannot join Conversation mode in this Room.'); return; }
     pending.current = true; const version = ++revision.current;
-    setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
+    setConnecting(true); setError(null); transientReplyError.current = false; setQuotaExhausted(false); quotaRef.current = false;
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     let closing: Promise<void> | undefined;
@@ -192,14 +194,16 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           }
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
+            if (transientReplyError.current) { transientReplyError.current = false; setError(null); }
           }
           // Routing notifications describe speech, not this person's explicit pin.
           if (data.type === 'error') {
             setError(data.message);
             if (data.code === 'speech-quota-exhausted') {
+              transientReplyError.current = false;
               quotaRef.current = true; setQuotaExhausted(true); setLevel(0);
               void room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
-            }
+            } else transientReplyError.current = true;
           }
           if (data.type === 'latency') setFirstAudioMs(data.firstAudioMs);
           if (data.type === 'humans') {

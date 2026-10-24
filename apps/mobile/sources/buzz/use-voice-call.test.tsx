@@ -209,6 +209,32 @@ it('ignores a peer error and mutes the microphone on the trusted bridge quota si
   } finally { await act(async () => renderer.unmount()); }
 });
 
+it('err-1: clears a failed reply notice when the next agent speaker signal arrives', async () => {
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { audioLevel: 0, publishData: vi.fn(async () => {}),
+      setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    const bridge = { identity: `beeline-voice-${fixture.callId}` };
+    const signal = (data: object) => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify(data)), bridge, undefined, VOICE_DATA_TOPIC);
+    await act(async () => signal({ type: 'error', message: 'Voice reply unavailable; please try again' }));
+    expect(voice.error).toBe('Voice reply unavailable; please try again');
+    expect(voice.quotaExhausted).toBe(false);
+    await act(async () => signal({ type: 'speaker', agentId: 'ruby' }));
+    expect(voice.speaker).toBe('ruby');
+    expect(voice.error).toBeNull();
+
+    await act(async () => signal({ type: 'error', code: 'speech-quota-exhausted', message: VOICE_QUOTA_MESSAGE }));
+    await act(async () => signal({ type: 'speaker', agentId: 'ruby' }));
+    expect(voice.error).toBe(VOICE_QUOTA_MESSAGE);
+    expect(voice.quotaExhausted).toBe(true);
+    await act(async () => voice.end());
+  } finally { await act(async () => renderer.unmount()); }
+});
+
 it('preserves the connection error even if disconnect and audio cleanup also reject', async () => {
   fixture.closeAudio.mockRejectedValueOnce(new Error('audio cleanup failed'));
   fixture.closeAudio.mockClear();

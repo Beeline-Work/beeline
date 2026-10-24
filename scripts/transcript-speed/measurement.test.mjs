@@ -28,3 +28,19 @@ test('nearest-rank percentile preserves tail stalls and missing samples', () => 
   assert.equal(result.rowCommits, 2);
   assert.equal(result.distinctRowsCommitted, 1);
 });
+
+test('build probe reports the effective compiler option and rejects moved targets', async () => {
+  const { createRequire } = await import('node:module');
+  const require = createRequire(new URL('../../apps/mobile/package.json', import.meta.url));
+  const { transformSync } = require('@babel/core');
+  const plugin = require('../../scripts/transcript-speed/commits.cjs');
+  const options = { configFile: false, babelrc: false, filename: '/fixture/chat/_chat-surface.tsx',
+    caller: { name: 'metro', platform: 'android', supportsReactCompiler: false }, plugins: [plugin] };
+  const output = transformSync('function BuzzChatSurface() { return null; }', options).code;
+  assert.match(output, /__transcriptCommit\("transcript", "room"\)/);
+  assert.match(output, /reactCompiler: false/);
+  assert.match(output, /__transcriptBuild/);
+  assert.throws(() => transformSync('function Renamed() {}', options), /target moved/);
+  const config = require('./babel.config.js')({ cache() {} });
+  assert.ok(!config.plugins.flat().some(item => typeof item === 'string' && item.endsWith('commits.cjs')));
+});

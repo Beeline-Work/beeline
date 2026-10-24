@@ -25,7 +25,7 @@ public final class LatencyRigProbe {
   }
   public static synchronized void expect(String needle, String name, String entry) {
     if (needle == null || !needle.matches("[a-f0-9]{16}") || name == null ||
-        !("room-list".equals(entry) || "push".equals(entry) || "send-text".equals(entry))) throw new IllegalArgumentException("Invalid fixture probe");
+        !("room-list".equals(entry) || "push".equals(entry) || "send-text".equals(entry) || "key".equals(entry))) throw new IllegalArgumentException("Invalid fixture probe");
     pending = new Pending(needle, name, entry);
   }
   public static synchronized void begin(String entry) {
@@ -48,7 +48,8 @@ public final class LatencyRigProbe {
     View room = roomScreen(view);
     if (room == null) return;
     int composerTop = composerTop(room);
-    if (composerTop == Integer.MAX_VALUE || !visibleRow(room, p.needle, composerTop)) return;
+    if (composerTop == Integer.MAX_VALUE || !("key".equals(p.entry)
+        ? visibleComposer(room, p.needle) : visibleRow(room, p.needle, composerTop))) return;
     p.submitted = true;
     view.getViewTreeObserver().registerFrameCommitCallback(() -> {
       long paintMs = p.startMs + (SystemClock.elapsedRealtimeNanos() - p.startNanos) / 1000000;
@@ -77,6 +78,19 @@ public final class LatencyRigProbe {
       }
     }
     return null;
+  }
+  private static boolean visibleComposer(View view, String needle) {
+    if (!view.isShown() || view.getAlpha() < 0.9f) return false;
+    if (view instanceof TextView && "Message".contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())
+        && ((TextView)view).getText().toString().contains(needle)) {
+      Rect bounds = new Rect();
+      return view.getGlobalVisibleRect(bounds) && bounds.height() >= ((TextView)view).getLineHeight();
+    }
+    if (view instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup)view;
+      for (int i = 0; i < group.getChildCount(); i++) if (visibleComposer(group.getChildAt(i), needle)) return true;
+    }
+    return false;
   }
   private static int composerTop(View view) {
     if (view.isShown() && view.getAlpha() >= 0.9f && "Message".contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())) {

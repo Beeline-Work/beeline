@@ -28,6 +28,11 @@ module.exports = function withLatencyRigNativeProbe(config) {
     return super.dispatchTouchEvent(event)
   }`, 'LatencyRigProbe.begin("room-list")');
     edit(path.join(java, 'PushNotificationActivity.kt'), 'super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n    LatencyRigProbe.begin("push")', 'LatencyRigProbe.begin("push")');
+    edit(path.join(java, 'MainActivity.kt'), 'class MainActivity : ReactActivity() {', `class MainActivity : ReactActivity() {
+  override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+    if (event.action == android.view.KeyEvent.ACTION_DOWN) LatencyRigProbe.begin("key")
+    return super.dispatchKeyEvent(event)
+  }`, 'LatencyRigProbe.begin("key")');
     edit(path.join(dir, 'AndroidManifest.xml'), '</application>', `<receiver android:name=".LatencyRigReceiver" android:exported="true" android:permission="android.permission.DUMP" /></application>`, 'android:name=".LatencyRigReceiver"');
     return mod;
   }]);

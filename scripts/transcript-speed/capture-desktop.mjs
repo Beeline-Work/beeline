@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { rooms, workspace, corner } from './fixture.mjs';
 import { fixtureStimulus } from './stimulus.mjs';
 import { summarize } from './metrics.mjs';
+import { desktopMemory } from './process-memory.mjs';
 const session = process.env.TRANSCRIPT_WEBDRIVER_SESSION;
 if (!session) throw new Error('Set TRANSCRIPT_WEBDRIVER_SESSION to the packaged app session');
 const output = process.argv[2] ?? '/tmp/transcript-desktop-results';
@@ -84,6 +85,17 @@ try {
     });
     samples.at(-1).serverSettled = await stimulus.settled(sent);
   }
+  const memoryBeforeSwitches = desktopMemory();
+  await capture('warm-room-switches', async () => {
+    for (let i = 0; i < 20; i++) {
+      const target = await element(`[data-testid="desktop-room-${rooms[i % 2]}"]`);
+      await call(`element/${target}/click`, {});
+      await pause(1000);
+      if (!(await evaluate('return location.pathname')).includes(rooms[i % 2])) throw new Error('Desktop Room switch did not navigate');
+    }
+  });
+  samples.at(-1).switches = 20;
+  samples.at(-1).memory = { before: memoryBeforeSwitches, after: desktopMemory() };
   const screenshot = await call('screenshot', undefined, 'GET');
   await writeFile(`${output}/screen.png`, Buffer.from(screenshot, 'base64'));
   const artifact = '.beeline-cargo-target/release/bundle/deb/Beeline_0.2.20_amd64.deb';

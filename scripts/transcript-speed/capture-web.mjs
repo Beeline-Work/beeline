@@ -13,6 +13,14 @@ const results = [];
 const stimulus = await fixtureStimulus();
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(() => {
+    globalThis.__keyPaintEvents = [];
+    globalThis.__eventTimingSupported = PerformanceObserver.supportedEntryTypes.includes('event');
+    if (globalThis.__eventTimingSupported) new PerformanceObserver(list => {
+      for (const event of list.getEntries()) if (event.name === 'keydown')
+        globalThis.__keyPaintEvents.push({ startTime: event.startTime, duration: event.duration, processingStart: event.processingStart });
+    }).observe({ type: 'event', durationThreshold: 16, buffered: true });
+  });
   await page.goto('http://127.0.0.1:19882/review/transcript-fixture-local-only-36bbb7b4');
   await page.waitForURL('**/beeline/channels**');
   await page.goto(`http://127.0.0.1:19882/beeline/chat/${rooms[0]}?communityId=${workspace}`);
@@ -44,11 +52,14 @@ try {
     await input.focus();
     await page.waitForTimeout(500);
     for (const character of 'measure') {
+      const eventStart = await page.evaluate(() => performance.now());
       await page.evaluate(() => globalThis.__transcriptSpeed.begin('keystroke'));
       await page.keyboard.type(character);
       await page.waitForTimeout(150);
       const sample = await page.evaluate(() => globalThis.__transcriptSpeed.end());
-      results.push({ repeat, ...summarize(sample, refreshHz), raw: sample });
+      results.push({ repeat, ...summarize(sample, refreshHz), raw: sample,
+        keyPaintEvents: await page.evaluate(start => globalThis.__keyPaintEvents.filter(event => event.startTime >= start), eventStart),
+        keyPaintMethod: 'Chrome Event Timing keydown-to-next-paint, 8ms quantization; unreported events censored below 16ms' });
     }
     await input.fill('');
     await page.evaluate(() => globalThis.__transcriptSpeed.begin('scroll'));
@@ -83,7 +94,22 @@ try {
     });
     results.at(-1).serverSettled = await stimulus.settled(sent);
   }
+  const memoryBeforeSwitches = (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value;
+  await capture('warm-room-switches', 0, async () => {
+    for (let i = 0; i < 20; i++) {
+      const desktopRow = page.getByTestId(`desktop-room-${rooms[i % 2]}`);
+      if (await desktopRow.count()) await desktopRow.click();
+      else {
+        await page.getByRole('button', { name: 'Back to Rooms', exact: true }).click();
+        await page.getByTestId(`room-${rooms[i % 2]}`).click();
+      }
+      await page.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
+      await page.waitForTimeout(1000);
+    }
+  });
   const metrics = (await cdp.send('Performance.getMetrics')).metrics;
+  results.at(-1).memory = { switches: 20, beforeBytes: memoryBeforeSwitches,
+    afterBytes: metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value };
   const record = {
     status: 'partial',
     buildSha: null, // The loaded export has no build manifest yet.

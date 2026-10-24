@@ -467,7 +467,7 @@ export async function createAgentCommand(
   return db.transaction(async (db) => {
   await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
-  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; wake_batch_minutes: number; human_input: boolean; is_implementer: boolean }>(
+  const member = await db.query<{ opening: CommandRow | null; source_text: string | null; source_event: { kind?: string } | null; wake_batch_minutes: number; human_input: boolean; failing_check_wake: boolean }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
        WHERE r.parent_id IS NOT NULL AND opened.room_id=r.id AND opened.private_payload->>'kind'='order'
        ORDER BY (opened.agent_id=$2) DESC,opened.created_at DESC,opened.id DESC LIMIT 1) opening,
@@ -477,21 +477,24 @@ export async function createAgentCommand(
        COALESCE((SELECT author.kind='human' AND source.presentation='message' AND source.system_event IS NULL
          FROM messages source JOIN identities author ON author.id=source.author_id WHERE source.id=$3),false)
          AND $4::boolean OR COALESCE((SELECT kind='human' FROM identities WHERE id=$5),false) AND $6::boolean human_input,
-       COALESCE((SELECT ${cornerImplementerSql('fact', 'corner')}=$2 FROM corner_facts fact
-         JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=r.id), false) is_implementer
+       COALESCE((SELECT true FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id
+         WHERE fact.corner_id=r.id
+           AND ${cornerImplementerSql('fact', 'corner')}=$2
+           AND $7::text='corner_check'), false) failing_check_wake
      FROM memberships m JOIN rooms r ON r.id=m.room_id
      JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
      WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
      FOR SHARE OF m,r`, [input.roomId, input.agentId, input.sourceMessageId,
        input.reason !== 'schedule' && !input.privatePayload && !input.reason.startsWith('corner_'),
-       input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order'],
+       input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order', input.reason],
   );
   if (!member.rowCount) return undefined;
   // A green review is the reply to a block filed while checks were still pending.
   // A red head still wakes the implementer after that block: the four-push stop
   // must not swallow failing checks.
   const greenReviewWake = isGreenReviewWake(input.reason, member.rows[0]!.source_event?.kind);
-  const failingCheckWake = input.reason === 'corner_check' && member.rows[0]!.is_implementer;
+  const failingCheckWake = member.rows[0]!.failing_check_wake;
   if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
       input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input && !greenReviewWake &&
       !failingCheckWake &&

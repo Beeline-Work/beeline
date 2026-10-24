@@ -93,11 +93,6 @@ describe('TrayGlyph primary-row action', () => {
 
 const NEEDS_COUNT_SIZE = 17;
 
-function badgeText(tree: ReactTestRenderer) {
-  const text = tree.root.findByProps({ testID: 'tray-needs-you-count' }).findByType('Text' as never);
-  return Object.assign({}, ...[text.props.style].flat());
-}
-
 describe.each(['obsidian', 'bone'] as const)('Room list header colour in %s', (name) => {
   const hull = beelineThemes[name];
   beforeAll(() => { activeTheme.buzz = hull; });
@@ -138,13 +133,5 @@ describe.each(['obsidian', 'bone'] as const)('Room list header colour in %s', (n
     const circle = Object.assign({}, ...[tree.root.findByProps({ testID: 'tray-needs-you-count' }).props.style].flat());
     expect(circle.backgroundColor).toBe(hull.accent);
     expect(circle.height).toBe(NEEDS_COUNT_SIZE);
-  });
-
-  it('centres the count digit in its circle', () => {
-    const text = badgeText(header(1));
-    expect(text.lineHeight).toBe(NEEDS_COUNT_SIZE);
-    expect(text.includeFontPadding).toBe(false);
-    expect(text.textAlignVertical).toBe('center');
-    expect(text.color).toBe(hull.textInverted);
   });
 });

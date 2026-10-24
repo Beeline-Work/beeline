@@ -2561,10 +2561,13 @@ export class GitHubOperations {
             (current.checks === 'passing' || current.checks === 'failing')))
             await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
           const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || !sameReportedHead || newAttempt);
-          // The deploy re-read passes a synthetic pending check. A green rollup
-          // posts that result; the placeholder must not read as a check that started.
+          // Pull-request open and the deploy re-read pass a synthetic pending
+          // check. A green rollup posts that result. A real suite keeps its own
+          // name, so the note does not turn into the jobs inside the rollup.
+          const syntheticPending = check.status === 'pending' && check.name === 'Pull request checks';
+          const greenFromPlaceholder = becamePassing && syntheticPending;
           const passedNames = summary.checks.filter(item => item.status === 'passed').map(item => item.name);
-          const label = becamePassing
+          const label = greenFromPlaceholder
             ? 'passed'
             : check.status === 'pending'
               ? 'started'
@@ -2601,7 +2604,7 @@ export class GitHubOperations {
                     ...(current.pr?.url ? { url: current.pr.url } : {}),
                     ...(check.headSha ? { headSha: check.headSha } : {}),
                   }
-                : becamePassing
+                : greenFromPlaceholder
                   ? {
                       text: passedNames.join(', ') || current.pr?.title
                         || (current.pr?.number ? `pull request #${current.pr.number}` : 'pull request checks'),

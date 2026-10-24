@@ -148,7 +148,7 @@ async function ci(checks: string) {
     }),
   ]);
 }
-it('Reproduction CORNER-STATE: the Room list and corner inspection agree on all four states and CI target', async () => {
+it('Reproduction CORNER-STATE: the Room list and corner inspection agree that CI is Review without human attention', async () => {
   await turn();
   expect(await state()).toBe('working');
   await end(WORKER, 10);
@@ -159,22 +159,41 @@ it('Reproduction CORNER-STATE: the Room list and corner inspection agree on all 
   expect(await state()).toBe('review');
   await end(REVIEWER, 40);
   await ci('pending');
-  expect(await state()).toBe('waiting');
+  expect(await state()).toBe('review');
   const row = (await phone.readCorners(ROOM, HUMAN))!.corners[0]!;
   expect(row).toMatchObject({
-    state: 'waiting',
-    blocker: { kind: 'ci', url: 'https://github.com/o/r/actions/runs/1' },
+    state: 'review',
   });
   expect(
     (await phone.readChats(WS, HUMAN))!.chats.find((row) => row.room.id === ROOM)?.openCorners?.[0]
       ?.state,
-  ).toBe('waiting');
+  ).toBe('review');
+  expect(row.blocker).toBeUndefined();
+  const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
+  expect(deck).toMatchObject({ waitingCornerCount: 0, agentState: null });
+  expect(deck!.openCorners[0]).not.toHaveProperty('attention', true);
   await ci('failing');
   expect(await state()).toBe('idle');
   console.info(
-    'Demonstrated Reproduction CORNER-STATE: list + inspection Working, Review, Waiting with CI job target, then Idle after failure',
+    'Demonstrated Reproduction CORNER-STATE: list + inspection Working, Review, Review for CI without human attention, then Idle after failure',
   );
 });
+it.each(['pending', 'passing'])(
+  'Reproduction CI-REVIEW: a human merge-yes request stays Waiting with %s checks',
+  async (checks) => {
+    await ci(checks);
+    await db.query(
+      `UPDATE agent_commands SET private_payload=jsonb_build_object('kind','order','text','Work','authorId',$1::text,'fromRoomId',$2::text) WHERE id='opening-order'`,
+      [HUMAN, ROOM],
+    );
+    const { reportToCommander } = await import('./commander.js');
+    await reportToCommander(db, C, WORKER, 'needs-decision: Please approve this merge?');
+    expect(await state()).toBe('waiting');
+    const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
+    expect(deck).toMatchObject({ waitingCornerCount: 1 });
+    expect(deck!.openCorners[0]).toMatchObject({ state: 'waiting', blocker: { kind: 'message' } });
+  },
+);
 it('single-use gap deadlines survive restart and a resume inside the gap sends no alert', async () => {
   await turn();
   await runCornerAttention(db);

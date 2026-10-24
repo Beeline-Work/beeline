@@ -6701,8 +6701,14 @@ export function BuzzChatSurface({
                             Ask a {ROOM_LABEL} admin to link one.
                           </Text>
                         )}
-                        <Button label="DISMISS" variant="quiet" accessibilityLabel="Dismiss"
-                          onPress={() => setCornerOpenRepoPrompt(false)} testID="corner-open-repo-prompt-dismiss" />
+                        <Button
+                          label="DISMISS"
+                          variant="quiet"
+                          accessibilityLabel="Dismiss"
+                          onPress={() => setCornerOpenRepoPrompt(false)}
+                          testID="corner-open-repo-prompt-dismiss"
+                          appearance={{ control: styles.repoPromptDismiss, label: styles.repoPromptDismissText }}
+                        />
                       </View>
                     ))}
                     {desktopExperience ? (

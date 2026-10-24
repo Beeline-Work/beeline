@@ -27,12 +27,17 @@ export function RuntimeErrorView({ error, retry, scope }: {
         ) : null}
     </ScrollView>
     <Button
-        label="Retry"
-        accessibilityLabel="Retry" onPress={retry}
-        emergencyTheme={theme}
-        variant="quiet"
-        testID="runtime-error-retry"
-      />
+      label="Retry"
+      accessibilityLabel="Retry"
+      onPress={retry}
+      emergencyTheme={theme}
+      variant="quiet"
+      testID="runtime-error-retry"
+      appearance={{
+        control: { minHeight: 44, justifyContent: 'center' },
+        label: { ...theme.type.bodyStrong, color: theme.accent },
+      }}
+    />
   </View>
   );
 }

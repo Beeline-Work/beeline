@@ -266,9 +266,11 @@ export function ZoomableArtifactImage({
           disabled={zoom.scale <= 1}
           onPress={() => step(1 / 1.5)}
           testID={`${testIDPrefix}-zoom-out`}
-          label="" icon={<Text style={styles.zoomText}>{"−"}</Text>}
+          label=""
+          icon={<Text style={styles.zoomText}>{'−'}</Text>}
           variant="quiet"
           iconOnly
+          appearance={{ control: styles.zoomButton, label: undefined }}
         />
         <Text
           accessibilityLabel={`Image zoom ${Math.round(zoom.scale * 100)} percent`}
@@ -283,20 +285,23 @@ export function ZoomableArtifactImage({
           disabled={zoom.scale >= MAX_IMAGE_ZOOM}
           onPress={() => step(1.5)}
           testID={`${testIDPrefix}-zoom-in`}
-          label="" icon={<Text style={styles.zoomText}>{"+"}</Text>}
+          label=""
+          icon={<Text style={styles.zoomText}>{'+'}</Text>}
           variant="quiet"
           iconOnly
+          appearance={{ control: styles.zoomButton, label: undefined }}
         />
           <Button
-          accessibilityRole="button"
-          accessibilityLabel="Reset image zoom"
-          accessibilityState={{ disabled: zoom.scale === 1 }}
-          disabled={zoom.scale === 1}
-          onPress={() => setImageZoom({ scale: 1, x: 0, y: 0 })}
-          testID={`${testIDPrefix}-zoom-reset`}
-          label={'Reset'}
-          variant="quiet"
-        />
+            accessibilityRole="button"
+            accessibilityLabel="Reset image zoom"
+            accessibilityState={{ disabled: zoom.scale === 1 }}
+            disabled={zoom.scale === 1}
+            onPress={() => setImageZoom({ scale: 1, x: 0, y: 0 })}
+            testID={`${testIDPrefix}-zoom-reset`}
+            label={'Reset'}
+            variant="quiet"
+            appearance={{ control: styles.zoomButton, label: styles.zoomResetText }}
+          />
       </View>
     </View>
   );

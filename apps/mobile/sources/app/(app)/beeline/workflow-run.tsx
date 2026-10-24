@@ -102,9 +102,12 @@ export default function WorkflowRun() {
           {roomId ? (
             <Button
               accessibilityRole="button"
-              onPress={() => router.push({ pathname: '/beeline/workflow', params: { roomId, name: run.workflowSlug } })}
+              onPress={() =>
+                router.push({ pathname: '/beeline/workflow', params: { roomId, name: run.workflowSlug } })
+              }
               label={'All runs'}
               variant="quiet"
+              appearance={{ control: styles.allRuns, label: styles.allRunsText }}
             />
           ) : null}
           <View style={styles.plate} testID="workflow-run-summary">

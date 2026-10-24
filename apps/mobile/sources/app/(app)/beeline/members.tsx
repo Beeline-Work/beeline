@@ -1293,6 +1293,7 @@ export default function BuzzMembers({
                   label={working === 'remove-agent' ? 'Removing…' : 'Remove from Workspace'}
                   variant="danger"
                   fullWidth
+                  appearance={{ control: styles.removeAgentControl, label: styles.removeAgentText }}
                 />
               )}
             </View>
@@ -1401,6 +1402,7 @@ export default function BuzzMembers({
               setError(null);
               schedulerRef.current?.force();
             }}
+            appearance={{ control: styles.errorPanel, label: styles.error }}
           />
         )}
         <KeyboardAwareScrollView
@@ -1449,6 +1451,7 @@ export default function BuzzMembers({
                 testID="members-load-more-people"
                 label={rosterLoading ? 'Loading…' : 'Show more'}
                 variant="quiet"
+                appearance={{ control: styles.loadMore, label: styles.loadMoreText }}
               />
             )}
           </View>
@@ -1497,6 +1500,7 @@ export default function BuzzMembers({
                 testID="members-load-more-agents"
                 label={rosterLoading ? 'Loading…' : 'Show more'}
                 variant="quiet"
+                appearance={{ control: styles.loadMore, label: styles.loadMoreText }}
               />
             )}
           </View>

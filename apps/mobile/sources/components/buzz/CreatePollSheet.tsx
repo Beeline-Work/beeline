@@ -117,6 +117,7 @@ export function CreatePollSheet({
                 onPress={() => setOptions((current) => current.filter((_, i) => i !== index))}
                 label={'Remove'}
                 variant="quiet"
+                appearance={{ control: styles.remove, label: styles.actionText }}
               />
             ) : null}
           </View>
@@ -128,6 +129,7 @@ export function CreatePollSheet({
             testID="create-poll-add-option"
             label={'Add option'}
             variant="quiet"
+            appearance={{ control: styles.add, label: styles.actionText }}
           />
         ) : null}
         <Text style={styles.label}>Closes after</Text>

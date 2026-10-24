@@ -117,9 +117,11 @@ function RailButton({
           accessibilityLabel={`Exit ${label}`}
           testID={`workspace-exit-${testID?.replace('community-rail-', '') ?? ''}`}
           onPress={onExitPress}
-          label="" icon={<Text style={styles.exitAffordanceGlyph}>{"×"}</Text>}
+          label=""
+          icon={<Text style={styles.exitAffordanceGlyph}>{'×'}</Text>}
           variant="quiet"
           iconOnly
+          appearance={{ control: styles.exitAffordance, label: undefined }}
         />
       )}
     </View>

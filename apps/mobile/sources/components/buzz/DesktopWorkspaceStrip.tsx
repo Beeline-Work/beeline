@@ -61,9 +61,11 @@ export function DesktopWorkspaceStrip({
           accessibilityRole="button"
           onPress={onAdd}
           testID="desktop-strip-add-workspace"
-          label="" icon={<Text style={styles.add}>{"+"}</Text>}
+          label=""
+          icon={<Text style={styles.add}>{'+'}</Text>}
           variant="quiet"
           iconOnly
+          appearance={{ control: styles.tile, label: undefined }}
         />
       </ScrollView>
       <Pressable

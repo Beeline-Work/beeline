@@ -138,11 +138,20 @@ function CornerAppBlockView({
           testID={`corner-app-action-${block.label}`}
           label={busy ? 'Sending…' : block.label}
           variant="quiet"
+          iconPosition="end"
           icon={
             <>
-          <Text style={styles.actionArrow}>→</Text>
-        </>
+              <Text style={styles.actionArrow}>→</Text>
+            </>
           }
+          appearance={{
+            control: ({ pressed }) => [
+              styles.action,
+              pressed && styles.actionPressed,
+              disabled && styles.actionBusy,
+            ],
+            label: styles.actionLabel,
+          }}
         />
       );
     }

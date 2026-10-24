@@ -250,6 +250,7 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 
 ### Buttons
 - Labelled actions use `Button`; cards use `ButtonRow` for a wrapping set of actions. `HullDialogActions` is reserved for real dialogs and inline editors. The `danger` Button variant retains normal text contrast inside a danger-coloured outline. Failure notices use `ErrorBanner`, with an optional shared secondary action for dismissal. `sources/buzz/shared-controls.guard.test.ts` inventories raw text controls, retry notices and dialog-action rows; each retained structural control has an exact fingerprint and a reason in `design/shared-control-allowlist.json`.
+- When migrating an existing approved control, `Button.appearance` preserves its exact control, label and pressed styles; it must not introduce new visual treatment. `iconPosition` preserves the original glyph order.
 - **`Button`** (`components/buzz/Button.tsx`) is the one button: house radius, 44 tall, `body` label in Space Grotesk Medium, sentence case, a pressed state. Variants: `primary` (filled `buttonPrimaryFill`), `secondary` (1 px `borderStrong`), `brass` (1 px `accent`, brass label), `quiet` (unboxed Cancel/dismissal), `destructive` (unboxed `dialogDanger` explicit verb). `HullDialogActions` owns the trailing, wrapping decision row: Cancel/reject first, confirm last, gap 8. Retry uses a secondary Button beside separately readable error copy; dismissal uses `HullActionSheetCancel`.
 - **Busy:** `PixelLoader` (four frames, ~7.5 fps) appears only inside a labelled control.
 

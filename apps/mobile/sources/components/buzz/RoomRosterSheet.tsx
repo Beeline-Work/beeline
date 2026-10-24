@@ -136,9 +136,11 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           <Button
             accessibilityLabel={`Close ${ROOM_LABEL} roster`}
             onPress={onClose}
-            label="" icon={<Text style={styles.rosterModalCloseText}>{"×"}</Text>}
+            label=""
+            icon={<Text style={styles.rosterModalCloseText}>{'×'}</Text>}
             variant="quiet"
             iconOnly
+            appearance={{ control: styles.rosterModalClose, label: undefined }}
           />
         </View>
 
@@ -226,6 +228,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                         testID={`profile-room-member-${participant.pubkey}`}
                         label={'View profile'}
                         variant="quiet"
+                        appearance={{ control: styles.rosterRemoveButton, label: styles.rosterRemoveText }}
                       />
                     )}
                     {canRemove ? (
@@ -237,6 +240,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
                         testID={`remove-room-member-${participant.pubkey}`}
                         label={removing ? 'Removing…' : `Remove from this ${ROOM_LABEL}`}
                         variant="quiet"
+                        appearance={{ control: styles.rosterRemoveButton, label: styles.rosterRemoveText }}
                       />
                     ) : (
                       <Text style={styles.rosterNote}>
@@ -259,13 +263,8 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
               accessibilityLabel={`Show the rest: ${roster.overflowLabel}`}
               onPress={() => setExpanded(true)}
               testID="room-roster-more"
-              icon={
-                <ChevronGlyph
-                color={styles.chevron.color}
-                direction="right"
-                size={CHEVRON_ROW_SIZE}
-              />
-              }
+              icon={<ChevronGlyph color={styles.chevron.color} direction="right" size={CHEVRON_ROW_SIZE} />}
+              appearance={{ control: styles.rosterMore, label: styles.rosterMoreLabel }}
             />
           )}
           {members.length === 0 && <Text style={styles.rosterEmpty}>No visible members</Text>}

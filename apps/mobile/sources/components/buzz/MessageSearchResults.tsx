@@ -65,6 +65,10 @@ export function MessageSearchResults({
               testID="message-search-more"
               label={search.loadingMore ? 'Loading…' : 'Show more'}
               variant="quiet"
+              appearance={{
+                control: ({ pressed }) => [styles.more, pressed && styles.pressed],
+                label: styles.action,
+              }}
             />
           ) : null}
         </>

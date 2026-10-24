@@ -253,4 +253,34 @@ describe('the shared Button anatomy', () => {
     expect(text.flexGrow).toBeUndefined();
     expect(text.textAlign).toBeUndefined();
   });
+
+  it.each(['obsidian', 'bone'] as const)('preserves approved appearance in %s without changing regular buttons', async theme => {
+    active.theme = theme;
+    const tokens = beelineThemes[theme];
+    const control = { minWidth: 44, minHeight: 44, alignItems: 'flex-end' as const, justifyContent: 'center' as const };
+    const label = { ...tokens.type.meta, color: tokens.accent };
+    const result = await render({
+      variant: 'quiet',
+      appearance: { control: ({ pressed }) => [control, pressed && { opacity: 0.6 }], label },
+    });
+    expect(result.frame()).toEqual(control);
+    expect(result.frame(true)).toEqual({ ...control, opacity: 0.6 });
+    expect(result.text).toEqual(label);
+    expect(result.label.props.numberOfLines).toBeUndefined();
+    expect((await render()).text.fontSize).toBe(tokens.type.body.fontSize);
+  });
+
+  it('preserves disabled state without adding geometry or colours', async () => {
+    const onPress = vi.fn();
+    const { pressable, frame } = await render({
+      disabled: true, variant: 'quiet', onPress,
+      appearance: { control: { minHeight: 44 }, label: { textAlign: 'right' } },
+    });
+    expect(pressable.props.disabled).toBe(true);
+    expect(pressable.props.accessibilityState.disabled).toBe(true);
+    expect(frame()).toEqual({ minHeight: 44 });
+  });
+
+
+
 });

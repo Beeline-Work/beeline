@@ -121,6 +121,10 @@ export function CodeBlock({
             onPress={copyAll}
             label={copyLabel}
             variant="quiet"
+            appearance={{
+              control: ({ pressed }) => [styles.verb, pressed && styles.verbPressed],
+              label: styles.verbText,
+            }}
           />
         </View>
       ) : (
@@ -133,6 +137,10 @@ export function CodeBlock({
             onPress={copyAll}
             label={copyLabel}
             variant="quiet"
+            appearance={{
+              control: ({ pressed }) => [styles.verb, pressed && styles.verbPressed],
+              label: styles.verbText,
+            }}
           />
         </View>
       )}

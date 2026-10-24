@@ -105,8 +105,11 @@ function HeaderIconControl({
       accessibilityRole="button"
       onPress={onPress}
       testID={testID}
-      label="" icon={<Text style={styles.headerGlyph}>{glyph}</Text>}
-      variant="quiet" iconOnly
+      label=""
+      icon={<Text style={styles.headerGlyph}>{glyph}</Text>}
+      variant="quiet"
+      iconOnly
+      appearance={{ control: styles.headerButton, label: undefined }}
     />
   );
   return Platform.OS === 'web'

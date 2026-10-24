@@ -705,8 +705,15 @@ export default function BuzzIdentitySettings() {
               <PixelLoader compact />
             </View>
           ) : (
-            <Button label="Check" variant="quiet" accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
-              disabled={!Updates.isEnabled} onPress={() => void checkForUpdate()} testID="ota-update-check" />
+            <Button
+              label="Check"
+              variant="quiet"
+              accessibilityLabel={manualUpdateButtonLabel(manualUpdate)}
+              disabled={!Updates.isEnabled}
+              onPress={() => void checkForUpdate()}
+              testID="ota-update-check"
+              appearance={{ control: !Updates.isEnabled ? styles.disabled : undefined, label: styles.check }}
+            />
           )}
         </View>
         </>

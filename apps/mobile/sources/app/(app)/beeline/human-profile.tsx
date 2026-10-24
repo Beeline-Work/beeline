@@ -352,7 +352,8 @@ export function HumanProfile({
                     testID="remove-person"
                     label={busy ? 'Removing…' : 'Remove from Workspace'}
                     variant="danger"
-                  fullWidth
+                    fullWidth
+                    appearance={{ control: styles.removeMemberControl, label: styles.removeMemberText }}
                   />
                 )}
               </View>

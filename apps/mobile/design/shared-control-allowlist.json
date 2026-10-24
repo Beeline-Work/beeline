@@ -127,20 +127,20 @@
   },
   {
     "file": "components/buzz/Button.tsx",
-    "line": 77,
+    "line": 86,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "f6e01c4ab5962f087359",
-    "control": "<EmergencyPressable {...props} accessibilityRole=\"button\" accessibilityState={{ ...accessibilityState, disabled: isDisabled }} disabled={isDisabled} onPress={onPress} style={[ { minHeight: 44, minWidth: 44, paddingHorizontal: emergencyTheme.space.md, justifyContent: 'center', alignItems: 'center', borderRadius: emergencyTheme.radius, }, style, ]} > <EmergencyText style={{ ...emergencyTheme.type.bo",
+    "id": "d4ae43e70e947ecad25a",
+    "control": "<EmergencyPressable {...props} accessibilityRole=\"button\" accessibilityState={{ ...accessibilityState, disabled: isDisabled }} disabled={isDisabled} onPress={onPress} style={(state) => appearance ? [ typeof appearance.control === 'function' ? appearance.control(state) : appearance.control, style, ] : [ { minHeight: 44, minWidth: 44, paddingHorizontal: emergencyTheme.space.md, justifyContent: 'cent",
     "reason": "Shared Button implementation, including provider-free recovery path."
   },
   {
     "file": "components/buzz/Button.tsx",
-    "line": 125,
+    "line": 151,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "b79a4c664493b23a1df0",
-    "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true }} disabled={isDisabled} onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(event); }} style={({ pressed }) => [ styles.frame, primary ? styles.primary : styles[variant], pressed",
+    "id": "a321e6bca9f9b11c7f0c",
+    "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true, }} disabled={isDisabled} onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(event); }} style={(state) => appearance ? [ typeof appearance.control === 'function' ? appearance.con",
     "reason": "Shared Button implementation, including provider-free recovery path."
   },
   {
@@ -184,7 +184,7 @@
     "line": 372,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "674f89f6c8e72aee943b",
+    "id": "615a34c86f1b702f42b0",
     "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
@@ -193,16 +193,16 @@
     "line": 379,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "7695cae7e85757b07ad6",
+    "id": "306ea6443df9d5741803",
     "control": "<View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numberOfLines={1} style={styles.replyLabel}> <Text style={styles.replyGlyph}>↩</Text> Replying to{' '} <Text style={styles.replyHandle}>@{reply.handle}</Text> </Text> <Text numberOfLines={1} ellipsizeMode=\"tail\" sty",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 403,
+    "line": 405,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "680e2791a5dac0137388",
+    "id": "f2bbacc5a94950d5972f",
     "control": "<View key={`${attachment.uri}:${index}`} style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]} testID={`pending-chat-attachment-${index}`} > <View style={styles.attachmentCopy}> <Text numberOfLines={1} ellipsizeMode=\"tail\" style={styles.attachmentName}> {attachment.name} </Text> <Text numberOfLines={1} style={styles.attachmentMeta} testID={`pending-chat-attachment-meta-${index",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },

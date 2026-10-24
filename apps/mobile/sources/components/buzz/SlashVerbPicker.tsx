@@ -57,9 +57,11 @@ export function SlashVerbPicker({
           accessibilityRole="button"
           onPress={onDismiss}
           testID="slash-verb-dismiss"
-          label="" icon={<Text style={styles.dismissText}>{"×"}</Text>}
+          label=""
+          icon={<Text style={styles.dismissText}>{'×'}</Text>}
           variant="quiet"
           iconOnly
+          appearance={{ control: styles.dismiss, label: undefined }}
         />
       </View>
       {commandCount > 0 || appCount > 0 || verbs.length > 0 ? (

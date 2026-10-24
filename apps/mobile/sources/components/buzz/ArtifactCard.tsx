@@ -291,6 +291,7 @@ function ArtifactCardShell({
             testID="artifact-open-browser"
             label={'Open in browser ↗'}
             variant="quiet"
+            appearance={{ control: undefined, label: styles.footerQuiet }}
           />
         ) : null}
         <View style={styles.footerSpacer} />
@@ -302,6 +303,7 @@ function ArtifactCardShell({
             testID="artifact-open"
             label={'Open →'}
             variant="quiet"
+            appearance={{ control: undefined, label: styles.footerPrimary }}
           />
         ) : null}
       </View>

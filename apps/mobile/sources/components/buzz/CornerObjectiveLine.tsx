@@ -103,6 +103,10 @@ function OtherWorkflowRuns({ runs, onOpenWorkflow, testID }: {
         testID={`${testID}-workflow-more`}
         label={`+${runs.length} running`}
         variant="quiet"
+        appearance={{
+          control: ({ pressed }) => [styles.briefLink, pressed && styles.briefLinkPressed],
+          label: styles.briefLinkText,
+        }}
       />
       <HullActionSheetModal
         accessibilityLabel="Close running workflows"
@@ -173,6 +177,10 @@ export function CornerBriefLink({
       testID={testID}
       label={'Read brief'}
       variant="quiet"
+      appearance={{
+        control: ({ pressed }) => [styles.briefLink, pressed && styles.briefLinkPressed],
+        label: styles.briefLinkText,
+      }}
     />
   );
 }

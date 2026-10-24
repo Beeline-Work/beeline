@@ -30,9 +30,13 @@ export function NoMatchingConversationsEmpty({ onShowAll }: { onShowAll: () => v
         variant="quiet"
         icon={
           <>
-        <ChevronGlyph direction="right" size={18} color={styles.actionText.color} />
-      </>
+            <ChevronGlyph direction="right" size={18} color={styles.actionText.color} />
+          </>
         }
+        appearance={{
+          control: ({ pressed }) => [styles.action, pressed && styles.pressed],
+          label: styles.actionText,
+        }}
       />
     </View>
   );

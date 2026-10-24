@@ -66,23 +66,23 @@ export function DesktopArtifactPane({
               accessibilityRole="button"
               onPress={() =>
                 void copyPicture(attachment).then((copied) =>
-                  copied
-                    ? showCopied('Image copied to clipboard')
-                    : showCopyFailed("Couldn't copy image"),
+                  copied ? showCopied('Image copied to clipboard') : showCopyFailed("Couldn't copy image"),
                 )
               }
               testID="desktop-artifact-copy"
               label={'Copy'}
               variant="quiet"
+              appearance={{ control: styles.headerAction, label: styles.actionText }}
             />
               <Button
-              accessibilityLabel="Share image"
-              accessibilityRole="button"
-              onPress={() => void sharePicture(attachment)}
-              testID="desktop-artifact-share"
-              label={'Share'}
-              variant="quiet"
-            />
+                accessibilityLabel="Share image"
+                accessibilityRole="button"
+                onPress={() => void sharePicture(attachment)}
+                testID="desktop-artifact-share"
+                label={'Share'}
+                variant="quiet"
+                appearance={{ control: styles.headerAction, label: styles.actionText }}
+              />
           </>
         ) : null}
         <Button
@@ -92,16 +92,19 @@ export function DesktopArtifactPane({
           testID="desktop-artifact-open-browser"
           label={'Open in browser ↗'}
           variant="quiet"
+          appearance={{ control: styles.headerAction, label: styles.openLink }}
         />
           <Button
-          accessibilityLabel="Close artifact pane"
-          accessibilityRole="button"
-          onPress={onClose}
-          testID="desktop-artifact-close"
-          label="" icon={<Text style={styles.close}>{"✕"}</Text>}
-          variant="quiet"
-          iconOnly
-        />
+            accessibilityLabel="Close artifact pane"
+            accessibilityRole="button"
+            onPress={onClose}
+            testID="desktop-artifact-close"
+            label=""
+            icon={<Text style={styles.close}>{'✕'}</Text>}
+            variant="quiet"
+            iconOnly
+            appearance={{ control: styles.headerAction, label: undefined }}
+          />
       </View>
       {format === 'game' ? (
         <RunnableArtifact attachment={attachment} />

@@ -258,9 +258,14 @@ export function DesktopWorkspaceRail({
                 tileRefs.current[workspaces.length] = node;
               }}
               testID="desktop-workspace-add"
-              label="" icon={<Text style={styles.addGlyph}>{"+"}</Text>}
+              label=""
+              icon={<Text style={styles.addGlyph}>{'+'}</Text>}
               variant="quiet"
               iconOnly
+              appearance={{
+                control: [styles.tile, styles.addTile, addFocused && styles.focusedTile],
+                label: undefined,
+              }}
             />
             <View style={styles.separator} />
             {/* The account hub. The rail's scrim covers the navigation pane

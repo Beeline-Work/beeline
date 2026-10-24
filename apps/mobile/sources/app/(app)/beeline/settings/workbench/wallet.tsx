@@ -225,20 +225,22 @@ export default function WalletScreen() {
                 </View>
                 <Button
                   accessibilityLabel="Copy address"
-                accessibilityRole="button"
-                onPress={copyAddress}
+                  accessibilityRole="button"
+                  onPress={copyAddress}
                   testID="wallet-address-copy"
                   label={copied ? 'Copied' : 'Copy'}
                   variant="quiet"
+                  appearance={{ control: styles.addressAction, label: styles.addressActionText }}
                 />
               <Button
-                  accessibilityLabel="Show address QR code"
+                accessibilityLabel="Show address QR code"
                 accessibilityRole="button"
                 onPress={() => setQrOpen((open) => !open)}
-                  testID="wallet-address-qr-toggle"
-                  label={'QR'}
-                  variant="quiet"
-                />
+                testID="wallet-address-qr-toggle"
+                label={'QR'}
+                variant="quiet"
+                appearance={{ control: styles.addressAction, label: styles.addressActionText }}
+              />
               </View>
               {qrOpen ? (
               <View style={styles.qrBlock} testID="wallet-address-qr">
@@ -254,7 +256,7 @@ export default function WalletScreen() {
               <View style={styles.balanceActions} testID="wallet-actions">
                 {(['send', 'receive'] as const).map((action) => (
                   <Button
-                      key={action}
+                    key={action}
                     accessibilityRole="button"
                     onPress={() =>
                       router.push({
@@ -262,10 +264,11 @@ export default function WalletScreen() {
                         params: { workspaceId },
                       } as unknown as Href)
                     }
-                      testID={`wallet-action-${action}`}
-                      label={action === 'send' ? 'Send' : 'Receive'}
-                      variant="quiet"
-                    />
+                    testID={`wallet-action-${action}`}
+                    label={action === 'send' ? 'Send' : 'Receive'}
+                    variant="quiet"
+                    appearance={{ control: styles.balanceAction, label: styles.balanceActionText }}
+                  />
                 ))}
               </View>
             </View>

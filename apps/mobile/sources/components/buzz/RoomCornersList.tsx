@@ -414,9 +414,11 @@ export function RoomCornersList({
                 label="More"
                 accessibilityLabel="More archived corners"
                 disabled={more?.status === 'loading'}
-                loading={more?.status === 'loading'} onPress={onMoreArchived}
+                loading={more?.status === 'loading'}
+                onPress={onMoreArchived}
                 variant="quiet"
                 testID="room-corners-archived-more"
+                appearance={{ control: styles.more, label: styles.moreLabel }}
               />
             )
           ) : null}

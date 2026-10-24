@@ -221,6 +221,7 @@ export function AgentProfileView({
                       onPress={() => setExpanded((value) => !value)}
                       label={expanded ? 'Show less' : 'Read full soul'}
                       variant="quiet"
+                      appearance={{ control: styles.readMore, label: styles.accent }}
                     />
                   )}
                   {canEdit && detail && (

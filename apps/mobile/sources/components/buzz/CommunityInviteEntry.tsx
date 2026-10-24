@@ -34,6 +34,7 @@ export function CommunityInviteEntry({
           testID="members-action"
           label={MEMBERS_LABEL}
           variant="quiet"
+          appearance={{ control: styles.action, label: styles.actionText }}
         />
       ) : allowPeopleInvites ? (
         <Button
@@ -46,9 +47,13 @@ export function CommunityInviteEntry({
           variant="quiet"
           icon={
             <>
-          <Text style={styles.actionIcon}>＋</Text>
-          </>
+              <Text style={styles.actionIcon}>＋</Text>
+            </>
           }
+          appearance={{
+            control: [styles.action, creatingInvite && styles.disabled],
+            label: styles.actionText,
+          }}
         />
       ) : null}
     </View>

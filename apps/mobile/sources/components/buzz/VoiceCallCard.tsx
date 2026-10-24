@@ -23,11 +23,16 @@ export function VoiceCallCard({ call, joined, onJoin, connecting = false, viewer
       <Text style={styles.title} numberOfLines={1}>Call · {voiceDuration(now - call.startedAt)} · {voiceCallHumanNames(call, viewer)}</Text>
       {!joined && (
           <Button
-            onPress={onJoin} disabled={connecting} hitSlop={8}
-        accessibilityState={{ busy: connecting }} accessibilityRole="button" accessibilityLabel="Join call"
+            onPress={onJoin}
+            disabled={connecting}
+            hitSlop={8}
+            accessibilityState={{ busy: connecting }}
+            accessibilityRole="button"
+            accessibilityLabel="Join call"
             testID="voice-call-join"
             label={connecting ? 'Joining…' : 'Join'}
             variant="quiet"
+            appearance={{ control: styles.join, label: styles.joinText }}
           />
         )}
     </View>

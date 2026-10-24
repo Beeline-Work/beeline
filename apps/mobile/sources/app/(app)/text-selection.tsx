@@ -78,15 +78,20 @@ export default function TextSelectionScreen() {
             <PageHeader
                 action={
                     <Button
-            accessibilityLabel={"Copy"}
-                        accessibilityRole="button"
-                        disabled={copyDisabled}
-                        onPress={handleCopyAll}
-            testID="text-selection-copy"
-            label="" icon={<Text style={[styles.copyGlyph, copyDisabled && styles.copyGlyphDisabled]}>{"⧉"}</Text>}
-            variant="quiet"
-            iconOnly
-          />
+                      accessibilityLabel={'Copy'}
+                      accessibilityRole="button"
+                      disabled={copyDisabled}
+                      onPress={handleCopyAll}
+                      testID="text-selection-copy"
+                      label=""
+                      icon={<Text style={[styles.copyGlyph, copyDisabled && styles.copyGlyphDisabled]}>{'⧉'}</Text>}
+                      variant="quiet"
+                      iconOnly
+                      appearance={{
+                        control: ({ pressed }) => [styles.copyButton, pressed && styles.copyButtonPressed],
+                        label: undefined,
+                      }}
+                    />
                 }
                 backAccessibilityLabel={"Back"}
                 onBack={() => router.back()}

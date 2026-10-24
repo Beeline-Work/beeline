@@ -422,9 +422,11 @@ export function TranscriptCard({
                     hitSlop={12}
                     onPress={onDismiss}
                     testID={testID ? `${testID}-dismiss` : undefined}
-                    label="" icon={<Text style={styles.dismiss}>{"✕"}</Text>}
+                    label=""
+                    icon={<Text style={styles.dismiss}>{'✕'}</Text>}
                     variant="quiet"
                     iconOnly
+                    appearance={{ control: undefined, label: undefined }}
                   />
                 ) : null}
               </View>

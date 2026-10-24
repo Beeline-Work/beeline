@@ -13,7 +13,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import { PixelLoader } from './MonoHull';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'provider' | 'brass' | 'quiet' | 'destructive' | 'danger';
+export type ButtonVariant =
+  'primary' | 'secondary' | 'provider' | 'brass' | 'quiet' | 'destructive' | 'danger';
 
 export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   ref?: React.Ref<React.ComponentRef<typeof Pressable>>;
@@ -25,6 +26,7 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   icon?: React.ReactNode;
   /** Fixed 44-point target without label padding. */
   iconOnly?: boolean;
+  iconPosition?: 'start' | 'end';
   /**
    * `primary`: the filled action (one per surface).
    * `secondary`: outlined in `borderStrong`, for the alternative action.
@@ -38,6 +40,11 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   loading?: boolean;
   /** Stretch across the parent's cross axis. */
   fullWidth?: boolean;
+  /** Preserve an existing approved control while moving its behavior into Button. */
+  appearance?: {
+    control?: PressableProps['style'];
+    label?: StyleProp<TextStyle>;
+  };
   /** Outer layout only (margins, alignment, flex). Shape and type are fixed. */
   style?: StyleProp<ViewStyle>;
   /** Label layout only; shape and type remain fixed. */
@@ -59,6 +66,7 @@ function RecoveryButton({
   emergencyTheme,
   icon,
   iconOnly = false,
+  iconPosition = 'start',
   variant = 'primary',
   labelTone,
   loading = false,
@@ -66,6 +74,7 @@ function RecoveryButton({
   disabled,
   style,
   labelStyle,
+  appearance,
   onPress,
   accessibilityState,
   ...props
@@ -80,19 +89,34 @@ function RecoveryButton({
         accessibilityState={{ ...accessibilityState, disabled: isDisabled }}
         disabled={isDisabled}
         onPress={onPress}
-        style={[
-          {
-            minHeight: 44,
-            minWidth: 44,
-            paddingHorizontal: emergencyTheme.space.md,
-            justifyContent: 'center',
-            alignItems: 'center',
-            borderRadius: emergencyTheme.radius,
-          },
-          style,
-        ]}
+        style={(state) =>
+          appearance
+            ? [
+                typeof appearance.control === 'function'
+                  ? appearance.control(state)
+                  : appearance.control,
+                style,
+              ]
+            : [
+                {
+                  minHeight: 44,
+                  minWidth: 44,
+                  paddingHorizontal: emergencyTheme.space.md,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  borderRadius: emergencyTheme.radius,
+                },
+                style,
+              ]
+        }
       >
-        <EmergencyText style={{ ...emergencyTheme.type.bodyStrong, color: emergencyTheme.accent }}>
+        <EmergencyText
+          style={
+            appearance
+              ? appearance.label
+              : { ...emergencyTheme.type.bodyStrong, color: emergencyTheme.accent }
+          }
+        >
           {label}
         </EmergencyText>
       </EmergencyPressable>
@@ -106,6 +130,7 @@ function ButtonFrame({
   emergencyTheme,
   icon,
   iconOnly = false,
+  iconPosition = 'start',
   variant = 'primary',
   labelTone,
   loading = false,
@@ -113,6 +138,7 @@ function ButtonFrame({
   disabled,
   style,
   labelStyle,
+  appearance,
   onPress,
   accessibilityState,
   ...props
@@ -125,53 +151,73 @@ function ButtonFrame({
     <Pressable
       accessibilityRole="button"
       {...props}
-      accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true }}
+      accessibilityState={{
+        ...accessibilityState,
+        disabled: isDisabled,
+        busy: loading || accessibilityState?.busy === true,
+      }}
       disabled={isDisabled}
       onPress={(event) => {
         if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress?.(event);
       }}
-      style={({ pressed }) => [
-        styles.frame,
-        primary ? styles.primary : styles[variant],
-        pressed && !isDisabled && (filled ? styles.primaryPressed : styles.outlinedPressed),
-        isDisabled &&
-          (primary
-            ? styles.primaryDisabled
-            : variant === 'provider'
-              ? styles.providerDisabled
-              : !borderless && styles.outlinedDisabled),
-        fullWidth && styles.fullWidth,
-        iconOnly && styles.iconOnly,
-        style,
-      ]}
+      style={(state) =>
+        appearance
+          ? [
+              typeof appearance.control === 'function'
+                ? appearance.control(state)
+                : appearance.control,
+              style,
+            ]
+          : [
+              styles.frame,
+              primary ? styles.primary : styles[variant],
+              state.pressed &&
+                !isDisabled &&
+                (filled ? styles.primaryPressed : styles.outlinedPressed),
+              isDisabled &&
+                (primary
+                  ? styles.primaryDisabled
+                  : variant === 'provider'
+                    ? styles.providerDisabled
+                    : !borderless && styles.outlinedDisabled),
+              fullWidth && styles.fullWidth,
+              iconOnly && styles.iconOnly,
+              style,
+            ]
+      }
     >
       {loading && <PixelLoader compact />}
-      {icon}
+      {iconPosition === 'start' && icon}
       {label ? (
         <Text
-          numberOfLines={1}
+          numberOfLines={appearance ? undefined : 1}
           style={[
-            styles.label,
-            labelStyle,
-            primary
-              ? styles.primaryLabel
-              : variant === 'provider'
-                ? styles.providerLabel
-              : variant === 'brass'
-                ? styles.brassLabel
-                : variant === 'danger'
-                  ? styles.dangerLabel
-                : variant === 'destructive'
-                  ? styles.destructiveLabel
-                  : styles.secondaryLabel,
-            labelTone === 'quiet' && styles.quietLabel,
-            isDisabled && variant !== 'provider' && styles.disabledLabel,
+            ...(appearance
+              ? [appearance.label]
+              : [
+                  styles.label,
+                  labelStyle,
+                  primary
+                    ? styles.primaryLabel
+                    : variant === 'provider'
+                      ? styles.providerLabel
+                      : variant === 'brass'
+                        ? styles.brassLabel
+                        : variant === 'danger'
+                          ? styles.dangerLabel
+                          : variant === 'destructive'
+                            ? styles.destructiveLabel
+                            : styles.secondaryLabel,
+                  labelTone === 'quiet' && styles.quietLabel,
+                  isDisabled && variant !== 'provider' && styles.disabledLabel,
+                ]),
           ]}
         >
           {label}
         </Text>
       ) : null}
+      {iconPosition === 'end' && icon}
     </Pressable>
   );
 }

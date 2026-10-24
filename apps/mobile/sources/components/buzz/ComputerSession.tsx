@@ -155,10 +155,14 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
       {session.status === 'live' && access ? (
         <View style={styles.footer}>
       <Button
-            onPress={() => void open()} accessibilityRole="button" accessibilityLabel="Open live browser" testID="computer-session-open"
-            label={'Open live browser'}
-            variant="quiet"
-          />
+        onPress={() => void open()}
+        accessibilityRole="button"
+        accessibilityLabel="Open live browser"
+        testID="computer-session-open"
+        label={'Open live browser'}
+        variant="quiet"
+        appearance={{ control: undefined, label: styles.link }}
+      />
     </View>
       ) : null}
     </View>

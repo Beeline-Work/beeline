@@ -951,9 +951,15 @@ export default function BuzzChannels() {
             variant="quiet"
             onPress={() => setDeletedWorkspaceNotice(null)}
             testID="workspace-deleted-notice"
+            appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && <Button label={error} variant="quiet" onPress={refreshNow} />}
+        {!!error && <Button
+          label={error}
+          variant="quiet"
+          onPress={refreshNow}
+          appearance={{ control: styles.errorBar, label: styles.error }}
+        />}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions

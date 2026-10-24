@@ -681,19 +681,26 @@ export default function TrayScreen() {
           {!desktop ? <Text style={styles.open}>OPEN →</Text> : null}
           {desktop && bookmark.available ? (
             <Button
-              accessibilityLabel="Remove bookmark" accessibilityRole="button"
-              onPress={(event) => { event.stopPropagation(); void remove(bookmark); }}
+              accessibilityLabel="Remove bookmark"
+              accessibilityRole="button"
+              onPress={(event) => {
+                event.stopPropagation();
+                void remove(bookmark);
+              }}
               label={'REMOVE'}
               variant="quiet"
+              appearance={{ control: styles.remove, label: styles.removeText }}
             />
           ) : null}
         </View>
         {!bookmark.available ? (
           <Button
-            accessibilityLabel="Remove unavailable bookmark" accessibilityRole="button"
+            accessibilityLabel="Remove unavailable bookmark"
+            accessibilityRole="button"
             onPress={() => void remove(bookmark)}
             label={'REMOVE'}
             variant="quiet"
+            appearance={{ control: styles.remove, label: styles.removeText }}
           />
         ) : null}
       </ContentTarget>
@@ -720,9 +727,11 @@ export default function TrayScreen() {
                 : 'This link did not name a Workspace, and none is open.'}
             </Text>
             <Button
-              accessibilityRole="button" onPress={() => router.replace('/beeline/channels')}
+              accessibilityRole="button"
+              onPress={() => router.replace('/beeline/channels')}
               label={'BACK TO ROOMS'}
               variant="quiet"
+              appearance={{ control: styles.remove, label: styles.removeText }}
             />
           </View>
         ) : loading ? (
@@ -741,11 +750,17 @@ export default function TrayScreen() {
                   <Text style={styles.sectionCount}>{row.count}</Text>
                   {row.clear ? (
                     <Button
-                      accessibilityLabel={`Clear ${row.title}`} accessibilityRole="button"
-                      hitSlop={8} onPress={() => clearSection(row.clear!)}
+                      accessibilityLabel={`Clear ${row.title}`}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => clearSection(row.clear!)}
                       testID={`tray-clear-${row.clear}`}
                       label={'CLEAR'}
                       variant="quiet"
+                      appearance={{
+                        control: ({ pressed }) => [styles.sectionClear, pressed && { opacity: 0.7 }],
+                        label: styles.removeText,
+                      }}
                     />
                   ) : null}
                 </View>
@@ -766,10 +781,12 @@ export default function TrayScreen() {
           case 'saved-more':
             return (
               <Button
-                accessibilityRole="button" onPress={() => void loadMoreSaved()}
+                accessibilityRole="button"
+                onPress={() => void loadMoreSaved()}
                 testID="bookmarks-more"
                 label={'LOAD MORE SAVED'}
                 variant="quiet"
+                appearance={{ control: styles.emptyBlock, label: styles.removeText }}
               />
             );
           case 'saved-empty':
@@ -804,10 +821,12 @@ export default function TrayScreen() {
             <Text style={styles.emptyTitle}>Source unavailable</Text>
             <Text style={styles.empty}>This bookmark no longer exposes message content.</Text>
             <Button
-              accessibilityLabel="Remove unavailable bookmark" accessibilityRole="button"
+              accessibilityLabel="Remove unavailable bookmark"
+              accessibilityRole="button"
               onPress={() => void remove(selectedBookmark)}
               label={'REMOVE'}
               variant="quiet"
+              appearance={{ control: styles.remove, label: styles.removeText }}
             />
           </View>
         ) : selected && inspectError ? (
@@ -841,9 +860,11 @@ export default function TrayScreen() {
           <Text style={styles.undoText}>Bookmark removed</Text>
           {removed.available ? (
             <Button
-              accessibilityRole="button" onPress={() => void undo()}
+              accessibilityRole="button"
+              onPress={() => void undo()}
               label={'UNDO'}
               variant="quiet"
+              appearance={{ control: styles.undoAction, label: styles.undoActionText }}
             />
           ) : null}
         </View>
@@ -854,7 +875,13 @@ export default function TrayScreen() {
           style={[styles.undo, desktop && styles.desktopUndo,
             { bottom: 16 + insets.bottom + (removed ? UNDO_STACK : 0) }]}>
           <Text style={styles.undoText}>{clearedLabel(newestClear)}</Text>
-          <Button accessibilityRole="button" onPress={undoClear} label={'UNDO'} variant="quiet" />
+          <Button
+            accessibilityRole="button"
+            onPress={undoClear}
+            label={'UNDO'}
+            variant="quiet"
+            appearance={{ control: styles.undoAction, label: styles.undoActionText }}
+          />
         </View>
       ) : null}
     </View>

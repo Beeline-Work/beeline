@@ -113,6 +113,10 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
         testID="wallet-send-confirm"
         label={'Send'}
         variant="quiet"
+        appearance={{
+          control: styles.sendPress,
+          label: [styles.sendButton, (sending || !amount || !to) && styles.sendDisabled],
+        }}
       />
       <HullActionSheetModal
         onClose={() => setPickerOpen(false)}

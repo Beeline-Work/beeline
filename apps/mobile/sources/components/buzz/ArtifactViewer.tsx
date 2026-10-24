@@ -100,15 +100,14 @@ export function ArtifactViewerScreen({
             onPress={() =>
               void Clipboard.setStringAsync(document.code).then(
                 (copied) =>
-                  copied
-                    ? showCopied('Code copied to clipboard')
-                    : showCopyFailed("Couldn't copy code"),
+                  copied ? showCopied('Code copied to clipboard') : showCopyFailed("Couldn't copy code"),
                 () => showCopyFailed("Couldn't copy code"),
               )
             }
             testID="artifact-viewer-copy"
             label={'Copy'}
             variant="quiet"
+            appearance={{ control: styles.headerAction, label: styles.headerActionText }}
           />
         ) : format === 'image' ? (
           <>
@@ -117,23 +116,23 @@ export function ArtifactViewerScreen({
               accessibilityRole="button"
               onPress={() =>
                 void copyPicture(attachment!).then((copied) =>
-                  copied
-                    ? showCopied('Image copied to clipboard')
-                    : showCopyFailed("Couldn't copy image"),
+                  copied ? showCopied('Image copied to clipboard') : showCopyFailed("Couldn't copy image"),
                 )
               }
               testID="artifact-viewer-copy"
               label={'Copy'}
               variant="quiet"
+              appearance={{ control: styles.headerAction, label: styles.headerActionText }}
             />
               <Button
-              accessibilityLabel="Share image"
-              accessibilityRole="button"
-              onPress={() => void sharePicture(attachment!)}
-              testID="artifact-viewer-share"
-              label={'Share'}
-              variant="quiet"
-            />
+                accessibilityLabel="Share image"
+                accessibilityRole="button"
+                onPress={() => void sharePicture(attachment!)}
+                testID="artifact-viewer-share"
+                label={'Share'}
+                variant="quiet"
+                appearance={{ control: styles.headerAction, label: styles.headerActionText }}
+              />
           </>
         ) : null}
         <Button
@@ -141,9 +140,11 @@ export function ArtifactViewerScreen({
           accessibilityRole="button"
           onPress={onClose}
           testID="artifact-viewer-close"
-          label="" icon={<Text style={styles.closeGlyph}>{"✕"}</Text>}
+          label=""
+          icon={<Text style={styles.closeGlyph}>{'✕'}</Text>}
           variant="quiet"
           iconOnly
+          appearance={{ control: styles.headerAction, label: undefined }}
         />
       </View>
       <View style={styles.body}>

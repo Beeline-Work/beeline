@@ -138,6 +138,8 @@
         "scripts/system-lines-proof.tsx",
         // The delivery-banner browser regression bundles this entry by path through esbuild.
         "scripts/error-banner-browser-proof.tsx",
+        // The icon-order browser regression bundles this entry by path through esbuild.
+        "scripts/button-icon-order-browser-proof.tsx",
         // The repository subscription screenshot runner bundles this entry by path.
         "scripts/repository-subscription-proof.tsx",
         "scripts/harness-start-failure-proof.tsx",

@@ -584,6 +584,7 @@ describe('beeline-files-and-mocks "Showing a photograph" section', () => {
 it('keeps the command contract aligned with asynchronous ordering and corner-only watches', () => {
   const text = beelineManagedSkills('test-release', { isReviewer: true }).map((skill) => skill.content).join('\n');
   // The always-on prompt carries the end-the-turn rule; the skill does not restate it.
+  expect(text).toContain('resume your corner by ordering yourself at its address from a different place');
   expect(text).not.toContain('After ordering another agent, end the turn');
   expect(roomPrompt()).toContain('After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.');
   expect(text).not.toContain('read(address) and watch(address) across member Rooms, corners and DMs');

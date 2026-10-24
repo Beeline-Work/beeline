@@ -184,9 +184,14 @@ it('Reproduction CORNER-STATE: the Room list and corner inspection agree that CI
   expect(deck).toMatchObject({ waitingCornerCount: 0, agentState: null });
   expect(deck!.openCorners[0]).not.toHaveProperty('attention', true);
   await ci('failing');
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
   expect(await state()).toBe('idle');
   console.info(
-    'Demonstrated Reproduction CORNER-STATE: list + inspection Working, Review, Review for CI without human attention, then Idle after failure',
+    'Demonstrated Reproduction CORNER-STATE: list + inspection Working, Review, Review for CI without human attention, Working during the red-check repair window, then Idle',
   );
 });
 it.each(['pending', 'passing'])(
@@ -206,9 +211,9 @@ it.each(['pending', 'passing'])(
   },
 );
 it.each([
-  ['agent', 'pending', 'review'],
+  ['agent', 'pending', 'idle'],
   ['human', 'pending', 'waiting'],
-  ['agent', 'unreported', 'review'],
+  ['agent', 'unreported', 'idle'],
   ['human', 'unreported', 'waiting'],
 ] as const)(
   'Reproduction R1: a %s commander blocked report during %s checks is %s',
@@ -231,11 +236,11 @@ it.each([
     ).toBe(expected);
     const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
     expect(deck!.openCorners[0]?.state).toBe(expected);
-    if (expected === 'review') {
+    if (expected === 'waiting') {
+      expect(deck).toMatchObject({ waitingCornerCount: 1 });
+    } else {
       expect(row.blocker).toBeUndefined();
       expect(deck).toMatchObject({ waitingCornerCount: 0 });
-    } else {
-      expect(deck).toMatchObject({ waitingCornerCount: 1 });
     }
     console.info(
       `Demonstrated Reproduction R1: ${kind} commander blocked report during ${checks} checks is ${expected}`,
@@ -282,11 +287,23 @@ it('single-use gap deadlines survive restart and a resume inside the gap sends n
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
-it('CI failure opens one Idle stretch, and pending CI past 30 minutes stays review', async () => {
+it('CI failure stays working for 30 minutes, then one idle alert, and pending checks stay review', async () => {
   await ci('pending');
-  await runCornerAttention(db);
+  const pending = await refreshCornerAttention(db, C);
+  expect(pending!.deadlines).toEqual([]);
   expect(await commanderFlags()).toHaveLength(0);
   await ci('failing');
+  const repair = await refreshCornerAttention(db, C);
+  expect(await state()).toBe('working');
+  expect(repair!.deadlines).toHaveLength(1);
+  expect(repair!.deadlines[0]! - Date.now()).toBeGreaterThan(29 * 60 * 1000);
+  expect(repair!.deadlines[0]! - Date.now()).toBeLessThan(31 * 60 * 1000);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
@@ -294,7 +311,7 @@ it('CI failure opens one Idle stretch, and pending CI past 30 minutes stays revi
   await ci('pending');
   await runCornerAttention(db);
   await db.query(
-    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '45 minutes' WHERE corner_id=$1`,
     [C],
   );
   await runCornerAttention(db);
@@ -570,4 +587,182 @@ it('Reproduction IDLE-1: a running workflow label without a live turn still aler
   await db.query(`UPDATE corner_facts SET lifecycle='{"lifecycle":"running"}' WHERE corner_id=$1`, [C]);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
+});
+
+async function checksHead(sha: string, checks: 'pending' | 'failing') {
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    C,
+    JSON.stringify({
+      lifecycle: 'in-review',
+      checks,
+      pr: { number: 2890, url: 'https://github.com/o/r/pull/2890', headSha: sha },
+      checksSummary: {
+        status: checks,
+        total: 34,
+        updatedAt: Date.now() / 1000,
+        checks: [{
+          name: 'SERVER SUITE',
+          status: checks === 'pending' ? 'pending' : 'failed',
+          url: 'https://github.com/o/r/actions/runs/1',
+        }],
+        failing: checks === 'failing' ? ['SERVER SUITE'] : [],
+      },
+    }),
+  ]);
+}
+
+it('Reproduction RED-STALL-1: four pushes, a blocked stop, and red checks wake the implementer, then one commander after 30 minutes', async () => {
+  const heads = [1, 2, 3, 4].map((n) => n.toString(16).padStart(40, '0'));
+  for (const sha of heads) await checksHead(sha, 'pending');
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(
+    db,
+    C,
+    WORKER,
+    'blocked: Four pushes without PASS. The reviewer cannot start until checks are green.',
+  );
+  await checksHead(heads[3]!, 'failing');
+  await systemLine(db, {
+    roomId: C,
+    authorId: WORKER,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'found failing checks on',
+    kind: 'check-failed',
+    object: { text: '7 of 34 failed', headSha: heads[3] },
+  });
+  const worker = (await readAgentCommands(db, C, WORKER)).commands;
+  const repair = worker.find((command) => command.reason === 'corner_check');
+  expect(repair).toBeTruthy();
+  await daemon.execute('claimAgentCommand', {
+    roomId: C, commandId: repair!.id, generationId: 'red-stall',
+  }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', {
+    roomId: C, requestId: repair!.turnRequestId, generationId: 'red-stall', status: 'complete',
+  }, WORKER);
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'));
+  expect(stalls).toHaveLength(1);
+  expect(stalls[0]!.source.body).toContain('30 minutes');
+  expect(await state()).toBe('idle');
+});
+
+it('Reproduction IDLE-1: a live repair turn suppresses alerts beyond the red-check deadline', async () => {
+  await ci('failing');
+  await wake(WORKER, 'repair-still-running');
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
+  await runCornerAttention(db);
+  expect(await state()).toBe('idle');
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'));
+  expect(stalls).toHaveLength(0);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'))).toHaveLength(0);
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+});
+
+it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer while five shards are still pending', async () => {
+  const heads = [1, 2, 3, 4].map((n) => n.toString(16).padStart(40, '0'));
+  for (const sha of heads) await checksHead(sha, 'pending');
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(
+    db,
+    C,
+    WORKER,
+    'blocked: Four pushes without PASS. The reviewer cannot start until checks are green.',
+  );
+  const sha = heads[3]!;
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    C,
+    JSON.stringify({
+      lifecycle: 'in-review',
+      checks: 'failing',
+      pr: { number: 2890, url: 'https://github.com/o/r/pull/2890', headSha: sha },
+      checksSummary: {
+        status: 'failing',
+        total: 8,
+        updatedAt: Date.now() / 1000,
+        failing: ['MOBILE SUITE', 'FRAME-BUDGET', 'STATE-UPGRADE'],
+        checks: [
+          { name: 'MOBILE SUITE', status: 'failed' },
+          { name: 'FRAME-BUDGET', status: 'failed' },
+          { name: 'STATE-UPGRADE', status: 'failed' },
+          { name: 'SERVER SUITE SHARD 1', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 2', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 3', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 4', status: 'pending' },
+          { name: 'SERVER SUITE SHARD 5', status: 'pending' },
+        ],
+      },
+    }),
+  ]);
+  await systemLine(db, {
+    roomId: C,
+    authorId: WORKER,
+    subject: { kind: 'github', name: 'GitHub' },
+    verb: 'found failing checks on',
+    kind: 'check-failed',
+    object: { text: 'MOBILE SUITE, FRAME-BUDGET, STATE-UPGRADE', headSha: sha },
+    payload: { runInProgress: true },
+  });
+  const worker = (await readAgentCommands(db, C, WORKER)).commands;
+  const repair = worker.find((command) => command.reason === 'corner_check');
+  expect(repair?.source.body).toContain('MOBILE SUITE');
+  expect(repair?.source.body).toContain('FRAME-BUDGET');
+  expect(repair?.source.body).toContain('STATE-UPGRADE');
+  expect(repair?.source.body).toContain('Fix them and push now');
+  expect(repair?.source.body).toContain('still running');
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+  await daemon.execute('claimAgentCommand', {
+    roomId: C, commandId: repair!.id, generationId: 'partial-red',
+  }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', {
+    roomId: C, requestId: repair!.turnRequestId, generationId: 'partial-red', status: 'complete',
+  }, WORKER);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  expect(await state()).toBe('working');
+  await db.query(
+    `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+    [C],
+  );
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'));
+  expect(stalls).toHaveLength(1);
+  expect(stalls[0]!.source.body).toContain('30 minutes');
+});
+
+it('Reproduction IDLE-1: a worker blocked on a gated reviewer stays quiet while checks are pending', async () => {
+  await ci('pending');
+  await runCornerAttention(db);
+  expect(await state()).toBe('review');
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
+  const { reportToCommander } = await import('./commander.js');
+  await reportToCommander(db, C, WORKER, 'blocked: Waiting on the reviewer until checks are green.');
+  expect(await state()).toBe('idle');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
+  expect(stalls).toHaveLength(0);
+  const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
+  expect(reviewer.filter((command) =>
+    command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
 });

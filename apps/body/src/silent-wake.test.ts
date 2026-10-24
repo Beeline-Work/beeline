@@ -21,13 +21,13 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   await context.enter(command);
   context.notePromptSections(['turn.task']);
   expect(JSON.parse(await readFile(context.path, 'utf8')).commandReason).toBe('report');
-  for (const reason of ['report', 'order', 'watched_corner', 'schedule', 'subscribed_event', 'system']) {
+  for (const reason of ['report', 'order', 'watched_corner', 'schedule', 'subscribed_event', 'system', 'corner_background_tool', 'corner_brief_revision']) {
     await context.enter({ ...command, reason });
     expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
     await expect(callAgentTool('no_reply_needed', {}, 'silent-again')).rejects.toThrow('turn has ended');
     await expect(callAgentTool('read', { facet: 'messages', address: 'room' }, 'read-after')).rejects.toThrow('turn has ended');
   }
-  for (const reason of ['human_tag', 'direct_message', 'corner_brief_revision', 'unknown']) {
+  for (const reason of ['human_tag', 'direct_message', 'unknown']) {
     await context.enter({ ...command, reason });
     await expect(callAgentTool('no_reply_needed', {}, 'silent-2')).rejects.toThrow('requires a nonhuman');
   }
@@ -35,7 +35,7 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   await expect(callAgentTool('no_reply_needed', {}, 'silent-3')).rejects.toThrow('no active server command');
   // R1: record silence immediately, leaving the terminal receipt to the helper
   // after it drains output. Rejected wakes and calls after silence write nothing.
-  expect(fetch).toHaveBeenCalledTimes(6);
+  expect(fetch).toHaveBeenCalledTimes(8);
   for (const [url, request] of fetch.mock.calls) {
     expect(url).toEqual(new URL('http://localhost/v1/daemon/operations/markAgentTurnSilent'));
     expect(request.method).toBe('POST');

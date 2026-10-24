@@ -73,8 +73,12 @@ async function roomListRow(phone: PhoneService) {
 describe('one corner projection for the Room list read, the live frame and the Corners page', () => {
   it('reads idle for finished failing checks with no running or queued work everywhere', async () => {
     const { database, phone } = await fixture();
-    // Mine, so the capped Room list carries it.
+    // Mine, so the capped Room list carries it. The repair window has elapsed.
     await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [FAILING, VIEWER]);
+    await database.query(
+      `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+      [FAILING],
+    );
     const read = await roomListRow(phone);
     const frame = (await phone.liveChatCornerStatus(ROOM, VIEWER))!;
     const page = (await phone.readCorners(ROOM, VIEWER))!;

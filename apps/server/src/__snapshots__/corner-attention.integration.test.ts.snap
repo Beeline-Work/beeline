@@ -1,6 +1,6 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`CI failure opens one Idle stretch, and pending CI past 30 minutes stays review > approved idle alert 1`] = `"blocked: Corner Corner is idle. Resume it, set a hold, or close it."`;
+exports[`CI failure stays working for 30 minutes, then one idle alert, and pending checks stay review > approved idle alert 1`] = `"blocked: Corner Corner is idle. Checks are failing and nothing has been pushed for 30 minutes."`;
 
 exports[`a merge hold shows Waiting with its real message and sends no extra wake > approved hold source line 1`] = `
 {

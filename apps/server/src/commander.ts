@@ -1,3 +1,4 @@
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
@@ -137,8 +138,8 @@ export async function sendOrder(
       await db.query<{ id: string; handle: string | null }>(
         `SELECT identity.id,lower(identity.handle) handle FROM effective_memberships member JOIN identities identity
          ON identity.id=member.identity_id AND identity.kind='agent'
-       WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.id<>$2`,
-        [address, agentId],
+       WHERE member.room_id=$1 AND member.removed_at IS NULL AND (identity.id<>$2 OR $3::boolean)`,
+        [address, agentId, Boolean(named)],
       )
     ).rows;
     const matches = named
@@ -150,15 +151,17 @@ export async function sendOrder(
         400,
       );
     if (named && !matches.length)
-      throw new CommandRefusalError(`order agent ${named} is not another agent member of this address`, 400);
+      throw new CommandRefusalError(`order agent ${named} is not an agent member of this address`, 400);
     if (!matches.length) throw new CommandRefusalError('address has no working agent', 409);
     if (matches.length > 1)
       throw new CommandRefusalError('order must name exactly one agent: pass agent with its handle or id', 400);
     worker = matches[0]!.id;
   }
-  if (worker === agentId) throw new CommandRefusalError('an agent cannot order itself', 400);
-  // Peer recruitment consumes the existing depth budget; worker handoffs retain it.
-  const peerOrder = Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
+  if (worker === agentId && target.id === command.room_id)
+    throw new CommandRefusalError('an agent cannot order itself in its current place', 400);
+  // Self-wakes across places and peer recruitment consume the existing depth
+  // budget; handoffs to another implementer retain it.
+  const peerOrder = worker === agentId || Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
   if (peerOrder && nextAgentDepth(command.agent_depth) === undefined)
     throw new CommandRefusalError('agent order chain depth limit reached', 400);
   const queued = await createAgentCommand(db, {
@@ -222,7 +225,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; agentOnly?: boolean; openingRoute?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -259,7 +262,7 @@ export async function reportToCommander(
     }
   }
   const strict = Boolean(command) && !options.automatic;
-  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command, options.openingRoute);
+  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command, options.automatic === true && options.agentOnly === true && agentId === SYSTEM_IDENTITY_ID);
   // Closed work has no outstanding request. Do not move its stale reports to
   // an ancestor Room merely because that Room still exists.
   if (origin && (await db.query(`SELECT 1 FROM rooms corner LEFT JOIN corner_facts fact ON fact.corner_id=corner.id

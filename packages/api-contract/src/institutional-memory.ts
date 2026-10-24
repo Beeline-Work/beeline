@@ -3,7 +3,7 @@ import type { DaemonAttachment } from './daemon-operations.js';
 
 export const INSTITUTIONAL_MEMORY_PROPOSAL_VERSION = 1 as const;
 /**
- * A saved item is one short sentence. Rows written before this cap may be
+ * A saved item is bounded by UTF-8 size. Rows written before this cap may be
  * longer (the table still accepts 4,000 bytes); they stay stored and only load
  * when they fit the turn budget below.
  */
@@ -452,33 +452,14 @@ function boundedText(value: unknown, label: string, maximum: number, bytes = fal
   return normalized;
 }
 
-const FILLER_OPENINGS =
-  /^(?:the user|user|this user|the requester|requester|it is|it's|note that|please|remember that|keep in mind)\b/i;
-const HEDGES = /\b(?:maybe|perhaps|probably|possibly|might|seems?|i think|apparently|likely)\b/i;
-
-/**
- * Save-time trim: one terse sentence of fact, no filler opening, no hedge.
- * The error says what to cut so the proposer can resubmit.
- */
+/** Trim saved bodies and enforce the UTF-8 byte cap. */
 export function conciseInstitutionalMemoryBody(value: unknown): string {
-  const body = boundedText(
+  return boundedText(
     value,
     `institutional memory body (at most ${INSTITUTIONAL_MEMORY_BODY_MAX_BYTES} bytes)`,
     INSTITUTIONAL_MEMORY_BODY_MAX_BYTES,
     true,
   );
-  if (FILLER_OPENINGS.test(body)) {
-    throw new Error(
-      'institutional memory body must state the fact itself, without a filler opening',
-    );
-  }
-  if (/[.!?;]\s+\S/.test(body) || /\n/.test(body)) {
-    throw new Error('institutional memory body must be one sentence');
-  }
-  if (HEDGES.test(body)) {
-    throw new Error('institutional memory body must not hedge; save only what is known');
-  }
-  return body;
 }
 
 export function institutionalMemoryKeywords(value: unknown): string[] {

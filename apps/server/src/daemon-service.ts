@@ -1505,7 +1505,8 @@ export class DaemonService {
         if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
           'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
           'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
-          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed'].includes(command.reason))
+          'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
+          'corner_background_tool', 'corner_brief_revision'].includes(command.reason))
           throw new CommandRefusalError('no_reply_needed requires a nonhuman wake', 400);
         await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
@@ -3258,6 +3259,34 @@ export class DaemonService {
         [input.roomId, input.messageId, offset],
       )
     ).rows[0];
+    if (!row) {
+      // A dispatched review lends access to current brief citations only.
+      // Keep this separate from Room access and requester-derived authority.
+      row = (await this.database.query<{ body: string; total: number; attachments: DaemonAttachment[] }>(
+        `SELECT substring(message.text FROM $4::integer + 1 FOR 4000) body,
+                char_length(message.text) total,message.attachments
+         FROM messages message
+         JOIN rooms corner ON corner.id=$1 AND corner.archived_at IS NULL
+         JOIN rooms source ON source.id=message.room_id AND source.workspace_id=corner.workspace_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN LATERAL (SELECT * FROM corner_brief_revisions
+           WHERE corner_id=corner.id ORDER BY revision DESC LIMIT 1) brief
+           ON brief.source_room_id=message.room_id
+         WHERE message.id=$3 AND message.deleted_at IS NULL AND message.presentation='message'
+           AND (message.id=brief.source_message_id
+             OR message.id=brief.approval_basis->>'sourceMessageId'
+             OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(brief.intent_verbatim,'[]'::jsonb)) intent
+               WHERE intent->>'sourceMessageId'=message.id))
+           AND EXISTS(SELECT 1 FROM agent_commands command
+             WHERE command.room_id=corner.id AND command.agent_id=$2
+               AND command.state IN ('pending','claimed') AND command.review_context IS NOT NULL
+               AND command.review_context->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+               AND command.review_context->'pullRequest'=fact.lifecycle->'pr'->'number'
+               AND command.review_context->>'briefRevision'=brief.revision::text)
+         LIMIT 1`,
+        [input.roomId,agentId,input.messageId,offset],
+      )).rows[0];
+    }
     let authority: { workspace_id: string; requester_identity_id: string } | undefined;
     if (!row && this.authorizedCommand?.room_id === input.roomId) {
       authority = (
@@ -6048,8 +6077,9 @@ export class DaemonService {
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
       [command.room_id, agentId, attachment.id]);
     if (command.private_payload) await database.query(
-      `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{reportedGenerationId}',to_jsonb($2::text)) WHERE id=$1`,
-      [command.id, command.generation_id]);
+      `UPDATE agent_commands SET private_payload=private_payload ||
+        jsonb_build_object('reportedGenerationId',$2::text,'reportedOutcome',$3::text) WHERE id=$1`,
+      [command.id, command.generation_id, prefix ?? null]);
     return result;
   }
   private async watchCorner(
@@ -8610,7 +8640,7 @@ export class DaemonService {
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
-      command.room_id === input.cornerId ? command : undefined);
+      command.room_id === input.cornerId.toLowerCase() ? command : undefined);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event)
@@ -8623,7 +8653,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);
-    const delivery = await routeAgentResult(this.database, { ...command, room_id: input.cornerId }, saved.id);
+    const delivery = await routeAgentResult(this.database, command, saved.id, { roomId: input.cornerId, agentId });
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,

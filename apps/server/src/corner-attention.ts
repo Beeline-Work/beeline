@@ -5,6 +5,7 @@ import type { LiveHub } from './live.js';
 import {
   cornerWorkSql,
   cornerBlockerSql,
+  blockedReportSql,
   cornerRowState,
   type CornerStateRow,
 } from './chat-corner-counts.js';
@@ -52,7 +53,7 @@ ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS last_turn_ended_at t
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_started_at timestamptz;
 ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_head text;
 CREATE OR REPLACE FUNCTION corner_state_changed() RETURNS trigger LANGUAGE plpgsql AS $state$
-DECLARE corner uuid; pending boolean; head text;
+DECLARE corner uuid; pending boolean; failing boolean; was_failing boolean; same_head boolean; head text; status text;
 BEGIN
   IF TG_TABLE_NAME='agent_turns' THEN
     corner=COALESCE(NEW.room_id,OLD.room_id);
@@ -83,12 +84,20 @@ BEGIN
   END IF;
   IF TG_TABLE_NAME='corner_facts' AND TG_OP<>'DELETE' THEN
     head=NEW.lifecycle->'pr'->>'headSha';
-    pending=COALESCE(NEW.lifecycle->'checksSummary'->>'status',NEW.lifecycle->>'checks')='pending'
+    status=COALESCE(NEW.lifecycle->'checksSummary'->>'status',NEW.lifecycle->>'checks');
+    pending=status='pending'
       OR (head IS NOT NULL AND NEW.lifecycle->'checksSummary'->>'status'='unknown'
         AND NEW.lifecycle->'checksSummary'->>'fetchStartedAt' IS NULL);
+    failing=status='failing';
+    was_failing=TG_OP='UPDATE' AND COALESCE(OLD.lifecycle->'checksSummary'->>'status',OLD.lifecycle->>'checks')='failing';
+    same_head=TG_OP='UPDATE' AND OLD.lifecycle->'pr'->>'headSha' IS NOT DISTINCT FROM head;
     UPDATE corner_attention_spans SET
-      ci_started_at=CASE WHEN pending THEN CASE WHEN ci_head IS DISTINCT FROM head OR ci_started_at IS NULL
-        THEN clock_timestamp() ELSE ci_started_at END ELSE NULL END,ci_head=head WHERE corner_id=corner;
+      ci_started_at=CASE
+        WHEN pending THEN CASE WHEN ci_head IS DISTINCT FROM head OR ci_started_at IS NULL
+          THEN clock_timestamp() ELSE ci_started_at END
+        WHEN failing THEN CASE WHEN was_failing AND same_head AND ci_started_at IS NOT NULL
+          THEN ci_started_at ELSE clock_timestamp() END
+        ELSE NULL END,ci_head=head WHERE corner_id=corner;
   END IF;
   IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND parent_id IS NOT NULL) THEN
     PERFORM pg_notify('beeline_live_v1',json_build_object('table','corner_state','operation','UPDATE','roomId',corner)::text);
@@ -136,6 +145,7 @@ function attentionSql() {
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
     blocker.agent_commander,blocker.human_blocker,
+    ${blockedReportSql('c')} blocked_report,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,
     EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.next_run_at>now()
@@ -154,15 +164,18 @@ export async function refreshCornerAttention(
   return db.transaction(async (tx) => {
     const row = (await tx.query<Row>(attentionSql(), [cornerId])).rows[0];
     if (!row) return;
-    const displayed = cornerRowState(row).state;
     const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
     // Pending CI and standing scheduled waits are not idle-alert episodes.
     // Ending a wait can open a real episode.
     const summary = row.lifecycle?.checksSummary;
     const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' ||
       (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
-    const suppressed = row.scheduled_wait || pendingHead;
-    const state = displayed === 'idle' && suppressed ? 'waiting' : displayed;
+    const suppressed = row.scheduled_wait || pendingHead || row.worker_active || row.reviewer_active;
+    if (suppressed) {
+      await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
+      return { parentId: row.parent_id, deadlines: [] };
+    }
+    const state = cornerRowState(row).state;
     const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
     await tx.query(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
@@ -170,21 +183,33 @@ export async function refreshCornerAttention(
     );
     if (state === 'idle' && row.last_state !== 'idle') {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
+      const stalledReport = row.waiting_kind === 'report' && row.blocked_report === true;
+      const repairExpired = Boolean(
+        row.ci_started_at && Date.now() - new Date(row.ci_started_at).getTime() >= 30 * 60_000,
+      );
+      const text = checks === 'failing' && repairExpired
+        ? `blocked: Corner ${row.name} is idle. Checks are failing and nothing has been pushed for 30 minutes.`
+        : stalledReport && checks !== 'failing'
+          ? `blocked: Corner ${row.name} is idle. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`
+          : `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
       await reportToCommander(
         tx,
         cornerId,
         SYSTEM_IDENTITY_ID,
-        `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`,
+        text,
         undefined,
         id,
-        { automatic: true, agentOnly: true, openingRoute: true },
+        { automatic: true, agentOnly: true },
       );
     }
     const now = Date.now();
-    // Pending checks stay review until a final result or a new push, so the
-    // old 30-minute CI clock is not a deadline.
+    // Pending checks stay review until a final result or a new push.
+    // Only a red head arms the 30-minute repair deadline.
     const deadlines = [
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
+      checks === 'failing' && row.ci_started_at
+        ? new Date(row.ci_started_at).getTime() + 30 * 60_000
+        : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };
   });
@@ -200,7 +225,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** The turn-gap deadline, reconstructed after startup or listener reconnect. Pending checks have none. */
+/** The turn-gap deadline, plus one 30-minute deadline while checks are failing. Pending checks have none. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

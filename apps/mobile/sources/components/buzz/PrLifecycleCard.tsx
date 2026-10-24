@@ -111,7 +111,7 @@ export function RepositoryLifecycleRow({
             : undefined
         }
       >
-        <InlineRow style={[styles.line, styles.cornerCopy]}>
+        <InlineRow style={styles.cornerCopy}>
           <Text style={[styles.repositoryTitle, styles.cornerName]} numberOfLines={1} ellipsizeMode="tail">
             <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
             {item.title}
@@ -135,8 +135,8 @@ export function RepositoryLifecycleRow({
     );
   }
   const copy = (
-    <Text style={styles.rowTitle} numberOfLines={2} ellipsizeMode="tail">
-      <Text style={[styles.verb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
+    <Text style={[styles.rowTitle, isRepositoryLifecycleItem(item) && styles.repositoryTitle]} numberOfLines={2} ellipsizeMode="tail">
+      <Text style={[styles.verb, !isRepositoryLifecycleItem(item) && styles.nonRepositoryVerb, /fail/i.test(state) && styles.failed]}>{verb} </Text>
       {number && item.url ? <><Text style={styles.number}>#{number}</Text>{' '}</> : null}
       {item.title}
     </Text>
@@ -175,21 +175,19 @@ export function RepositoryLifecycleRow({
 
 const styles = StyleSheet.create(({ buzz }) => ({
   failed: { color: buzz.accent },
-  // System rows are meta size, the size of the label that expands them. The
-  // margin centres one line in the 44px row; a second line grows downward.
-  line: { marginVertical: (44 - 2 * buzz.space.sm - buzz.type.meta.lineHeight) / 2 },
   cornerCopy: { flexDirection: 'row', alignItems: 'baseline' },
   cornerName: { flexShrink: 1, minWidth: 0 },
   cornerNumber: { flexShrink: 0, marginLeft: buzz.space.xs },
-  repositoryTitle: { ...buzz.type.meta, color: buzz.textSecondary },
+  repositoryTitle: { ...buzz.type.body, color: buzz.textSecondary, marginVertical: 0 },
   rowTitle: {
     ...buzz.type.meta,
     color: buzz.textSecondary,
     marginVertical: (44 - 2 * buzz.space.sm - buzz.type.meta.lineHeight) / 2,
   },
-  verb: { ...buzz.type.meta, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
+  verb: { ...buzz.type.body, fontFamily: buzz.proseMedium, color: buzz.textPrimary },
+  nonRepositoryVerb: { ...buzz.type.meta, fontFamily: buzz.proseMedium },
   number: {
-    ...buzz.type.meta,
+    ...buzz.type.body,
     fontFamily: buzz.proseMedium,
     color: buzz.accent,
     textDecorationLine: 'underline',

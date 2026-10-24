@@ -102,14 +102,15 @@ async function main() {
   };
   assert(Math.abs(arrowX('corner-status-line') - arrowX('notification-run-cell-check')) < 1, 'status chevron column differs');
   assert(Math.abs(get('corner-status-line').getBoundingClientRect().left - get('notification-run-cell-check').getBoundingClientRect().left) < 1, 'status left edge differs');
-  // Rows under a summary label are the label's size and face (Reproduction R1).
+  // Repository reference rows retain body; summaries and check children use meta (Reproduction R1).
   for (const [summary, ids] of [['notification-run-expand-checks', ['notification-run-cell-check', 'notification-run-cell-check-2']], [`notification-run-expand-${repositoryId}`, [merged.getAttribute('data-testid')!]]] as const) {
     const label = getComputedStyle(get(summary).querySelector('[dir="auto"]')!);
     assert(label.fontSize === '13px', `${summary}: label is ${label.fontSize}`);
     for (const id of ids)
       for (const node of get(id).querySelectorAll('[dir="auto"]')) {
         const style = getComputedStyle(node);
-        assert(style.fontSize === label.fontSize, `${id}: row text ${style.fontSize} beside a ${label.fontSize} label`);
+        const expectedSize = summary === `notification-run-expand-${repositoryId}` ? '16px' : label.fontSize;
+        assert(style.fontSize === expectedSize, `${id}: expected ${expectedSize}, got ${style.fontSize}`);
         assert(style.fontFamily.includes('SpaceGrotesk'), `${id}: row font ${style.fontFamily}`);
       }
   }

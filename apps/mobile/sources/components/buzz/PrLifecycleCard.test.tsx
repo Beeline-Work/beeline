@@ -101,8 +101,8 @@ describe('mock A lifecycle rows', () => {
     const title = tree.root
       .findAllByType('Text')
       .find((node: any) => node.props.ellipsizeMode === 'tail');
-    expect(title.props.style.fontFamily).toBe(theme.buzz.type.body.fontFamily);
-    expect(title.props.style.color).toBe(theme.buzz.textSecondary);
+    expect(Object.assign({}, ...[title.props.style].flat()).fontFamily).toBe(theme.buzz.type.body.fontFamily);
+    expect(Object.assign({}, ...[title.props.style].flat()).color).toBe(theme.buzz.textSecondary);
     expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
   });
   it('shows issues without a corner arrow and opens their GitHub URL', () => {
@@ -342,7 +342,7 @@ it('keeps each surface’s closed wording in the shared format', () => {
   expect(runs(line)).toEqual(runs(lines(closed.tree)[0]));
 });
 
-describe('Reproduction R1: system rows at the label size', () => {
+describe('Reproduction R1: preserved repository type roles', () => {
   const flatten = (style: any): any =>
     Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
   const check = (id: string, state: string, title: string, cornerId?: string) => ({
@@ -435,17 +435,21 @@ describe('Reproduction R1: system rows at the label size', () => {
         { ...item, id: 'c2', kind: 'corner', kindLine: 'corner', state: 'Opened', url: undefined },
       ],
     ],
-  ])('draws grouped %s rows at the label size in Space Grotesk', (_, items) => {
-    const { label, rows } = sizes(mount(items as any[]).tree);
+  ])('preserves grouped %s child titles, verbs and numbers at body size', (_, items) => {
+    const { tree } = mount(items as any[]);
+    const { label, rows } = sizes(tree);
+    for (const title of tree.root.findAllByType('Text').filter((node: any) => node.props.ellipsizeMode))
+      expect(flatten(title.props.style).marginVertical).toBe(0);
     expect(label.fontSize).toBe(13);
     expect(rows.length).toBeGreaterThan(0);
     for (const style of rows) {
-      expect(style.fontSize).toBe(13);
+      expect(style.fontSize).toBe(theme.buzz.type.body.fontSize);
+      expect(style.lineHeight).toBe(theme.buzz.type.body.lineHeight);
       expect(style.fontFamily).toMatch(/^SpaceGrotesk-/);
     }
   });
 
-  it('draws a single PR event and the Opened corner line at 13px', () => {
+  it('preserves body typography for a single PR event and the Opened corner line', () => {
     let standalone: any, marker: any;
     act(() => {
       standalone = create(
@@ -457,7 +461,8 @@ describe('Reproduction R1: system rows at the label size', () => {
       const styles = tree.root.findAllByType('Text').map((node: any) => flatten(node.props.style));
       expect(styles.length).toBeGreaterThan(0);
       for (const style of styles) {
-        expect(style.fontSize).toBe(13);
+        expect(style.fontSize).toBe(theme.buzz.type.body.fontSize);
+        expect(style.lineHeight).toBe(theme.buzz.type.body.lineHeight);
         expect(style.fontFamily).toMatch(/^SpaceGrotesk-/);
       }
     }

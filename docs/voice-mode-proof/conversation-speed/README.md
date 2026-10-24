@@ -126,7 +126,7 @@ VOICE_PIN_PROOF=1 VOICE_DELIVERY_BASELINE=1 \
 VOICE_PROOF_PORT=18297 VOICE_PROOF_LIVEKIT_PORT=18290 \
 VOICE_PROOF_MONITOR=emberus_voice_proof.monitor \
 VOICE_PROOF_EVENTS="$PWD/docs/voice-mode-proof/conversation-speed/android-baseline-events.jsonl" \
-SILENCE_PROOF_ANDROID_FIRST=1 node --import tsx scripts/prove-voice-speed.ts
+SILENCE_PROOF_ANDROID_FIRST=1 npm run prove:voice-speed
 ```
 
 For baseline only, generate `apps/server/src/.voice-delivery-baseline.ts` from

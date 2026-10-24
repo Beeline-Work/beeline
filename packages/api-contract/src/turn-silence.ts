@@ -261,6 +261,15 @@ export function escalateExhaustedHiccup(classified: ClassifiedTurnSilence): Clas
   return { kind: 'not-signed-in' };
 }
 
+/** The helper's one plain line for a repo cache it could not repair after a crash. */
+export function repositoryCacheDamagedFault(cache: string, machine: string): string {
+  return `The repo cache ${cache} on ${machine} is damaged and automatic repair failed. The machine's owner needs to repair it`;
+}
+
+export function isRepositoryCacheDamagedFault(text: string): boolean {
+  return /\bThe repo cache \S+ on .+ is damaged and automatic repair failed\b/.test(text);
+}
+
 /** Corner-start configuration that cannot recover without a human/config change. */
 export function isStandingWorkspaceConfigurationFault(text: string): boolean {
   return (

@@ -7,6 +7,7 @@ import { ConnectionPresence } from './connection-presence.js';
 import { LiveHub } from './live.js';
 import type { CommittedTurnLiveRow } from './live.js';
 import { noteFirstSilence, reclaimExpiredCommandLeases } from './turn-silence-notice.js';
+import { repositoryCacheDamagedFault } from '@beeline/api-contract/daemon';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -947,6 +948,45 @@ describe('silence detector ownership', () => {
       hiccup_attempts: 0,
       generation_id: null,
     });
+  });
+
+  it('shows a damaged repo cache as one plain line and files it for the owner', async () => {
+    const requestId = '7'.repeat(64);
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@candy hi')`,
+      [requestId, ROOM, HUMAN],
+    );
+    const command = await createAgentCommand(database, {
+      roomId: ROOM,
+      agentId: AGENT,
+      sourceMessageId: requestId,
+      reason: 'human_tag',
+    });
+    const reason = repositoryCacheDamagedFault('repositories/655f97ec88f4e595a04a9e67.git', 'chad');
+    await new DaemonService(database, new LiveHub()).execute(
+      'postAgentTurnReceipt',
+      { roomId: ROOM, requestId, status: 'failed', reason, reasonKind: 'workspace-failure' },
+      AGENT,
+    );
+    const line = await failureLine(database, requestId);
+    expect(line).toMatchObject({ silence: 'workspace-failure', state: 'failed' });
+    expect(line!.text).toBe(`@candy could not answer · ${reason}.`);
+    expect(
+      (
+        await database.query(
+          `SELECT category,summary,detail,reporter_owner_id,room_id FROM feedback_items WHERE source_kind='agent'`,
+        )
+      ).rows,
+    ).toEqual([
+      {
+        category: 'bug',
+        summary: 'A helper repo cache is damaged and automatic repair failed',
+        detail: reason,
+        reporter_owner_id: HUMAN,
+        room_id: ROOM,
+      },
+    ]);
+    expect(await commandState(database, command!.id)).toMatchObject({ state: 'pending' });
   });
 
   it('coalesces concurrent silence detectors into one restart', async () => {

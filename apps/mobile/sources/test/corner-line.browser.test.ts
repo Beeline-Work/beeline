@@ -13,7 +13,7 @@ it('draws the call-site corner line in the Room corner row format in both themes
       `import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { CornerOpenedMarker } from '@/components/buzz/CornerOpenedMarker';
-import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
+import { RepositoryLifecycleRow, NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { useUnistyles } from 'react-native-unistyles';
 import regular from '@/assets/fonts/SpaceGrotesk-Regular.ttf';
@@ -26,7 +26,7 @@ document.head.appendChild(fonts);
 let destination = '';
 const base = { text: '', timestamp: 1, isUser: false };
 const opened = { ...base, id: 'opened', daemonFact: { type: 'corner-open', cornerId: 'corner-font-check', name: 'font-check-android', objective: 'Check fonts', sourceMessageId: 'dm-source' } };
-const pr = { ...base, id: 'pr', daemonFact: { type: 'corner-complete', outcome: 'landed', cornerId: 'corner-2742', objective: 'Keep agent lead and body text in the same font face', pullRequest: { number: 2742, title: 'Keep agent lead and body text in the same font face', url: 'https://github.com/Beeline-Work/beeline/pull/2742' } } };
+const pr = { ...base, id: 'pr', daemonFact: { type: 'corner-complete', outcome: 'landed', cornerId: 'corner-2742', objective: 'Keep agent lead', pullRequest: { number: 2742, title: 'Keep agent lead', url: 'https://github.com/Beeline-Work/beeline/pull/2742' } } };
 const props = { onOpenCorner: id => destination = 'corner:' + id, onOpenUrl: url => destination = url };
 const card = messages => foldPrLifecycleRuns(messages).map(message => <NotificationLifecycleCard key={message.id} message={message} {...props}/>);
 function Proof() {
@@ -37,14 +37,16 @@ function Proof() {
   const dom = type => ({ ...type, lineHeight: type.lineHeight + 'px' });
   const body = { ...dom(theme.buzz.type.body), color: theme.buzz.textPrimary, margin: 0 };
   const label = { ...dom(theme.buzz.type.meta), color: theme.buzz.ledgerQuiet, margin: '24px 0 8px' };
-  return <main style={{padding:24,maxWidth:760,fontFamily:'SpaceGrotesk-Regular'}}>
-    <p style={label}>LOCAL BUILD · corner line · {theme.buzz.dark ? 'Obsidian' : 'Bone'} · desktop column</p>
+  return <main style={{padding:24,width:Number(new URLSearchParams(location.search).get('width'))-48,maxWidth:760,fontFamily:'SpaceGrotesk-Regular'}}>
+    <p style={label}>LOCAL BUILD · corner line · {theme.buzz.dark ? 'Obsidian' : 'Bone'} · transcript column</p>
     <section data-surface="room">
+      <div data-line="opened-width"><CornerOpenedMarker title="webhook-subscriptions" onOpen={() => destination = 'corner:width'}/></div>
+      <div data-line="merged-width"><RepositoryLifecycleRow item={{id:'merged-width',kind:'corner',kindLine:'corner',state:'Merged',title:'webhook-subscriptions',cornerId:'width',url:'https://github.com/Beeline-Work/beeline/pull/2742',actor:'',updatedBy:''}} {...props}/></div>
       <p style={label}>#beeline</p>
       <p style={body}>@ruby open a corner to align the corner lines.</p>
       <div data-line="call-site"><CornerOpenedMarker title="latency-rig" onOpen={() => destination = 'corner:corner-latency-rig'}/></div>
       <div data-line="room">{card([opened])}</div>
-      {card([pr])}
+      <div data-line="merged-short">{card([pr])}</div>
       <p style={{...body, marginTop:24}}>@ruby open a corner with a long name.</p>
       <div data-line="long"><CornerOpenedMarker title="call-site-corner-line-shares-the-room-row-format-and-truncates-before-the-chevron" onOpen={() => destination = 'corner:long'}/></div>
     </section>
@@ -73,6 +75,30 @@ async function main() {
   const long = line('long');
   const [, chevron] = long.querySelectorAll('svg');
   assert(chevron.getBoundingClientRect().right <= long.getBoundingClientRect().right, 'long name pushes the chevron out');
+  const measurements = {};
+  for (const name of ['long','opened-width','merged-width','room']) {
+    const element = line(name);
+    const mark = [...element.querySelectorAll('svg')].at(-1).getBoundingClientRect();
+    const target = element.querySelector('[role="link"]');
+    const copy = target.children[1];
+    const bounds = copy.getBoundingClientRect();
+    const number = element.querySelector('[data-testid="notification-run-cell-url-merged-width"]');
+    measurements[name] = { gap: mark.left - bounds.right, edge: element.getBoundingClientRect().right - mark.right, height: target.getBoundingClientRect().height, copyWidth: bounds.width, numberWidth: number?.getBoundingClientRect().width };
+    assert(measurements[name].gap <= 8.1, name + ': wasted copy-to-chevron gap ' + measurements[name].gap);
+    assert(Math.abs(measurements[name].edge) <= 1, name + ': empty trailing gutter ' + measurements[name].edge);
+    assert(measurements[name].height >= 44, name + ': tap target too short');
+    if (name === 'long') assert(mark.left - copy.firstElementChild.firstElementChild.getBoundingClientRect().right <= 8.1, 'long name gives width back to the chevron');
+    if (number) assert(number.getBoundingClientRect().width >= number.scrollWidth - 1, 'PR number shrinks');
+  }
+  const shortLink = line('merged-short').querySelector('[accessibilitylabel="Open PR 2742"], [aria-label="Open PR 2742"]');
+  const shortName = shortLink.previousElementSibling;
+  assert(shortName.scrollWidth <= shortName.clientWidth + 1, 'short merged name must fit without truncation');
+  measurements.shortMergedGap = shortLink.getBoundingClientRect().left - shortName.getBoundingClientRect().right;
+  assert(measurements.shortMergedGap >= 4, 'Reproduction corner-width-1: untruncated name touches PR link: ' + measurements.shortMergedGap);
+  const prLink = line('merged-width').querySelector('[data-testid="notification-run-cell-url-merged-width"]');
+  destination = '';
+  prLink.click();
+  assert(destination === 'https://github.com/Beeline-Work/beeline/pull/2742', 'PR link destination');
   const results = {};
   for (const [name, expected] of [['call-site','corner:corner-latency-rig'],['dm','corner:corner-font-check'],['long','corner:long'],['room','corner:corner-font-check']]) {
     destination = '';
@@ -80,11 +106,11 @@ async function main() {
     assert(destination === expected, name + ': destination ' + destination);
     results[name] = destination;
   }
-  document.getElementById('result').textContent = JSON.stringify({source:'local built production components', format: callSite, destinations: results});
+  document.getElementById('result').textContent = JSON.stringify({source:'local built production components', format: callSite, destinations: results, measurements});
 }
 main().catch(error=>document.getElementById('result').textContent = 'FAIL: '+error.message);`,
     );
-    for (const theme of ['bone', 'obsidian']) {
+    for (const width of [390, 820]) for (const theme of ['bone', 'obsidian']) {
       const shims = webProofShims(mobile);
       shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace(
         'beelineThemes.obsidian',
@@ -100,16 +126,17 @@ main().catch(error=>document.getElementById('result').textContent = 'FAIL: '+err
         entry,
         mobile,
         shims,
-        width: 820,
+        width,
+        query: '?width=' + width,
         height: 760,
-        ...(output ? { screenshotPath: path.resolve(output, `desktop-${theme}.png`) } : {}),
+        ...(output ? { screenshotPath: path.resolve(output, `${width}-${theme}.png`) } : {}),
       });
       expect(proof.status, proof.stderr).toBe(0);
       expect(proof.result).not.toMatch(/^FAIL:/);
       const result = JSON.parse(proof.result);
       if (output)
         await writeFile(
-          path.join(output, `desktop-${theme}-results.json`),
+          path.join(output, `${width}-${theme}-results.json`),
           JSON.stringify(result, null, 2) + '\n',
         );
     }

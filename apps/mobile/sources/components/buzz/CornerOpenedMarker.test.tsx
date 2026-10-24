@@ -214,7 +214,7 @@ it.each(['Room', 'DM', 'corner'])(
         } as any),
       ),
     );
-    expect(textOf(renderer)).toBe('Merged 2832/steps-row-line PR 2832');
+    expect(textOf(renderer)).toBe('Merged 2832/steps-row-linePR 2832');
     expect(target()).toBe(originalTarget);
     const link = renderer.root.find(
       (node: any) => node.type === 'Text' && node.props.accessibilityLabel === 'Open PR 2832',

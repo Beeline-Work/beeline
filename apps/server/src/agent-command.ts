@@ -987,18 +987,22 @@ async function setCornerImplementer(
 
 export async function routeAgentResult(
   db: SqlDatabase,
-  parent: CommandRow,
+  parent: CommandRow | undefined,
   sourceId: string,
+  speaker?: { roomId: string; agentId: string },
 ) {
+  const roomId = parent?.room_id ?? speaker?.roomId;
+  const agentId = parent?.agent_id ?? speaker?.agentId;
+  const woken: string[] = [];
+  const notWoken: { handle: string; reason: string }[] = [];
+  if (!roomId || !agentId) return { woken, notWoken };
   const source = (await db.query<{ text: string }>(
     `SELECT text FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3
        AND presentation='message' AND deleted_at IS NULL`,
-    [sourceId, parent.room_id, parent.agent_id],
+    [sourceId, roomId, agentId],
   )).rows[0];
-  const woken: string[] = [];
-  const notWoken: { handle: string; reason: string }[] = [];
   if (!source) return { woken, notWoken };
-  const mentions = await resolveCurrentMemberMentions(db, parent.room_id, source.text, parent.agent_id);
+  const mentions = await resolveCurrentMemberMentions(db, roomId, source.text, agentId);
   for (const handle of typedMentionHandles(source.text)) {
     if (isChannelMentionToken(handle)) continue;
     if (!mentions.some(mention => mention.handle === handle))
@@ -1011,7 +1015,7 @@ export async function routeAgentResult(
     }
     // Tags are conversation, never a delegation or an implementer change.
     const dispatched = await createAgentCommand(db, {
-      roomId: parent.room_id,
+      roomId,
       agentId: mention.id,
       sourceMessageId: sourceId,
       parent,
@@ -1019,7 +1023,7 @@ export async function routeAgentResult(
       inheritPrivatePayload: false,
     });
     if (dispatched) woken.push(mention.handle);
-    else notWoken.push({ handle: mention.handle, reason: nextAgentDepth(parent.agent_depth) === undefined
+    else notWoken.push({ handle: mention.handle, reason: parent && nextAgentDepth(parent.agent_depth) === undefined
       ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
   }
   return { woken, notWoken };

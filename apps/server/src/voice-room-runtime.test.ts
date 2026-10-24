@@ -109,7 +109,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   try {
     await runtime.utterance('human', 'Jellybean, hello');
     expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi Jellybean.');
-    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer, expect.any(Object));
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();
     await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
@@ -457,7 +457,7 @@ it('lookup goes to order: speaks a short checking line at once when the brain st
   try {
     await runtime.utterance('human', 'Ruby build a widget');
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'Checking. I’ll tell you when I have it.');
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'Checking. I’ll tell you when I have it.', expect.any(Object));
     expect(speech.synthesize.mock.calls.map(call => call[0]).join(' ')).toBe('Checking. I’ll tell you when I have it.');
   } finally { await runtime.close(); }
 });
@@ -472,7 +472,7 @@ it('records the audible acknowledgement before external work completes', async (
   try {
     await runtime.utterance('human', 'Ruby reproduce the bug');
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'You’re right to question it.');
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'You’re right to question it.', expect.any(Object));
   } finally { await runtime.close(); }
 });
 
@@ -1407,7 +1407,7 @@ it('Reproduction MULTI-1: another human\'s laughter does not cancel the reply to
     say('starter', 'Update', 'haha', 0);
     say('starter', 'EndOfTurn', 'haha', 0);
     firstToken();
-    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'I’m here. What do you need?'));
+    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'I’m here. What do you need?', expect.any(Object)));
     expect(service.config.brain.answer.mock.calls[0]?.[3].aborted).toBe(false);
     expect(service.recordHuman.mock.calls.map(call => [call[2], call[4]])).toEqual([['second', 'Ruby are you there']]);
   } finally { await runtime.close(); }
@@ -2659,5 +2659,34 @@ it('Reproduction R1: the quick answer and search acknowledgement are clean befor
     await runtime.utterance('human','Ruby, what is new?');
     expect(service.recordAnswer.mock.calls.map(call=>call[2])).toEqual(['Let me look.', 'Here is the answer.']);
     expect(speech.synthesize.mock.calls.map(call=>call[0])).toEqual(['Let me look.', 'Here is the answer.']);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-TAG-1: only final replies route handles, while spoken audio uses names', async () => {
+  const { service, speech } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, _onText, _signal, context) => {
+    expect(context!.agents).toContainEqual({name:'Ruby',handle:'ruby'});
+    await context!.announce('@ruby let me look.');
+    return {text:'@ruby what are you up to?',order:false};
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try {
+    await runtime.utterance('human','Ruby, ask the other agent');
+    expect(service.recordAnswer.mock.calls.map(call=>[call[2],(call[3] as any).routeMentions])).toEqual([
+      ['@ruby let me look.',false],['@ruby what are you up to?',true],
+    ]);
+    expect(service.recordAnswer.mock.calls[1]?.[3]).toMatchObject({sourceId:'source',replyId:expect.any(String)});
+    expect(speech.synthesize.mock.calls.map(call=>call[0])).toEqual(['Ruby let me look.','Ruby what are you up to?']);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-TAG-1: order acknowledgements leave agent mentions to the heavy final reply', async () => {
+  const {service} = conversationService(1);
+  service.config.brain.answer.mockResolvedValue({text:'I will ask @ruby.',order:true});
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try {
+    await runtime.utterance('human','Ruby, do the work');
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordAnswer).toHaveBeenCalledWith('room','ruby','I will ask @ruby.',expect.objectContaining({routeMentions:false}));
   } finally { await runtime.close(); }
 });

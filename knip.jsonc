@@ -184,6 +184,8 @@
         "scripts/call-feedback-proof.tsx",
         "scripts/voice-resume-proof.tsx",
         "scripts/composer-waveform-native-proof.tsx",
+        // Gradle bundles the pinned composer screenshot fixture via entryFile.
+        "scripts/composer-pin-row-native-proof.tsx",
         "scripts/composer-v4-native-proof.tsx",
         "scripts/composer-v4-web-proof.tsx",
         "scripts/answer-prefill-proof.tsx",

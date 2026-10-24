@@ -11,7 +11,7 @@ vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return { Text: host('Text'), View: host('View'), Pressable: host('Pressable') };
 });
-import { NotificationLifecycleCard } from './PrLifecycleCard';
+import { NotificationLifecycleCard, RepositoryLifecycleRow } from './PrLifecycleCard';
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
 import { LifecycleRecordCard } from './LifecycleCard';
 import { CornerOpenedMarker } from './CornerOpenedMarker';
@@ -103,7 +103,7 @@ describe('mock A lifecycle rows', () => {
       .find((node: any) => node.props.ellipsizeMode === 'tail');
     expect(Object.assign({}, ...[title.props.style].flat()).fontFamily).toBe(theme.buzz.type.body.fontFamily);
     expect(Object.assign({}, ...[title.props.style].flat()).color).toBe(theme.buzz.textSecondary);
-    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
+    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
   });
   it('shows issues without a corner arrow and opens their GitHub URL', () => {
     const { get, onOpenUrl } = render([issue] as any);
@@ -136,7 +136,7 @@ describe('mock A lifecycle rows', () => {
     act(() => header.props.onPress());
     expect(get('notification-run-cell-pr')).toBeUndefined();
   });
-  it('renders a nonresident source as a Room lifecycle row without a branch', () => {
+  it('keeps the branch mark when the call-site source is outside the loaded window', () => {
     const fact: ChatDisplayMessage = {
       id: 'open',
       text: '',
@@ -468,3 +468,11 @@ describe('Reproduction R1: preserved repository type roles', () => {
     }
   });
 });
+
+ it('CALLSITE-GLYPH-1: suppresses the mark for an explicit off-call-site row and a repository-only row', () => {
+  for (const row of [{...item,kind:'corner' as const}, {...issue}]) {
+    let tree:any;
+    act(()=>{tree=create(<RepositoryLifecycleRow item={row} glyph={row.kind !== 'corner'} onOpenCorner={()=>{}} onOpenUrl={()=>{}} />);});
+    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
+  }
+ });

@@ -9,7 +9,22 @@ export const UNREAD_COUNT_CAP = 99;
 
 /** Shared transcript visibility, including legacy corner completion cards. */
 export function visibleMessageSql(alias: string): string {
+  // Keep the source-free Room record only when no other conversation has the
+  // call site. Legacy servers may already have settled either opening card.
   return `${hiddenWakeCardSql(alias)}
+      AND NOT ((${alias}.card_type IS NOT DISTINCT FROM 'github-event'
+          OR (${alias}.card_type IS NOT DISTINCT FROM 'daemon-fact'
+            AND COALESCE(${alias}.card->>'type','') IN ('corner-open','corner-complete')))
+        AND ${alias}.card->>'sourceMessageId' IS NULL
+        AND EXISTS (SELECT 1 FROM rooms opening_corner
+          WHERE opening_corner.id::text=${alias}.card->>'cornerId'
+            AND opening_corner.parent_id=${alias}.room_id)
+        AND EXISTS (SELECT 1 FROM messages callsite
+          WHERE callsite.room_id<>${alias}.room_id
+            AND callsite.card_type='daemon-fact'
+            AND callsite.card->>'cornerId'=${alias}.card->>'cornerId'
+            AND callsite.card->>'type' IN ('corner-open','corner-complete')
+            AND callsite.card->>'sourceMessageId' IS NOT NULL))
       AND NOT (${alias}.card_type IS NOT DISTINCT FROM 'daemon-fact'
         AND ${alias}.card->>'type' IS NOT DISTINCT FROM 'corner-complete'
         AND COALESCE(${alias}.system_event->>'kind','')<>'corner-opened'

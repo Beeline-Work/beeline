@@ -1,6 +1,6 @@
 """Reviewed resume only: reuse the existing App/key; never enroll a new App."""
 import hashlib
-import importlib.util
+import types
 import os
 from pathlib import Path
 import signal
@@ -19,11 +19,12 @@ PINS = {'rollout.py': 'c5cba3648c0fb3aba39f2bd6f553e8c7418705443e7a5e8fb1735f8b1
 
 def load(name):
     path = ROOT / name
-    if hashlib.sha256(path.read_bytes()).hexdigest() != PINS[name]:
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != PINS[name]:
         raise RuntimeError('Reviewed source digest mismatch: ' + name)
-    spec = importlib.util.spec_from_file_location('resume_' + path.stem, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = types.ModuleType('resume_' + path.stem)
+    module.__file__ = str(path)
+    exec(compile(data, str(path), 'exec'), module.__dict__)
     return module
 
 

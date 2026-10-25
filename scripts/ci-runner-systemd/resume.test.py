@@ -1,4 +1,8 @@
 import importlib.util
+import hashlib
+import marshal
+import struct
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -10,6 +14,32 @@ spec.loader.exec_module(r)
 
 
 class ResumeTests(unittest.TestCase):
+    def test_planted_timestamp_cache_is_ignored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'fixture.py'
+            data = b"VALUE = 'source'\n"
+            source.write_bytes(data)
+            cache = Path(importlib.util.cache_from_source(str(source)))
+            cache.parent.mkdir()
+            # A valid timestamp cache with the exact trusted source mtime/size.
+            header = importlib.util.MAGIC_NUMBER + struct.pack('<III', 0, int(source.stat().st_mtime), len(data))
+            cache.write_bytes(header + marshal.dumps(compile("VALUE = 'poison'\n", str(source), 'exec')))
+            # Establish that the old loader really would accept the planted cache.
+            spec = importlib.util.spec_from_file_location('old_loader', source)
+            poisoned = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(poisoned)
+            self.assertEqual(poisoned.VALUE, 'poison')
+            original_read = Path.read_bytes
+            reads = []
+            def read_once(path):
+                reads.append(path)
+                return original_read(path)
+            with patch.object(r, 'ROOT', Path(folder)), patch.object(r, 'PINS', {'fixture.py': hashlib.sha256(data).hexdigest()}), patch.object(Path, 'read_bytes', read_once):
+                module = r.load('fixture.py')
+            self.assertEqual(module.VALUE, 'source')
+            self.assertEqual(module.__file__, str(source))
+            self.assertEqual(reads, [source])
+
     def test_socket_inode_requires_unique_listener(self):
         line = 'header\n000: 2 0 00010000 0001 01 123 /run/beeline-ci-registration/relay.sock\n'
         with patch.object(Path, 'read_text', return_value=line):

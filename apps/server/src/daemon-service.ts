@@ -512,6 +512,8 @@ export class DaemonService {
              AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
           [scopedRoom, authenticatedAgentId]);
         for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
+      } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
+        await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
       } else if (isCorner && (['getCornerRestoreState', 'order', 'report', 'postCornerMessage'].includes(name) ||
         name === 'postRoomMessage' && candidate.relay === undefined)) {
         await this.github.refreshCornerReviewHead?.(scopedRoom);

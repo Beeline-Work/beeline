@@ -20,7 +20,8 @@ import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
-import { assertCornerBriefAllowsMerge } from './corner-brief.js';
+import { cornerImplementerSql } from './corner-worker.js';
+import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands, retryCornerPullRequestClosures } from './corner-close.js';
 import { captureServerError } from './sentry.js';
 import { retryOnDeadlock } from './migration-retry.js';
@@ -882,6 +883,38 @@ export class GitHubOperations {
     if (target.repository.toLowerCase() !== 'beeline-work/beeline' || target.defaultBranch !== 'main')
       throw new Error('Production release requires Beeline main');
     await this.app.dispatchProductionWorkflow(target.token, target.repository, inputs);
+  }
+
+  /** Repair the opened-webhook race before a worker's done report transaction. */
+  async resolveUnregisteredCornerPullRequest(cornerId: string, agentId: string): Promise<void> {
+    const corner = (await this.database.query<{ parent_id: string; feature_branch: string }>(
+      `SELECT room.parent_id,fact.feature_branch FROM rooms room
+       JOIN corner_facts fact ON fact.corner_id=room.id
+       WHERE room.id=$1 AND room.archived_at IS NULL
+         AND ${cornerImplementerSql('fact', 'room')}=$2
+         AND fact.lifecycle->'pr'->>'number' IS NULL
+         AND COALESCE(fact.lifecycle->>'lifecycle','')<>'landed'
+         AND fact.feature_branch IS NOT NULL`, [cornerId, agentId],
+    )).rows[0];
+    if (!corner || (await currentCornerBrief(this.database, cornerId))?.repositoryWork === false) return;
+    const target = await this.roomWorkflowTarget(corner.parent_id);
+    const numbers = await this.app.openPullRequestsForBranch(target.token, target.repository, corner.feature_branch);
+    if (numbers.length !== 1) return;
+    const pr = await this.app.readPullRequest(target.token, target.repository, numbers[0]!);
+    if (pr.state !== 'open' || pr.merged || pr.headRef !== corner.feature_branch || !pr.baseRef) return;
+    await this.database.transaction(async db => {
+      await lockCornerLifecycle(db, cornerId);
+      // A webhook or close may have won while the provider read was in flight.
+      await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb,updated_at=now()
+        FROM rooms room WHERE fact.corner_id=$1 AND room.id=fact.corner_id AND room.archived_at IS NULL
+          AND fact.feature_branch=$2 AND fact.lifecycle->'pr'->>'number' IS NULL
+          AND COALESCE(fact.lifecycle->>'lifecycle','')<>'landed'`,
+      [cornerId, corner.feature_branch, JSON.stringify({ lifecycle: 'in-review', branch: corner.feature_branch,
+        pr: { number: pr.number, url: pr.url, title: pr.title ?? `Pull request #${pr.number}`,
+          headSha: pr.headSha, targetBranch: pr.baseRef, mergeability: 'unknown',
+          ...(pr.baseSha ? { baseSha: pr.baseSha } : {}) } })]);
+    });
+    this.onRoomChanged?.(cornerId);
   }
 
   /** Resolve handoffs against GitHub even when the synchronize webhook is late. */

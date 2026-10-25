@@ -101,6 +101,8 @@
         "scripts/render-card-buttons.mjs",
         "scripts/card-button-gallery.tsx",
         "scripts/card-buttons-native-proof.tsx",
+        // The artifact-card footer restore selects this native Metro entry by path.
+        "scripts/artifact-card-native-proof.tsx",
         // The desktop proportions evidence runbook invokes these standalone proof tools by path.
         "scripts/desktop-proportions-browser-proof.cjs",
         "scripts/desktop-proportions-native-fixture.cjs",

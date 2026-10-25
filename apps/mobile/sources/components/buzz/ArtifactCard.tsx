@@ -144,6 +144,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
         actions={actions}
         onOpenInBrowser={openInBrowser}
         onOpenFull={openFull}
+        fileFooter
         testID={`artifact-document-${activeAttachment.name}`}
       >
         <View style={styles.docRow} testID="artifact-document-body">
@@ -262,6 +263,7 @@ function ArtifactCardShell({
   actions,
   onOpenInBrowser,
   onOpenFull,
+  fileFooter = false,
   children,
   testID,
 }: {
@@ -270,6 +272,10 @@ function ArtifactCardShell({
   actions: readonly ('browser' | 'open')[];
   onOpenInBrowser(): void;
   onOpenFull(): void;
+  /** Only a non-previewable file card keeps the v0.1.106 footer: body-size
+   * labels, a spacer, and the accent `Open →`. Previewable artifacts keep the
+   * shared inline row (PR 2959's decision unification). */
+  fileFooter?: boolean;
   children: React.ReactNode;
   testID: string;
 }) {
@@ -284,30 +290,58 @@ function ArtifactCardShell({
           {kindLine}
         </Text>
       </View>
-      <InlineRow style={styles.footer}>
-        {actions.includes('browser') ? (
-          <Button
-            accessibilityLabel="Open in browser"
-            accessibilityRole="link"
-            onPress={onOpenInBrowser}
-            testID="artifact-open-browser"
-            label={'Open in browser ↗'}
-            variant="secondary"
-            size="inline"
-          />
-        ) : null}
-        {actions.includes('open') ? (
-          <Button
-            accessibilityLabel="Open artifact"
-            accessibilityRole="link"
-            onPress={onOpenFull}
-            testID="artifact-open"
-            label={'Open'}
-            variant="secondary"
-            size="inline"
-          />
-        ) : null}
-      </InlineRow>
+      {fileFooter ? (
+        <InlineRow style={styles.fileFooter}>
+          {actions.includes('browser') ? (
+            <Button
+              accessibilityLabel="Open in browser"
+              accessibilityRole="link"
+              onPress={onOpenInBrowser}
+              testID="artifact-open-browser"
+              label={'Open in browser ↗'}
+              variant="quiet"
+              appearance={{ control: undefined, label: styles.footerQuiet }}
+            />
+          ) : null}
+          <View style={styles.footerSpacer} />
+          {actions.includes('open') ? (
+            <Button
+              accessibilityLabel="Open artifact"
+              accessibilityRole="link"
+              onPress={onOpenFull}
+              testID="artifact-open"
+              label={'Open →'}
+              variant="quiet"
+              appearance={{ control: undefined, label: styles.footerPrimary }}
+            />
+          ) : null}
+        </InlineRow>
+      ) : (
+        <InlineRow style={styles.footer}>
+          {actions.includes('browser') ? (
+            <Button
+              accessibilityLabel="Open in browser"
+              accessibilityRole="link"
+              onPress={onOpenInBrowser}
+              testID="artifact-open-browser"
+              label={'Open in browser ↗'}
+              variant="secondary"
+              size="inline"
+            />
+          ) : null}
+          {actions.includes('open') ? (
+            <Button
+              accessibilityLabel="Open artifact"
+              accessibilityRole="link"
+              onPress={onOpenFull}
+              testID="artifact-open"
+              label={'Open'}
+              variant="secondary"
+              size="inline"
+            />
+          ) : null}
+        </InlineRow>
+      )}
     </View>
   );
 }
@@ -576,6 +610,18 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: 1,
     borderTopColor: theme.buzz.border,
   },
+  fileFooter: {
+    minHeight: theme.buzz.transcriptCard.footerMinHeight,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: theme.buzz.transcriptCard.side,
+    paddingVertical: theme.buzz.transcriptCard.footerVertical,
+    borderTopWidth: 1,
+    borderTopColor: theme.buzz.border,
+  },
+  footerSpacer: { flex: 1 },
+  footerQuiet: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  footerPrimary: { ...theme.buzz.type.body, color: theme.buzz.accent },
 }));
 
 // Referenced by tests and the cache module's key derivation.

@@ -3018,7 +3018,8 @@ it.each(Array.from({ length: 4 }, (_, run) => [
     await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
     expect(service.config.brain.answer).toHaveBeenCalledOnce();
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordHuman.mock.calls[1]?.[4]).toBe(message);
+    expect(service.recordHuman).toHaveBeenCalledOnce();
+    expect(service.reviseHuman.mock.calls[0]?.[5]).toBe(`${fragment} ${message}`);
     await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledOnce());
     expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual(['On it.']);
     expect(state.audio.captureFrame).toHaveBeenCalledOnce();
@@ -3089,8 +3090,7 @@ it.each([0, 1, 2, 3])('SPEEDY-CONTACT-2: silent contact then tell it hello retai
   let receive!: (event: any) => void;
   fixture.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
   fixture.config.brain.answer.mockImplementation(async (_agent, history) => {
-    expect(history.some(message => message.role === 'user' && message.content.includes('Grok bot'))).toBe(true);
-    expect(history.at(-1)?.content).toBe('tell it hello');
+    expect(history.at(-1)?.content).toBe('Grok bot tell it hello');
     return { text: 'On it.', order: true };
   });
   const voice = new RealVoiceService(db, live, { ...fixture.config, speech });
@@ -3122,8 +3122,10 @@ it.each([0, 1, 2, 3])('SPEEDY-CONTACT-2: silent contact then tell it hello retai
     await vi.waitFor(async () => expect((await db.query(`SELECT * FROM agent_commands WHERE room_id=$1`, [room])).rowCount).toBe(1));
     await vi.waitFor(async () => expect((await phone.readRoom(room, human))!.messages.filter(m => m.author.pubkey === agent)).toHaveLength(1));
     const view = (await phone.readRoom(room, human))!;
-    expect(view.messages.filter(m => m.author.pubkey === human).map(m => m.text)).toEqual(['@ruby Grok bot', '@ruby tell it hello']);
+    expect(view.messages.filter(m => m.author.pubkey === human).map(m => m.text)).toEqual(['@ruby Grok bot tell it hello']);
     expect(view.messages.filter(m => m.author.pubkey === agent).map(m => m.text)).toEqual(['On it.']);
+    const sources = await db.query<{ text: string }>(`SELECT m.text FROM agent_commands c JOIN messages m ON m.id=c.source_message_id WHERE c.room_id=$1`, [room]);
+    expect(sources.rows.map(row => row.text)).toEqual(['@ruby Grok bot tell it hello']);
     expect(fixture.config.brain.answer).toHaveBeenCalledOnce();
     expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual(['On it.']);
     expect(state.audio.captureFrame).toHaveBeenCalledOnce();

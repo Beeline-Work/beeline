@@ -795,7 +795,7 @@ export class VoiceRoomRuntime {
         resolveSource(sourceId);
       }
       if (voiceContactNameOnly(fragment, this.externalContacts.get(human)) && !previous && !retry) {
-        this.assembler.finish(human, request);
+        // Retain the recorded contact draft so the next phrase includes its recipient.
         this.assembler.address(human, agent.id);
         return;
       }

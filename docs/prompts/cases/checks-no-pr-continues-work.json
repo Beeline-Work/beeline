@@ -510,6 +510,41 @@
           "stdout": "",
           "cwd": ""
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git status --porcelain(?:=v1)?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd apps/server$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": "apps/server"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "git diff main...HEAD --stat"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": ""
+        }
       }
     ],
     "connect": {

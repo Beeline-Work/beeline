@@ -278,6 +278,8 @@ test('compound shell reads use only recorded facts and never turn an unknown com
   assert.equal(scenarioShell(state, '; git status --short'), undefined);
   assert.equal(scenarioShell(state, 'git status --short &&'), undefined);
   assert.deepEqual(scenarioShell(state, 'echo "a;b"'), { result: { exitCode: 0, stdout: 'a;b\n' } });
+  assert.deepEqual(scenarioShell(state, 'cd apps/mobile && ls'), { result: { exitCode: 0, stdout: 'package.json\n' } });
+  assert.equal(scenarioShell(state, 'ls /unrecorded'), undefined);
 });
 
 test('recorded repository and SDK facts cover ordinary combined observations', () => {

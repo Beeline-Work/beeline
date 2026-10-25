@@ -199,6 +199,19 @@ export function scenarioShell(state, command) {
       evaluateRule({ call: entry.call, args: entry.args }, { calls: [call], text: '' }).pass);
     let result = recorded?.result;
     if (recorded?.boundary) return;
+    // A directory view derives only names present in this case's file snapshot.
+    const ls = /^ls(?: -[a-zA-Z]+)*(?: ([a-zA-Z0-9_./ -]+))?$/.exec(cmd);
+    if (ls && Object.keys(state.files ?? {}).length) {
+      const views = (ls[1]?.split(/\s+/) ?? ['.']).map(path => {
+        const target = [cwd, path === '.' ? '' : path.replace(/^\.\//, '').replace(/\/$/, '')].filter(Boolean).join('/');
+        if (Object.hasOwn(state.files, target)) return path + '\n';
+        const prefix = target ? target + '/' : '';
+        const names = [...new Set(Object.keys(state.files).filter(file => file.startsWith(prefix))
+          .map(file => file.slice(prefix.length).split('/')[0]))];
+        return names.length ? names.sort().join('\n') + '\n' : undefined;
+      });
+      if (views.every(v => v !== undefined)) result = { exitCode: 0, stdout: views.join('') };
+    }
     if (!result) {
       const cat = /^(?:cat|sed -n '1,\d+p') ([a-zA-Z0-9_./-]+)$/.exec(cmd);
       const path = cat && (cwd ? `${cwd}/${cat[1]}` : cat[1]);

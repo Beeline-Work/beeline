@@ -443,6 +443,31 @@
           "exitCode": 1,
           "stdout": "FAIL sources/buzz/live-turn-stream.test.ts\nFAIL sources/buzz/draft-settle.test.ts\nTest Files 2 failed\n"
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git status --porcelain(?:=v1)?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd apps/server$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": "apps/server"
+        }
       }
     ],
     "connect": {

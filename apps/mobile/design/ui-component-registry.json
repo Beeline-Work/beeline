@@ -2,6 +2,7 @@
   "version": 1,
   "fingerprintMode": "layout-shell-v2",
   "components": {
+    "components/buzz/SpeakingSpeedSetting.tsx": ["SpeakingSpeedSetting"],
     "components/AnimatedOverlay.tsx": ["AnimatedBlurBackdrop"],
     "components/bubblePressableFeedback.ts": [],
     "components/buzz/ActivityTimeline.tsx": [

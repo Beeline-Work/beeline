@@ -197,4 +197,23 @@ describe('live Workspace and identity changes across sessions', () => {
     expect(mateFrames).toEqual([]);
     expect(outsiderFrames).toEqual([]);
   });
+  it('SPEAKING-SPEED-1: saves only the owner preference and invalidates their other devices', async () => {
+    const viewer = await open('viewer');
+    const mate = await open('mate');
+    const ownFrames = frames(viewer, 'person-changed');
+    const mateFrames = frames(mate, 'person-changed');
+    const phone = new PhoneService(database, 'http://local.test');
+    expect((await phone.execute('getManagedIdentity', {}, VIEWER)).speakingSpeed).toBe(1.15);
+    for (const speakingSpeed of [1.3, 1.5, 1.15] as const) {
+      const before = ownFrames.length;
+      expect((await phone.execute('updateIdentitySpeakingSpeed', {speakingSpeed}, VIEWER)).speakingSpeed).toBe(speakingSpeed);
+      await until(() => ownFrames.length > before);
+      expect((await phone.execute('getManagedIdentity', {}, VIEWER)).speakingSpeed).toBe(speakingSpeed);
+      expect((await phone.execute('getManagedIdentity', {}, MATE)).speakingSpeed).toBe(1.15);
+    }
+    expect(mateFrames).toEqual([]);
+    for (const speakingSpeed of [1, 2, '1.5', null]) await expect(phone.execute(
+      'updateIdentitySpeakingSpeed', {speakingSpeed} as any, VIEWER)).rejects.toThrow('invalid speaking speed');
+  });
+
 });

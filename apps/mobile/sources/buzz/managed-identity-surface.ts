@@ -13,6 +13,8 @@ export const isManagedIdentity = (value: unknown): value is ManagedIdentityResul
   return (
     typeof result.personId === 'string' && typeof result.name === 'string' &&
     typeof result.pushLevel === 'string' &&
+    (result.speakingSpeed === undefined || result.speakingSpeed === 1.15 ||
+      result.speakingSpeed === 1.3 || result.speakingSpeed === 1.5) &&
     (result.providers === undefined ||
       (Array.isArray(result.providers) &&
         result.providers.every(

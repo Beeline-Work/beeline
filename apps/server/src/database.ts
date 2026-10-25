@@ -637,6 +637,7 @@ ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
 ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
 ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS speaking_speed double precision NOT NULL DEFAULT 1.15 CHECK (speaking_speed IN (1.15,1.3,1.5));
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'attention';
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
 -- Record user counts (excluding hidden system identities) and convert once.

@@ -312,8 +312,8 @@ BEGIN
     WHEN 'identities' THEN
       -- The public identity (name, handle, picture, face) and the owner's push level.
       -- A push level change alone is the owner's own setting, so only they hear it.
-      IF TG_OP = 'UPDATE' AND ROW(NEW.name,NEW.handle,NEW.avatar,NEW.face_id,NEW.push_level)
-          IS DISTINCT FROM ROW(OLD.name,OLD.handle,OLD.avatar,OLD.face_id,OLD.push_level) THEN
+      IF TG_OP = 'UPDATE' AND ROW(NEW.name,NEW.handle,NEW.avatar,NEW.face_id,NEW.push_level,NEW.speaking_speed)
+          IS DISTINCT FROM ROW(OLD.name,OLD.handle,OLD.avatar,OLD.face_id,OLD.push_level,OLD.speaking_speed) THEN
         payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
           'roomId', '', 'identityId', NEW.id,
           'ownerOnly', ROW(NEW.name,NEW.handle,NEW.avatar,NEW.face_id)

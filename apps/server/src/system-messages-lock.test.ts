@@ -821,6 +821,29 @@ function scan(files: Map<string, string>): Entry[] {
     const collect = (part: ts.Node) => {
       if (seen.has(part)) return;
       seen.add(part);
+      // The private command transport contributes its returned command values,
+      // not unrelated wake-bookkeeping statements in its transaction callback.
+      // Explicit mutations of returned locals are still followed below.
+      let producer: ts.Node | undefined = part.parent;
+      while (producer && !ts.isFunctionDeclaration(producer)) producer = producer.parent;
+      if (
+        (ts.isArrowFunction(part) || ts.isFunctionExpression(part)) &&
+        producer &&
+        ts.isFunctionDeclaration(producer) &&
+        producer.name?.text === 'createAgentCommand' &&
+        producer.getSourceFile().fileName === resolve(server, 'src/agent-command.ts')
+      ) {
+        if (!ts.isBlock(part.body)) collect(part.body);
+        else {
+          const returned = (statement: ts.Node) => {
+            if (ts.isReturnStatement(statement) && statement.expression)
+              collect(statement.expression);
+            else if (!ts.isFunctionLike(statement)) ts.forEachChild(statement, returned);
+          };
+          ts.forEachChild(part.body, returned);
+        }
+        return;
+      }
       // Returned SQL expressions may supply words; access clauses do not.
       if (queryResult(part)) {
         const selected = queryWording(part);
@@ -1407,4 +1430,90 @@ it('freezes direct System wording in an upsert SET outcome', () => {
     new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
   expect(() => enforce(scan(mutate('hello', 'goodbye')), scan(base))).toThrow(failure);
   expect(() => enforce(scan(mutate("text='member'", "text='owner'")), scan(base))).not.toThrow();
+});
+it('SYSTEM-VISIBILITY-2: private wake bookkeeping does not change the five mixed wrapper snapshots', () => {
+  const base = sources(resolve(server, 'src'));
+  const baseline = scan(base);
+  const scopes = [
+    'sendOrder',
+    'checksReported',
+    'ensureReviewDispatch',
+    'noteReviewBlocked',
+    'reassignFailedCornerReviewer',
+  ];
+  for (const scope of scopes)
+    expect(
+      baseline.some((entry) => entry.kind === 'wrapper' && entry.id.includes(`:${scope}:`)),
+    ).toBe(true);
+  const changed = new Map(base);
+  const path = resolve(server, 'src/agent-command.ts');
+  const text = base.get(path)!;
+  const before = '  if (command && reviewContext) {';
+  expect(text.split(before)).toHaveLength(2);
+  changed.set(
+    path,
+    text
+      .replace(
+        before,
+        `  if (command && input.reason === 'corner_brief_revision') {
+    await db.query("UPDATE agent_commands SET wake_context=jsonb_build_object('briefRevision',1) WHERE id=$1", [command.id]);
+  }
+${before}`,
+      )
+      .replace('Current handoff target: PR #', 'Private handoff target: PR #'),
+  );
+  const current = scan(changed);
+  for (const scope of scopes) {
+    const entries = (items: Entry[]) =>
+      items.filter((entry) => entry.kind === 'wrapper' && entry.id.includes(`:${scope}:`));
+    expect(entries(current)).toEqual(entries(baseline));
+  }
+  expect(() => enforce(current, baseline)).not.toThrow();
+  console.info(
+    'SYSTEM-VISIBILITY-2: all five real wrapper snapshots accept private wake bookkeeping and handoff-note changes',
+  );
+}, 30_000);
+
+it.each([
+  ['commander.ts', "'ordered'", "'public wording changed'"],
+  ['corner-lifecycle.ts', "'requested review of'", "'public wording changed'"],
+  ['agent-command.ts', "verb: 'requested another check of'", "verb: 'public wording changed'"],
+])(
+  'SYSTEM-VISIBILITY-2: visible wording in %s remains locked',
+  (filename, before, after) => {
+    const base = sources(resolve(server, 'src'));
+    const path = resolve(server, 'src', filename);
+    expect(base.get(path)).toContain(before);
+    const changed = new Map(base);
+    changed.set(path, base.get(path)!.replace(before, after));
+    expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+  },
+  30_000,
+);
+
+it.each([
+  "return 'visible callback words';",
+  "let text='visible callback words'; text += ' changed'; return text;",
+])('keeps returned command callback wording and mutations locked: %s', (body) => {
+  const files = new Map([
+    [
+      resolve(server, 'src/agent-command.ts'),
+      `export function createAgentCommand(db: any) { return db.transaction(async () => { ${body} }); }`,
+    ],
+    [
+      resolve(server, 'src/system-line.ts'),
+      'export function systemLine(db: unknown, input: unknown) {}',
+    ],
+    [
+      resolve(server, 'src/callback-fixture.ts'),
+      "import {createAgentCommand} from './agent-command.js'; import {systemLine} from './system-line.js'; systemLine(db,{verb:await createAgentCommand(db)});",
+    ],
+  ]);
+  const changed = new Map(
+    [...files].map(([path, text]) => [
+      path,
+      text.replace('visible callback words', 'unapproved callback words'),
+    ]),
+  );
+  expect(() => enforce(scan(changed), scan(files))).toThrow(failure);
 });

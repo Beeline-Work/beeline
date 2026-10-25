@@ -10,6 +10,70 @@ import org.json.JSONObject;
 import java.lang.ref.WeakReference;
 /** Observes existing draws without accessibility polling or JavaScript callbacks. */
 public final class LatencyRigProbe {
+  private static final com.facebook.react.bridge.ReactMarker.FabricMarkerListener FABRIC_LISTENER =
+    LatencyRigProbe::fabricMarker;
+  private static org.json.JSONArray fabricEvents;
+  public static synchronized void recordFabric(android.content.Context context, boolean enabled) {
+    if (enabled) { fabricEvents = new org.json.JSONArray(); return; }
+    try (java.io.FileWriter out = new java.io.FileWriter(
+        new java.io.File(context.getExternalFilesDir(null), "latency-fabric.json"))) {
+      JSONObject result = new JSONObject();
+      result.put("probe", "react-fabric-markers-v1");
+      result.put("epochOffsetMs", System.currentTimeMillis() - SystemClock.uptimeMillis());
+      result.put("events", fabricEvents);
+      out.write(result.toString());
+      fabricEvents = null;
+    } catch (Exception error) { throw new RuntimeException(error); }
+  }
+  private static synchronized void fabricMarker(com.facebook.react.bridge.ReactMarkerConstants name,
+      String tag, int instanceKey, long timestamp) {
+    if (fabricEvents == null) return;
+    try {
+      JSONObject event = new JSONObject();
+      event.put("name", name.name()); event.put("commit", instanceKey);
+      event.put("uptimeMs", timestamp); event.put("observedUptimeMs", SystemClock.uptimeMillis());
+      fabricEvents.put(event);
+    } catch (org.json.JSONException error) { throw new RuntimeException(error); }
+  }
+  /** Dumps real mounted Views; flattened Fabric nodes are deliberately absent. */
+  public static void dumpViews(android.content.Context context) {
+    View view = root.get();
+    if (view == null) throw new IllegalStateException("No fixture activity attached");
+    view.post(() -> {
+      try {
+        JSONObject dump = new JSONObject();
+        dump.put("probe", "mounted-native-views-v1");
+        dump.put("capturedAtMs", System.currentTimeMillis());
+        dump.put("tree", describeView(view));
+        try (java.io.FileWriter out = new java.io.FileWriter(
+            new java.io.File(context.getExternalFilesDir(null), "latency-views.json"))) {
+          out.write(dump.toString());
+        }
+        Log.w("LATENCY_VIEWS", "saved");
+      } catch (Exception error) { throw new RuntimeException(error); }
+    });
+  }
+  private static JSONObject describeView(View view) throws org.json.JSONException {
+    JSONObject node = new JSONObject();
+    node.put("class", view.getClass().getName());
+    node.put("id", view.getId());
+    node.put("shown", view.isShown());
+    node.put("alpha", view.getAlpha());
+    node.put("width", view.getWidth()); node.put("height", view.getHeight());
+    int[] location = new int[2]; view.getLocationOnScreen(location);
+    node.put("x", location[0]); node.put("y", location[1]);
+    node.put("description", view.getContentDescription());
+    node.put("testId", view.getTag(com.facebook.react.R.id.react_test_id));
+    node.put("nativeId", view.getTag(com.facebook.react.R.id.view_tag_native_id));
+    if (view instanceof TextView) node.put("text", ((TextView)view).getText().toString());
+    org.json.JSONArray children = new org.json.JSONArray();
+    if (view instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup)view;
+      for (int i=0; i<group.getChildCount(); i++) children.put(describeView(group.getChildAt(i)));
+    }
+    node.put("children", children);
+    return node;
+  }
   private static WeakReference<View> root = new WeakReference<>(null);
   private static Pending pending;
   private static boolean profiling;
@@ -38,6 +102,7 @@ public final class LatencyRigProbe {
     if (view != null) view.postInvalidateOnAnimation();
   }
   public static void attach(Activity activity) {
+    com.facebook.react.bridge.ReactMarker.addFabricListener(FABRIC_LISTENER);
     View view = activity.getWindow().getDecorView();
     root = new WeakReference<>(view);
     view.getViewTreeObserver().addOnDrawListener(() -> observe(view));

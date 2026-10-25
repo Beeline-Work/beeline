@@ -411,8 +411,13 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
     INLINE_HOSTS.has(first.type) &&
     !('items' in first && first.items.length === 0);
 
+  // A single paragraph can carry the identifier itself, allowing Fabric to
+  // flatten the root's native View. Retain the Yoga wrapper: removing it changes
+  // text pixel rounding at fractional row positions on Android.
+  const singleParagraph = blocks.length === 1 && first.type === 'text';
+
   return (
-    <View style={styles.root} testID={testID}>
+    <View style={styles.root} testID={singleParagraph ? undefined : testID}>
       {leadingInline && !inlineHosted ? (
         <Text selectable style={[base, styles.block]}>
           {leadingInline}
@@ -427,7 +432,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
 
         if (block.type === 'text') {
           return (
-            <Text key={index} selectable style={[base, blockStyle]}>
+            <Text key={index} selectable testID={singleParagraph ? testID : undefined} style={[base, blockStyle]}>
               {lead}
               <InlineMarkdown
                 spans={block.content}

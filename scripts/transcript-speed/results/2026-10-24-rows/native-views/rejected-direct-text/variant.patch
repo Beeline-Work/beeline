@@ -1,0 +1,29 @@
+--- before/apps/mobile/sources/components/buzz/MonoMarkdown.tsx
++++ rejected/apps/mobile/sources/components/buzz/MonoMarkdown.tsx
+@@ -410,6 +410,26 @@
+     Boolean(first) &&
+     INLINE_HOSTS.has(first.type) &&
+     !('items' in first && first.items.length === 0);
++
++  // A single paragraph can carry the width and test identifier itself. Keeping
++  // a separate root View materializes an otherwise empty native node per row.
++  if (blocks.length === 1 && first.type === 'text') {
++    return (
++      <Text selectable testID={testID} style={[styles.root, base, styles.block, styles.lastBlock]}>
++        {leadingInline}
++        <InlineMarkdown
++          spans={first.content}
++          base={base}
++          onLink={onLink}
++          liveMentionHandles={liveMentionHandles}
++          onMention={onMention}
++          channelIndex={channelIndex}
++          onChannelReference={onChannelReference}
++          tail={tail}
++        />
++      </Text>
++    );
++  }
+ 
+   return (
+     <View style={styles.root} testID={testID}>

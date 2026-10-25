@@ -1,0 +1,39 @@
+11:55 940
+
+#Transcript A/Transcript stre...
+
+AGENT - working
+
+| Local concurrent streaming fixture
+
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+Measured results need repeatable inputs.
+
+SAT 24 OCT
+
+Stream O: repeatable chunk repeatable chunk
+repeatable chunk repeatable chunk repeatable
+chunk repeatable chunk repeatable chunk
+repeatable chunk repeatable chunk repeatable
+chunk repeatable chunk repeatable chunk
+repeatable chunk repeatable chunk repeatable
+chunk
+
+Agent AGENT 23395
+
+Stream 1: repeatable chunk repeatable chunk
+repeatable chunk repeatable chunk repeatable
+chunk repeatable chunk repeatable chunk
+repeatable chunk repeatable chunk repeatable
+chunk repeatable chunk repeatable chunk
+repeatable chunk repeatable chunk repeatable
+
+chunk
+@ Agent Pondering.. 2s m STOP
++ Ft ao *

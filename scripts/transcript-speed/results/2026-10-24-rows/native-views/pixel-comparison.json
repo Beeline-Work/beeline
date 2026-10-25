@@ -1,0 +1,46 @@
+[
+  {
+    "platform": "android",
+    "theme": "light",
+    "size": [
+      1080,
+      2400
+    ],
+    "excludedSystemStatusHeight": 100,
+    "fullChangedPixels": 701,
+    "productChangedPixels": 0
+  },
+  {
+    "platform": "android",
+    "theme": "dark",
+    "size": [
+      1080,
+      2400
+    ],
+    "excludedSystemStatusHeight": 100,
+    "fullChangedPixels": 735,
+    "productChangedPixels": 0
+  },
+  {
+    "platform": "web",
+    "theme": "light",
+    "size": [
+      1280,
+      1100
+    ],
+    "excludedSystemStatusHeight": 0,
+    "fullChangedPixels": 0,
+    "productChangedPixels": 0
+  },
+  {
+    "platform": "web",
+    "theme": "dark",
+    "size": [
+      1280,
+      1100
+    ],
+    "excludedSystemStatusHeight": 0,
+    "fullChangedPixels": 0,
+    "productChangedPixels": 0
+  }
+]

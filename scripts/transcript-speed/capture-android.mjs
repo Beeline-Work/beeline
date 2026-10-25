@@ -39,6 +39,7 @@ if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3)
 const regressionOnly = process.env.TRANSCRIPT_REGRESSION_ONLY === '1';
 const rowScenariosOnly = process.env.TRANSCRIPT_ROW_SCENARIOS_ONLY === '1';
 const profileRows = process.env.TRANSCRIPT_PROFILE_ROWS === '1';
+const fabricMarkers = process.env.TRANSCRIPT_FABRIC_MARKERS === '1';
 const profiledScenarios = new Set(['fling', 'history-prepend', 'concurrent-streams', 'optimistic-send']);
 const control = startControl();
 const stimulus = await fixtureStimulus();
@@ -63,6 +64,8 @@ const frameStats = text => {
 };
 async function capture(name, duration, action) {
   const profiling = profileRows && profiledScenarios.has(name);
+  if (fabricMarkers) adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_PROFILE',
+    '-n', 'app.usebeeline/.LatencyRigReceiver', '--es', 'action', 'fabric-start');
   if (profiling) adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_PROFILE',
     '-n', 'app.usebeeline/.LatencyRigReceiver', '--es', 'action', 'start');
   adb('shell', 'dumpsys', 'gfxinfo', 'app.usebeeline', 'reset');
@@ -70,13 +73,35 @@ async function capture(name, duration, action) {
   try {
     sample = await control.capture(name, duration, action);
   } finally {
+    if (fabricMarkers) adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_PROFILE',
+      '-n', 'app.usebeeline/.LatencyRigReceiver', '--es', 'action', 'fabric-stop');
     if (profiling) adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_PROFILE',
       '-n', 'app.usebeeline/.LatencyRigReceiver', '--es', 'action', 'stop');
+  }
+  let fabric;
+  if (fabricMarkers) {
+    fabric = JSON.parse(adb('shell', 'cat', '/sdcard/Android/data/app.usebeeline/files/latency-fabric.json'));
+    await writeFile(`${output}/fabric-${name}-${samples.filter(s => s.scenario === name).length}.json`, JSON.stringify(fabric));
   }
   if (profiling) await writeFile(`${output}/profile-${name}-${samples.filter(s => s.scenario === name).length}.json`,
     adb('shell', 'cat', '/sdcard/Android/data/app.usebeeline/files/latency-profile.json'));
   const rawFrames = adb('shell', 'dumpsys', 'gfxinfo', 'app.usebeeline', 'framestats');
-  const result = { ...summarize(sample, refreshHz), profiling, raw: sample, uiFrames: frameStats(rawFrames) };
+  const nativePhases = fabric ? Object.fromEntries(['COMMIT', 'LAYOUT', 'BATCH_EXECUTION'].map(phase => {
+    const starts = new Map(), durations = [];
+    for (const event of fabric.events) {
+      if (event.name === `FABRIC_${phase}_START`) starts.set(event.commit, event.uptimeMs);
+      if (event.name === `FABRIC_${phase}_END` && starts.has(event.commit)) {
+        const start = starts.get(event.commit), end = event.uptimeMs;
+        // Use the marker timestamps, not the delayed listener callback time.
+        // Android RN performance.now and Fabric markers use CLOCK_MONOTONIC.
+        if (start > 0 && end >= start && start >= sample.startMs &&
+            end <= sample.endMs) durations.push(end - start);
+        starts.delete(event.commit);
+      }
+    }
+    return [phase, { count: durations.length, p50Ms: percentile(durations, .5), p95Ms: percentile(durations, .95), rawMs: durations }];
+  })) : undefined;
+  const result = { ...summarize(sample, refreshHz), profiling, fabricMarkers, nativePhases, raw: sample, uiFrames: frameStats(rawFrames) };
   samples.push(result);
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, refreshHz, samples }, null, 2));
   console.log(name, result.uiFrames.count, 'UI frames');
@@ -169,7 +194,7 @@ try {
     if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
-    scenarioOptions: { repeatCount, regressionOnly, rowScenariosOnly, profileRows, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
+    scenarioOptions: { repeatCount, regressionOnly, rowScenariosOnly, profileRows, fabricMarkers, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     refreshHz,

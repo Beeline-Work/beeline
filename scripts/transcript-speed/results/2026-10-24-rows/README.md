@@ -3,8 +3,12 @@
 Step 3 starts from `4b8f8feffeef308bbdb56c0007f36e5454623277`, which includes
 the merged baseline and redraw work. The profiling phase is complete. The
 [full Android baseline](ANDROID-BASELINE.md) and [attribution and recommendation](PROFILE-NOTES.md)
-are retained. No product optimization or passing before/after optimization gate
-is claimed; a profiling-only result needs the commander's decision.
+are retained. Ruby accepted that finding and requested native view counts.
+The [native-view continuation](native-views/README.md) removes one mounted
+wrapper per single paragraph while preserving pixels. Its full alternating
+timings are retained; the concurrent-row-commit and slow-scroll conflicts
+prevent a blanket passing optimization gate. The PR remains a draft for that
+decision.
 
 ## Chrome hover
 

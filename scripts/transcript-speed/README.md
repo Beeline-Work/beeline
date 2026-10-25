@@ -250,6 +250,10 @@ this checkout's Expo config with `ReferenceError: require is not defined`.
 Use a private Gradle home, bounded heaps/workers, and persistent log/output paths.
 
 Keep the fixture server, delayed-image server, and capture on the same host.
+For exports with different fixture backend URLs, use a private `TMPDIR` and
+`expo export --clear`; verify the embedded app-config override. A shared Metro
+transform cache can otherwise retain another local backend port even when the
+export environment specifies the intended URL.
 Forward the corner's emulator lease variables when launching `beeline emulator`
 through the host route; select its returned serial and ADB server port for every
 capture command. Do not select another corner's emulator. Wait for build success
@@ -280,3 +284,27 @@ for acceptance. The approved metric definition and latest measurements are in
 [the Room-switch proof](results/2026-10-24-redraw/room-switch/README.md).
 
 Every scenario in the generated summary includes its worst JS interval and total missed JS frame opportunities alongside p50/p95. A small number of long gaps can dominate wall time while staying above the p95 cutoff; use all these measures when assessing Room switching.
+
+### Mounted row views and native phases
+
+Local fixture APKs accept the `views` action on the existing DUMP-permission
+receiver, `app.usebeeline/.LatencyRigReceiver`, with broadcast action
+`app.usebeeline.LATENCY_RIG_PROFILE`. It writes
+`/sdcard/Android/data/app.usebeeline/files/latency-views.json` after traversing
+the attached activity's real Android View tree on the UI thread. Existing
+test identifiers identify row boundaries; no new row identifiers or
+`collapsable={false}` props distort Fabric flattening. Count native SVG shape
+nodes separately from React View/Text nodes, and distinguish content, swipe
+shell and list cell counts. This dump is not an accessibility hierarchy.
+
+`TRANSCRIPT_FABRIC_MARKERS=1` records React Native's release Fabric markers in
+memory during each scenario, then writes `fabric-<scenario>-<trial>.json`.
+The capture summary pairs start/end markers by commit number and reports
+commit, layout and batch-execution p50/p95 with raw durations retained. These
+are overlapping wall-time phases with millisecond timestamp precision, not
+additive CPU time. The Android release sampler's `performance.now()` and the
+native markers share the monotonic clock. Only complete pairs inside the JS
+sample window contribute. Missing pairs remain absent, rather than becoming
+zero-duration samples. Compare both arms with the same marker setting and
+keep Hermes sampling off. JS frame intervals remain frame-opportunity
+measurements; do not label them JS CPU time.

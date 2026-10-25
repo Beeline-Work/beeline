@@ -1,0 +1,78 @@
+[
+  {
+    "kind": "plain-header",
+    "id": "2e4b32f3d3d68d7e120fc42820dd7207acbf91d16a1aa6651fab0ed9318471af",
+    "contentMountedViews": 30,
+    "cellMountedViews": 44,
+    "headerMountedViews": 27,
+    "classes": {
+      "ReactViewGroup": 7,
+      "SvgView": 1,
+      "GroupView": 11,
+      "PathView": 5,
+      "EllipseView": 3,
+      "ReactTextView": 3
+    }
+  },
+  {
+    "kind": "plain-grouped",
+    "id": "3dcca00873c907edd58903e0e71ab1a9a5d5a2fd935ba91cca7eb5c0f0344a41",
+    "contentMountedViews": 3,
+    "cellMountedViews": 16,
+    "headerMountedViews": 0,
+    "classes": {
+      "ReactViewGroup": 2,
+      "ReactTextView": 1
+    }
+  },
+  {
+    "kind": "markdown",
+    "id": "dc942a8d9908cd5464bb40ed1149fd3c31a004824dc9f79ccc9246b7eaf18b4a",
+    "contentMountedViews": 6,
+    "cellMountedViews": 19,
+    "headerMountedViews": 0,
+    "classes": {
+      "ReactViewGroup": 3,
+      "ReactTextView": 3
+    }
+  },
+  {
+    "kind": "attachment",
+    "id": "68000a61248b0434f20323229814ffe332d8ac7b22bb43edbbe56101d433cbed",
+    "contentMountedViews": 8,
+    "cellMountedViews": 21,
+    "headerMountedViews": 0,
+    "classes": {
+      "ReactViewGroup": 3,
+      "ReactTextView": 5
+    }
+  },
+  {
+    "kind": "card",
+    "id": "06dfaa0876ad1e0566a97930b39d78e018628e7e3ee970d44ef8d4aab4030c2d",
+    "contentMountedViews": 40,
+    "cellMountedViews": 53,
+    "headerMountedViews": 0,
+    "classes": {
+      "ReactViewGroup": 10,
+      "SvgView": 1,
+      "GroupView": 10,
+      "EllipseView": 4,
+      "PathView": 3,
+      "LineView": 4,
+      "CircleView": 1,
+      "ReactTextView": 7
+    }
+  },
+  {
+    "kind": "system",
+    "id": "00bf7287a000f8579a6361ab8419ecbf263acb5f2718c1b11d361af40258ceaa",
+    "contentMountedViews": 5,
+    "cellMountedViews": 6,
+    "headerMountedViews": 0,
+    "classes": {
+      "ReactViewGroup": 2,
+      "ReactTextView": 3
+    }
+  }
+]

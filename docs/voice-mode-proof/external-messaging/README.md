@@ -1,85 +1,83 @@
 # External messaging and bare contact fragments
 
-Reproduction SPEEDY-CONTACT-1: a stored webhook contact `Grok`, or the short
-name of `Grok bot`, is spoken as a confident final. The previous runtime drops
-single-word `Grok` before recording it; multiword bare contact names reach the
-brain and can incorrectly dispatch work. Speedy's live review saw bare `Grok`
-order on every attempt (4/4).
+Revision four requires bare contact names to stay silent while callers finish
+their request. Stored contacts remain in the human transcript, do not invoke
+the model or order, and produce no reply or audio. After recording the fragment,
+the runtime finishes it and remembers the addressed agent like a bare agent
+name. The next phrase uses normal persisted Room history to resolve the contact.
 
-The regression emits eager and final recognizer events into VoiceRoomRuntime.
-Against PR head `0d6c35be0`, the initial contact cases fail (3/3). With the fix,
-stored `Grok` and `Grok bot` contacts retain `Grok`, `Grok bot`, and `Grok Bot?`
-in the transcript, never invoke the brain or dispatch, then dispatch a following
-`Tell Grok bot hello`. Each contact/fragment combination is repeated (4 runs;
-16 total). This is a simulated RTC/STT path, not a real microphone proof.
+## Reproduced
 
-Stored contact names use the existing call-start read. Matching accepts the
-normalized full name, a trailing `bot` label omitted, punctuation and a greeting.
-It does not treat an arbitrary first word of a multiword contact as its name.
-The final guard runs after recording the human transcript; the eager guard runs
-before model work. Previous request fragments still join normally.
+Reproduction VOICE-EXTERNAL-1: the original built router refused `Ruby, tell
+Grok Bot hello` instead of handing it to the full agent. Retained live generation:
+`gen-1792895403-KRS5HIQSdRCaCEhEJbTV`.
 
-Live streaming Luna checks use the payload captured from the built
-OpenRouterVoiceBrain, with the existing production provider settings and no
-external side effects. Bare `Grok` clarified (4/4); raw bare `Grok bot` clarified
-(3/4) and ordered (1/4). The runtime guard therefore remains essential and
-prevents all these bare inputs from reaching that model. Actual requests to
-message Grok, the `Crock Pot` recognition variant, email and Telegram all ordered
-(4/4 each). A sky-color knowledge question answered in-call (4/4).
+Reproduction SPEEDY-CONTACT-1: before the contact guard, a confident single-word
+`Grok` was discarded before the transcript, while multiword contact fragments
+could incorrectly dispatch. The initial contact regressions fail against
+`0d6c35be0` (3/3). Speedy's original live review observed bare `Grok` order
+(4/4). Revision four explicitly requires silence, superseding the intervening
+spoken-clarification review request; the unpublished spoken change was removed.
 
-The raw live results include generation IDs, responses and usage. They are
-attached to the corner, alongside the timing samples and original/fixed test
-outputs. These proofs cover routing and transcript retention. They do not prove
-acoustic recognition or delivery through the external webhook.
+## Demonstrated
 
-## Latency comparison against PR head 0d6c35be0
+Eager/final recognizer events retain stored `Grok` and `Grok bot` fragments
+(`Grok`, `Grok bot`, `Grok Bot?`) in the transcript, with no model call,
+dispatch, recorded answer, synthesis or accepted audio frame (4 runs per
+combination; 16 total). Following Grok, Crock Pot, email and Telegram requests
+each invoke the model, dispatch and speak an acknowledgement (4 runs each).
 
-Same method as the previous comparison: alternating streamed base/head pairs
-(40), interleaved base/base controls (20 pairs), OpenAI pinned without fallback,
-reasoning off, identical date/soul/history/contact context, output cap unchanged.
-All successful samples are retained (120 requests), with generation IDs and
-OpenRouter generation `latency` as the first-delta proxy; this is not phone
-first-audio latency. Resolved model: `openai/gpt-6-luna-20260922`.
+SPEEDY-CONTACT-2 uses the real VoiceService, database and phone read. A stored
+webhook contact supplies `Grok bot` to hints. The final `Grok bot` is visible
+in the phone transcript without an order or audio. A following `tell it hello`
+reaches the model with the stored contact in normal call history and creates
+exactly one ordinary agent command and one acknowledgement (4 runs). Both
+human phrases remain in the phone transcript. RTC/STT/TTS and the model are
+doubles; this is not physical microphone or external webhook delivery proof.
+
+Stored contact names use the existing parallel call-start read. Agent hints
+retain priority within the cap (80). The controlled read overlap proof remains
+unchanged (20 ms). The caller-resume and committed search-budget regressions
+remain included in validation.
+
+## Retained live routing and latency evidence
+
+The captured model request is unchanged by revision four. Live streaming Luna
+checks for Grok, Crock Pot, email and Telegram action requests each order
+(4/4); a knowledge question answers in-call (4/4). Raw bare `Grok` clarified
+(4/4), while raw bare `Grok bot` clarified (3/4) and ordered (1/4). Those bare
+inputs are blocked before the model by the runtime, so raw model behavior does
+not determine silence or dispatch. No external messages were actually sent.
+
+The previous comparison alternated streamed base/head pairs (40), with
+interleaved base/base controls (20 pairs), OpenAI pinned without fallback,
+reasoning off and identical date/soul/history/contact context. Every successful
+sample is retained (120 requests), with generation IDs and OpenRouter generation
+`latency` as the first-delta proxy; this is not phone first-audio latency.
+Resolved model: `openai/gpt-6-luna-20260922`.
 
 | Payload | Samples | Median | p90 |
 | --- | --- | --- | --- |
-| Current PR base | (40) | (577 ms) | (1198 ms) |
-| Fixed head | (40) | (623.5 ms) | (813 ms) |
+| Base at 0d6c35be0 | (40) | (577 ms) | (1198 ms) |
+| Unchanged model payload | (40) | (623.5 ms) | (813 ms) |
 | Base/base control A | (20) | (545 ms) | (972 ms) |
 | Base/base control B | (20) | (537.5 ms) | (784 ms) |
 
-Head minus base: median (+46.5 ms), p90 (-385 ms). Absolute paired control
-jitter: median (69.5 ms), p90 (463 ms). Paired bootstrap intervals (95%,
-10,000 resamples, seed 1729): median difference (-4 to +104 ms), p90 difference
+Head minus base: median (+46.5 ms), p90 (-385 ms). Absolute control jitter:
+median (69.5 ms), p90 (463 ms). Paired bootstrap intervals (95%, 10,000
+resamples, seed 1729): median difference (-4 to +104 ms), p90 difference
 (-560 to -80 ms). No clear median regression at this sample's noise floor;
 this does not establish identical distributions or literal zero latency cost.
-All fixed-head timing requests ordered (40/40).
+Provider input shrinks relative to the base (660 to 630 tokens; -30).
 
-Complete provider input shrinks (660 → 630 tokens; -30), relative to
-`0d6c35be0`. The controlled call-start read proof remains unchanged (20 ms).
-Server build, root typecheck and voice suites pass (304 tests, 5 files), with
-final targeted runtime checks passing after the last runtime/test edit
-(18 tests). `git diff --check` passes.
+## Validation
 
-## Main conflict integration
+- `npm run corner:prepare`: passed.
+- `npm test -w @beeline/server -- voice --maxWorkers=2 --minWorkers=1`: passed (403 tests, 14 files).
+- Focused contact, resume, search-budget and startup command: passed (27 tests).
+- Server build and root typecheck (mobile and scripts included): passed.
+- Built provider request comparison and `git diff --check`: passed.
 
-Merged main `69d9b253f`, including caller-resume and resumed-final/search-budget
-fixes, without changing the contact feature's behavior.
-
-- `voice-eager-reply.ts`: retained `externalContacts` and main's `ready` gate.
-- `voice-providers.ts`: retained both optional search-context fields; main's
-  committed search budget starts after `ready`, while contacts still reach the
-  existing complete calls.
-- `voice-room-runtime.test.ts`: retained both appended regression blocks.
-
-The runtime and assembler merged automatically. Main's resumed-final reopening
-still runs before speech filtering; the contact allowlist and deterministic
-bare-contact guards remain intact. Playback resume and search acknowledgement
-handling retain main's implementation.
-
-Validation on the combined tree: all voice suites passed (399 tests, 14 files).
-The focused command passed (23 tests): SPEEDY-RESUME-1, SPEEDY-SEARCH-1,
-SPEEDY-EAGER-1, SPEEDY-CONTACT-1 and the previous targeted checks (18).
-Server build and root typecheck passed. No unmerged paths or whitespace errors
-remain. The built provider request matches the previously measured payload
-byte-for-byte, so the live latency comparison was not rerun.
+Relative to reviewed head `c60322be1`, runtime code adds the same addressed-agent
+continuation used by bare agent names. The spoken local draft was replaced
+before publication. No production-corpus threshold or unrelated code changed.

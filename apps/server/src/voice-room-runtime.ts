@@ -796,6 +796,7 @@ export class VoiceRoomRuntime {
       }
       if (voiceContactNameOnly(fragment, this.externalContacts.get(human)) && !previous && !retry) {
         this.assembler.finish(human, request);
+        this.assembler.address(human, agent.id);
         return;
       }
       committedSourceId = sourceId;

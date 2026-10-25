@@ -59,10 +59,12 @@
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
         // The transcript benchmark README invokes these measurement CLIs by path.
-        "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile}.mjs",
+        "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile,symbolicate-row-profiles}.mjs",
       ],
       "project": [
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",
+        // Disposable benchmark exports and host drivers are generated, git-ignored output.
+        "!scripts/latency-rig/.local/**",
         "!scripts/fixtures/dead-code-regression/**",
         ".verification/**/*.ts",
         "web/**/*.{js,mjs}",

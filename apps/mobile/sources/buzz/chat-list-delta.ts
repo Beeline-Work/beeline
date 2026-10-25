@@ -1,5 +1,6 @@
 import {
   chatActivityAt,
+  type SidebarPreview,
   type ChatListCorner,
 } from '@beeline/api-contract/phone';
 import type {
@@ -10,6 +11,7 @@ import type {
 } from '@beeline/buzz-client';
 
 export type ChatListDelta =
+  | SidebarPreview
   | { readonly type: 'message-delta'; readonly roomId: string; readonly message: RoomViewMessage;
       readonly deckPreview?: ChatListItem['latestMessage'] | null }
   | { readonly type: 'turn-delta'; readonly roomId: string; readonly turn: RoomViewAgentTurn;
@@ -78,7 +80,7 @@ export function withCornerFacts(
 function applyMessage(
   view: ChatListView,
   index: number,
-  message: RoomViewMessage,
+  message: SidebarPreview['preview'] & { readonly attachments?: RoomViewMessage['attachments'] },
   context: ChatListDeltaContext,
 ): ChatListView {
   const item = view.chats[index]!;
@@ -92,6 +94,7 @@ function applyMessage(
     createdAt: message.createdAt,
     author: message.author,
     ...(message.attachments?.length ? { attachments: message.attachments } : {}),
+    ...('mentionsViewer' in message && message.mentionsViewer ? { mentionsViewer: true as const } : {}),
   };
   if (latest?.id === message.id) {
     // The same row edited or reacted to: its read state is unchanged.
@@ -128,6 +131,14 @@ export function applyChatListDelta(
   const index = view.chats.findIndex((item) => item.room.id === delta.roomId);
   if (index < 0) return view;
   const item = view.chats[index]!;
+  if (delta.type === 'sidebar-preview') {
+    if (delta.preview.deleted && 'deckPreview' in delta && item.latestMessage?.id === delta.preview.id) {
+      const { latestMessage: _old, ...rest } = item;
+      return { ...view, chats: placed(view.chats.filter((_, position) => position !== index),
+        { ...rest, ...(delta.deckPreview ? { latestMessage: delta.deckPreview } : {}) }, context) };
+    }
+    return applyMessage(view, index, delta.preview, context);
+  }
   if (delta.type === 'message-delta') {
     const call = delta.message.voiceCall;
     if (call) {
@@ -177,6 +188,10 @@ export function applyChatListDelta(
 /** Older live frames without a preview or terminal state need one covering read. */
 export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta): boolean {
   if (delta.type === 'corner-status') return false;
+  if (delta.type === 'sidebar-preview') {
+    return delta.preview.deleted === true && !('deckPreview' in delta) && view.chats.some((item) =>
+      item.room.id === delta.roomId && item.latestMessage?.id === delta.preview.id);
+  }
   if (delta.type === 'message-delta') {
     return delta.message.deleted === true && !('deckPreview' in delta) && view.chats.some((item) =>
       item.room.id === delta.roomId && item.latestMessage?.id === delta.message.id);

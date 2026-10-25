@@ -11,7 +11,7 @@ import type {
   RoomViewMessage,
   WritePermissionDecision,
 } from '@beeline/buzz-client';
-import type { PushLevel } from '@beeline/api-contract/phone';
+import type { SidebarPreview, PushLevel } from '@beeline/api-contract/phone';
 import type { AgentMessageWriteResult, ChatListCorner, ChatListItem, CornerListItem, MessageBookmarkView, NeedsYouItemView, RoomRepositoryResult, WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import type { MessageSubmitInput } from './rig-transport';
 import { monolithSession, MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
@@ -29,6 +29,7 @@ export type LiveWireTrace = {
 };
 
 export type LiveWireEvent = (
+  | SidebarPreview
   | { type: 'resource-change'; roomId: ''; resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string }
   | {
       type: 'invalidate';

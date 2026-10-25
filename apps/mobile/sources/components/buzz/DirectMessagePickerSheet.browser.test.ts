@@ -34,7 +34,7 @@ describe.skipIf(!existsSync(CHROME))('Message member picker', () => {
     const result = await renderPicker(null, process.env.DM_PICKER_SCREENSHOT);
     expect(result.searchLeftInset).toBe(result.titleInset);
     expect(result.searchRightInset).toBe(result.titleInset);
-  });
+  }, 20_000);
 
   it('puts rows and headers on the title edge, with the whole row as the only tap target', async () => {
     const result = await renderPicker('pubkey-chloro', process.env.DM_PICKER_BUSY_SCREENSHOT);

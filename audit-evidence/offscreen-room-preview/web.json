@@ -1,0 +1,87 @@
+{
+  "reproduction": "NET-HOL-1",
+  "results": [
+    {
+      "platform": "web",
+      "profile": "normal",
+      "trial": 0,
+      "offscreenBytes": 670,
+      "activeBytes": 732,
+      "actionAt": 1792906172105,
+      "activeAt": 1792906172133,
+      "arrivalMs": 28,
+      "paintMs": 64,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 1
+    },
+    {
+      "platform": "web",
+      "profile": "normal",
+      "trial": 1,
+      "offscreenBytes": 670,
+      "activeBytes": 732,
+      "actionAt": 1792906172442,
+      "activeAt": 1792906172461,
+      "arrivalMs": 19,
+      "paintMs": 60,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 1
+    },
+    {
+      "platform": "web",
+      "profile": "normal",
+      "trial": 2,
+      "offscreenBytes": 670,
+      "activeBytes": 732,
+      "actionAt": 1792906172773,
+      "activeAt": 1792906172792,
+      "arrivalMs": 19,
+      "paintMs": 63,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 2
+    },
+    {
+      "platform": "web",
+      "profile": "throttled",
+      "trial": 0,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "actionAt": 1792906173109,
+      "activeAt": 1792906173215,
+      "arrivalMs": 106,
+      "paintMs": 211,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 79
+    },
+    {
+      "platform": "web",
+      "profile": "throttled",
+      "trial": 1,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "actionAt": 1792906173594,
+      "activeAt": 1792906173694,
+      "arrivalMs": 100,
+      "paintMs": 205,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 78
+    },
+    {
+      "platform": "web",
+      "profile": "throttled",
+      "trial": 2,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "actionAt": 1792906174070,
+      "activeAt": 1792906174174,
+      "arrivalMs": 104,
+      "paintMs": 212,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 79
+    },
+    {
+      "openOffscreenFetchesFullText": true,
+      "tail": "TAIL-6e1d5fb27b"
+    }
+  ]
+}

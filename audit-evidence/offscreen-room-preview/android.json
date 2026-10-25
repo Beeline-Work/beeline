@@ -1,0 +1,166 @@
+{
+  "reproduction": "NET-HOL-1",
+  "clock": {
+    "deviceMinusHostMs": -501,
+    "samplingErrorMs": 10
+  },
+  "results": [
+    {
+      "platform": "release-android",
+      "profile": "normal",
+      "trial": 0,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "arrivalMs": 20,
+      "offscreenType": "sidebar-preview",
+      "actionAt": 1792906193600,
+      "activeFrame": {
+        "atMs": 1792906193119,
+        "type": "message-delta",
+        "roomId": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6",
+        "id": "3780c12c66d0790619c0a61b26c08818dafc97811b95fbc491f81e328be82140",
+        "bytes": 732
+      },
+      "offscreen": {
+        "atMs": 1792906193058,
+        "type": "sidebar-preview",
+        "roomId": "868eda06-001d-415e-8bfb-c7a6ffe48301",
+        "id": "bae106b251056155ec945cfad452ce54aac39d8c5a2828e173053beba21ff070",
+        "bytes": 671
+      },
+      "proxyDeliveryMs": 1,
+      "offscreenBeforeActive": true
+    },
+    {
+      "platform": "release-android",
+      "profile": "normal",
+      "trial": 1,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "arrivalMs": 7,
+      "offscreenType": "sidebar-preview",
+      "actionAt": 1792906194018,
+      "activeFrame": {
+        "atMs": 1792906193524,
+        "type": "message-delta",
+        "roomId": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6",
+        "id": "936dedaaba3c2ac68caadfeba8509abeb11f941b040bc1ced76cbbc228c4ae79",
+        "bytes": 732
+      },
+      "offscreen": {
+        "atMs": 1792906193478,
+        "type": "sidebar-preview",
+        "roomId": "868eda06-001d-415e-8bfb-c7a6ffe48301",
+        "id": "599ef592c63678621831bdfa27362dd5df6454b8709d2090511abf68ba72ad79",
+        "bytes": 671
+      },
+      "proxyDeliveryMs": 1,
+      "offscreenBeforeActive": true
+    },
+    {
+      "platform": "release-android",
+      "profile": "normal",
+      "trial": 2,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "arrivalMs": 10,
+      "offscreenType": "sidebar-preview",
+      "actionAt": 1792906194413,
+      "activeFrame": {
+        "atMs": 1792906193922,
+        "type": "message-delta",
+        "roomId": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6",
+        "id": "97c8f39b8a00a8c9194c01f7c4cb910a1a3fa3b4fa16fd4195f608283aaa142d",
+        "bytes": 732
+      },
+      "offscreen": {
+        "atMs": 1792906193872,
+        "type": "sidebar-preview",
+        "roomId": "868eda06-001d-415e-8bfb-c7a6ffe48301",
+        "id": "cc9a4cf9008558d6d54d163730d5879201048390567a9fa3e06804b2d5c2ed7d",
+        "bytes": 671
+      },
+      "proxyDeliveryMs": 1,
+      "offscreenBeforeActive": true
+    },
+    {
+      "platform": "release-android",
+      "profile": "throttled",
+      "trial": 0,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "arrivalMs": 84,
+      "offscreenType": "sidebar-preview",
+      "actionAt": 1792906196842,
+      "activeFrame": {
+        "atMs": 1792906196425,
+        "type": "message-delta",
+        "roomId": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6",
+        "id": "a6db4322386454346771b0a318a830777ab35aefed0b5ab4f7770848d7a1dcb7",
+        "bytes": 732
+      },
+      "offscreen": {
+        "atMs": 1792906196375,
+        "type": "sidebar-preview",
+        "roomId": "868eda06-001d-415e-8bfb-c7a6ffe48301",
+        "id": "cc235e4c50966cdd25f738e2fb8daf439aaa0778ab8ba9008ee30c55f167ddc6",
+        "bytes": 671
+      },
+      "proxyDeliveryMs": 79,
+      "offscreenBeforeActive": true
+    },
+    {
+      "platform": "release-android",
+      "profile": "throttled",
+      "trial": 1,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "arrivalMs": 87,
+      "offscreenType": "sidebar-preview",
+      "actionAt": 1792906197232,
+      "activeFrame": {
+        "atMs": 1792906196818,
+        "type": "message-delta",
+        "roomId": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6",
+        "id": "71cfc61346a1f10837a09ed09c1e6353c18a7cf1664eb324bfdda8ef239231e9",
+        "bytes": 732
+      },
+      "offscreen": {
+        "atMs": 1792906196769,
+        "type": "sidebar-preview",
+        "roomId": "868eda06-001d-415e-8bfb-c7a6ffe48301",
+        "id": "0f99820d065af53641030a0df7bcd9ad96b1299efae1c1764dfb490e33053309",
+        "bytes": 671
+      },
+      "proxyDeliveryMs": 78,
+      "offscreenBeforeActive": true
+    },
+    {
+      "platform": "release-android",
+      "profile": "throttled",
+      "trial": 2,
+      "offscreenBytes": 671,
+      "activeBytes": 732,
+      "arrivalMs": 93,
+      "offscreenType": "sidebar-preview",
+      "actionAt": 1792906197626,
+      "activeFrame": {
+        "atMs": 1792906197218,
+        "type": "message-delta",
+        "roomId": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6",
+        "id": "b7be966423b1bf87c903b874591618a5bbb720fcc1f43a12acc09110a9bde52d",
+        "bytes": 732
+      },
+      "offscreen": {
+        "atMs": 1792906197162,
+        "type": "sidebar-preview",
+        "roomId": "868eda06-001d-415e-8bfb-c7a6ffe48301",
+        "id": "73e0ab671f7e80be002e5a3e2c217223ac144d5625999648d656ec09e1bf0604",
+        "bytes": 671
+      },
+      "proxyDeliveryMs": 79,
+      "offscreenBeforeActive": true
+    }
+  ],
+  "visibleLastMessage": true
+}

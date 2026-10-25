@@ -1241,6 +1241,7 @@ describe('phone committed-row live delivery', () => {
     readLiveBookmark?: PhoneService['readLiveBookmark'],
     liveNeedsYou?: PhoneService['liveNeedsYou'],
     phoneReads: Partial<PhoneService> = {},
+    sidebarPreviews = false,
   ) {
     const roomId = 'room-live';
     const live = new LiveHub();
@@ -1284,10 +1285,57 @@ describe('phone committed-row live delivery', () => {
       socket.once('error', reject);
     });
     const subscribed = nextSocketMessage(socket, 'subscribed');
-    socket.send(JSON.stringify({ type: 'subscribe', roomId }));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId, ...(sidebarPreviews ? { sidebarPreviews: true } : {}) }));
     await subscribed;
     return { live, roomId, socket, port, liveDraftSnapshot };
   }
+
+  it('NET-HOL-1 sends bounded previews only to opted-in offscreen subscriptions', async () => {
+    const roomId = 'room-live';
+    const text = 'B'.repeat(128 * 1024);
+    const read = vi.fn().mockResolvedValue({ type: 'message-delta', roomId,
+      message: { id: 'large', text, createdAt: 1, presentation: 'message',
+        author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Agent' },
+        mentionPubkeys: ['viewer'], attachments: [{ data: text }] } });
+    const legacy = await connect(read);
+    const modern = await connect(read, undefined, undefined, false, undefined,
+      undefined, undefined, undefined, undefined, {}, true);
+    const legacyFrame = nextSocketMessage(legacy.socket, 'message-delta');
+    const previewFrame = nextSocketMessage(modern.socket, 'sidebar-preview');
+    legacy.live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: 'large' });
+    modern.live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: 'large' });
+    expect((await legacyFrame).message.text).toHaveLength(128 * 1024);
+    const preview = await previewFrame;
+    expect(preview.preview.text).toHaveLength(240);
+    expect(preview.preview.mentionsViewer).toBe(true);
+    expect(preview).not.toHaveProperty('message');
+    expect(preview.preview).not.toHaveProperty('attachments');
+    expect(JSON.stringify(preview).length).toBeLessThan(2000);
+  });
+
+  it('keeps viewed Room messages complete after opting into sidebar previews', async () => {
+    const roomId = '00000000-0000-4000-8000-000000000123';
+    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [] });
+    const read = vi.fn().mockImplementation(async () => ({ type: 'message-delta', roomId,
+      message: { id: 'viewed', text: 'V'.repeat(128 * 1024), createdAt: 1,
+        presentation: 'message', author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Agent' } } }));
+    const { live, socket } = await connect(read, undefined, undefined, false, query);
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    socket.send(JSON.stringify({ type: 'viewing', roomId, viewing: true }));
+    socket.send(JSON.stringify({ type: 'subscribe', roomId, sidebarPreviews: true }));
+    await subscribed;
+    const frame = nextSocketMessage(socket, 'message-delta');
+    live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: 'viewed' });
+    expect((await frame).message.text).toHaveLength(128 * 1024);
+    socket.send(JSON.stringify({ type: 'viewing', roomId, viewing: false }));
+    await vi.waitFor(() => expect(query.mock.calls.some(([sql]) => sql.includes('DELETE FROM room_push_views'))).toBe(true));
+    const preview = nextSocketMessage(socket, 'sidebar-preview');
+    read.mockResolvedValueOnce({ type: 'message-delta', roomId, message: {
+      id: 'after-leaving', text: 'S'.repeat(128 * 1024), createdAt: 2, presentation: 'message',
+      author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Agent' } } });
+    live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: 'after-leaving' });
+    expect((await preview).preview.text).toHaveLength(240);
+  });
 
   it('projects a parent corner status into one compact frame', async () => {
     const status = { cornerCount: 1, waitingCornerCount: 1,

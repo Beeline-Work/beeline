@@ -166,3 +166,20 @@ For wide emulation, set document zoom to 0.6667, override window innerWidth/inne
 Unrelated conversation previews were hidden with visibility:hidden before captures, preserving layout. Tray bookmark author/excerpt text was also hidden. No screenshot is evidence that this branch is deployed. Production after is a post-release check; built real components remain the PR's after proof.
 
 The confirmation was recaptured after Ruby’s screenshot-before-click instruction. Screenshots verified Edit, then the Remove from Workspace opener, then Cancel on the open confirmation. The destructive action was never pressed. Its widths remain 460 / 460, with height 172 / 173.
+
+## DESKTOP-WALLET-1: populated Wallet shell
+
+Review found the initial Wallet cap applied only to the loading child. At head `2ac08ce38`, the populated page, its address/balance/assets and its error shell filled the pane. The fix moves the shared desktop detail width onto screenStyle, which is consumed by all Wallet return paths, and removes the loading-only duplicate.
+
+The real Wallet page is rendered with fixture service responses and device boundaries. The populated fixture displays an address, $42.00 balance, and a USDC asset row. No real wallet or signing permission is accessed. This built-page stand-in exercises the exact populated path; it is not deployed-production proof. Fonts are bundled from the app. Each desktop case asserts both width and horizontal centring; loading/error paths are covered as well.
+
+| Layout viewport | Populated Wallet before | Populated Wallet after | Rule |
+| --- | --- | --- | --- |
+| 500 | 500 | 500 | Phone unchanged |
+| 1280 | 1280 | 640 | Shared detail width, centred |
+| 1440 | 1440 | 640 | Shared detail width, centred |
+| 1920 | 1920 | 640 | Shared detail width, centred |
+
+Before is the pre-review branch page bundled over the same fixture and layout. Evidence is in `wallet/before/` and `wallet/after/`, including populated, loading and error screenshots and bounding-box JSON. These fixture pages occupy a standalone pane; widths describe that pane rather than a production navigation-shell split.
+
+The populated phone before/after PNG files compare byte-for-byte equal at 500 px. Both baseline and fixed browser matrices passed all 12 cases.

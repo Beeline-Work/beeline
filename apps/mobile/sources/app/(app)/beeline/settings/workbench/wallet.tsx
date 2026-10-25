@@ -152,7 +152,9 @@ export default function WalletScreen() {
       title={title}
     />
   );
-  const screenStyle = [styles.container, { paddingTop: insets.top }];
+  const screenStyle = [styles.container, desktopPageLayout && {
+    width: '100%' as const, maxWidth: desktopColumnWidths.detail, alignSelf: 'center' as const,
+  }, { paddingTop: insets.top }];
 
   if (workspaceId === null || workspaceError) {
     return (
@@ -178,7 +180,7 @@ export default function WalletScreen() {
     return (
       <View style={screenStyle}>
         {header}
-        <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, styles.centered]} testID="wallet-loading">
+        <View style={[styles.container, styles.centered]} testID="wallet-loading">
           <SurfaceGlyphLoader testID="wallet-loader" />
         </View>
       </View>

@@ -2917,8 +2917,8 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
       let operations = github;
       let expected: string;
       if (change === 'checks') {
-        githubApp.readCommitCheckRollup.mockResolvedValueOnce({ state: 'passed', total: 1, checks: [] })
-          .mockResolvedValueOnce({ state: 'pending', total: 1, checks: [] });
+        githubApp.readCommitCheckRollup.mockResolvedValueOnce({ state: 'passed', total: 1, failing: [], checks: [] })
+          .mockResolvedValueOnce({ state: 'pending', total: 1, failing: [], checks: [] });
         expected = 'checks are pending';
       } else if (change === 'read') {
         githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId)).mockRejectedValueOnce(new Error('provider read unavailable'));
@@ -3150,7 +3150,16 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
 
   it('Reproduction MA-2 / R6a: recurring recovery releases an unmerged claim without merging', async () => {
     const cornerId = await claimed();
+    const claimUpdatedAt = async () => (await db.query<{ updated_at: string }>(
+      `SELECT updated_at::text FROM corner_facts WHERE corner_id=$1`, [cornerId],
+    )).rows[0]!.updated_at;
+    const beforeRead = await claimUpdatedAt();
     expect(await implementersMerge()).toBe(0);
+    // The live gate repairs its missing header snapshot without extending the
+    // existing claim's recovery grace period.
+    expect(await claimUpdatedAt()).toBe(beforeRead);
+    expect((await db.query(`SELECT lifecycle->'checksSummary'->>'total' total
+      FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.total).toBe('1');
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
     for (let cycle = 0; cycle < 3; cycle++) {
       await recover();

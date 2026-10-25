@@ -96,6 +96,44 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it.each(['workflow completion', 'live checks read'])(
+    'CHECK-HEADER-1: %s replaces the stale rerun summary seen by the phone', async trigger => {
+      const { corners, app, payload, headSha } = await checksFixture();
+      const corner = corners[0]!;
+      await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
+        '{pr,title}','"Fix checks"'),'{pr,targetBranch}','"main"') WHERE corner_id=$1`, [corner]);
+      await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+        SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1`, [
+        '22222222-2222-4222-8222-222222222222', HUMAN]);
+      await database.query(`INSERT INTO memberships(workspace_id,identity_id,role)
+        VALUES('11111111-1111-4111-8111-111111111111',$1,'owner')`, [HUMAN]);
+      const pending = Array.from({ length: 16 }, (_, i) => ({
+        name: i === 15 ? 'BODY SUITE' : `check ${i}`, status: i === 15 ? 'pending' : 'passed',
+      }));
+      app.readCommitCheckRollup.mockResolvedValue({ state: 'pending', total: 16, failing: [], checks: pending });
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+        app as unknown as GitHubAppClient, 'secret');
+      const phone = new PhoneService(database, 'http://local.test');
+      const line = async () => checkStatusLine(readRoomView(await phone.readRoom(corner, HUMAN))!.cornerLifecycle);
+      await operations.processWebhook('check_run', payload);
+      expect(await line()).toBe('PR #1 · 15/16 tests passed · running');
+      const complete = [...pending.map(check => ({ ...check, status: 'passed' })),
+        ...Array.from({ length: 18 }, (_, i) => ({ name: `later ${i}`, status: 'passed' }))];
+      app.readCommitCheckRollup.mockResolvedValue({ state: 'passed', total: 34, failing: [], checks: complete });
+      app.readCommitCheckRollup.mockClear();
+      if (trigger === 'workflow completion') {
+        await operations.processWebhook('workflow_run', { action: 'completed',
+          installation: payload.installation, repository: payload.repository,
+          workflow_run: { head_branch: 'feature/checks-1', head_sha: headSha, conclusion: 'success' } });
+      } else {
+        expect(await operations.prChecksStatus({ cornerId: corner })).toMatchObject({ checks: 'passed', checkCount: 34 });
+      }
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
+      expect(await line()).toBe('PR #1 · all 34 tests passed');
+      expect(await operations.prChecksStatus({ cornerId: corner })).toMatchObject({ checks: 'passed', checkCount: 34 });
+      console.info(`CHECK-HEADER-1 (${trigger}): phone Room read → ${await line()}; checks facet → 34 passed`);
+    });
+
   it('REVIEW-HEAD-1: handoff refresh discovers a push before its webhook and clears predecessor checks', async () => {
     const { corners, app } = await checksFixture();
     const corner = corners[0]!;
@@ -108,6 +146,25 @@ describe('GitHub phone operations', () => {
       'SELECT lifecycle FROM corner_facts WHERE corner_id=$1', [corner])).rows[0];
     expect(row?.lifecycle).toMatchObject({ checks: 'pending', pr: { headSha: '2'.repeat(40) } });
     expect(app.readPullRequest).toHaveBeenLastCalledWith('room-token', 'owner/widgets', 1);
+  });
+
+  it('CHECK-HEADER-1: a live read cannot replace a newer snapshot or another PR association', async () => {
+    const { corners, app } = await checksFixture();
+    const corner = corners[0]!;
+    const newer = { status: 'passing', total: 34, failing: [], checks: [], fetchStartedAt: 9e12 };
+    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',$2::jsonb)
+      WHERE corner_id=$1`, [corner, JSON.stringify(newer)]);
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      app as unknown as GitHubAppClient, 'secret');
+    const lifecycle = async () => (await database.query<{ lifecycle: unknown }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]!.lifecycle;
+    const before = await lifecycle();
+    await operations.prChecksStatus({ cornerId: corner });
+    expect(await lifecycle()).toEqual(before);
+    await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'checksSummary' WHERE corner_id=$1`, [corner]);
+    const otherPr = await lifecycle();
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 2 });
+    expect(await lifecycle()).toEqual(otherPr);
   });
 
   it('CONFLICT-STATUS-1: check refresh projects a live conflict over a stored clean verdict and clears it when resolved', async () => {
@@ -643,8 +700,9 @@ describe('GitHub phone operations', () => {
     expect(self).not.toHaveProperty('reviewerIsAuthor');
     await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });
-    // The live verdict leads; the wake reports only what was dispatched.
-    expect(result).toMatchObject({ stage: 'waiting_for_yes', checks: 'passed', reviewerWake: { status: 'waiting' } });
+    // Repairing the unknown snapshot commits the green transition; the wake
+    // reports the resulting dispatch, without a self-review special case.
+    expect(result).toMatchObject({ stage: 'waiting_for_yes', checks: 'passed', reviewerWake: { status: 'dispatched' } });
     expect(result).not.toHaveProperty('recordedChecks');
   });
 

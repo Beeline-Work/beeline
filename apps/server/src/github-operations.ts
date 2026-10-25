@@ -83,6 +83,7 @@ function branchForEvent(event: string, body: GitHubRecord): string | undefined {
   if (event === 'pull_request') return text(record(record(body.pull_request)?.head)?.ref);
   if (event === 'check_run') return text(record(record(body.check_run)?.check_suite)?.head_branch);
   if (event === 'check_suite') return text(record(body.check_suite)?.head_branch);
+  if (event === 'workflow_run') return text(record(body.workflow_run)?.head_branch);
   if (event === 'status') {
     const branches = Array.isArray(body.branches) ? body.branches : [];
     return branches.map((value) => text(record(value)?.name)).find(Boolean);
@@ -109,6 +110,12 @@ function checksResult(event: string, body: GitHubRecord): 'passed' | 'failed' | 
 }
 
 function checkFact(event: string, body: GitHubRecord) {
+  if (event === 'workflow_run' && body.action === 'completed') {
+    const run = record(body.workflow_run);
+    // Completion is a refresh signal; only the head's rollup supplies a verdict.
+    return { name: 'Pull request checks', status: 'pending' as const,
+      ...(text(run?.head_sha) ? { headSha: text(run?.head_sha)! } : {}) };
+  }
   if (event === 'check_run') {
     const run = record(body.check_run);
     const completed = body.action === 'completed' || run?.status === 'completed';
@@ -783,6 +790,8 @@ export class GitHubOperations {
       token: token.token,
       repository: row.full_name,
       defaultBranch: row.default_branch,
+      repository_id: row.repository_id,
+      installation_id: row.github_installation_id,
     };
   }
 
@@ -922,8 +931,11 @@ export class GitHubOperations {
         parent_reviewer_id: string | null;
         corner_reviewer_id: string | null;
         reviewer_handle: string | null;
+        author_id: string;
+        corner_name: string;
       }>(
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
+                COALESCE(f.owner_agent_id,r.created_by,parent.created_by) author_id,r.name corner_name,
                 r.archived_at IS NOT NULL archived,
                 (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
                 ${cornerReviewerSql('r')} configured_reviewer_id,
@@ -959,6 +971,9 @@ export class GitHubOperations {
     if (!Number.isSafeInteger(number) || number <= 0)
       throw new Error('invalid pull request number');
     // Always resolve the head: a force-push must never inherit a green predecessor.
+    const fetchStartedAt = (await this.database.query<{ started_at: number }>(
+      `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
+    )).rows[0]!.started_at;
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
     let rollup = await this.app.readCommitCheckRollup(
       target.token,
@@ -984,6 +999,26 @@ export class GitHubOperations {
       corner.lifecycle.checksSummary?.total === 0 &&
       corner.lifecycle.pr?.headSha === pr.headSha;
     const checks = completedWithoutChecks ? ('passed' as const) : rollup.state;
+    const summaryStatus = checks === 'passed' ? 'passing' : checks === 'failed' ? 'failing' : 'pending';
+    // The live read and phone header must retain the same provider snapshot.
+    // Reuse the event path, including its head/age guards and review transition,
+    // without fetching GitHub again. Explicit reads of another PR cannot change
+    // this corner, and zero-check completion retains its worker-only authority.
+    if (!corner.archived && !pr.merged && rollup.total > 0 && corner.author_id &&
+      corner.lifecycle.pr?.number === number && corner.lifecycle.pr.headSha === pr.headSha &&
+      (corner.lifecycle.checksSummary?.total !== rollup.total ||
+        JSON.stringify(corner.lifecycle.checksSummary?.checks) !== JSON.stringify(rollup.checks) ||
+        corner.lifecycle.checksSummary?.status !== summaryStatus || corner.lifecycle.checks !== summaryStatus)) {
+      await this.refreshCheckRollup({ ...target, corner_id: input.cornerId,
+        parent_id: corner.parent_id, author_id: corner.author_id, corner_name: corner.corner_name,
+        summary: '', has_pr: true, pr_number: String(number) }, target.repository,
+      { name: 'Pull request checks', status: 'pending', headSha: pr.headSha }, this.database,
+      { quiet: true, snapshot: { rollup, pr, fetchStartedAt, token: target.token } });
+      corner.review_woken = (await this.database.query<{ review_woken: boolean }>(
+        `SELECT workflow_state='review' AND workflow_outcome IS DISTINCT FROM 'no_reviewer' review_woken
+         FROM corner_facts WHERE corner_id=$1`, [input.cornerId],
+      )).rows[0]?.review_woken ?? false;
+    }
     const configuredReviewerId = corner.configured_reviewer_id;
     // The same gate the server merges on (`cornerMergeGate`), for this exact head.
     const gate = await cornerMergeGate(this.database, input.cornerId, {
@@ -1427,6 +1462,7 @@ export class GitHubOperations {
         event === 'pull_request' ||
         event === 'check_run' ||
         event === 'check_suite' ||
+        event === 'workflow_run' ||
         event === 'status'
       ) {
         await this.processRepositoryEvent(event, body, install.id);
@@ -2458,7 +2494,12 @@ export class GitHubOperations {
   private async refreshCheckRollup(
     target: CornerWebhookTarget & { has_pr?: boolean; pr_number?: string | null }, repository: string,
     check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
-    options?: { quiet?: boolean },
+    options?: { quiet?: boolean; snapshot?: {
+      rollup: Awaited<ReturnType<GitHubAppClient['readCommitCheckRollup']>>;
+      pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>>;
+      fetchStartedAt: number;
+      token: string;
+    } },
   ) {
     const checkHeadSha = check.headSha!;
     let fetchStartedAt = 0;
@@ -2466,13 +2507,13 @@ export class GitHubOperations {
     try {
         // Use the database clock across server instances, with subsecond precision
         // to order overlapping fetches while keeping updatedAt in epoch seconds.
-        fetchStartedAt = (await database.query<{ started_at: number }>(
+        fetchStartedAt = options?.snapshot?.fetchStartedAt ?? (await database.query<{ started_at: number }>(
           `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
         )).rows[0]!.started_at;
-        const token = await retryGitHubRead(() => this.app.installationToken(Number(target.installation_id), {
+        const token = options?.snapshot ?? await retryGitHubRead(() => this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
         }));
-        const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
+        const rollup = options?.snapshot?.rollup ?? await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
         // A cancelled job (GitHub cancelled it before a runner picked it up:
@@ -2492,9 +2533,9 @@ export class GitHubOperations {
           item => item.status === 'failed' && !interruptedNames.has(item.name),
         );
         const interruptedOnly = failedChecks.length === 0 && interruptedNames.size > 0;
-        const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
+        const livePr = options?.snapshot?.pr ?? (target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
           ? await retryGitHubRead(() => this.app.readPullRequest(token.token, repository, Number(target.pr_number)))
-          : undefined;
+          : undefined);
         confirmedPr = livePr;
         if (livePr?.state === 'closed' && !livePr.merged) {
           await this.recordClosedCornerPullRequest(target.corner_id, Number(target.pr_number), database);
@@ -2537,15 +2578,16 @@ export class GitHubOperations {
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
           // the provider has replied, under the run lock then the fact row lock.
-          const current = (
+          const currentRow = (
             await database.query<{ lifecycle: CornerLifecycleView & {
               checksSummary?: { fetchStartedAt?: number };
-            } }>(
-              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            }; updated_at: string; merge_attempt_head: string | null }>(
+              `SELECT lifecycle,updated_at::text,merge_attempt_head FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
               [target.corner_id],
             )
-          ).rows[0]?.lifecycle;
-          if (!current) return;
+          ).rows[0];
+          if (!currentRow) return;
+          const current = currentRow.lifecycle;
           if (livePr && current.pr?.number !== livePr.number) return;
           // GitHub may deliver a completed run for the previous branch head after a push.
           if (current.pr?.headSha && checkHeadSha !== current.pr.headSha) return;
@@ -2702,6 +2744,13 @@ export class GitHubOperations {
           );
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
+          // A live checks read may repair the header while an earlier merge
+          // awaits confirmation. Its writes must not restart that claim's
+          // recovery grace period, which is anchored to updated_at.
+          if (options?.snapshot && currentRow.merge_attempt_head)
+            await database.query(`UPDATE corner_facts SET updated_at=$2::timestamptz
+              WHERE corner_id=$1 AND merge_attempt_head=$3`,
+            [target.corner_id, currentRow.updated_at, currentRow.merge_attempt_head]);
         });
     } catch (error) {
       if (transientGitHubError(error)) {
@@ -2718,7 +2767,9 @@ export class GitHubOperations {
       }
       throw error;
     }
-    await this.refreshStaleMergeability(target.corner_id, confirmedPr);
+    // A checks read repairs only its check snapshot; mergeability refreshes
+    // retain their event path and must not reset a pending merge claim's age.
+    if (!options?.snapshot) await this.refreshStaleMergeability(target.corner_id, confirmedPr);
   }
 
   private async lifecycle(

@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -744,7 +745,7 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgBase },
-    desktopColumn: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+    desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     content: {
       paddingHorizontal: hull.space.md,
       paddingBottom: hull.space.xxl,

@@ -22,6 +22,7 @@ Briefs opened from both the chat and corner list use `DesktopArtifactPane`, with
 | Brief | [image](web-before/brief-1280.png) | [image](web-after/brief-1280.png) | [image](web-before/brief-1920.png) | [image](web-after/brief-1920.png) |
 | Settings | [image](web-before/settings-1280.png) | [image](web-after/settings-1280.png) | [image](web-before/settings-1920.png) | [image](web-after/settings-1920.png) |
 | Corners | [image](web-before/corners-1280.png) | [image](web-after/corners-1280.png) | [image](web-before/corners-1920.png) | [image](web-after/corners-1920.png) |
+| Members | [image](web-before/members-1280.png) | [image](web-after/members-1280.png) | [image](web-before/members-1920.png) | [image](web-after/members-1920.png) |
 
 File and brief after panels, together:
 
@@ -42,6 +43,7 @@ The same browser assertions also pass in Obsidian: [chat](web-after-dark/chat-12
 | Brief | [image](tauri-before/brief-1280.png) | [image](tauri-after/brief-1280.png) |
 | Settings | [image](tauri-before/settings-1280.png) | [image](tauri-after/settings-1280.png) |
 | Corners | [image](tauri-before/corners-1280.png) | [image](tauri-after/corners-1280.png) |
+| Members | [image](tauri-before/members-1280.png) | [image](tauri-after/members-1280.png) |
 
 ## Repeating the browser proof
 
@@ -57,10 +59,16 @@ NODE_PATH=/tmp/desktop-proof-tools/node_modules \
 
 The script launches `/usr/bin/google-chrome`, intercepts API calls, uses fixture tokens, and checks document width, list restoration, brief chrome and heading type, narrow fallback, and mouse/touch chip height. `BEELINE_PROOF_BEFORE=1` captures a baseline export without enforcing the changed proportions.
 
-For Tauri, run `scripts/desktop-proportions-native-fixture.cjs` with `BEELINE_PROOF_WEB_DIR` pointing at an export, compile the debug shell with the isolated identifier and `devUrl` set to `http://localhost:8766`, then launch it under an isolated X display. The fixture serves local API answers and redirects exported API origins to localhost. POST a scene name (`chat`, `file`, `brief`, `settings`, `corners`) to `/proof/scene`; `/proof/observation` reports when it has rendered. Capture the real window at 1280 × 900. No production writes or actual account credentials are used.
+For Tauri, run `scripts/desktop-proportions-native-fixture.cjs` with `BEELINE_PROOF_WEB_DIR` pointing at an export, compile the debug shell with the isolated identifier and `devUrl` set to `http://localhost:8766`, then launch it under an isolated X display. The fixture serves local API answers and redirects exported API origins to localhost. POST a scene name (`chat`, `file`, `brief`, `settings`, `corners`, `members`) to `/proof/scene`; `/proof/observation` reports when it has rendered. Capture the real window at 1280 × 900. No production writes or actual account credentials are used.
 
-## Production proof limitation
+## Production smoke test and accepted proof
 
-An existing signed-in browser on `web.usebeeline.app` was inspected successfully. The specifically requested reviewer-bypass session remains unverified: connector status and app discovery find the saved reviewer login URL, but Trusty Squire `operate_login(action: load_saved, fields: [value])` rejects it with `unsupported_credential_type`. App discovery offers only a sealed API route; that route cannot navigate a saved full login URL into a browser session. No raw reviewer URL was extracted. Feedback: `fb_b67f86d1c18f5b6e29557f3c`.
+Ruby accepted the exported-app browser proofs and Tauri screenshots as the pre-merge evidence: production runs main and cannot demonstrate this unmerged PR. The reviewer-bypass production sign-in requirement is waived for this PR; Ruby will check production after release.
 
-A supported sealed browser navigation for the saved reviewer link, or acceptance of the signed-in production inspection plus exported-app/Tauri fixture proofs, is still needed to satisfy that production sign-in requirement.
+A read-only live browser smoke test on October 24 reached the existing Milo conversation, Members and Settings using an existing signed-in session. Settings rendered the signed-in identity. The production sidebar showed a workspace-load error with Retry. This is a production observation, not proof of the PR's layout. No production data was changed.
+
+The original reviewer-bypass attempt remains unverified because the saved credential type was rejected by sealed browser-fill. No raw reviewer link was extracted. Feedback: `fb_b67f86d1c18f5b6e29557f3c`.
+
+## Scope
+
+Brief revision 3 keeps findings 1–7 here. Every other sub-page, sheet, modal and the full inventory belong to desktop-subpage-widths. No unfinished item-8 changes were present to revert. The shared `desktopColumnWidths` tokens provide the detail (640 px) and list (720 px) widths for that follow-up.

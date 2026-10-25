@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -74,7 +75,7 @@ export default function WorkbenchScreen() {
 const styles = StyleSheet.create(theme => ({
   container: { flex: 1, backgroundColor: theme.buzz.appCanvas }, content: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  desktopColumn: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+  desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     contentInner: {
  paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
   note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, marginBottom: theme.buzz.space.lg },

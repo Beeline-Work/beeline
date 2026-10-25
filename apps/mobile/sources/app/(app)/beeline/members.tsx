@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
@@ -1546,7 +1547,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.danger,
       textAlign: 'center',
     },
-    desktopColumn: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+    desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     content: {
       padding: hull.space.md,
       gap: hull.layout.sectionGap,

@@ -119,7 +119,7 @@ function answer(p) {
     return {
       workspace: ws,
       viewer: { identity: viewer, role: 'owner' },
-      members: [],
+      members: [{ identity: viewer, role: 'owner' }, { identity: agent, role: 'member' }],
       rooms: [room],
       watchFilters: [],
     };
@@ -178,11 +178,13 @@ const server = http.createServer(async (req, res) => {
     const scripts = [...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map((m) => m[1]);
     html = html.replace(/<script src="([^"]+)" defer><\/script>/g, '');
     const target =
-      scene === 'settings'
-        ? 'settings'
-        : scene === 'corners'
-          ? 'corners/' + room.id
-          : 'chat/' + (scene === 'brief' ? corner.id : room.id);
+      scene === 'members'
+        ? 'members'
+        : scene === 'settings'
+          ? 'settings'
+          : scene === 'corners'
+            ? 'corners/' + room.id
+            : 'chat/' + (scene === 'brief' ? corner.id : room.id);
     const boot = `<script>(async()=>{
     const scene=${JSON.stringify(scene)};
     const store={'buzzy.monolith.identity.v1':${JSON.stringify(viewer.pubkey)},'buzzy.monolith.refresh.v1':'fixture-refresh','buzzy.monolith.access.v1':JSON.stringify({token:'fixture',expiresAt:Date.now()+86400000,identityId:${JSON.stringify(viewer.pubkey)}})};

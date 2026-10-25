@@ -170,7 +170,7 @@ function roomView(isCorner = false) {
       body = {
         workspace: ws,
         viewer: { identity: viewer, role: 'owner' },
-        members: [],
+        members: [{ identity: viewer, role: 'owner' }, { identity: agent, role: 'member' }],
         rooms: [room],
         watchFilters: [],
       };
@@ -272,6 +272,17 @@ function roomView(isCorner = false) {
       await page.getByTestId('desktop-artifact-pane').waitFor();
       await settle();
       await capture('brief-from-list', width);
+    }
+    await navigate('members?communityId=' + ws.id);
+    await page.getByTestId('members-search').waitFor();
+    await settle();
+    await capture('members', width);
+    if (!before) {
+      const search = await page.getByTestId('members-search').boundingBox();
+      const navigation = await page.getByTestId('desktop-navigation-pane').boundingBox();
+      const centre = (width + navigation.x + navigation.width) / 2;
+      if (search.width > 640 || Math.abs(search.x + search.width / 2 - centre) > 1)
+        throw Error('members column is not readable and centred');
     }
     metrics.push({ width, transcript, mouseChipHeight: chips.height, panelWidth: panel.width });
   }

@@ -18,9 +18,13 @@ const open = room => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.act
   `beeline://beeline/chat/${room}?communityId=${workspace}`, 'app.usebeeline/.MainActivity');
 const dump = () => {
   for (let attempt = 0; attempt < 3; attempt++) {
-    adb('shell', 'rm', '-f', '/sdcard/transcript.xml');
-    const result = adb('shell', 'uiautomator', 'dump', '/sdcard/transcript.xml');
-    if (result.includes('dumped to:')) return adb('shell', 'cat', '/sdcard/transcript.xml');
+    try {
+      adb('shell', 'rm', '-f', '/sdcard/transcript.xml');
+      const result = adb('shell', 'uiautomator', 'dump', '/sdcard/transcript.xml');
+      if (result.includes('dumped to:')) return adb('shell', 'cat', '/sdcard/transcript.xml');
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
   }
   throw new Error('Android accessibility dump could not get idle state after three attempts');
 };

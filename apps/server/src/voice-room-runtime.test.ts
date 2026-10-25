@@ -592,7 +592,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
       return VoiceService.prototype.recordHuman.call(writer, call, room, human, target, text, leaseOwner);
     }), reviseHuman: vi.fn(async (_call: string, _room: string, _human: string, _target: unknown, _source: string, text: string) => {
       messages[0] = `@ronnie ${text}`;
-    }), recordAnswer: vi.fn(async () => {}),
+    }), recordAnswer: vi.fn(async () => {}), dispatch: vi.fn(async () => {}),
     db: { query: vi.fn(async (sql: string, parameters?: any[]) => ({ rowCount: 1,
       rows: sql.includes('speaking_speed') ? [{speaking_speed: 1.5}] : sql.includes('identity_id=ANY') ? (parameters?.[1] ?? []).map((identity_id: string) => ({identity_id})) : [] as any[] })) },
     runtimeClosed: vi.fn(),
@@ -632,6 +632,37 @@ it.each(['I', 'um', 'so', 'and'])('Reproduction stray-word-1: drops confident %s
   } finally { harness.finishPlayback(); await runtime.close(); }
 });
 
+it.each(['Okay.', 'Yeah.', 'Mm hmm', 'Uh', 'Yes'])('Reproduction VOICE-ACK-1: %s only answers a question', async word => {
+  for (const question of [false, true]) {
+    const harness = phantomHarness(question ? 'Is that okay?' : 'The task is finished.');
+    const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+    state.streams = [new ReadableStream()];
+    try {
+      state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+      await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+      harness.emit('EndOfTurn', 'Explain the answer', 0);
+      await vi.waitFor(() => expect(harness.service.recordAnswer).toHaveBeenCalledOnce());
+      harness.finishPlayback();
+      await vi.waitFor(() => expect((runtime as any).speaking).toBeUndefined());
+      harness.service.config.brain.answer.mockImplementationOnce(async () => ({ text: 'Proceeding.', order: true }));
+      harness.emit('EndOfTurn', word, 1);
+      await new Promise(resolve => setTimeout(resolve, 30));
+      expect(harness.messages).toEqual(question
+        ? ['@ronnie Explain the answer', '@ronnie ' + word] : ['@ronnie Explain the answer']);
+      expect(harness.service.config.brain.answer).toHaveBeenCalledTimes(question ? 2 : 1);
+      expect(harness.service.dispatch).toHaveBeenCalledTimes(question ? 1 : 0);
+      if (question) {
+        harness.finishPlayback();
+        await vi.waitFor(() => expect((runtime as any).speaking).toBeUndefined());
+        harness.emit('EndOfTurn', word, 2);
+        await new Promise(resolve => setTimeout(resolve, 30));
+        expect(harness.service.config.brain.answer).toHaveBeenCalledTimes(2);
+        expect(harness.service.dispatch).toHaveBeenCalledOnce();
+      }
+    } finally { harness.finishPlayback(); await runtime.close(); }
+  }
+});
+
 it.each(['Ronnie', '@ronnie'])('keeps a lone call agent name or handle: %s', async text => {
   const harness = phantomHarness();
   const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
@@ -654,7 +685,8 @@ it.each([
   ['Hey', 0.95, 0.08, false],
   ['Hey', 0.95, 0.2, false],
   ...['uh', 'um', 'huh', 'hmm', 'mm'].map(text => [text, 0.3, 0.2, false]),
-  ...['yes', 'no', 'yeah', 'yep', 'yup', 'nope', 'sure', 'okay', 'ok', 'wait', 'pause', 'continue', 'thanks', 'I think so'].map(text => [text, 0.3, 0.2, true]),
+  ...['yes', 'yeah', 'yep', 'yup', 'sure', 'okay', 'ok'].map(text => [text, 0.3, 0.2, false]),
+  ...['no', 'nope', 'wait', 'pause', 'continue', 'thanks', 'Definitely', 'Goosy', 'okay so what about tomorrow', 'I think so'].map(text => [text, 0.3, 0.2, true]),
 ] as [string, number, number, boolean][])('Reproduction filler-final-1: %s confidence=%s duration=%s delivered=%s', async (text, confidence, end, delivered) => {
   const harness = phantomHarness();
   const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
@@ -700,7 +732,7 @@ it.each(['Hey,', 'I', 'um', 'so', 'and'])('Reproduction stray-word-1/filler-fina
   } finally { finish?.(); harness.finishPlayback(); await runtime.close(); }
 });
 
-it('Demonstration stray-word-1 and filler-final-1/2: recognizer finals reach the persisted phone transcript without phantom fillers', async () => {
+it('Demonstration VOICE-ACK-1, stray-word-1 and filler-final-1/2: recognizer finals reach the persisted phone transcript without phantom fillers', async () => {
   const db = new PgliteDatabase(), live = new LiveHub();
   const human = 'a'.repeat(64), agent = 'b'.repeat(64);
   const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
@@ -749,8 +781,17 @@ it('Demonstration stray-word-1 and filler-final-1/2: recognizer finals reach the
     for (const [index, word] of ['I', 'um', 'so', 'and'].entries()) say(word, 3 + index, 0.99);
     await new Promise(resolve => setImmediate(resolve));
     expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.']);
-    say('yes', 7, 0.95);
-    await vi.waitFor(async () => expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.', '@ruby yes']));
+    say('Okay.', 7, 0.95);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.']);
+    fixture.service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
+      onText('Should I continue?'); return { text: 'Should I continue?', order: false };
+    });
+    say('Ask me a question', 8, 0.95);
+    await vi.waitFor(async () => expect((await phone.readRoom(room, human))!.messages.some(message => message.text === 'Should I continue?')).toBe(true));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    say('yes', 9, 0.95);
+    await vi.waitFor(async () => expect(await transcript()).toEqual(['@ruby Ruby slower than the previous version.', '@ruby Ask me a question', '@ruby yes']));
     console.log('filler-final-1/2: STT final → real VoiceService/database → PhoneService transcript: noise absent, prior request unchanged, confident stray words absent, yes delivered.');
   } finally { finish?.(); await voice.close(); await db.close(); }
 }, 30_000);
@@ -901,8 +942,8 @@ it('keeps echo context until a delayed final and ignores duplicate finals before
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(harness.service.recordHuman).toHaveBeenCalledOnce();
     expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
-    // A new deliberate short utterance after playback is still a valid turn.
-    harness.emit('EndOfTurn', 'yes', 2);
+    // A meaningful short utterance after playback is still a valid turn.
+    harness.emit('EndOfTurn', 'continue', 2);
     await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
   } finally { clock?.mockRestore(); await runtime.close(); }
 });

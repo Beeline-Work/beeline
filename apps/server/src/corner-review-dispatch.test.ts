@@ -90,6 +90,7 @@ beforeEach(async () => {
   Object.assign(daemon, { github: { assertCornerReviewerNotAuthor: async () => {} } });
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [B]);
   await db.query(`DELETE FROM agent_commands`);
+  await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
   await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [C]);
@@ -541,7 +542,7 @@ describe('corner message attribution', () => {
       expect(rows.rows[0]?.state).toBe(state === 'pending' ? 'cancelled' : 'complete');
     });
 
-  it('Reproduction REVIEW-CYCLE-1: later background cycles repair a lost wake and report a finished review only once', async () => {
+  it('Reproduction REVIEW-CYCLE-1: later background cycles repair a lost wake and hand back a finished review only once', async () => {
     // Keep the database stand-in tied to the actual background-cycle wiring.
     const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(index.includes('reconciledCornerReviewers')).toBe(false);
@@ -563,10 +564,54 @@ describe('corner message attribution', () => {
     for (let i = 0; i < 4; i++) await cycle();
     expect(await commands(B, C)).toHaveLength(0);
     const reports = (await commands(A, R)).filter(c => c.reason === 'report' && c.source.body.includes('the reviewer completed its review'));
-    expect(reports).toHaveLength(1);
-    expect(reports[0]?.source.body).toMatch(/^blocked:/);
+    expect(reports).toHaveLength(0);
     expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
-    console.info('Demonstrated REVIEW-CYCLE-1: later cycle restored review; completed review reported once across four repairs');
+    console.info('Demonstrated REVIEW-CYCLE-1: later cycle restored review; findings handed back once without a commander report');
+  });
+
+  it('Reproduction REVIEW-FAIL-HANDOFF-1: an explicit wait postpones handback without reporting a wake failure', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await greenHead(82, 'a'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, 'FAIL: demonstrate the missing user path.');
+    await db.query(`INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)`, [C, H, R]);
+    for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
+    expect(await commands(B, C)).toHaveLength(0);
+    expect(await commands(A, C)).toHaveLength(0);
+    expect((await commands(A, R)).filter(c => c.reason === 'report')).toHaveLength(0);
+    await db.query(`DELETE FROM corner_report_blockers WHERE corner_id=$1`, [C]);
+    await reconcileConfiguredCornerReviewers(db, R);
+    expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
+  });
+
+  it('Reproduction REVIEW-FAIL-HANDOFF-1: a consumed failed-review handback is not a failed wake or another reviewer assignment', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    // The reviewer previously ordered the implementer to repair this corner.
+    // Lifecycle reports inherit that order and therefore return to the reviewer.
+    const order = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null,
+      reason: 'order', privatePayload: { text: 'Repair this corner', authorId: B, fromRoomId: C, kind: 'order' } });
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [order!.id]);
+    await greenHead(81, 'a'.repeat(40));
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, 'FAIL: demonstrate the missing user path.');
+    await reconcileConfiguredCornerReviewers(db, R);
+    const [repair] = (await commands(A, C)).filter(c => c.reason === 'corner_review_needed');
+    expect(repair?.source.body).toContain('FAIL: demonstrate the missing user path.');
+    expect(await commands(B, C)).toHaveLength(0);
+    await claim(repair!);
+    await result(repair!, 'Waiting for the requested evidence before pushing.');
+    await db.query(`INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)`, [C, H, R]);
+    for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
+    const failures = await db.query(`SELECT id FROM agent_commands WHERE reason='report'
+      AND private_payload->>'text' LIKE '%implementer cannot be woken%'`);
+    expect(failures.rowCount).toBe(0);
+    expect(await commands(B, C)).toHaveLength(0);
+    expect((await db.query(`SELECT id FROM agent_commands WHERE room_id=$1
+      AND reason='corner_review_needed'`, [C])).rowCount).toBe(1);
+    await greenHead(81, 'b'.repeat(40));
+    expect(await commands(B, C)).toHaveLength(1);
   });
 
   it.each(['pending', 'claimed'] as const)('Reproduction REVIEW-WORK-1: no repair wake or report while implementer is %s', async (state) => {

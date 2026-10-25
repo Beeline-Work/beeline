@@ -1,3 +1,4 @@
+import { ExpectedRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 
 /** These SQL reads are executable with the operator's read-only Neon route. */
@@ -96,14 +97,14 @@ export async function readServiceReviewPage(database: SqlDatabase, agentId: stri
  * All receipts commit in the workflow's completion transaction.
  */
 export async function completeServiceReview(database: SqlDatabase, agentId: string, runId: string, value: unknown): Promise<void> {
-  if (!Array.isArray(value)) throw new Error('workspace receipts must be an array');
+  if (!Array.isArray(value)) throw new ExpectedRefusalError('workspace receipts must be an array');
   await database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
     const targets = await db.query<{workspace_id: string}>('SELECT * FROM service_review_targets($1,$2)',[agentId,runId]);
-    if (value.length !== targets.rows.length) throw new Error('a receipt is required for every active workspace');
+    if (value.length !== targets.rows.length) throw new ExpectedRefusalError('a receipt is required for every active workspace');
     for (const target of targets.rows) {
       const receipts = value.filter(row => row?.workspace === target.workspace_id);
-      if (receipts.length !== 1) throw new Error('each workspace needs exactly one receipt');
+      if (receipts.length !== 1) throw new ExpectedRefusalError('each workspace needs exactly one receipt');
       const receipt = receipts[0];
       let rowsRead = 0;
       let after = '';
@@ -121,7 +122,7 @@ export async function completeServiceReview(database: SqlDatabase, agentId: stri
       times.sort();
       if (!rowsRead || receipt.rowsRead !== rowsRead || receipt.firstMessageTime !== (times[0] ?? null)
         || receipt.lastMessageTime !== (times.at(-1) ?? null) || typeof receipt.findings !== 'string')
-        throw new Error('workspace receipt must match all rows and first/last message times');
+        throw new ExpectedRefusalError('workspace receipt must match all rows and first/last message times');
       await db.query(`UPDATE service_review_visits SET receipt=$4::jsonb,completed_at=now()
         WHERE workspace_id=$1 AND agent_id=$2 AND run_id=$3`,[target.workspace_id,agentId,runId,JSON.stringify(receipt)]);
     }

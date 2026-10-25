@@ -738,6 +738,30 @@ describe('managed app provider boundary', () => {
     expect((error as Error).message).not.toContain('x-secret-value');
   });
 
+  it.each([
+    JSON.stringify({ message: 'Not Found', documentation_url: 'https://docs.example.test' }),
+    JSON.stringify({ message: 'Missing resource', status: '404' }),
+    { message: 'Missing resource', status_code: 404 },
+    'Not Found',
+  ])('preserves a typed missing-resource refusal for provider error %j', async (error) => {
+    const transport = vi.fn(async (url: URL | string) => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith(`/connected_accounts/${ACCOUNT}`)) return json({
+        id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/SLACK_POST_MESSAGE')) return json({
+        slug: 'SLACK_POST_MESSAGE', version: '20260928_00', toolkit: { slug: 'slack' },
+      });
+      if (path.endsWith('/tools/execute/SLACK_POST_MESSAGE')) return json({ successful: false, error });
+      throw new Error('unexpected request');
+    });
+    const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+    const failure = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'slack',
+      tool: 'SLACK_POST_MESSAGE', arguments: {} }).catch((value: unknown) => value);
+    expect(failure).toBeInstanceOf(CommandRefusalError);
+    expect(failure).toMatchObject({ status: 404 });
+  });
+
   it('keeps the fixed execution message when a flag is set without an error detail', async () => {
     const transport = vi.fn(async (url: URL | string) => {
       const path = new URL(String(url)).pathname;

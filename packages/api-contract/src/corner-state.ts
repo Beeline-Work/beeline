@@ -17,11 +17,6 @@ export type CornerStateFacts = {
   readonly workerQueued?: boolean;
   readonly now?: number;
   readonly lastTurnEndedAt?: number;
-  /**
-   * Start of the failing-check repair window. Pending checks record a time
-   * here too, and that time does not end review.
-   */
-  readonly ciStartedAt?: number;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
@@ -41,12 +36,6 @@ export type CornerStateFacts = {
    */
   readonly agentCommanderReport?: boolean;
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
-  /**
-   * A worker `blocked:` report while the reviewer cannot be dispatched.
-   * Failing checks keep the repair window. Pending or not-yet-reported
-   * checks are idle at once. A needs-decision report does not set this.
-   */
-  readonly stallReport?: boolean;
 };
 
 export type DerivedCornerState = {
@@ -100,25 +89,12 @@ export function cornerRunFromLifecycle(input: {
  *
  * 1. `archived` — the corner is archived, or its run or lifecycle is landed or closed.
  * 2. `review` — a reviewer turn is active and checks are not failing.
- * 3. `working` — a worker turn is running, unless failing checks are past
- *    the 30-minute repair window. A queued worker is not running. After that
- *    window the failing-check rules below apply, so a still-running repair
- *    with no push is `idle`.
- * 4. Failing checks with `stallReport`: `working` for 30 minutes from
- *    `ciStartedAt`, otherwise `idle`. A blocked report does not keep a red
- *    head waiting.
- * 5. Pending or not-yet-reported checks with `stallReport`: `idle`. The
- *    worker is waiting on a reviewer who cannot start. Ordinary pending CI
- *    leaves this flag unset.
- * 6. `waiting` — an unresolved blocker, unless checks are pending on the
- *    current head and every blocker is an agent-commander report. A human
- *    report, grant, connect step, or merge hold stays waiting during CI,
- *    including while checks are failing.
- * 7. Failing checks with no blocker: the same 30-minute repair window, then `idle`.
- * 8. `review` — pending or not-yet-reported checks, with no time cap, until a
- *    final result or a new push.
- * 9. `working` — the last turn ended within 30 seconds and checks are not failing.
- * 10. `idle`.
+ * 3. `working` — a worker turn is running. A queued worker is not running.
+ * 4. `waiting` — an unresolved blocker, unless checks are pending on the
+ *    current head and every blocker is an agent-commander report.
+ * 5. `review` — pending or not-yet-reported checks, until a final result or push.
+ * 6. `working` — the last turn ended within 30 seconds.
+ * 7. `idle` — the fall-through, including failing checks without work or a blocker.
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
@@ -129,19 +105,10 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
   const now = facts.now ?? Date.now() / 1000;
   const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
-  const repairOpen = facts.ciStartedAt !== undefined && now - facts.ciStartedAt < 30 * 60;
-  // A claimed or just-dispatched repair turn stays working only inside the
-  // window. Once it expires, the same failing-check rules apply while that
-  // turn is still running.
-  const repairExpired = checks === 'failing' && facts.ciStartedAt !== undefined && !repairOpen;
   if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
-  if (facts.turnRunning && !repairExpired) return { state: 'working' };
-  if (checks === 'failing' && facts.stallReport === true)
-    return repairOpen ? { state: 'working' } : { state: 'idle' };
-  if (facts.stallReport === true && pendingCi) return { state: 'idle' };
+  if (facts.turnRunning) return { state: 'working' };
   if ((facts.blocker || facts.owed === true) && !(facts.agentCommanderReport && pendingCi))
     return { state: 'waiting', ...facts.blocker };
-  if (checks === 'failing') return repairOpen ? { state: 'working' } : { state: 'idle' };
   if (pendingCi) return { state: 'review' };
   if (facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
     return { state: 'working' };

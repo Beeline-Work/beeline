@@ -5,7 +5,6 @@ import type { LiveHub } from './live.js';
 import {
   cornerWorkSql,
   cornerBlockerSql,
-  blockedReportSql,
   cornerRowState,
   type CornerStateRow,
 } from './chat-corner-counts.js';
@@ -145,7 +144,6 @@ function attentionSql() {
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
     blocker.agent_commander,blocker.human_blocker,
-    ${blockedReportSql('c')} blocked_report,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,
     EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.next_run_at>now()
@@ -183,15 +181,7 @@ export async function refreshCornerAttention(
     );
     if (state === 'idle' && row.last_state !== 'idle') {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
-      const stalledReport = row.waiting_kind === 'report' && row.blocked_report === true;
-      const repairExpired = Boolean(
-        row.ci_started_at && Date.now() - new Date(row.ci_started_at).getTime() >= 30 * 60_000,
-      );
-      const text = checks === 'failing' && repairExpired
-        ? `blocked: Corner ${row.name} is idle. Checks are failing and nothing has been pushed for 30 minutes.`
-        : stalledReport && checks !== 'failing'
-          ? `blocked: Corner ${row.name} is idle. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`
-          : `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
+      const text = `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
       await reportToCommander(
         tx,
         cornerId,
@@ -203,13 +193,9 @@ export async function refreshCornerAttention(
       );
     }
     const now = Date.now();
-    // Pending checks stay review until a final result or a new push.
-    // Only a red head arms the 30-minute repair deadline.
+    // Only the existing post-turn gap has an activity deadline.
     const deadlines = [
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
-      checks === 'failing' && row.ci_started_at
-        ? new Date(row.ci_started_at).getTime() + 30 * 60_000
-        : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };
   });
@@ -225,7 +211,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** The turn-gap deadline, plus one 30-minute deadline while checks are failing. Pending checks have none. */
+/** The existing post-turn gap deadline; check duration never changes state. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

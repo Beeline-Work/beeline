@@ -1,20 +1,23 @@
+const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
+if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3) throw new Error('TRANSCRIPT_REPEAT_COUNT must be from 1 to 3');
 /** External Room-open probe: native release markers, plus process memory. */
 import { execFileSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { rooms, workspace } from './fixture.mjs';
 import { androidArtifact } from './android-artifact.mjs';
 const device = process.env.LATENCY_RIG_DEVICE;
-if (!/^emulator-\d+$/.test(device ?? '')) throw new Error('Select a leased fixture emulator');
+if (!/^(emulator-\d+|127\.0\.0\.1:\d+)$/.test(device ?? '')) throw new Error('Select a leased fixture emulator');
 const output = process.argv[2] ?? '/tmp/transcript-open-results';
 await mkdir(output, { recursive: true });
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 32e6 });
+if (adb('shell', 'getprop', 'ro.kernel.qemu').trim() !== '1') throw new Error('Disposable emulator required');
 const artifact = androidArtifact(adb);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const open = route => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', `beeline://${route}`, 'app.usebeeline/.MainActivity');
 const samples = [];
 adb('shell', 'pm', 'grant', 'app.usebeeline', 'android.permission.POST_NOTIFICATIONS');
 for (const variant of ['cold-process-retained-cache', 'warm', 'cache-miss']) {
-  for (let repeat = 0; repeat < 3; repeat++) {
+  for (let repeat = 0; repeat < repeatCount; repeat++) {
     if (variant === 'cache-miss') {
       // Only the explicitly selected, locally signed fixture installation.
       adb('shell', 'pm', 'clear', 'app.usebeeline');

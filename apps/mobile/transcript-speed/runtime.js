@@ -49,7 +49,8 @@ globalThis.__transcriptSpeed = {
 // Explicit fixture build only. Polling stops for the complete measurement
 // window; the start acknowledgement and result upload are outside it.
 const control = process.env.EXPO_PUBLIC_TRANSCRIPT_CONTROL;
-if (control && /^http:\/\/(127\.0\.0\.1|10\.0\.2\.2):19886$/.test(control)) {
+const controlPort = control?.match(/^http:\/\/(127\.0\.0\.1|10\.0\.2\.2):(\d{1,5})$/)?.[2];
+if (controlPort && Number(controlPort) > 0 && Number(controlPort) <= 65535) {
   const post = (path, value) => fetch(`${control}/${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
   });

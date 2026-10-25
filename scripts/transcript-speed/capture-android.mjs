@@ -40,6 +40,7 @@ const regressionOnly = process.env.TRANSCRIPT_REGRESSION_ONLY === '1';
 const control = startControl();
 const stimulus = await fixtureStimulus();
 const samples = [];
+const pathFailures = [];
 
 const refreshHz = Number(process.env.TRANSCRIPT_REFRESH_HZ ?? 60);
 const frameStats = text => {
@@ -61,6 +62,8 @@ const frameStats = text => {
 async function capture(name, duration, action) {
   adb('shell', 'dumpsys', 'gfxinfo', 'app.usebeeline', 'reset');
   const sample = await control.capture(name, duration, action);
+  if (process.env.TRANSCRIPT_EXPECT_ENGINE && sample.build?.listEngine !== process.env.TRANSCRIPT_EXPECT_ENGINE)
+    throw new Error(`Expected ${process.env.TRANSCRIPT_EXPECT_ENGINE}, loaded ${sample.build?.listEngine}`);
   const rawFrames = adb('shell', 'dumpsys', 'gfxinfo', 'app.usebeeline', 'framestats');
   const result = { ...summarize(sample, refreshHz), raw: sample, uiFrames: frameStats(rawFrames) };
   samples.push(result);
@@ -78,6 +81,7 @@ try {
     const composer = pointFor(dump(), 'content-desc', 'Message');
     tap(composer); await pause(500);
     for (const char of 'measure') await capture('keystroke', 650, async () => { adb('shell', 'input', 'text', char); });
+    await writeFile(`${output}/keyboard-${repeat}.png`, execFileSync('adb', ['-s', device, 'exec-out', 'screencap', '-p']));
     adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
     adb('shell', 'input', 'keyevent', 'KEYCODE_DEL'); adb('shell', 'input', 'keyevent', '4');
     await pause(500);
@@ -96,6 +100,7 @@ try {
         }
       });
       samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
+      await writeFile(`${output}/history-${repeat}.png`, execFileSync('adb', ['-s', device, 'exec-out', 'screencap', '-p']));
       if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
     }
     open(rooms[1]); await pause(1200); open(rooms[0]); await pause(1200);
@@ -129,7 +134,11 @@ try {
       await writeFile(screenshot, execFileSync('adb', ['-s', device, 'exec-out', 'screencap', '-p']));
       const visible = execFileSync('tesseract', [screenshot, 'stdout'], { encoding: 'utf8' });
       await writeFile(`${output}/streams-${repeat}.txt`, visible);
-      if (!/Stream [0O]:/.test(visible) || !/Stream 1:/.test(visible)) throw new Error('Android screenshot did not show both live streams');
+      if (!/Stream [0O]:/.test(visible) || !/Stream 1:/.test(visible)) {
+        pathFailures.push({ scenario: 'concurrent-streams-visible', repeat, reason: 'Screenshot did not show both live streams' });
+        if (process.env.TRANSCRIPT_EXPERIMENT_KEEP_FAILURES !== '1')
+          throw new Error('Android screenshot did not show both live streams');
+      }
     });
     await capture('concurrent-streams', 5000, async () => { await stimulus.stream(); });
     if (!samples.at(-1).rowCommits) throw new Error('Streaming rows were not captured inside the sampling window');
@@ -143,7 +152,7 @@ try {
     if (!samples.at(-1).serverSettled) throw new Error('Android optimistic send did not settle on the fixture server');
     if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
-  await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
+  await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', completed: true, device, fixtureFingerprint, pathFailures,
     scenarioOptions: { repeatCount, regressionOnly, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

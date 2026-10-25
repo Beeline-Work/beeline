@@ -1,3 +1,5 @@
+const webOrigin = process.env.TRANSCRIPT_WEB_ORIGIN ?? 'http://127.0.0.1:19882';
+const viewport = { width: Number(process.env.TRANSCRIPT_WEB_WIDTH ?? 390), height: 844 };
 /** Paired sampler-on/off key-to-render bounds; commit hooks remain installed. */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { rooms, workspace } from './fixture.mjs';
@@ -17,9 +19,9 @@ try {
   if(!session) {
     const {chromium}=await import(process.env.PLAYWRIGHT_CORE_PATH??'/home/lunchbox/gstack/node_modules/playwright-core/index.mjs');
     browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH??'/home/lunchbox/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome',headless:true,args:['--no-sandbox']});
-    page=await browser.newPage({viewport:{width:390,height:844}});
-    await page.goto('http://127.0.0.1:19882/review/transcript-fixture-local-only-36bbb7b4');await page.waitForURL('**/beeline/channels**');
-    await page.goto(`http://127.0.0.1:19882/beeline/chat/${rooms[0]}?communityId=${workspace}`);
+    page=await browser.newPage({viewport:viewport});
+    await page.goto(`${webOrigin}/review/transcript-fixture-local-only-36bbb7b4`);await page.waitForURL('**/beeline/channels**');
+    await page.goto(`${webOrigin}/beeline/chat/${rooms[0]}?communityId=${workspace}`);
     await page.getByRole('textbox',{name:'Message',exact:true}).waitFor();
   } else await wd('url',{url:`tauri://localhost/beeline/chat/${rooms[0]}?communityId=${workspace}`});
   await pause(2500);

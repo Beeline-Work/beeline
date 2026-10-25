@@ -6,18 +6,37 @@ module.exports = function ({ types: t }) {
       const target = file.endsWith('/chat/_chat-surface.tsx') ? 'BuzzChatSurface'
         : file.endsWith('/buzz/room-message-cell.tsx') ? 'RoomMessageCell' : null;
       if (!target) return;
+      const listEngine = process.env.BEELINE_TRANSCRIPT_ENGINE;
+      if (listEngine && !['flatlist', 'flashlist', 'legendlist'].includes(listEngine))
+        throw new Error('Unknown transcript benchmark engine');
+      if (listEngine && listEngine !== process.env.EXPO_PUBLIC_TRANSCRIPT_ENGINE)
+        throw new Error('Benchmark metadata and runtime engine must match');
+      if (listEngine && target === 'BuzzChatSurface') {
+        path.unshiftContainer('body', t.importDeclaration([
+          t.importSpecifier(t.identifier('__BenchmarkList'), t.identifier('BenchmarkList')),
+        ], t.stringLiteral(require('node:path').resolve(__dirname, '../../apps/mobile/transcript-speed/benchmark-list.js'))));
+        path.traverse({
+          JSXIdentifier(node) { if (node.node.name === 'FlatList') node.node.name = '__BenchmarkList'; },
+          VariableDeclarator(node) {
+            if (node.node.id.name === 'desktopTranscript') node.node.init = t.booleanLiteral(false);
+          },
+        });
+      }
       const traceProps = process.env.BEELINE_TRANSCRIPT_PROP_TRACE === '1';
       const caller = state.file.opts.caller;
       if (caller?.name !== 'metro') throw new Error('Measurement build requires the Metro Babel caller');
+      const repositoryRoot = require('node:path').resolve(__dirname, '../..');
+      const git = process.env.TRANSCRIPT_GIT ?? 'git';
       // Match babel-preset-expo's effective getReactCompiler(caller) decision.
       const metadata = {
+        listEngine: listEngine ?? 'shipped',
         propTrace: traceProps,
         reactCompiler: caller.supportsReactCompiler ?? false,
         platform: caller.platform,
         engine: caller.engine ?? null,
-        checkoutSha: require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+        checkoutSha: require('node:child_process').execFileSync(git, ['-C', repositoryRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
         sourceDiffSha256: require('node:crypto').createHash('sha256').update(
-          require('node:child_process').execFileSync('git', ['diff', 'HEAD', '--', 'apps/mobile', 'scripts/transcript-speed'])).digest('hex'),
+          require('node:child_process').execFileSync(git, ['-C', repositoryRoot, 'diff', 'HEAD', '--', 'apps/mobile', 'scripts/transcript-speed'])).digest('hex'),
       };
       path.pushContainer('body', t.expressionStatement(t.assignmentExpression('=',
         t.memberExpression(t.identifier('globalThis'), t.identifier('__transcriptBuild')), t.valueToNode(metadata))));

@@ -1,0 +1,38 @@
+{
+  "legendApkBundleSha256": "63b336944060737ad11343efcce26beced542e4001d4e2672fbbe201cff30a42",
+  "generatedBundleSha256": "63b336944060737ad11343efcce26beced542e4001d4e2672fbbe201cff30a42",
+  "bundleMatchesApk": true,
+  "maps": [
+    "apps/mobile/android/app/build/generated/sourcemaps/react/release/index.android.bundle.map"
+  ],
+  "sourceChecks": [
+    {
+      "source": "apps/mobile/transcript-speed/benchmark-list.js",
+      "mapSource": "/transcript-speed/benchmark-list.js",
+      "snapshotSha256": "796b301bb7eca2cabfd8e39089405b3ae3e7c49f3da4822542291f00e7aee45c",
+      "mapSha256": "796b301bb7eca2cabfd8e39089405b3ae3e7c49f3da4822542291f00e7aee45c",
+      "matches": true
+    },
+    {
+      "source": "apps/mobile/transcript-speed/runtime.js",
+      "mapSource": "/transcript-speed/runtime.js",
+      "snapshotSha256": "b3dc3d0a76fddbaa5f2fb1e9f22620b5d3dcbe154915d96d7e22dfd9ee2ad36a",
+      "mapSha256": "b3dc3d0a76fddbaa5f2fb1e9f22620b5d3dcbe154915d96d7e22dfd9ee2ad36a",
+      "matches": true
+    },
+    {
+      "source": "apps/mobile/sources/app/(app)/beeline/chat/_chat-surface.tsx",
+      "mapSource": "/sources/app/(app)/beeline/chat/_chat-surface.tsx",
+      "snapshotSha256": "ddc6a73d145b8b3b7ef35d628b4c31078af4ad58fcc132e5d0f7093547eb1b30",
+      "mapSha256": "ddc6a73d145b8b3b7ef35d628b4c31078af4ad58fcc132e5d0f7093547eb1b30",
+      "matches": true
+    },
+    {
+      "source": "apps/mobile/sources/buzz/room-message-cell.tsx",
+      "mapSource": "/sources/buzz/room-message-cell.tsx",
+      "snapshotSha256": "1599cac954f1555616a64753da207eac407576a068cbebfbffc3347d932ae622",
+      "mapSha256": "1599cac954f1555616a64753da207eac407576a068cbebfbffc3347d932ae622",
+      "matches": true
+    }
+  ]
+}

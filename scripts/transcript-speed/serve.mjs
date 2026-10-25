@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(process.argv[2] ?? 'apps/mobile/transcript-dist');
+const port = Number(process.env.TRANSCRIPT_WEB_PORT ?? 19882);
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.ttf': 'font/ttf', '.wasm': 'application/wasm' };
 createServer(async (req, res) => {
   try {
@@ -22,4 +23,4 @@ createServer(async (req, res) => {
     res.setHeader('Content-Type', types[path.extname(target)] ?? 'application/octet-stream');
     res.end(await readFile(target));
   } catch { res.writeHead(404).end(); }
-}).listen(19882, '127.0.0.1', () => console.log('Transcript fixture web and images: http://127.0.0.1:19882'));
+}).listen(port, '127.0.0.1', () => console.log(`Transcript fixture web and images: http://127.0.0.1:${port}`));

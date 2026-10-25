@@ -729,7 +729,7 @@ describe('PR-scoped check gate', () => {
     });
   });
 
-  it('Reproduction REVIEWERWAKE-1: follows the live verdict when the stored lifecycle still reads unknown', async () => {
+  it('Reproduction REVIEWERWAKE-1: repairs the stored snapshot and reports the resulting green transition', async () => {
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
       `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
@@ -750,8 +750,8 @@ describe('PR-scoped check gate', () => {
       checks: 'passed',
       reviewer: '@reviewer',
       reviewerWake: {
-        status: 'waiting',
-        detail: 'A review turn has not been dispatched to @reviewer yet.',
+        status: 'dispatched',
+        detail: 'The checks-passed transition woke @reviewer.',
       },
     });
   });

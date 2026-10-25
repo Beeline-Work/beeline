@@ -185,10 +185,10 @@ fields and add schema version, class counts and per-case intervals. Old JSONL
 lines need no migration: paragraph rotation still reads the last block ID.
 
 Run-level `scoring` records baseline `passed`, `scoredCases`, `unscoredCases`,
-`passRate`, and `overallPassRate`; history stores these fields at the top level.
+`formatInvalidCases`, `passRate`, and `overallPassRate`; history stores these fields at the top level.
 Only cases with every fixed sample behavior-scored enter `scoredCases`.
 `passed` and `passRate` are null when that denominator is zero, and the summary
-says the behavior pass rate is unavailable. A subset rate names its denominator
+says `no behavior verdicts` with the separate format-invalid case count. A subset rate names its denominator
 and unscored case count; `overallPassRate` remains null unless all eligible cases
 are scored. The legacy `cases` history field remains the eligible cohort size,
 not the behavioral denominator. `complete` describes finished simulation, not

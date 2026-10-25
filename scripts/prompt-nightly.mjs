@@ -479,14 +479,15 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   result.diagnostics = Object.fromEntries(['baseline', 'control', 'candidate'].map(arm => [arm, diagnostics(result[arm])]));
   const scoredCases = result.baseline.filter(row => row.scored === FIXED_SAMPLES && typeof row.pass === 'boolean').length;
   const passed = scoredCases ? result.baseline.filter(row => row.pass === true).length : null;
-  result.scoring = { passed, scoredCases, unscoredCases: cases.length - scoredCases,
+  const formatInvalidCases = result.baseline.filter(row => row.samples.some(sample => sample.status === 'format')).length;
+  result.scoring = { passed, scoredCases, formatInvalidCases, unscoredCases: cases.length - scoredCases,
     passRate: scoredCases ? passed / scoredCases : null,
     overallPassRate: scoredCases === cases.length ? passed / scoredCases : null };
   save();
   const total = median(result.baseline.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
   const rate = scoredCases
-    ? `${passed}/${scoredCases} behavior-scored cases passed (${(100 * result.scoring.passRate).toFixed(1)}%); ${result.scoring.unscoredCases} unscored cases${result.scoring.overallPassRate === null ? '; overall pass rate unavailable' : ''}`
-    : `behavior pass rate unavailable; ${result.scoring.unscoredCases} unscored cases; overall pass rate unavailable`;
+    ? `${passed}/${scoredCases} behavior-scored cases passed (${(100 * result.scoring.passRate).toFixed(1)}%); ${formatInvalidCases} format-invalid cases; ${result.scoring.unscoredCases} unscored cases${result.scoring.overallPassRate === null ? '; overall pass rate unavailable' : ''}`
+    : `no behavior verdicts (${formatInvalidCases} format-invalid cases); behavior pass rate unavailable; ${result.scoring.unscoredCases} unscored cases; overall pass rate unavailable`;
   const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([arm, d]) => [arm, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));
   const reasons = Object.entries(result.diagnostics).flatMap(([arm, d]) => {
     const groups = new Map();

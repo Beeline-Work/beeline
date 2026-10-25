@@ -300,7 +300,9 @@ test('an addressed brief returns that corner facts before a default current-plac
 });
 
 
-test('full runner excludes format-only and partially scored cases from summary and history rates', async () => {
+test('full runner excludes format-only and partially scored cases from summary and history rates', async t => {
+  const printed = [];
+  t.mock.method(console, 'log', line => printed.push(line));
   const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-format-'));
   try {
     for (const mixed of [false, true]) {
@@ -316,9 +318,13 @@ test('full runner excludes format-only and partially scored cases from summary a
       const saved = JSON.parse(readFileSync(history, 'utf8'));
       const artifact = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
       assert.equal(result.status, 'complete');
+      assert.equal(printed.at(-1).trimEnd(), summary.trimEnd());
       assert.equal(result.classes.baseline.format, result.eligibleCount * (mixed ? FIXED_SAMPLES - 1 : FIXED_SAMPLES));
       assert.equal(result.classes.baseline.pass + result.classes.baseline.behavior, mixed ? result.eligibleCount : 0);
-      assert.match(summary, /behavior pass rate unavailable/);
+      assert.ok(summary.includes(`no behavior verdicts (${result.eligibleCount} format-invalid cases)`));
+      assert.equal(saved.formatInvalidCases, result.eligibleCount);
+      assert.equal(result.noise.losses, 0);
+      assert.equal(result.noise.outcome, 'too little data');
       assert.doesNotMatch(summary, /0\/73 passed|\(0\.0%\)/);
       assert.equal(saved.passed, null);
       assert.equal(saved.scoredCases, 0);
@@ -343,6 +349,7 @@ test('full runner reports a behavioral rate only for fully scored cases in a mix
       return reply;
     } });
     const saved = JSON.parse(readFileSync(history, 'utf8'));
+    assert.equal(saved.formatInvalidCases, result.eligibleCount - 1);
     assert.equal(saved.scoredCases, 1);
     assert.equal(saved.passed, 1);
     assert.equal(saved.unscoredCases, result.eligibleCount - 1);

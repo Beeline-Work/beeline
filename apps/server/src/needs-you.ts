@@ -12,7 +12,7 @@ import {
   type NeedsYouItemView,
   type RoomViewIdentity,
 } from '@beeline/api-contract/phone';
-import { AGENT_GRANT_VERBS, connectionInstallName, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
+import { AGENT_GRANT_VERBS, grantPresentation, connectionInstallName, isCommandGrantScript, type AgentGrantKind, type CommandGrantScript } from '@beeline/api-contract/agent-grants';
 import type { SqlDatabase } from './database.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 
@@ -151,7 +151,7 @@ export function needsYouRowText(message: string, readerHandle: string | null, as
   return shortenAsk(withoutReaderTags(ask || needsYouSentence(message), readerHandle));
 }
 
-type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; appName?: string; reason?: string; purpose?: string; script?: CommandGrantScript };
+type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; appName?: string; reason?: string; purpose?: string; touches?: string; capabilities?: string; script?: CommandGrantScript };
 
 /** The raw card fields the approval rows read; every kind's card is a subset. */
 type ApprovalCard = {
@@ -641,6 +641,7 @@ function approvalView(
       );
       if (!result || !first.grantId) return result;
       return { ...result,
+        ...grantPresentation({ ...first, kind: first.kind, target: first.target }),
         ...(isCommandGrantScript(first.script) ? { script: first.script } : {}),
         actions: [
           ...((first.kind === 'shared_asset') ? [] : [{ kind: 'grant' as const, label: 'Once', grantId: first.grantId, decision: 'once' as const }]),

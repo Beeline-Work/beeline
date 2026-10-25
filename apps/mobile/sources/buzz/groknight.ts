@@ -52,8 +52,6 @@ const shared = {
     footerTop: 16,
     footerVertical: 8,
     footerMinHeight: 44,
-    actionGap: 24,
-    actionSize: 16,
   },
   // Mobile Room list cards (approved Room list card mock). Desktop rows keep
   // the body/meta roles.

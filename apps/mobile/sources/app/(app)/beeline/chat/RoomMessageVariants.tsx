@@ -164,8 +164,7 @@ export const WritePermissionCard = React.memo(function WritePermissionCard({
       : !pending && permission.status === 'allowed' && permission.subchannelId
         ? [
             {
-              label: 'Open →',
-              primary: true,
+              label: 'Open',
               accessibilityRole: 'link',
               onPress: () => onOpenCorner(permission.subchannelId!),
               testID: 'write-permission-open-corner',
@@ -221,7 +220,7 @@ export const SquireApprovalCard = React.memo(function SquireApprovalCard({
     onPress: () => onOpenSource(approval.sourceRoomId!, approval.sourceMessageId!), testID: 'squire-approval-source',
   });
   if (!settled) actions.push({ label: approval.linkKind === 'passkey' ? 'Use passkey ↗' : approval.linkKind === 'vouch' ? 'Vouch ↗' : 'Review ↗',
-    primary: true, accessibilityRole: 'link', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
+    accessibilityRole: 'link', onPress: () => void openExternalUrl(approval.approvalUrl), testID: 'squire-approval-open' });
   return <AgentApprovalCard tier={settled ? 'record' : 'ask'} testID="squire-approval-card" wrapTitle
     askingAgent={approval.agent} agent={agent}
     title={`@${name.replace(/^@/, '')} wants to ${approval.action ?? squireApprovalAction(approval.tool, approval.detail, approval.linkKind)}`}
@@ -363,7 +362,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
         : !pending && !connecting
           ? [
               {
-                label: 'Manage ›',
+                label: 'Manage',
                 accessibilityRole: 'link',
                 onPress: onOpenWorkbench,
                 testID: `connector-offer-${offer.offerId}-workbench`,
@@ -476,6 +475,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
       ? [
           {
             label: 'Skip',
+            dismiss: true,
             disabled: busy,
             onPress: () => onSkip(card.choiceId),
             testID: `choice-${card.choiceId}-skip`,

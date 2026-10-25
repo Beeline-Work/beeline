@@ -99,6 +99,7 @@ export const StarPromptCard = memo(function StarPromptCard({
       actions={[
         {
           label: STAR_PROMPT_LATER_LABEL,
+          dismiss: true,
           onPress: () => onAnswer('later'),
           disabled: busy !== null,
           loading: busy === 'later',

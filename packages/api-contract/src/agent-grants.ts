@@ -520,3 +520,28 @@ export function interpreterScriptArgument(
 
 /** The mcp grant target that mounts Trusty Squire. */
 export const SQUIRE_MCP_TARGET = 'squire';
+
+/** Paint-ready grant details shared by the DM card and the server's tray projection. */
+export function grantPresentation(grant: {
+  kind: AgentGrantKind; target: string; appName?: string; reason?: string;
+  purpose?: string; touches?: string; capabilities?: string;
+}) {
+  let runs: string | undefined;
+  let uses: string | undefined;
+  if (grant.kind === 'command') {
+    try {
+      const rule = parseCommandGrantTarget(grant.target);
+      runs = rule.argv.map((value) => value.split(/[\\/]/).pop() || value).join(' ');
+      uses = rule.secrets.join(', ') || undefined;
+    } catch { /* Legacy command targets may predate the command grammar. */ }
+  }
+  return {
+    purpose: grant.purpose ?? grant.reason,
+    facts: [
+      ...(runs ? [{ label: 'Runs', value: runs }] : []),
+      ...(uses && !(grant.purpose && grant.touches && grant.capabilities) ? [{ label: 'Uses', value: uses }] : []),
+      ...(grant.touches ? [{ label: 'Touches', value: grant.touches }] : grant.kind !== 'command' ? [{ label: 'Touches', value: grant.appName ?? grant.target }] : []),
+      ...(grant.capabilities ? [{ label: 'Can', value: grant.capabilities }] : !grant.purpose && grant.kind !== 'command' ? [{ label: 'Can', value: `Use ${grant.appName ?? grant.target}` }] : []),
+    ].slice(0, 3),
+  };
+}

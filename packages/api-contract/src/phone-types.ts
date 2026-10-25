@@ -499,7 +499,10 @@ export type NeedsYouApprovalView = {
   /** The person the request is for, when that is not the viewer. */
   readonly forName?: string;
   readonly actions?: readonly NeedsYouActionView[];
-  /** Full script bytes bound to the first grant; never approve a hidden script. */
+  /** Shared grant details, shown before its folded script disclosure. */
+  readonly purpose?: string;
+  readonly facts?: readonly { readonly label: string; readonly value: string }[];
+  /** Full script bytes bound to the first grant, available on request. */
   readonly script?: { readonly path: string; readonly contents: string };
 };
 

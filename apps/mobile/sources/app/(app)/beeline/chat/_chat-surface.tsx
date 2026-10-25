@@ -6691,7 +6691,7 @@ export function BuzzChatSurface({
                         description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}
                         retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation →' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
                         onRetry={() => void handleReconnectRoomRepository()} retryTestID="corner-open-repo-connect"
-                        secondaryAction={{ label: 'DISMISS', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID="corner-open-repo-prompt" />
+                        secondaryAction={{ label: 'Dismiss', onPress: () => setCornerOpenRepoPrompt(false), testID: 'corner-open-repo-prompt-dismiss' }} testID="corner-open-repo-prompt" />
                     ) : (
                       <View style={styles.repoPromptBanner} testID="corner-open-repo-prompt">
                         <Text style={styles.repoPromptTitle}>
@@ -6725,12 +6725,11 @@ export function BuzzChatSurface({
                           </Text>
                         )}
                         <Button
-                          label="DISMISS"
+                          label="Dismiss"
                           variant="quiet"
                           accessibilityLabel="Dismiss"
                           onPress={() => setCornerOpenRepoPrompt(false)}
                           testID="corner-open-repo-prompt-dismiss"
-                          appearance={{ control: styles.repoPromptDismiss, label: styles.repoPromptDismissText }}
                         />
                       </View>
                     ))}
@@ -7764,11 +7763,6 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.meta,
       fontFamily: groknight.proseSemibold,
       color: groknight.accent,
-    },
-    repoPromptDismiss: { alignSelf: 'flex-end', minHeight: 32, justifyContent: 'center' },
-    repoPromptDismissText: {
-      ...theme.buzz.type.machine,
-      color: groknight.textSecondary,
     },
     archivedInputBar: {
       paddingHorizontal: 16,

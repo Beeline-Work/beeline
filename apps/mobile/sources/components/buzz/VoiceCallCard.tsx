@@ -31,8 +31,8 @@ export function VoiceCallCard({ call, joined, onJoin, connecting = false, viewer
             accessibilityLabel="Join call"
             testID="voice-call-join"
             label={connecting ? 'Joining…' : 'Join'}
-            variant="quiet"
-            appearance={{ control: styles.join, label: styles.joinText }}
+            variant="primary"
+            loading={connecting}
           />
         )}
     </View>
@@ -45,7 +45,5 @@ const styles = StyleSheet.create((theme) => ({
     borderWidth: 1, borderRadius: 10, borderColor: theme.buzz.border, backgroundColor: theme.buzz.bgRaised },
   dot: { width: 8, height: 8, borderRadius: 999, backgroundColor: theme.buzz.accent },
   title: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary, flex: 1 },
-  join: { minWidth: 44, minHeight: 28, paddingHorizontal: 16, borderRadius: 999,
-    alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.textPrimary },
-  joinText: { ...theme.buzz.type.meta, color: theme.buzz.bgRaised },
+
 }));

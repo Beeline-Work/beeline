@@ -4,7 +4,7 @@ import ts from 'typescript';
 import { expect, it } from 'vitest';
 
 // These surfaces contain main actions explicitly retained by the approved mock.
-const mainActionFiles = new Set(['TranscriptCard.tsx', 'RunnableArtifact.tsx', 'ViewerConversationDock.tsx', 'ComputerSessionViewer.tsx']);
+const mainActionFiles = new Set(['TranscriptCard.tsx', 'VoiceCallCard.tsx', 'RunnableArtifact.tsx', 'ViewerConversationDock.tsx', 'ComputerSessionViewer.tsx']);
 function violations(source: string, filename: string): string[] {
   const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found: string[] = [];

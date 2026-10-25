@@ -22,6 +22,12 @@ export function ButtonRow({
   actions: readonly ButtonRowAction[];
   style?: StyleProp<ViewStyle>;
 }) {
+  if (actions.filter((action) => action.variant === 'primary').length > 1) {
+    throw new Error('A decision row permits only one primary action');
+  }
+  if (actions.some((action) => action.accessibilityRole === 'link')) {
+    throw new Error('Links belong outside ButtonRow at the start of the footer');
+  }
   return (
     <View style={[styles.row, style]}>
       {actions.map((action) => (

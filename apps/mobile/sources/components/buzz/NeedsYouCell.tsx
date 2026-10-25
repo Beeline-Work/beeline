@@ -1,3 +1,5 @@
+import { LedgerDisclosure } from './LedgerDisclosure';
+import { TranscriptFactRow } from './IndexRow';
 import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Button } from './Button';
 import React, { useRef, useState } from 'react';
@@ -69,12 +71,14 @@ export function NeedsYouCell({
   onDismiss: (item: NeedsYouItemView) => void;
   onAction?: (item: NeedsYouItemView, action: NeedsYouActionView) => Promise<void>;
 }) {
+  const [scriptOpen, setScriptOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const sending = useRef(false);
   const unifiedApproval = item.approval && ['grant', 'write-access', 'connector', 'squire'].includes(item.approval.kind);
   const subject = unifiedApproval ? item.approval!.subject : item.text;
   const approval = item.approval?.detail === subject ? { ...item.approval, detail: undefined } : item.approval;
+  const sharedGrant = approval?.kind === 'grant' && approval.facts !== undefined;
   const age = compactRelativeTime(item.createdAt, now);
   const stale = now / 1000 - item.createdAt > STALE_SECONDS;
   const expiry = needsYouExpiryLabel(item.expiresAt, now);
@@ -143,12 +147,29 @@ export function NeedsYouCell({
         ) : null}
       </View>
       <Text
-        style={[styles.text, approval ? approval.literal && styles.literal : styles.quote]}
+        style={[styles.text, approval ? !sharedGrant && approval.literal && styles.literal : styles.quote]}
         testID={`needs-you-text-${item.messageId}`}
       >
-        {subject}
+        {sharedGrant ? approval.purpose ?? approval.detail ?? subject : subject}
       </Text>
-      {approval?.detail && !choiceActions ? (
+      {sharedGrant ? approval.facts?.map((fact) => (
+        <TranscriptFactRow key={fact.label} label={fact.label} value={fact.value} />
+      )) : null}
+      {approval?.script ? (
+        <View>
+          <LedgerDisclosure expanded={scriptOpen}
+            rowTestID={`needs-you-script-${item.messageId}-toggle`}
+            accessibilityLabel="Script" accessibilityState={{ expanded: scriptOpen }}
+            onPress={(event) => { event.stopPropagation(); setScriptOpen((open) => !open); }}>
+            {`Script · ${approval.script.contents.replace(/\r?\n$/, '').split('\n').length} lines`}
+          </LedgerDisclosure>
+          {scriptOpen ? <View style={styles.script}>
+            <Text style={styles.detail}>{approval.script.path}</Text>
+            <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>{approval.script.contents}</Text>
+          </View> : null}
+        </View>
+      ) : null}
+      {approval?.detail && !choiceActions && !sharedGrant ? (
         <Text style={styles.detail} testID={`needs-you-detail-${item.messageId}`}>
           {approval.detail}
         </Text>
@@ -165,7 +186,7 @@ export function NeedsYouCell({
       </View>
       {desktop && hovered ? (
         <Button
-          label="DISMISS ✕"
+          label="Dismiss"
           accessibilityLabel="Dismiss"
           variant="quiet"
           onPress={(event) => {
@@ -183,14 +204,11 @@ export function NeedsYouCell({
       {source}
       {onAction && approval && actions.length ? (
         <View style={styles.actionArea}>
-          {approval?.script ? (
-            <View style={styles.script}>
-              <Text style={styles.detail}>{approval.script.path}</Text>
-              <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>
-                {approval.script.contents}
-              </Text>
-            </View>
-          ) : null}
+          {actions.map((action, index) => action.kind === 'external' ? (
+            <Button key={index} label={action.label} size="inline" variant="secondary"
+              accessibilityRole="link" disabled={busy !== null} loading={busy === index}
+              onPress={() => void send(action, index)} testID={`needs-you-action-${item.messageId}-${index}`} />
+          ) : null)}
           {choiceActions ? (
             <View style={styles.choices}>
               {actions.map((action, index) =>
@@ -221,13 +239,13 @@ export function NeedsYouCell({
                 const denied = (action: NeedsYouActionView) => (action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny';
                 return Number(denied(b.action)) - Number(denied(a.action));
               }).flatMap(({ action, index }) =>
-                action.kind === 'choice'
+                action.kind === 'choice' || action.kind === 'external'
                   ? []
                   : [
                       {
                         label: action.label,
-                        variant: action.kind === 'skip-choice' || action.kind === 'external' || ((action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny') ? 'quiet' : 'primary',
-                        accessibilityRole: action.kind === 'external' ? 'link' : 'button',
+                        variant: action.kind === 'skip-choice' ? 'quiet' : (action.kind === 'grant' ? action.decision === 'always' : action.kind === 'write-access' && action.decision !== 'deny') ? 'primary' : 'secondary',
+                        accessibilityRole: 'button',
                         disabled: busy !== null,
                         loading: busy === index,
                         testID: `needs-you-action-${item.messageId}-${index}`,
@@ -258,7 +276,7 @@ export function NeedsYouCell({
       overshootLeft={false}
       renderLeftActions={() => (
         <View style={styles.rail} testID={`needs-you-swipe-rail-${item.messageId}`}>
-          <Text style={styles.railText}>DISMISS</Text>
+          <Text style={styles.railText}>Dismiss</Text>
         </View>
       )}
       testID={`needs-you-swipe-${item.messageId}`}

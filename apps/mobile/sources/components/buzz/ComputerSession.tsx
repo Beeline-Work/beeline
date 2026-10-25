@@ -156,12 +156,12 @@ export function ComputerSessionCard({ session, isDesktop, agentHandle }: { sessi
         <View style={styles.footer}>
       <Button
         onPress={() => void open()}
-        accessibilityRole="button"
+        accessibilityRole="link"
         accessibilityLabel="Open live browser"
         testID="computer-session-open"
         label={'Open live browser'}
-        variant="quiet"
-        appearance={{ control: undefined, label: styles.link }}
+        variant="secondary"
+        size="inline"
       />
     </View>
       ) : null}
@@ -271,6 +271,8 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
         {!ended && !unavailable && session.access ? (
           <Button
             label="Open ↗"
+            size="inline"
+            accessibilityRole="link"
             variant="secondary"
             onPress={() => void openInBrowser()}
             accessibilityLabel="Open in browser"
@@ -279,7 +281,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
         ) : null}
         <Button
           label="✕"
-          style={{ width: 44, paddingHorizontal: 0 }}
+          iconOnly
           variant="secondary"
           onPress={onClose}
           accessibilityLabel="Close browser"
@@ -321,7 +323,6 @@ const styles = StyleSheet.create((theme) => ({
   title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   kind: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   footer: { minHeight: theme.buzz.transcriptCard.footerMinHeight, paddingHorizontal: theme.buzz.transcriptCard.side, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: theme.buzz.border },
-  link: { ...theme.buzz.type.body, color: theme.buzz.accent },
   viewer: { flex: 1, backgroundColor: theme.buzz.bgBase },
   viewerStream: { flex: 1, minHeight: 0 },
   previewFrame: { position: 'absolute', inset: 0, width: '100%', height: '100%' },

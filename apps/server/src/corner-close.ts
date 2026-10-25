@@ -46,6 +46,7 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
      WHERE room_id=$1 AND status='working'`,
     [cornerId],
   );
+  await database.query(`DELETE FROM agent_pending_attachments WHERE room_id=$1`, [cornerId]);
 }
 
 /** Release migration: old archived corners cannot have an active assignment. */

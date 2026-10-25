@@ -590,6 +590,8 @@ function phantomHarness(answer = 'Hey there is the answer.') {
         }),
       } } as unknown as VoiceService;
       return VoiceService.prototype.recordHuman.call(writer, call, room, human, target, text, leaseOwner);
+    }), reviseHuman: vi.fn(async (_call: string, _room: string, _human: string, _target: unknown, _source: string, text: string) => {
+      messages[0] = `@ronnie ${text}`;
     }), recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async (sql: string, parameters?: any[]) => ({ rowCount: 1,
       rows: sql.includes('identity_id=ANY') ? (parameters?.[1] ?? []).map((identity_id: string) => ({identity_id})) : [] as any[] })) },
@@ -838,6 +840,7 @@ it.each(['stop', 'cancel', 'wait', 'no', 'Yeah', 'Please explain something else'
     harness.emit('EndOfTurn', 'Explain the answer', 0);
     await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
     harness.emit('Update', text, 1, [{ confidence: 0.95 }]);
+    await vi.waitFor(() => expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true));
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
     if (text === 'stop' || text === 'cancel') {
@@ -845,11 +848,33 @@ it.each(['stop', 'cancel', 'wait', 'no', 'Yeah', 'Please explain something else'
     expect(harness.service.leave).not.toHaveBeenCalled();
       expect(harness.service.recordHuman).toHaveBeenCalledOnce();
     } else {
-      await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
-      expect(harness.service.recordHuman.mock.calls[1]?.[4]).toBe(text);
+      await vi.waitFor(() => expect(harness.service.reviseHuman).toHaveBeenCalledOnce());
+      expect(harness.service.reviseHuman.mock.calls[0]?.[5]).toBe(`Explain the answer ${text}`);
+      expect(harness.service.recordHuman).toHaveBeenCalledOnce();
     }
     expect(harness.speech.synthesize.mock.calls[0]?.[2]?.aborted).toBe(true);
   } finally { await runtime.close(); }
+});
+
+it('VOICE-CUTIN-1: a delayed membership read cannot cancel a newer finalized request', async () => {
+  const harness = phantomHarness('Here is the answer.');
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  let release!: (value: number) => void;
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.service.recordAnswer).toHaveBeenCalledOnce());
+    harness.service.humanCount.mockImplementationOnce(() => new Promise<number>(resolve => { release = resolve; }));
+    harness.emit('Update', 'wait', 1, [{ confidence: 0.95 }]);
+    harness.emit('EndOfTurn', 'Please explain something else', 1);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledTimes(2));
+    release(1);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(harness.service.recordHuman).toHaveBeenCalledTimes(2);
+    expect(harness.speech.synthesize.mock.calls.at(-1)?.[2].aborted).toBe(false);
+  } finally { harness.finishPlayback(); await runtime.close(); }
 });
 
 it('keeps echo context until a delayed final and ignores duplicate finals before they cancel audio', async () => {

@@ -35,6 +35,8 @@ const inputs: ((event: FluxEvent) => void)[] = [];
 const operations: string[] = [];
 const microphoneFrames: number[] = [];
 let speechMs = 100;
+let brainDelayMs = 0;
+let cutinSequence = 0;
 let fault = '';
 let holdSpeech = false;
 const speechWaiters = new Set<() => void>();
@@ -62,6 +64,7 @@ const service = new VoiceService(db,live,{url:`ws://127.0.0.1:${rtcPort}`,apiKey
     const capped = /capped reply/.test(input.messages.at(-1).content);
     const work = /build|check my latest report/.test(input.messages.at(-1).content);
     decisionRequests++;
+    if (brainDelayMs) await new Promise(resolve => setTimeout(resolve, brainDelayMs));
     if (decisionGate && work) await decisionGate;
     const text = capped ? (process.env.VOICE_CAPPED_REPLY ?? 'One complete sentence. Then a trailing fragment') : work ? 'Checking.' : 'Ready.';
     replies.push(text);
@@ -142,6 +145,28 @@ const server = createServer((req,res)=> { void (async()=>{
     else { releaseDecision?.(); decisionGate = undefined; }
   }
   else if(req.url==='/delivery-fault') fault = body.kind;
+  else if(req.url==='/cutin') {
+    const callback = inputs[1];
+    if (!callback) throw new Error('Android microphone STT not ready');
+    const turn = (turns.get(nativeHuman) ?? -1) + 1;
+    turns.set(nativeHuman, turn + 1);
+    const text = "Ruby, I don't know how to explain this, but you have a way of sending";
+    const continuation = 'a message to Croc Bot';
+    const send = (event: FluxEvent['event'], turn_index: number, transcript: string) => callback({event,turn_index,
+      sequence_id: ++cutinSequence,transcript,words:transcript.split(' ').map((word,i)=>({word,confidence:.99,start:i*.2,end:i*.2+.18}))});
+    const mark = (event: string) => console.info('[voice-cutin-proof]',JSON.stringify({event,at:performance.now(),wall:Date.now()}));
+    brainDelayMs = 700; speechMs = 3000;
+    mark('eager'); send('EagerEndOfTurn',turn,text);
+    await new Promise(resolve=>setTimeout(resolve,600));
+    mark('final'); send('EndOfTurn',turn,text);
+    await new Promise(resolve=>setTimeout(resolve,body.resumeMs??800));
+    mark('resume'); send(body.kind??'StartOfTurn',body.kind==='TurnResumed'?turn:turn+1,continuation);
+    await new Promise(resolve=>setTimeout(resolve,3500));
+    mark('continued-final'); send('EndOfTurn',turn+1,continuation);
+    await new Promise(resolve=>setTimeout(resolve,5000));
+    brainDelayMs = 0; speechMs = 100;
+    value={transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey}))};
+  }
   else if(req.url==='/segment') {
     const who = body.human === 'partner' ? partner : nativeHuman;
     const index = who === partner ? 0 : 1;

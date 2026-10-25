@@ -111,6 +111,7 @@ export class VoiceRoomRuntime {
   private readonly targets = new Map<string, string>();
   private readonly explicitTargets = new Map<string, string>();
   private readonly turnIndices = new Map<string, number>();
+  private readonly resumedFinals = new Map<string, { turn: number; text: string }>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
   private readonly eager = new Map<string, { turn: number; text: string; reply?: VoiceEagerReply }>();
@@ -121,6 +122,27 @@ export class VoiceRoomRuntime {
   private humanCountRefresh = Promise.resolve();
   private speaking?: AbortController;
   private speakingHuman?: string;
+  private voicedReply?: { human: string; traceId: string; kind: 'turn' | 'report'; signal: AbortSignal; firstAt: number; lastAt: number;
+    resumedAt?: number; clearedAt?: number };
+  private observeCallerResume(human: string, event: FluxEvent) {
+    const reply = this.voicedReply;
+    if (!reply || this.speaking?.signal !== reply.signal || reply.human !== human || reply.resumedAt !== undefined ||
+        event.event === 'EndOfTurn' || event.event === 'EagerEndOfTurn' || !confirmedVoiceSpeech(event)) return;
+    const context = this.recentSpeech.filter(spoken => spoken.until > performance.now()).map(spoken => spoken.text).join(' ');
+    if (voicePlaybackEcho(event.transcript, context)) return;
+    reply.resumedAt = performance.now();
+    console.info('[voice-playback-resume]', JSON.stringify({ callId: this.callId, traceId: reply.traceId,
+      callerId: human, replyKind: reply.kind, event: event.event, turnIndex: event.turn_index, sinceFirstVoicedMs: reply.resumedAt - reply.firstAt }));
+  }
+  private finishVoicedReply(signal: AbortSignal) {
+    const reply = this.voicedReply;
+    if (!reply || reply.signal !== signal) return;
+    if (reply.resumedAt !== undefined) console.info('[voice-playback-stopped]', JSON.stringify({ callId: this.callId,
+      traceId: reply.traceId, callerId: reply.human, replyKind: reply.kind, publicationTailMs: Math.max(0, reply.lastAt - reply.resumedAt),
+      queueClearMs: reply.clearedAt === undefined ? null : reply.clearedAt - reply.resumedAt,
+      cleanupMs: performance.now() - reply.resumedAt }));
+    this.voicedReply = undefined;
+  }
   private readonly humanSpeaking = new Set<string>();
   private readonly quietWaiters = new Set<() => void>();
   private humanQuiet(human: string) {
@@ -320,8 +342,13 @@ export class VoiceRoomRuntime {
       stt = await this.service.config.stt(event => {
       const receivedAt = performance.now();
       this.task(async () => {
+      if (this.inputVersions.get(human) === version && event.turn_index >= (this.turnIndices.get(human) ?? -1))
+        this.observeCallerResume(human, event);
+      // A resumed final still belongs to the active conversational request.
+      const resumesFinal = event.event === 'TurnResumed' && event.turn_index === this.turnIndices.get(human) &&
+        (!!this.assembler.current(human) || (!!this.speaking && this.speakingHuman === human));
       if (this.inputVersions.get(human) !== version ||
-          event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
+          (event.turn_index <= (this.turnIndices.get(human) ?? -1) && !resumesFinal)) return;
       if (event.event === 'TurnResumed' || event.event === 'StartOfTurn') this.cancelEager(human);
       if (event.event === 'EndOfTurn') this.humanQuiet(human);
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
@@ -358,13 +385,27 @@ export class VoiceRoomRuntime {
         this.task(() => this.prepareEager(human, event), human); return;
       }
       this.markCallActivity();
+      if (resumesFinal && this.assembler.current(human)) {
+        this.resumedFinals.set(human, { turn: event.turn_index, text: this.assembler.current(human)!.text });
+        this.turnIndices.delete(human);
+      }
       if (event.event !== 'EndOfTurn') this.humanSpeaking.add(human);
       this.assembler.speaking(human);
       // Recognized speech fences classification even when it is too short to barge in.
-      const pausedReply = event.event !== 'EndOfTurn' && !!this.assembler.current(human) && this.speakingHuman === human;
+      const activeRequest = this.assembler.current(human);
+      let pausedReply = event.event !== 'EndOfTurn' && !!activeRequest && activeRequest.state !== 'playing' && this.speakingHuman === human;
+      let liveHumans: number | undefined;
       if (event.event !== 'EndOfTurn') {
-        if (pausedReply) this.interruptPlayback();
-        this.assembler.pause(human);
+        if (activeRequest?.state === 'playing') {
+          if (!voiceInterrupt(event)) liveHumans = await this.retry(() => this.service.humanCount(this.callId));
+          // A final can arrive while live membership resolves. Never cancel its newer request.
+          if ((liveHumans === 1 || voiceInterrupt(event)) && this.assembler.current(human) === activeRequest) {
+            this.interruptPlayback(); this.assembler.pause(human); pausedReply = true;
+          }
+        } else {
+          if (pausedReply) this.interruptPlayback();
+          this.assembler.pause(human);
+        }
       }
       this.task(() => this.signal({ type: 'speech' }, human), human);
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
@@ -372,12 +413,16 @@ export class VoiceRoomRuntime {
       const stop = /^(stop|cancel|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
       if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
         this.turnIndices.set(human, event.turn_index);
+        const resumed = this.resumedFinals.get(human);
+        this.resumedFinals.delete(human);
+        const fragment = resumed?.turn === event.turn_index && event.transcript.startsWith(resumed.text)
+          ? event.transcript.slice(resumed.text.length).trim() : event.transcript;
         const interrupts = voiceInterrupt(event);
-        this.task(() => this.utterance(human, event.transcript, receivedAt, interrupts, confirmedVoiceSpeech(event)), human);
+        this.task(() => this.utterance(human, fragment, receivedAt, interrupts, confirmedVoiceSpeech(event)), human);
         return;
       }
       // With several humans, anyone may interrupt, but only with real speech.
-      const humans = await this.retry(() => this.service.humanCount(this.callId));
+      const humans = liveHumans ?? await this.retry(() => this.service.humanCount(this.callId));
       if (this.inputVersions.get(human) !== version || event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       const interrupts = humans === 1 || voiceInterrupt(event);
       if (interrupts && !pausedReply) this.interruptPlayback();
@@ -408,6 +453,7 @@ export class VoiceRoomRuntime {
   }
   private stopInput(human: string) {
     this.cancelEager(human);
+    this.resumedFinals.delete(human);
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
     const input = this.inputs.get(human);
@@ -549,6 +595,8 @@ export class VoiceRoomRuntime {
   private clearAudioQueue() {
     // Provider cancellation can unwind after close has disposed the native handle.
     if (!this.audioDisposed) this.audio.clearQueue();
+    if (this.voicedReply?.resumedAt !== undefined && this.voicedReply.clearedAt === undefined)
+      this.voicedReply.clearedAt = performance.now();
   }
 
   private interruptPlayback() {
@@ -646,6 +694,8 @@ export class VoiceRoomRuntime {
       if (stages.has(stage)) return;
       stages.add(stage);
       const row = { traceId, callId: this.callId, stage, elapsedMs: performance.now() - startedAt };
+      if (stage === 'first_voiced_audio_published') this.voicedReply = { human, traceId, kind: 'turn', signal: controller.signal,
+        firstAt: performance.now(), lastAt: performance.now() };
       console.info('[voice-turn-timing]', JSON.stringify(row));
       void Promise.resolve().then(() => this.service.recordTiming?.(row))
         .catch(error => captureServerError(error, { surface: 'voice-timing' }));
@@ -816,10 +866,11 @@ export class VoiceRoomRuntime {
         if (committed) return;
         if (generation.signal.aborted || this.closed || this.humanSpeaking.has(human))
           throw new DOMException('Interrupted', 'AbortError');
-        // Close assembly before the dispatch round trip. Later speech is a new request.
-        this.assembler.finish(human, request);
         committed = true;
+        if (!reply.order) request.state = 'playing';
         if (reply.order) {
+          // Accepted work cannot be revised or dispatched again by later speech.
+          this.assembler.finish(human, request);
           request.state = 'delivering';
           try { await this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id)); }
           catch (error) { this.assembler.retainFailure(human, request); throw error; }
@@ -868,6 +919,8 @@ export class VoiceRoomRuntime {
       }
       // Empty or failed synthesis must not drop an accepted work request.
       if (reply.order && !committed) await commitReply();
+      // Keep a conversational request editable while its audio is playing.
+      if (!reply.order && !generation.signal.aborted) this.assembler.finish(human, request);
     } catch (error) {
       rejectSource?.(error);
       // Assembler cancellation reasons are strings, not AbortError instances.
@@ -890,6 +943,7 @@ export class VoiceRoomRuntime {
         finishSpeech?.();
         this.shutdown.signal.removeEventListener('abort', stop);
         generation.signal.removeEventListener('abort', pausePlayback);
+        this.finishVoicedReply(controller.signal);
         await Promise.all(completions);
       }
     }
@@ -955,10 +1009,12 @@ export class VoiceRoomRuntime {
             this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
             try {
               await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(spokenReport(cleanVoiceReply(report.text, agent.name)), agent, controller.signal, () => {
+                this.voicedReply = { human: report.human_id, traceId: report.id, kind: 'report', signal: controller.signal,
+                  firstAt: performance.now(), lastAt: performance.now() };
                 const request = this.assembler.current(report.human_id);
                 if (request?.id === report.source_message_id) this.assembler.finish(report.human_id, request);
               }, undefined, undefined, members);
-            } finally { controller.abort(); finishSpeech(); if (this.speaking === controller) { this.clearAudioQueue(); this.speaking = undefined; await this.safeSignal({ type: 'speaker', agentId: null }); } }
+            } finally { controller.abort(); finishSpeech(); if (this.speaking === controller) { this.clearAudioQueue(); this.speaking = undefined; await this.safeSignal({ type: 'speaker', agentId: null }); } this.finishVoicedReply(controller.signal); }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });
         const queued = this.reportQueue;
@@ -1004,6 +1060,7 @@ export class VoiceRoomRuntime {
           if (voiced) { first = false; await onFirstVoicedFrame?.(); }
           if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
+          if (this.voicedReply?.signal === signal) this.voicedReply.lastAt = performance.now();
           if (firstPublished) { firstPublished = false; timing?.('first_audio_published'); }
           if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
         }
@@ -1017,6 +1074,7 @@ export class VoiceRoomRuntime {
         if (voiced) { first = false; await onFirstVoicedFrame?.(); }
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
         await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
+        if (this.voicedReply?.signal === signal) this.voicedReply.lastAt = performance.now();
         if (firstPublished) { firstPublished = false; timing?.('first_audio_published'); }
         if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
       }

@@ -141,8 +141,10 @@ export default function ConnectorServiceScreen() {
           })}
         </View> : (['connection', 'login', 'key'] as const).map(kind => {
           const items = row.items.filter(item => item.kind === kind);
-          return items.length ? <View key={kind}>
+          return items.length || kind === 'connection' && row.mcp ? <View key={kind}>
             <RoomListSectionHeader title={kind === 'connection' ? 'Connections' : kind === 'login' ? 'Logins' : 'Keys'} inset="content" spacing="flush" />
+            {kind === 'connection' && row.mcp ? <SettingsRow appBoard title={row.mcp.name} description={`via ${row.name.replace(/\.[a-z]+$/i, '')} MCP`}
+              chevron="right" disabled={Boolean(actions.busy)} onPress={() => void actions.connect(row.mcp!)} testID="company-mcp-connect" /> : null}
             {items.map(item => {
               const target = item.target;
               const app = target.kind === 'app' ? view.apps.find(entry => entry.id === target.appId) : undefined;

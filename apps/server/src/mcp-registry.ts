@@ -1,3 +1,4 @@
+import { CompanyMcpDiscovery, companyForMcp } from './company-mcp-discovery.js';
 import type { RegistryMcpManifest } from '@beeline/api-contract/daemon';
 
 const REGISTRY_ORIGIN = 'https://registry.modelcontextprotocol.io';
@@ -118,7 +119,20 @@ export class McpRegistryClient {
   constructor(
     private readonly transport: typeof fetch = fetch,
     private readonly origin = REGISTRY_ORIGIN,
+    readonly companies = new CompanyMcpDiscovery(),
   ) {}
+
+  /** Revalidate a company selection; arbitrary URLs never cross this boundary. */
+  async selected(name: string, version: string): Promise<RegistryMcpManifest | undefined> {
+    if (name.endsWith('/company-mcp')) {
+      const domain = name.split('/')[0]!.split('.').reverse().join('.');
+      const company = companyForMcp(domain);
+      if (company?.domain !== domain) return undefined;
+      const manifest = await this.companies.discover(domain, true);
+      return manifest?.name === name && manifest.version === version ? manifest : undefined;
+    }
+    return this.exact(name, version);
+  }
 
   async search(query: string, requestedLimit = 10): Promise<readonly RegistryMcpManifest[]> {
     const term = query.trim().slice(0, 120);
@@ -139,7 +153,7 @@ export class McpRegistryClient {
       version: 'latest',
       limit: String(limit),
     }).toString();
-    const response = await this.transport(url, { signal: AbortSignal.timeout(10_000) });
+    const response = await this.transport(url, { signal: AbortSignal.timeout(1500) });
     if (!response.ok) throw new Error('MCP Registry search is unavailable');
     const body = await boundedJson(response);
     const rows = Array.isArray(body)

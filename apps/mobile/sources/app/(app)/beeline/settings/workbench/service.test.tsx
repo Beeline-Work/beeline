@@ -303,3 +303,22 @@ describe('three-state connection status', () => {
     await act(async () => renderer.unmount());
   });
 });
+
+it('Reproduction MCP-DISCOVERY-1: the service-page MCP row starts the existing ceremony while keys remain plain rows', async () => {
+  const source = new MockWorkbenchSource();
+  const option = { appKey: 'fly', appName: 'Fly.io', name: 'Fly.io', purpose: 'Fly MCP',
+    providerId: 'fly', providerName: 'Fly.io', domain: 'fly.io', logo: { kind: 'monogram' as const },
+    flow: 'app' as const, registryServerName: 'io.fly/company-mcp', registryVersion: 'verified-version' };
+  source.readWorkbench = async () => companyWorkbench([{ ...companyRow('fly', 'Fly.io'), domain: 'fly.io', mcp: option }]);
+  source.listHelpers = async () => [{ id: 'squire', name: 'Squire', online: true, platform: 'linux', agentCount: 1 }];
+  const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'fly-mcp' });
+  setWorkbenchSource(source); params.service = 'fly';
+  const renderer = await render();
+  const entry = renderer.root.findByProps({ testID: 'company-mcp-connect' });
+  expect(entry.props.title).toBe('Fly.io'); expect(entry.props.description).toBe('via Fly MCP');
+  expect(renderer.root.findByProps({ testID: 'company-item-fly-key' }).props.onPress).toBeUndefined();
+  await act(async () => entry.props.onPress());
+  await vi.waitFor(() => expect(connect).toHaveBeenCalledWith(expect.objectContaining({
+    app: 'Fly.io', registryServerName: 'io.fly/company-mcp', registryVersion: 'verified-version',
+  })));
+});

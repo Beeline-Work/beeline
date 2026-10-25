@@ -10097,6 +10097,7 @@ describe('monolith integration', () => {
       cornerId,
     ]);
     expect((await phone.readRoom(cornerId, HUMAN))?.cornerBrief).toEqual({
+      authorHandle: 'bee',
       revision: 2,
       spec: folded,
       approval: { sourceMessageId: approval, text: 'Yes, build that.', approverName: human },

@@ -9,43 +9,56 @@ afterEach(async () => { vi.useRealTimers(); await Promise.all(roots.splice(0).ma
 async function fixture(overrides: Partial<ConstructorParameters<typeof ReleaseTransaction>[0]> = {}) {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-release-')); roots.push(root);
   const layout = { libDir: resolve(root, 'lib/beeline'), releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
-  const handoff = vi.fn(async () => undefined), failed = vi.fn(), interrupt = vi.fn();
-  const transaction = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => false, interrupt, handoff, changed: () => undefined, failed, ...overrides });
-  return { transaction, handoff, failed, interrupt, layout };
+  const handoff = vi.fn(async () => undefined), failed = vi.fn(), interrupt = vi.fn(), drain = vi.fn();
+  const transaction = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => false, drain, interrupt, handoff, changed: () => undefined, failed, ...overrides });
+  return { transaction, handoff, failed, interrupt, drain, layout };
 }
-it('uses one idle event or fixed five-minute deadline, and hands off exactly once', async () => {
+it('WAKE-UPDATE-1: drains admission at the deadline and preserves active work until idle', async () => {
   vi.useFakeTimers();
-  const f = await fixture();
+  let idle = false;
+  const f = await fixture({ idle: () => idle });
   await f.transaction.prepared('new');
   await vi.advanceTimersByTimeAsync(UPDATE_DRAIN_DEADLINE_MS - 1);
-  expect(f.handoff).not.toHaveBeenCalled();
+  expect(f.drain).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
-  expect(f.handoff).toHaveBeenCalledTimes(1);
-  expect(f.handoff).toHaveBeenCalledWith('new', true);
+  expect(f.drain).toHaveBeenCalledOnce();
+  expect(f.handoff).not.toHaveBeenCalled();
+  expect(f.interrupt).not.toHaveBeenCalled();
+  await f.transaction.idleChanged();
+  expect(f.drain).toHaveBeenCalledOnce();
+  idle = true;
+  await f.transaction.idleChanged();
   await f.transaction.idleChanged();
   expect(f.handoff).toHaveBeenCalledTimes(1);
+  expect(f.handoff).toHaveBeenCalledWith('new', false);
   f.transaction.dispose();
 });
-it('newer prepared content replaces the pending target without renewing the drain allowance', async () => {
+it('newer prepared content replaces the pending target without renewing the admission deadline', async () => {
   vi.useFakeTimers();
-  const f = await fixture();
+  let idle = false;
+  const f = await fixture({ idle: () => idle });
   await f.transaction.prepared('first');
   await vi.advanceTimersByTimeAsync(200_000);
   await f.transaction.prepared('newer');
   await vi.advanceTimersByTimeAsync(100_000);
-  expect(f.handoff).toHaveBeenCalledTimes(1);
-  expect(f.handoff).toHaveBeenCalledWith('newer', true);
+  expect(f.drain).toHaveBeenCalledOnce();
+  expect(f.handoff).not.toHaveBeenCalled();
+  idle = true;
+  await f.transaction.idleChanged();
+  expect(f.handoff).toHaveBeenCalledWith('newer', false);
   f.transaction.dispose();
 });
-it('idle handoff is immediate and a failed journal never grants a fresh drain budget', async () => {
+it('a failed admission drain retries without interrupting active work', async () => {
   vi.useFakeTimers();
-  const handoff = vi.fn().mockRejectedValueOnce(new Error('journal unavailable')).mockResolvedValue(undefined);
-  const f = await fixture({ handoff });
+  const drain = vi.fn().mockImplementationOnce(() => { throw new Error('drain unavailable'); });
+  const f = await fixture({ drain });
   await f.transaction.prepared('new');
   await vi.advanceTimersByTimeAsync(UPDATE_DRAIN_DEADLINE_MS);
-  expect(f.failed).toHaveBeenCalledWith(expect.objectContaining({ message: 'journal unavailable' }), undefined);
+  expect(f.failed).toHaveBeenCalledWith(expect.objectContaining({ message: 'drain unavailable' }), undefined);
   await f.transaction.idleChanged();
-  expect(handoff).toHaveBeenNthCalledWith(2, 'new', true);
+  expect(drain).toHaveBeenCalledTimes(2);
+  expect(f.handoff).not.toHaveBeenCalled();
+  expect(f.interrupt).not.toHaveBeenCalled();
   f.transaction.dispose();
 });
 it('coalesces a newer notice during preparation before accepting any handoff', async () => {
@@ -67,6 +80,37 @@ it('coalesces a newer notice during preparation before accepting any handoff', a
   expect(prepares).toBe(2);
   expect(f.handoff).toHaveBeenCalledTimes(1);
   expect(f.handoff).toHaveBeenCalledWith('newer', false);
+  f.transaction.dispose();
+});
+it('finishes an already drained handoff when publication returns to the loaded release', async () => {
+  vi.useFakeTimers();
+  let idle = false;
+  const f = await fixture({ idle: () => idle });
+  await f.transaction.prepared('new');
+  await vi.advanceTimersByTimeAsync(UPDATE_DRAIN_DEADLINE_MS);
+  await f.transaction.prepared('old');
+  expect(f.handoff).not.toHaveBeenCalled();
+  idle = true;
+  await f.transaction.idleChanged();
+  expect(f.handoff).toHaveBeenCalledWith('old', false);
+  f.transaction.dispose();
+});
+it('re-drains resumed intake after a failed idle handoff without cancelling the next turn', async () => {
+  vi.useFakeTimers();
+  let idle = false;
+  const handoff = vi.fn().mockRejectedValueOnce(new Error('handoff unavailable')).mockResolvedValue(undefined);
+  const f = await fixture({ idle: () => idle, handoff });
+  await f.transaction.prepared('new');
+  await vi.advanceTimersByTimeAsync(UPDATE_DRAIN_DEADLINE_MS);
+  idle = true;
+  await f.transaction.idleChanged();
+  idle = false;
+  await f.transaction.idleChanged();
+  expect(f.drain).toHaveBeenCalledTimes(2);
+  expect(f.interrupt).not.toHaveBeenCalled();
+  idle = true;
+  await f.transaction.idleChanged();
+  expect(handoff).toHaveBeenLastCalledWith('new', false);
   f.transaction.dispose();
 });
 it('an ordinary release notice starts preparation even with the removed BEELINE_UPDATE_DISABLE set', async () => {

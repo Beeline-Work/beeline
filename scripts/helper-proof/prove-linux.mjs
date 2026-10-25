@@ -367,7 +367,7 @@ try {
     assert.equal(baseline.loadedIdentity.version, 'v0.2.2');
   });
   await phase(
-    'a real five-minute busy drain journals and replays once on the newest release',
+    'a real five-minute admission drain preserves active work and delivers queued wakes',
     async () => {
       fixture.holdWork(true);
       const started = fixture.nextHarness();
@@ -381,22 +381,21 @@ try {
       assert.equal((await fixture.waitReply(during, 60_000)).length, 1);
       await publish('v0.2.4', '5'.repeat(40));
       await observe((s) => s.desiredRelease?.startsWith('5'.repeat(40)));
-      const stopped = await observe((s) => s.processState === 'stopping', 310_000);
-      assert.equal(stopped.generation, baseline.generation);
-      assert.ok(Date.now() - began <= 305_000, 'a newer release must not renew the drain deadline');
-      const journal = JSON.parse(
-        await readFile(
-          `${stateRoot}/beeline/agents/${agents[0]}/force-update-interruptions.json`,
-          'utf8',
-        ),
+      // Cross the actual admission deadline without shortening the held turn.
+      while (Date.now() - began < 305_000) await delay(1000);
+      const draining = await observe();
+      assert.equal(draining.generation, baseline.generation, 'routine update must preserve the running helper');
+      const queued = await fixture.message('native after-deadline sibling', 1);
+      await delay(500);
+      const pending = await database.query(
+        'SELECT state FROM agent_commands WHERE turn_request_id=$1', [queued],
       );
-      assert.ok(
-        JSON.stringify(journal).includes(heldId),
-        'active command identity is durable before cancellation',
-      );
-      await systemctl('kill', '--signal=SIGKILL', '--kill-whom=main', 'beeline-helper.service');
+      assert.equal(pending.rows[0]?.state, 'pending', 'new wakes wait durably while active work drains');
+      const successor = observe((s) => serving(s) && s.generation !== draining.generation, 120_000);
       fixture.holdWork(false);
-      baseline = await observe((s) => serving(s) && s.generation !== stopped.generation, 120_000);
+      assert.equal((await fixture.waitReply(heldId, 60_000)).length, 1);
+      baseline = await successor;
+      assert.equal((await fixture.waitReply(queued, 90_000)).length, 1);
       console.log(await updates);
       assert.equal(baseline.loadedIdentity.version, 'v0.2.4');
       assert.equal((await fixture.waitReply(heldId, 90_000)).length, 1);

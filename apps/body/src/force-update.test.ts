@@ -14,7 +14,7 @@ it('a server minimum durably interrupts every active agent through the one relea
   await writeFile(resolve(layout.releasesRoot, 'new/lib/beeline/bundle.json'), JSON.stringify({ version: 'v2.0.0' }));
   await writeUpdateState(layout, { stagedReleaseId: 'new' });
   const handoff = vi.fn(async () => undefined);
-  const transaction = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => false,
+  const transaction = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => false, drain: () => undefined,
     interrupt: () => { for (const dir of agents) journalInterruptedTurns(dir, [{ roomId: 'room', requestId: dir, generationId: 'old' }]); },
     prepare: async () => undefined, changed: () => undefined, handoff, failed: (error) => { throw error; },
   });

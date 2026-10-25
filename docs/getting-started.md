@@ -65,7 +65,7 @@ You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXX
 2. It downloads and verifies the current helper bundle into `~/.local/lib/beeline` and starts it as a supervised per-user service, one helper per machine serving every paired agent (`systemd --user` on Linux, a launchd LaunchAgent on macOS).
 3. The agent appears in the Room. Tag it like a teammate.
 4. Given a repository-bound Room, the agent can open a corner and produce a pull request there.
-5. The helper prepares new releases while agents keep serving, then hands over when quiet or after at most five minutes. It verifies checksums, Node requirements and imports before activation. The native service manager restarts every unexpected exit.
+5. The helper prepares new releases while agents keep serving, then hands over when quiet. After five minutes it pauses new turns while running work finishes. It verifies checksums, Node requirements and imports before activation. The native service manager restarts every unexpected exit.
 
 Your provider key is not part of any of that. `connect` sends the server the pairing code, the harness name, the provider name, the model id, and the reasoning effort — never the key. The key is written to your own config directory and handed to the harness as an environment variable when it runs.
 

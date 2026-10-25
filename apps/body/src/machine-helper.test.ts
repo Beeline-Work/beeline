@@ -14,7 +14,6 @@ import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
-import * as updateJournal from './force-update-journal.js';
 import { AgentLifecycle, type AgentExitReason } from './helper-lifecycle.js';
 import { helperStatusLines, helperStatusPath } from './helper-status.js';
 import { quiesceHostedAgents, runMachineHelper } from './machine-helper.js';
@@ -603,7 +602,7 @@ describe('one update drain for every hosted agent', () => {
     }
   }, 20_000);
 
-  it.each(['quiet gap', 'deadline', 'deadline retry'] as const)('installs at %s and resumes queued/interrupted work in an isolated helper', async (handoff) => {
+  it.each(['quiet gap', 'deadline', 'deadline retry'] as const)('installs at %s without interrupting active work in an isolated helper', async (handoff) => {
     const { root, configPaths, env, signals } = await machine(1);
     const layout = { libDir: resolve(root, 'lib/beeline'),
       releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
@@ -689,6 +688,15 @@ describe('one update drain for every hosted agent', () => {
     const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     const send = (id: string, roomId = 'message-room') => fetch(`${origin}/messages`, {
       method: 'POST', body: JSON.stringify({ id, roomId, text: `@bee ${id}` }) });
+    // A real process models the emulator/server owned by the long turn.
+    const child = spawn(process.execPath, ['-e', "console.log('ready'); setInterval(() => {}, 1000)"], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    await new Promise<void>((resolveReady, reject) => {
+      child.stdout!.once('data', () => resolveReady());
+      child.once('error', reject);
+    });
+    const childClosed = new Promise<void>(resolveClosed => child.once('close', () => resolveClosed()));
     let finishHeld!: () => void;
     const held = new Promise<void>((resolveHeld) => { finishHeld = resolveHeld; });
     let host!: AgentRuntimeHost;
@@ -722,7 +730,10 @@ describe('one update drain for every hosted agent', () => {
         return runServerCommandIntake({ api, roomId, agentId, context, signal,
           canStartTurn: () => !internal.roomRuntime.restartRequested,
           onClaiming: () => { busy = true; }, onClaimFailed: () => { busy = false; },
-          onLeave: () => { busy = false; }, stop: finishHeld, onError: (error) => errors.push(error),
+          onLeave: () => { busy = false; }, stop: () => {
+            if (roomId === 'long-room' && busy) child.kill();
+            finishHeld();
+          }, onError: (error) => errors.push(error),
           run: async (command) => {
             if (command.id === 'held' && run === 1) {
               await Promise.race([held, new Promise<void>((resolveAbort) =>
@@ -750,6 +761,8 @@ describe('one update drain for every hosted agent', () => {
       await requestMachine(root, { operation: 'update', releaseId: 'new' }, () => true);
       expect(core.activeTurnCount()).toBe(1);
       expect(await activeReleaseId(layout)).toBe('old');
+      await send('same-corner-wake', 'long-room');
+      expect(claims.has('same-corner-wake')).toBe(false);
 
       const sentAt = Date.now();
       await send('mid-drain');
@@ -761,6 +774,7 @@ describe('one update drain for every hosted agent', () => {
       // response and leaves the short turn.
       await vi.waitFor(() => expect(core.activeTurnCount()).toBe(1));
       expect(await activeReleaseId(layout)).toBe('old');
+      process.kill(child.pid!, 0);
       if (handoff === 'quiet gap') {
         finishHeld();
         await vi.waitFor(() => expect(core.activeTurnCount()).toBe(0));
@@ -769,14 +783,29 @@ describe('one update drain for every hosted agent', () => {
         vi.setSystemTime(Date.now() + 5 * 60_000 + 1);
       }
       if (handoff === 'deadline retry') {
-        vi.spyOn(updateJournal, 'journalInterruptedTurns').mockImplementationOnce(() => {
-          throw new Error('interruption journal temporarily unavailable');
+        vi.spyOn(core, 'quiesceForUpdate').mockImplementationOnce(() => {
+          throw new Error('intake drain temporarily unavailable');
         });
         await host.tickUpdate();
         expect(agentLifecycle.serving).toBe(true);
       }
       const restartAt = Date.now();
       await host.tickUpdate();
+      if (handoff !== 'quiet gap') {
+        expect(core.activeTurnCount()).toBe(1);
+        expect(agentLifecycle.serving).toBe(false);
+        expect(replies).not.toContain('held');
+        // Repeated wakes remain durable while intake is drained.
+        await send('after-deadline');
+        await host.tickUpdate();
+        expect(claims.has('after-deadline')).toBe(false);
+        process.kill(child.pid!, 0);
+        expect(child.exitCode).toBeNull();
+        expect(child.signalCode).toBeNull();
+        finishHeld();
+        await vi.waitFor(() => expect(core.activeTurnCount()).toBe(0));
+        await host.tickUpdate();
+      }
       expect((await running).reason).toBe('update');
       await activateRelease(layout, 'new');
       expect(await activeReleaseId(layout)).toBe('new');
@@ -794,9 +823,11 @@ describe('one update drain for every hosted agent', () => {
       expect(successorAnswerMs).toBeLessThan(2_000);
       if (handoff !== 'quiet gap') {
         await vi.waitFor(() => expect(replies).toContain('held'));
+        await vi.waitFor(() => expect(replies).toContain('after-deadline'));
         expect(claimGenerations[0]).not.toBe(claimGenerations.at(-1));
         expect(replies.filter((reply) => reply === 'held')).toHaveLength(1);
       }
+      await vi.waitFor(() => expect(replies).toContain('same-corner-wake'));
       expect(queued.size).toBe(0);
       expect(await readFile(legacyAttemptPath, 'utf8')).toBe(legacyAttempt);
       expect(await readFile(resolve(layout.releasesRoot, 'new/bundle.json'), 'utf8')).toContain('v0.1.29');
@@ -804,6 +835,8 @@ describe('one update drain for every hosted agent', () => {
       console.log(`[isolated-helper] downloaded+installed v0.1.29; mid-drain claim=${midDrainClaimMs}ms; ` +
         `successor claim=${successorClaimMs}ms; answer=${successorAnswerMs}ms; XDG_STATE_HOME=${root}`);
     } finally {
+      child.kill();
+      await childClosed;
       finishHeld();
       signals.emit('SIGTERM');
       await running;

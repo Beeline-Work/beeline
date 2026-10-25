@@ -31,7 +31,7 @@ export function versionAtLeast(actual: string, minimum: string): boolean {
   return true;
 }
 
-/** One machine-owned transaction: prepare, bounded idle handoff, successor activation and acknowledgment. */
+/** One machine-owned transaction: prepare, drain intake, idle handoff and acknowledgment. */
 export class ReleaseTransaction {
   #pendingCheck = false;
   #preparing: Promise<void> | undefined;
@@ -43,6 +43,7 @@ export class ReleaseTransaction {
   #handingOff: Promise<void> | undefined;
   #notice: string | undefined;
   #completed = false;
+  #draining = false;
   constructor(
     readonly options: {
       layout: BeelineInstallLayout;
@@ -50,6 +51,7 @@ export class ReleaseTransaction {
       env: NodeJS.ProcessEnv;
       prepare?: () => Promise<void>;
       idle: () => boolean;
+      drain: () => void;
       interrupt: () => void;
       handoff: (releaseId: string, interrupted: boolean) => Promise<void>;
       changed: (desiredRelease?: string) => void;
@@ -95,10 +97,11 @@ export class ReleaseTransaction {
         );
       }
     }
-    if (releaseId === this.options.loadedRelease) {
+    if (releaseId === this.options.loadedRelease && !this.#draining) {
       this.#prepared = undefined;
       this.#deadlineAt = undefined;
       this.#handoffAt = undefined;
+      this.#draining = false;
       clearTimeout(this.#timer);
       this.#timer = undefined;
       this.options.changed(undefined);
@@ -130,8 +133,21 @@ export class ReleaseTransaction {
       this.#handingOff
     )
       return;
-    const interrupted = this.now() >= this.#handoffAt!;
-    if (!interrupted && !this.options.idle()) return;
+    const interrupted = Boolean(this.#minimum);
+    if (!interrupted && !this.options.idle()) {
+      // A release notification is not permission to cancel a running turn.
+      // Bound admission instead: existing work finishes while new commands
+      // remain durable on the server for the successor to claim.
+      if (!this.#draining && this.now() >= this.#handoffAt!) {
+        try {
+          this.options.drain();
+          this.#draining = true;
+        } catch (error) {
+          this.options.failed(error, this.#minimum);
+        }
+      }
+      return;
+    }
     clearTimeout(this.#timer);
     const target = this.#prepared;
     this.#handingOff = this.options
@@ -141,6 +157,7 @@ export class ReleaseTransaction {
       })
       .catch((error) => {
         this.options.failed(error, this.#minimum);
+        this.#draining = false;
         // No second drain allowance. A later explicit event retries this same operation.
       })
       .finally(() => {

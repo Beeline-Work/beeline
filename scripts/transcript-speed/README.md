@@ -176,6 +176,14 @@ send trials. Both arms must use the same option, recorded in capture metadata.
 The Android driver rejects incoming/stream/send samples with no row commits:
 visibility after sampling alone cannot establish that the action was measured.
 
+For alternating-order regression checks, `TRANSCRIPT_REPEAT_COUNT=1`
+(default: 3; accepted range: 1–3) and `TRANSCRIPT_REGRESSION_ONLY=1`
+retain the exact idle, typing, scroll/fling, Room-return and incoming sequence,
+then omit the later Room-switch, streaming and send scenarios. Clear the owned
+fixture app and reset traffic before each arm. Record the arm order and keep
+all captures; compare the median and min/max of per-trial p95 values. These
+short arms supplement, rather than replace, the full before/after suite.
+
 After the timing run, `capture-row-updates.mjs <output>` exercises visible
 edits, server reactions and a real reaction toggle, verifies zero transcript
 commits while typing, checks the keyboard dock, and checks that an incoming

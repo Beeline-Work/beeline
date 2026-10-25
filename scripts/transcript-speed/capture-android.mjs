@@ -33,9 +33,14 @@ const newestPoint = xml => {
   return label ? pointFor(xml, 'content-desc', label) : null;
 };
 const tap = point => { if (!point) throw new Error('Expected fixture UI control missing'); adb('shell', 'input', 'tap', ...point.map(String)); };
+const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
+if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3)
+  throw new Error('TRANSCRIPT_REPEAT_COUNT must be an integer from 1 to 3');
+const regressionOnly = process.env.TRANSCRIPT_REGRESSION_ONLY === '1';
 const control = startControl();
 const stimulus = await fixtureStimulus();
 const samples = [];
+
 const refreshHz = Number(process.env.TRANSCRIPT_REFRESH_HZ ?? 60);
 const frameStats = text => {
   const frames = [];
@@ -68,7 +73,7 @@ try {
   if (!xml.includes('Transcript A')) throw new Error('The fixture Room did not open');
   const newest = newestPoint(xml);
   if (newest) { tap(newest); await pause(2000); }
-  for (let repeat = 0; repeat < 3; repeat++) {
+  for (let repeat = 0; repeat < repeatCount; repeat++) {
     await capture('idle', 2000, async () => {});
     const composer = pointFor(dump(), 'content-desc', 'Message');
     tap(composer); await pause(500);
@@ -110,6 +115,7 @@ try {
     samples.at(-1).visible = incomingXml.includes(incoming.text);
     if (!samples.at(-1).visible) throw new Error('Android incoming message did not become visible');
     if (!samples.at(-1).rowCommits) throw new Error('Incoming message was not captured inside the sampling window');
+    if (regressionOnly) continue;
     const memoryBefore = adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline');
     await capture('warm-room-switches', 30000, async () => {
       for (let i = 0; i < 20; i++) { open(rooms[i % 2]); await pause(900); }
@@ -138,7 +144,7 @@ try {
     if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
-    scenarioOptions: { skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
+    scenarioOptions: { repeatCount, regressionOnly, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     refreshHz,

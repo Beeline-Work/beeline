@@ -4,18 +4,20 @@ import {randomBytes} from 'node:crypto';
 import pg from 'pg';
 import {rooms,workspace,agents,localDatabase} from '../../scripts/transcript-speed/fixture.mjs';
 import {fixtureStimulus} from '../../scripts/transcript-speed/stimulus.mjs';
-const adb=(...args)=>execFileSync('adb',['-s','emulator-5554',...args],{encoding:'utf8',maxBuffer:16e6});
+const device=process.env.LATENCY_RIG_DEVICE;
+if(!device?.startsWith('emulator-'))throw new Error('Select this corner emulator explicitly');
+const adb=(...args)=>execFileSync('adb',['-s',device,...args],{encoding:'utf8',maxBuffer:16e6});
 if(adb('shell','getprop','ro.kernel.qemu').trim()!=='1')throw new Error('Emulator required');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 const open=id=>adb('shell','am','start','-W','-a','android.intent.action.VIEW','-d',`beeline://beeline/chat/${id}?communityId=${workspace}`,'app.usebeeline/.MainActivity');
 const stimulus=await fixtureStimulus();
 const db=new pg.Client({connectionString:localDatabase(process.env.LATENCY_RIG_DATABASE_URL)});await db.connect();
 const results=[];
-const before=Date.now(),device=Number(adb('shell','date','+%s%3N').trim()),after=Date.now();
-const clock={deviceMinusHostMs:device-(before+after)/2,samplingErrorMs:(after-before)/2};
+const before=Date.now(),deviceClockMs=Number(adb('shell','date','+%s%3N').trim()),after=Date.now();
+const clock={deviceMinusHostMs:deviceClockMs-(before+after)/2,samplingErrorMs:(after-before)/2};
 const frames=()=>adb('logcat','-d','-s','ReactNativeJS:I','*:S').split('\n').flatMap(line=>{
  const start=line.indexOf('[NET-HOL-1]');if(start<0)return [];
- try{return [JSON.parse(line.slice(start+'[NET-HOL-1]'.length).trim())]}catch{return []}
+ try{return [JSON.parse(line.slice(line.indexOf('{', start), line.lastIndexOf('}') + 1))]}catch{return []}
 });
 try{
  for(const profile of [{name:'normal',rttMs:0,mbps:100},{name:'throttled',rttMs:150,mbps:1.6}]){
@@ -36,4 +38,10 @@ try{
    await writeFile('/tmp/jellybean-hol-android-results.json',JSON.stringify({reproduction:'NET-HOL-1',clock,results},null,2));
   }
  }
+ adb('shell','uiautomator','dump','/sdcard/hol-visible.xml');
+ const xml=adb('shell','cat','/sdcard/hol-visible.xml');
+ const lastText='Incoming fixture '+results.at(-1).activeFrame.id.slice(0,16);
+ const visibleLastMessage=xml.includes(lastText);
+ await writeFile('/tmp/jellybean-hol-android-results.json',JSON.stringify({reproduction:'NET-HOL-1',clock,results,visibleLastMessage},null,2));
+ if(!visibleLastMessage)throw new Error('Latest active message is not visible');
 }finally{await stimulus.close();await db.end();}

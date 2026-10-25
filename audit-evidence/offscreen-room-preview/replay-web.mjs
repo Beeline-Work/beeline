@@ -34,7 +34,7 @@ try {
    const activeFrame=frames.find(f=>f.message?.id===active.id);
    if(!offscreen||!activeFrame)throw new Error('Missing offscreen preview or active full delta');
    if(offscreen.bytes>8192)throw new Error('Oversized preview');
-   results.push({platform:'web',profile:profile.name,trial,offscreenBytes:offscreen.bytes,activeBytes:activeFrame.bytes,arrivalMs:activeFrame.at-actionAt,paintMs:paintedAt-actionAt,offscreenType:offscreen.type});
+   results.push({platform:'web',profile:profile.name,trial,offscreenBytes:offscreen.bytes,activeBytes:activeFrame.bytes,actionAt,activeAt:activeFrame.at,arrivalMs:activeFrame.at-actionAt,paintMs:paintedAt-actionAt,offscreenType:offscreen.type});
    console.log(JSON.stringify(results.at(-1)));
    await writeFile('/tmp/jellybean-hol-web-results.json',JSON.stringify({reproduction:'NET-HOL-1',results},null,2));
    if(profile.name==='throttled'&&trial===2){

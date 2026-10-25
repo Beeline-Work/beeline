@@ -1,62 +1,62 @@
 [
   {
     "type": "ws",
-    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "traceId": "b8b73ec5-3460-446e-a067-7ff0e33163db",
     "granularity": "message",
     "direction": "down",
-    "startMs": 1792905768596,
-    "endMs": 1792905768597,
-    "bytes": 735,
-    "connectionStartMs": 1792905765514
+    "startMs": 1792906172130,
+    "endMs": 1792906172131,
+    "bytes": 732,
+    "connectionStartMs": 1792906109397
   },
   {
     "type": "ws",
-    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "traceId": "b8b73ec5-3460-446e-a067-7ff0e33163db",
     "granularity": "message",
     "direction": "down",
-    "startMs": 1792905769181,
-    "endMs": 1792905769182,
-    "bytes": 735,
-    "connectionStartMs": 1792905765514
+    "startMs": 1792906172456,
+    "endMs": 1792906172457,
+    "bytes": 732,
+    "connectionStartMs": 1792906109397
   },
   {
     "type": "ws",
-    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "traceId": "b8b73ec5-3460-446e-a067-7ff0e33163db",
     "granularity": "message",
     "direction": "down",
-    "startMs": 1792905769978,
-    "endMs": 1792905769980,
-    "bytes": 735,
-    "connectionStartMs": 1792905765514
+    "startMs": 1792906172788,
+    "endMs": 1792906172790,
+    "bytes": 732,
+    "connectionStartMs": 1792906109397
   },
   {
     "type": "ws",
-    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "traceId": "b8b73ec5-3460-446e-a067-7ff0e33163db",
     "granularity": "message",
     "direction": "down",
-    "startMs": 1792905770796,
-    "endMs": 1792905770875,
-    "bytes": 735,
-    "connectionStartMs": 1792905765514
+    "startMs": 1792906173131,
+    "endMs": 1792906173210,
+    "bytes": 732,
+    "connectionStartMs": 1792906109397
   },
   {
     "type": "ws",
-    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "traceId": "b8b73ec5-3460-446e-a067-7ff0e33163db",
     "granularity": "message",
     "direction": "down",
-    "startMs": 1792905771988,
-    "endMs": 1792905772066,
-    "bytes": 735,
-    "connectionStartMs": 1792905765514
+    "startMs": 1792906173611,
+    "endMs": 1792906173689,
+    "bytes": 732,
+    "connectionStartMs": 1792906109397
   },
   {
     "type": "ws",
-    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "traceId": "b8b73ec5-3460-446e-a067-7ff0e33163db",
     "granularity": "message",
     "direction": "down",
-    "startMs": 1792905772829,
-    "endMs": 1792905772907,
-    "bytes": 735,
-    "connectionStartMs": 1792905765514
+    "startMs": 1792906174092,
+    "endMs": 1792906174171,
+    "bytes": 732,
+    "connectionStartMs": 1792906109397
   }
 ]

@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -78,7 +79,8 @@ export default function ConnectAppScreen() {
   const scope = { workspaceId: params.workspaceId ?? '', viewerId: params.viewerId ?? '' };
   const { value: view, error } = useSharedWorkbench(scope.viewerId ? scope : null);
   const insets = useSafeAreaInsets();
-  return <View style={[styles.screen, { paddingTop: insets.top }]}>
+  const desktopPageLayout = useDesktopPageLayout();
+  return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]}>
     <PageHeader eyebrow="Connectors" prominent title="Search" onBack={() => router.back()} backAccessibilityLabel="Back to Connectors" testID="connect-app-header" />
     <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom }} keyboardShouldPersistTaps="handled" testID="connect-app-scroll">
       {error ? <Text accessibilityRole="alert" style={styles.error}>Connections are unavailable right now</Text> : null}

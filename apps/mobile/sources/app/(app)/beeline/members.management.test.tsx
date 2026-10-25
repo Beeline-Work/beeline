@@ -196,6 +196,7 @@ vi.mock('react-native', async () => {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     Platform: platform,
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),

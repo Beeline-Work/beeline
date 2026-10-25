@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -28,6 +29,7 @@ export default function CreateWorkspace() {
   useLatencyRouteFrame('/beeline/create-workspace', true, true);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const workspaceId = useRef(Crypto.randomUUID()).current;
   // A create is attempted before its answer is known, so what the server
   // HOLDS is only what a call has confirmed: null means unknown, and an
@@ -99,7 +101,7 @@ export default function CreateWorkspace() {
         ]}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.column}>
+        <View style={[styles.column, desktopPageLayout && { maxWidth: 640 }]}>
           <Button label="" variant="quiet"
             accessibilityLabel="Back"
             onPress={back}

@@ -1,3 +1,4 @@
+import { Text } from 'react-native';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -11,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  * replaced them: a value, a switch, a chevron, or nothing at all, every form
  * ending on the sheet's own trailing inset, and no row wearing a box.
  */
+const viewport = vi.hoisted(() => ({ desktop: false, width: 390, height: 844 }));
+
 const theme = vi.hoisted(() => ({
   hull: {
     accent: '#b08a4a',
@@ -50,7 +53,7 @@ vi.mock('react-native', async () => {
     Text: host('Text'),
     TextInput: host('TextInput'),
     View: host('View'),
-    useWindowDimensions: () => ({ width: 390, height: 844 }),
+    useWindowDimensions: () => ({ width: viewport.width, height: viewport.height }),
   };
 });
 
@@ -81,10 +84,10 @@ vi.mock('./HullDialog', async () => {
   return { HullFloatingSurface: host('HullFloatingSurface'), HullModal: host('HullModal') };
 });
 
-vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => viewport.desktop }));
 
 import { ChevronGlyph } from './ChevronGlyph';
-import { HULL_SHEET_INSET, HullActionSheet, HullActionSheetRow } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheet, HullActionSheetModal, HullActionSheetRow } from './HullActionSheet';
 
 const originalConsoleError = console.error;
 
@@ -366,5 +369,33 @@ describe('sheet title', () => {
     expect(title.findByType('Text' as any).props.children).toBe('#beeline');
     act(() => title.props.onPress());
     expect(onTitlePress).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe('desktop sheet placement', () => {
+  it.each([1440, 1920])('centres and bounds a sheet without footer at %i px', (width) => {
+    viewport.desktop = true;
+    viewport.width = width;
+    try {
+      const renderer = render(<HullActionSheetModal visible onClose={() => undefined} title="Members" testID="desktop-sheet">
+        <Text>Long sheet content</Text>
+      </HullActionSheetModal>);
+      const modal = renderer.root.findByType('HullModal' as any);
+      expect(modal.props.placement).toBe('center');
+      expect(Object.assign({}, ...modal.props.contentStyle.filter(Boolean))).toMatchObject({ maxWidth: 560, maxHeight: 844 * 0.82 });
+      expect(renderer.root.findByType('ScrollView' as any).props.style.flat().some((style: any) => style?.maxHeight > 0)).toBe(true);
+      expect(renderer.root.findAll((node: any) => node.props?.style?.height === 18)).toHaveLength(0);
+    } finally {
+      viewport.desktop = false;
+      viewport.width = 390;
+    }
+  });
+
+  it('keeps a phone sheet bottom-aligned with its grip', () => {
+    const renderer = render(<HullActionSheetModal visible onClose={() => undefined} title="Members">{null}</HullActionSheetModal>);
+    const modal = renderer.root.findByType('HullModal' as any);
+    expect(modal.props.placement).toBe('bottom');
+    expect(Object.assign({}, ...modal.props.contentStyle.filter(Boolean))).not.toHaveProperty('maxWidth');
   });
 });

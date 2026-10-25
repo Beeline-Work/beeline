@@ -20,6 +20,7 @@ import { HullFloatingSurface, HullModal } from './HullDialog';
 import { IndexRow } from './IndexRow';
 
 type HullActionSheetProps = {
+  desktop?: boolean;
   children: React.ReactNode;
   /** Pinned under the title: cannot scroll away with the sheet body. */
   sticky?: React.ReactNode;
@@ -77,6 +78,7 @@ function useVisualKeyboardHeight(): number {
 
 export function HullActionSheet({
   children,
+  desktop = false,
   footer,
   scrollBody = true,
   grip = true,
@@ -93,7 +95,7 @@ export function HullActionSheet({
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const keyboardHeight = useVisualKeyboardHeight();
-  const pinChrome = sticky != null || footer != null;
+  const pinChrome = desktop || sticky != null || footer != null;
   const bodyMaxHeight = pinChrome
     ? Math.max(
         SHEET_BODY_MIN_HEIGHT,
@@ -296,10 +298,11 @@ export function HullActionSheetModal({
 }: HullActionSheetModalProps) {
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
+  const { height: windowHeight } = useWindowDimensions();
   return (
     <HullModal
       accessibilityLabel={accessibilityLabel ?? 'Close action sheet'}
-      contentStyle={[styles.modalContent, contentStyle]}
+      contentStyle={[styles.modalContent, isDesktop && { maxWidth: 560 }, contentStyle, isDesktop && { maxHeight: windowHeight * SHEET_MAX_HEIGHT_FRACTION }]}
       dismissOnBackdrop={dismissOnBackdrop}
       onDismiss={onDismiss}
       onRequestClose={onClose}
@@ -309,6 +312,7 @@ export function HullActionSheetModal({
       visible={visible}
     >
       <HullActionSheet
+        desktop={isDesktop}
         footer={footer}
         scrollBody={scrollBody}
         grip={!isDesktop}

@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { Button } from '@/components/buzz/Button';
@@ -48,6 +49,7 @@ const LIVE_HALO = 20;
 export default function WorkflowRun() {
   useLatencyRouteFrame('/beeline/workflow-run');
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const params = useLocalSearchParams<{ roomId?: string | string[]; runId?: string | string[] }>();
   const roomId = first(params.roomId);
   const runId = first(params.runId);
@@ -79,7 +81,7 @@ export default function WorkflowRun() {
   const last = detail?.history[detail.history.length - 1];
   const starter = detail ? workflowStarterLine(detail.run) || detail.history[0]?.actor?.name : undefined;
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 720, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back"
         eyebrow={run?.roomName ?? 'Workflow'}

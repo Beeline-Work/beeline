@@ -2,6 +2,9 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import os
+import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -13,12 +16,12 @@ spec.loader.exec_module(r)
 
 class RolloutTests(unittest.TestCase):
     def test_manifest_has_exact_scope_and_no_webhook(self):
-        value = r.manifest('fixture')
+        value = r.manifest('fixture', 'http://127.0.0.1:34567')
         self.assertEqual(value['default_permissions'], {'organization_self_hosted_runners': 'write', 'administration': 'read'})
         self.assertFalse(value['public'])
         self.assertFalse(value['hook_attributes']['active'])
         self.assertEqual(value['default_events'], [])
-        self.assertEqual(value['redirect_url'], 'http://127.0.0.1:18765/callback')
+        self.assertEqual(value['redirect_url'], 'http://127.0.0.1:34567/callback')
 
     def test_callback_rejects_state_then_consumes_once_and_encrypts(self):
         replies, saved, requests = [], [], []
@@ -26,13 +29,17 @@ class RolloutTests(unittest.TestCase):
         class Server:
             def __init__(self, address, handler):
                 self.handler = handler
-                self.paths = iter(['/', '/callback?code=fixturecode123&state=wrong', '/callback?code=fixturecode123&state=fixturestate'])
+                self.server_address = ('127.0.0.1', 34567)
+                assert address == ('127.0.0.1', 0)
+                self.paths = iter(['/', '/callback?code=fixturecode123&state=fixturestate', '/callback?code=fixturecode123&state=wrong', '/callback?code=fixturecode123&state=fixturestate'])
+                self.request_count = 0
                 self.address = address
             def __enter__(self): return self
             def __exit__(self, *args): pass
             def handle_request(self):
                 obj = self.handler.__new__(self.handler)
-                obj.headers = {'Host': '127.0.0.1:18765'}
+                self.request_count += 1
+                obj.headers = {'Host': '127.0.0.1:18765' if self.request_count == 2 else '127.0.0.1:34567'}
                 obj.path = next(self.paths)
                 obj.reply = lambda code, text: replies.append((code, text))
                 obj.do_GET()
@@ -48,8 +55,10 @@ class RolloutTests(unittest.TestCase):
             pem, app_id, slug = r.capture_manifest()
         self.assertEqual(pem, secret.encode())
         self.assertEqual(app_id, 123)
-        self.assertEqual([code for code, _ in replies], [200, 403, 200])
+        self.assertEqual([code for code, _ in replies], [200, 403, 403, 200])
         self.assertEqual(len(requests), 1)
+        self.assertIn('OWNER_OPEN http://127.0.0.1:34567/', output.getvalue())
+        self.assertIn('http://127.0.0.1:34567/callback', replies[0][1])
         self.assertEqual(saved, [b'encrypted-fixture', b'GITHUB_APP_ID=123\n'])
         self.assertNotIn(secret, output.getvalue() + str(replies))
 
@@ -88,6 +97,42 @@ class RolloutTests(unittest.TestCase):
         with patch.object(r, 'run', return_value=journal.encode()), patch.object(Path, 'glob', side_effect=lambda *args: iter([Log()])):
             with self.assertRaisesRegex(r.Failure, 'Registration token found'):
                 r.verify_logs('fixture')
+
+    def test_status_is_append_only_and_uses_public_modes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            status = Path(folder) / 'rollout/status'
+            original_lstat, original_fstat = Path.lstat, os.fstat
+            def root_lstat(path):
+                info = original_lstat(path)
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0)
+            def root_fstat(fd):
+                info = original_fstat(fd)
+                return SimpleNamespace(st_mode=info.st_mode, st_uid=0, st_nlink=info.st_nlink)
+            with patch.object(r, 'STATUS', status), patch.object(r, 'STATUS_FD', None), patch.object(Path, 'lstat', root_lstat), patch.object(os, 'fstat', root_fstat), contextlib.redirect_stdout(io.StringIO()):
+                r.setup_status()
+                try:
+                    r.log('OWNER_OPEN http://127.0.0.1:34567/')
+                    r.log('unlisted request details')
+                    r.log('policy_seconds=0.123')
+                finally:
+                    os.close(r.STATUS_FD)
+                r.setup_status()
+                try:
+                    r.log('ROLLOUT FAILED: safe reason')
+                finally:
+                    os.close(r.STATUS_FD)
+            self.assertEqual(status.read_text(), 'OWNER_OPEN http://127.0.0.1:34567/\npolicy_seconds=0.123\nROLLOUT FAILED: safe reason\n')
+            self.assertEqual(status.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(status.parent.stat().st_mode & 0o777, 0o755)
+
+    def test_existing_encrypted_key_refuses_before_manifest(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cipher, config = Path(folder) / 'cipher', Path(folder) / 'config'
+            with patch.object(r, 'CIPHER', cipher), patch.object(r, 'CONFIG', config):
+                r.refuse_existing_app()
+                cipher.write_bytes(b'encrypted-fixture')
+                with self.assertRaisesRegex(r.Failure, 'Existing App configuration'):
+                    r.refuse_existing_app()
 
     def test_extra_permission_rejected(self):
         with self.assertRaisesRegex(r.Failure, 'permissions differ'):

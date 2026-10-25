@@ -10,6 +10,7 @@ import re
 import resource
 import secrets
 import socket
+import stat
 import subprocess
 import time
 import urllib.error
@@ -17,7 +18,8 @@ import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent
-URL = 'http://127.0.0.1:18765'
+STATUS = Path('/run/beeline-ci-rollout/status')
+STATUS_FD = None
 ORG = 'Beeline-Work'
 REPO = ORG + '/beeline'
 GROUP = 'beeline-server-ci'
@@ -31,8 +33,32 @@ class Failure(Exception):
     pass
 
 
+def setup_status():
+    global STATUS_FD
+    STATUS.parent.mkdir(mode=0o755, exist_ok=True)
+    info = STATUS.parent.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
+        raise Failure('Status directory must be root-owned and not a symlink')
+    STATUS.parent.chmod(0o755)
+    fd = os.open(STATUS, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o644)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1:
+        os.close(fd)
+        raise Failure('Status file must be a single root-owned regular file')
+    os.fchmod(fd, 0o644)
+    STATUS_FD = fd
+
+
 def log(message):
     print(message, flush=True)
+    if STATUS_FD is not None and message.startswith(('OWNER_OPEN ', 'OWNER_INSTALL ', 'policy_seconds=', 'ROLLOUT PASS', 'ROLLOUT FAILED')):
+        os.write(STATUS_FD, (message + '\n').encode())
+        os.fsync(STATUS_FD)
+
+
+def refuse_existing_app():
+    if CIPHER.exists() or CIPHER.is_symlink() or CONFIG.exists() or CONFIG.is_symlink():
+        raise Failure('Existing App configuration; refusing a duplicate enrollment')
 
 
 def run(argv, data=None, timeout=180):
@@ -97,9 +123,9 @@ def private_write(path, content):
         os.fsync(stream.fileno())
 
 
-def manifest(state):
+def manifest(state, url):
     return {'name': 'Beeline squire CI ' + state[:8], 'url': 'https://github.com/' + REPO,
-        'redirect_url': URL + '/callback', 'public': False,
+        'redirect_url': url + '/callback', 'public': False,
         'hook_attributes': {'url': 'https://github.com/' + REPO, 'active': False},
         'default_events': [], 'default_permissions': PERMISSIONS,
         'request_oauth_on_install': False, 'description': 'Dedicated isolated squire CI registration'}
@@ -120,14 +146,14 @@ def capture_manifest():
             self.end_headers()
             self.wfile.write(text.encode())
         def do_GET(self):
-            if self.headers.get('Host') != '127.0.0.1:18765' or time.monotonic() >= deadline:
+            if self.headers.get('Host') != authority or time.monotonic() >= deadline:
                 self.reply(403, 'Local rollout session unavailable')
                 return
             parsed = urllib.parse.urlsplit(self.path)
             if parsed.path == '/' and not result.get('page_served'):
                 result['page_served'] = True
                 action = 'https://github.com/organizations/' + ORG + '/settings/apps/new?state=' + state
-                payload = html.escape(json.dumps(manifest(state)), quote=True)
+                payload = html.escape(json.dumps(manifest(state, url)), quote=True)
                 self.reply(200, '<!doctype html><title>Beeline CI App setup</title>'
                     '<p>Opening GitHub to create a private org App with runner write and administration read.</p>'
                     f'<form method="post" action="{html.escape(action, quote=True)}">'
@@ -167,12 +193,14 @@ def capture_manifest():
         def handle_error(self, *args):
             log('Local HTTP request failed; request details withheld')
     try:
-        listener = LocalServer(('127.0.0.1', 18765), Handler)
+        listener = LocalServer(('127.0.0.1', 0), Handler)
     except OSError:
-        raise Failure('Loopback setup port 18765 unavailable') from None
+        raise Failure('Loopback setup listener unavailable') from None
+    authority = f'127.0.0.1:{listener.server_address[1]}'
+    url = 'http://' + authority
     with listener as server:
         server.timeout = 1
-        log('OWNER_OPEN ' + URL + '/')
+        log('OWNER_OPEN ' + url + '/')
         while 'pem' not in result and 'failure' not in result and time.monotonic() < deadline:
             server.handle_request()
     if 'failure' in result:
@@ -314,13 +342,13 @@ def main():
     if os.geteuid() != 0:
         raise Failure('Root required')
     os.umask(0o077)
+    setup_status()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     for name in PINS:
         pinned_bytes(name)
     if not PINS:
         raise Failure('Companion digests missing')
-    if CIPHER.exists() or CIPHER.is_symlink() or CONFIG.exists() or CONFIG.is_symlink():
-        raise Failure('Existing App configuration; refusing a duplicate enrollment')
+    refuse_existing_app()
     # Ensure neither runner can execute while the credentials are provisioned.
     for index in [1, 2]:
         status = subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', f'beeline-ci-shard-{index}.service'], capture_output=True).returncode
@@ -329,6 +357,8 @@ def main():
     CIPHER.parent.mkdir(mode=0o700, exist_ok=True)
     os.chown(CIPHER.parent, 0, 0)
     CIPHER.parent.chmod(0o700)
+    # Recheck immediately before manifest capture: no key from a prior run.
+    refuse_existing_app()
     pem, app_id, slug = capture_manifest()
     installation, repo_id = wait_installation(pem, app_id, slug)
     write_config({'GITHUB_INSTALLATION_ID': installation})

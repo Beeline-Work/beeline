@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 
 payload = Path('/home/lunchbox/.local/state/beeline/corners/d0dedb54-162b-4185-a9ef-0e241540a1d4/scripts/ci-runner-systemd/rollout.py')
-expected = 'fe2cf2487c0dd37dde554e9fe975802f79dcb91a91136689174550f1c087eec5'
+expected = 'c5cba3648c0fb3aba39f2bd6f553e8c7418705443e7a5e8fb1735f8b1c25d95d'
 if hashlib.sha256(payload.read_bytes()).hexdigest() != expected:
     raise SystemExit('Rollout payload SHA-256 mismatch; refusing execution')
 # Two owner browser steps can each take twenty minutes, beyond a command turn.
@@ -14,4 +14,4 @@ subprocess.run(['/usr/bin/systemd-run', '--unit=beeline-ci-manifest-rollout',
     '-p', 'UMask=0077', '-p', 'LimitCORE=0', '-p', 'RuntimeMaxSec=3000',
     '-p', 'StandardOutput=journal', '-p', 'StandardError=journal',
     '/usr/bin/python3', str(payload)], check=True)
-print('Rollout queued. After journal says OWNER_OPEN, open http://127.0.0.1:18765/ on squire.', flush=True)
+print('Rollout queued. Watch /run/beeline-ci-rollout/status for the exact OWNER_OPEN URL on squire.', flush=True)

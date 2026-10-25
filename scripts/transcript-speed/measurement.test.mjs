@@ -27,6 +27,14 @@ test('nearest-rank percentile preserves tail stalls and missing samples', () => 
   assert.equal(result.missedJsFrameOpportunities, 2);
   assert.equal(result.rowCommits, 2);
   assert.equal(result.distinctRowsCommitted, 1);
+  assert.equal(result.jsFrameIntervalMaxMs, 50);
+  const sparseStall = summarize({ name: 'room-switch', startMs: 0, endMs: 5000,
+    jsFrameIntervalsMs: [...Array(99).fill(1000 / 60), 2638], commits: [] }, 60);
+  assert.equal(sparseStall.jsFrameIntervalP95Ms, 1000 / 60);
+  assert.equal(sparseStall.jsFrameIntervalMaxMs, 2638);
+  assert.equal(sparseStall.missedJsFrameOpportunities, 157);
+  assert.equal(summarize({ name: 'empty', startMs: 0, endMs: 0,
+    jsFrameIntervalsMs: [], commits: [] }, 60).jsFrameIntervalMaxMs, null);
 });
 
 test('build probe reports the effective compiler option and rejects moved targets', async () => {

@@ -1,3 +1,6 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -93,6 +96,7 @@ function ConnectToolFlow() {
   const [error, setError] = useState<string | null>(null);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const [observedId, setObservedId] = useState(pairedConnectorId);
   const observed = useInstallObserver(workspaceId, observedId);
   useEffect(() => { if (pairedConnectorId) setObservedId(pairedConnectorId); }, [pairedConnectorId]);
@@ -193,7 +197,7 @@ function ConnectToolFlow() {
   const someHelpers = onlineHelpers.length > 0;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Connectors"
         eyebrow="Connectors"
@@ -315,7 +319,7 @@ function ConnectToolFlow() {
               ))}
             </View>
             {install.steps.some((step) => step.status === 'failed') ? (
-              <Button label="Retry" onPress={retry} testID="connect-retry" variant="secondary" />
+              <ErrorBanner inline title="Connection failed" onRetry={retry} retryTestID="connect-retry" />
             ) : install.signIn ? (
               <View style={styles.signInBlock}>
                 <Button
@@ -353,14 +357,8 @@ function ConnectToolFlow() {
           </View>
         ) : null}
         {error || helperLoadError ? (
-          <View>
-            <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
-              {error ?? 'Helpers are unavailable right now'}
-            </Text>
-            {pairedHelperRef.current || observedId ? (
-              <Button label="Retry" onPress={retry} testID="connect-pair-retry" variant="secondary" />
-            ) : null}
-          </View>
+          <ErrorBanner inline title={error ?? 'Helpers are unavailable right now'} titleTestID="connect-error"
+            onRetry={pairedHelperRef.current || observedId ? retry : undefined} retryTestID="connect-pair-retry" />
         ) : null}
       </ScrollView>
     </View>

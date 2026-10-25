@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { View } from 'react-native';
@@ -20,8 +22,9 @@ export default function WalletSendScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]} testID="wallet-send-screen">
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="wallet-send-screen">
       <PageHeader
         backAccessibilityLabel="Back to Wallet"
         eyebrow="Wallet"

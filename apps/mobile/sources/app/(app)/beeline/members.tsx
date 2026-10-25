@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -1398,15 +1399,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <Button
-            label={`! ${displayedError}`}
-            variant="quiet"
-            onPress={() => {
-              setError(null);
-              schedulerRef.current?.force();
-            }}
-            appearance={{ control: styles.errorPanel, label: styles.error }}
-          />
+          <ErrorBanner inline title={displayedError!} onRetry={() => { setError(null); schedulerRef.current?.force(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}

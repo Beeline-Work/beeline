@@ -1,3 +1,4 @@
+import { ErrorBanner } from './buzz/ErrorBanner';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
@@ -561,15 +562,7 @@ export const SidebarView = React.memo(function SidebarView() {
           )}
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {navigationError ? (
-              <View>
-                <Text style={styles.empty}>{navigationError}</Text>
-                <Button
-                  label="Retry"
-                  variant="secondary"
-                  style={{ alignSelf: 'flex-end' }}
-                  onPress={() => setRefreshNonce((value) => value + 1)}
-                />
-              </View>
+              <ErrorBanner inline title={navigationError} onRetry={() => setRefreshNonce((value) => value + 1)} />
             ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (

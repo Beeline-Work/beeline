@@ -1,6 +1,6 @@
 /** Loopback-only transport for explicitly instrumented fixture builds. */
 import { createServer } from 'node:http';
-export function startControl(port = 19886) {
+export function startControl(port = Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886)) {
   const pending = [];
   const results = new Map();
   const started = new Set();

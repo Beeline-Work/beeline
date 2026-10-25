@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -25,6 +27,7 @@ function first(value: string | string[] | undefined): string | undefined {
 export default function PromptSchedule() {
   useLatencyRouteFrame('/beeline/settings/schedule');
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const params = useLocalSearchParams<{
     roomId?: string | string[];
     scheduleId?: string | string[];
@@ -53,7 +56,7 @@ export default function PromptSchedule() {
   };
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Schedules and subscriptions"
         eyebrow="Schedules and subscriptions"
@@ -64,7 +67,7 @@ export default function PromptSchedule() {
       {stopFailed ? (
         <ErrorBanner
           title="Could not stop this schedule."
-          retryLabel="Try again"
+          retryLabel="Retry"
           onRetry={() => void stop()}
           retryTestID="schedule-stop-error-retry"
           testID="schedule-stop-error"

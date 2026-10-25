@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -28,6 +30,7 @@ const LAST_RUN = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeS
 export default function RoomWorkflows() {
   useLatencyRouteFrame('/beeline/settings/workflows');
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const params = useLocalSearchParams<{ roomId?: string | string[] }>();
   const roomId = first(params.roomId);
   const [roomName, setRoomName] = useState('Room');
@@ -98,7 +101,7 @@ export default function RoomWorkflows() {
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <PageHeader
         backAccessibilityLabel="Back to Room"
         eyebrow={roomTitle(roomName) ?? 'Room'}

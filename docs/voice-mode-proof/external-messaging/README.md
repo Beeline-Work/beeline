@@ -60,3 +60,26 @@ Complete provider input shrinks (660 → 630 tokens; -30), relative to
 Server build, root typecheck and voice suites pass (304 tests, 5 files), with
 final targeted runtime checks passing after the last runtime/test edit
 (18 tests). `git diff --check` passes.
+
+## Main conflict integration
+
+Merged main `69d9b253f`, including caller-resume and resumed-final/search-budget
+fixes, without changing the contact feature's behavior.
+
+- `voice-eager-reply.ts`: retained `externalContacts` and main's `ready` gate.
+- `voice-providers.ts`: retained both optional search-context fields; main's
+  committed search budget starts after `ready`, while contacts still reach the
+  existing complete calls.
+- `voice-room-runtime.test.ts`: retained both appended regression blocks.
+
+The runtime and assembler merged automatically. Main's resumed-final reopening
+still runs before speech filtering; the contact allowlist and deterministic
+bare-contact guards remain intact. Playback resume and search acknowledgement
+handling retain main's implementation.
+
+Validation on the combined tree: all voice suites passed (399 tests, 14 files).
+The focused command passed (23 tests): SPEEDY-RESUME-1, SPEEDY-SEARCH-1,
+SPEEDY-EAGER-1, SPEEDY-CONTACT-1 and the previous targeted checks (18).
+Server build and root typecheck passed. No unmerged paths or whitespace errors
+remain. The built provider request matches the previously measured payload
+byte-for-byte, so the live latency comparison was not rerun.

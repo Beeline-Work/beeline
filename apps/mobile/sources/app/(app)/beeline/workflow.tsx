@@ -1,5 +1,7 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import React, { useCallback, useState } from 'react';
@@ -30,6 +32,7 @@ export default function Workflow() {
   const roomId = Array.isArray(params.roomId) ? params.roomId[0] : params.roomId;
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const [detail, setDetail] = useState<
     PhoneOperationMap['readWorkflowDefinition']['output'] | null
   >(null);
@@ -49,7 +52,7 @@ export default function Workflow() {
     }, [reload]),
   );
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         title={workflowDisplayName(name)}
         onBack={() => router.back()}
@@ -57,17 +60,7 @@ export default function Workflow() {
         testID="workflow-header"
       />
       {error ? (
-        <View>
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
-          </Text>
-          <Button
-            label="Retry"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={() => void reload()}
-          />
-        </View>
+        <ErrorBanner inline title={error} onRetry={() => void reload()} />
       ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (

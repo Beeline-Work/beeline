@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -73,6 +75,7 @@ export default function WalletScreen() {
   const [copied, setCopied] = useState(false);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
 
   useEffect(() => {
     let cancelled = false;
@@ -149,7 +152,9 @@ export default function WalletScreen() {
       title={title}
     />
   );
-  const screenStyle = [styles.container, { paddingTop: insets.top }];
+  const screenStyle = [styles.container, desktopPageLayout && {
+    width: '100%' as const, maxWidth: desktopColumnWidths.detail, alignSelf: 'center' as const,
+  }, { paddingTop: insets.top }];
 
   if (workspaceId === null || workspaceError) {
     return (

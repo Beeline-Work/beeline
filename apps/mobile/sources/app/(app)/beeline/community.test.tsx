@@ -1,3 +1,4 @@
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => '11111111-2222-4333-8444-555555555555' }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: controls.operation }));
 vi.mock('@/buzz/community-storage', () => ({ saveActiveCommunityId: vi.fn(async () => undefined) }));

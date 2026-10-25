@@ -1,3 +1,4 @@
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -141,10 +142,9 @@ describe('Connection detail screen', () => {
   it('keeps the scroll content above the Android navigation inset', async () => {
     const renderer = await render();
     const screen = renderer.root.findByProps({ testID: 'connection-detail-screen' });
-    expect(screen.props.style).toEqual([
-      expect.objectContaining({ flex: 1 }),
-      { paddingTop: 0, paddingBottom: 34 },
-    ]);
+    const screenStyle = Object.assign({}, ...screen.props.style.filter(Boolean));
+    expect(screenStyle).toMatchObject({ flex: 1, paddingTop: 0, paddingBottom: 34 });
+    expect(screenStyle).not.toHaveProperty('maxWidth');
   });
 
   it('renders service identity and the complete vault facts', async () => {

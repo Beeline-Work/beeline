@@ -1,3 +1,4 @@
+import { InlineActionRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
 import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, Text, View } from 'react-native';
@@ -379,8 +380,8 @@ export function RoomCornersList({
       ListFooterComponent={
         <View>
           {moreOpen ? (
-            <Button label="MORE OPEN CORNERS" variant="secondary"
-            onPress={onMoreOpen} testID="room-corners-more-open" />
+            <InlineActionRow><Button size="inline" label="More open corners" variant="secondary"
+            onPress={onMoreOpen} testID="room-corners-more-open" /></InlineActionRow>
           ) : null}
           {/* Captain 2026-09-20: a corner's name is never truncated. It
             wraps to as many lines as it needs and the row grows with it;
@@ -405,13 +406,15 @@ export function RoomCornersList({
           ))}
           {showMoreArchived && archived.status === 'ready' && archived.next ? (
             more?.status === 'error' ? (
-              <ErrorBanner
+              <InlineActionRow><ErrorBanner inline
                 title={more.reason}
                 retryLabel="Retry"
                 onRetry={onMoreArchived}
-                retryTestID="room-corners-archived-more" />
+                retryTestID="room-corners-archived-more" /></InlineActionRow>
             ) : (
-              <Button
+              <InlineActionRow><Button
+                size="inline"
+
                 label="More"
                 accessibilityLabel="More archived corners"
                 disabled={more?.status === 'loading'}
@@ -420,7 +423,7 @@ export function RoomCornersList({
                 variant="quiet"
                 testID="room-corners-archived-more"
                 appearance={{ control: styles.more, label: styles.moreLabel }}
-              />
+              /></InlineActionRow>
             )
           ) : null}
         </View>

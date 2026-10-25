@@ -197,6 +197,7 @@ vi.mock('react-native', async () => {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     Platform: platform,
+    useWindowDimensions: () => ({ width: 390, height: 844 }),
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
@@ -218,6 +219,7 @@ const unistylesTheme = vi.hoisted(() => ({
     },
     agentProfileTypography: { name: { fontSize: 28, lineHeight: 36 } },
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
+    transcriptCard: { identitySize: 26 },
     roomList: { edge: 20 },
     layout: { row: 64, sectionGap: 24 },
     radius: 3,
@@ -1476,7 +1478,7 @@ describe('Members workspace management', () => {
     roomView.agent.mockRejectedValueOnce(new Error('offline'));
     await press(renderer, 'load-more-agent-work');
     expect(renderer.root.findByProps({ testID: 'load-more-agent-work' }).props.label).toBe(
-      'Retry recent work',
+      'Retry',
     );
     roomView.agent.mockResolvedValueOnce({
       ...baseAgent(),

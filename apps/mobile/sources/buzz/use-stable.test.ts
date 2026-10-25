@@ -1,5 +1,8 @@
+import React from 'react';
+import { act, create } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 import {
+  useScopedCallbacks,
   sameMessageRefMap,
   sameRecordValueMap,
   sameSelectedMembers,
@@ -75,7 +78,32 @@ describe('render-input identity comparators', () => {
       sameSelectedMembers(roster, [
         { pubkey: 'p1', role: 'admin', kind: 'human', identity: { ...identity } },
       ]),
-    ).toBe(false);
+    ).toBe(true);
+    expect(sameSelectedMembers(roster, [
+      { ...roster[0]!, identity: { ...identity, name: 'Renamed' } },
+    ])).toBe(false);
     expect(sameSelectedMembers(roster, [])).toBe(false);
+  });
+});
+
+
+describe('scoped event callbacks', () => {
+  it('keeps current Room actions stable without retargeting callbacks from a previous Room', () => {
+    let actions!: { read: () => string };
+    function Probe({ scope, value }: { scope: string; value: string }) {
+      actions = useScopedCallbacks({ read: () => value }, scope);
+      return null;
+    }
+    let renderer!: ReturnType<typeof create>;
+    act(() => { renderer = create(React.createElement(Probe, { scope: 'a', value: 'a1' })); });
+    const first = actions;
+    act(() => { renderer.update(React.createElement(Probe, { scope: 'a', value: 'a2' })); });
+    expect(actions).toBe(first);
+    expect(first.read()).toBe('a2');
+    act(() => { renderer.update(React.createElement(Probe, { scope: 'b', value: 'b1' })); });
+    expect(actions).not.toBe(first);
+    expect(actions.read()).toBe('b1');
+    expect(first.read()).toBe('a2');
+    act(() => renderer.unmount());
   });
 });

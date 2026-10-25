@@ -206,5 +206,17 @@ export function useRoomMessageRecords<const Groups extends readonly (readonly Ro
     if (!key) return;
     return () => { const held = rooms.get(key); held?.views.delete(viewKey); if (held) prune(key, held); };
   }, [key, viewKey]);
-  return visible.map((rows) => select(room, rows, scope, identityVersion)) as unknown as Groups;
+  const selected = visible.map((rows) => select(room, rows, scope, identityVersion));
+  const previous = useRef<readonly (readonly RoomViewMessage[])[]>([]);
+  // A canonical edit can replace an input row without replacing that window.
+  // Keep the selected window while its row references are unchanged, so typing
+  // does not refold cards and recreate their neighbouring row context.
+  const stable = selected.map((rows, index) => {
+    const held = previous.current[index];
+    return held && held.length === rows.length && rows.every((row, index) => row === held[index])
+      ? held : rows;
+  });
+  if (stable.length !== previous.current.length || stable.some((rows, index) => rows !== previous.current[index]))
+    previous.current = stable;
+  return previous.current as unknown as Groups;
 }

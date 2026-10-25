@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -24,12 +26,13 @@ export default function WalletReceiveScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
   const workspaceId = firstParam(params.workspaceId) ?? '';
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const { value: wallet } = useSharedWallet(workspaceId);
   const address = wallet?.address ?? '';
   const solanaAddress = wallet?.solanaAddress ?? null;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]} testID="wallet-receive-screen">
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="wallet-receive-screen">
       <PageHeader
         backAccessibilityLabel="Back to Wallet"
         eyebrow="Wallet"

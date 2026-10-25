@@ -22,7 +22,7 @@ vi.mock('react-native-unistyles', () => {
   const theme = {
     buzz: {
       space: { xs: 4, sm: 8, md: 16 },
-      transcriptCard: { side: 16 },
+      transcriptCard: { side: 16, identitySize: 26 },
       radius: 3,
       type: { body: {}, meta: {}, machine: {} },
       textPrimary: 'ink',
@@ -120,7 +120,7 @@ describe('@agent login card', () => {
   ])('insets the entire login body, including waiting and failures (%j)', (state) => {
     const { renderer } = render({ ...claude, ...state });
     const body = byId(renderer, 'agent-sign-in-body');
-    expect(body.props.style).toMatchObject({ paddingHorizontal: 16, paddingVertical: 8 });
+    expect(body.props.style).toMatchObject({ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16 });
     const card = renderer.root.findByType('TranscriptCard' as any);
     expect(card.findAllByProps({ testID: 'agent-sign-in-body' })).toContain(body);
     for (const control of renderer.root.findAllByType('Button' as any)) {
@@ -137,7 +137,7 @@ describe('@agent login card', () => {
   it("carries the company's logo, not an identity plate", () => {
     const logo = (card: AgentSignInCardView) =>
       render(card).renderer.root.findByType('AppMark' as any).props;
-    expect(logo(claude)).toMatchObject({ name: 'Claude', domain: 'claude.ai', size: 36 });
+    expect(logo(claude)).toMatchObject({ name: 'Claude', domain: 'claude.ai', size: 26 });
     expect(logo({ ...claude, harness: 'codex', kind: 'device-code' })).toMatchObject({
       name: 'ChatGPT',
       domain: 'openai.com',

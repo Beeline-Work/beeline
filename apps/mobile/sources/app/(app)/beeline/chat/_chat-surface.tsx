@@ -306,8 +306,10 @@ import {
 import { copyEntireTurn } from '@/buzz/message-copy';
 import { storeTempText } from '@/sync/persistence';
 import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
+  createTranscriptRowFolder,
   foldTranscriptRows,
   hostRowIndex,
   useRoomMessageStore,
@@ -382,6 +384,7 @@ import {
   sameStringSet,
   shallowEqualRecord,
   useStable,
+  useScopedCallbacks,
 } from '@/buzz/use-stable';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
@@ -955,6 +958,8 @@ export function BuzzChatSurface({
   const [attachmentPickerVisible, setAttachmentPickerVisible] = useState(false);
   const [messageActionsTarget, setMessageActionsTarget] = useState<ChatDisplayMessage | null>(null);
   const [optimisticReactions, setOptimisticReactions] = useState<Record<string, ChatDisplayMessage['reactions']>>({});
+  const optimisticReactionsRef = useRef(optimisticReactions);
+  optimisticReactionsRef.current = optimisticReactions;
   const [optimisticDeletes, setOptimisticDeletes] = useState<Record<string, true>>({});
   const reactingRef = useRef(new Set<string>());
   const { showCopied: showReportToast, toast: reportToast } =
@@ -1273,12 +1278,13 @@ export function BuzzChatSurface({
     [roomSurface?.messages, roomSurface?.toolRows],
   );
   // Resolve references only within the Room family returned by this surface.
-  const channelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
+  const rawChannelReferenceIndex = useMemo<ChannelReferenceIndex>(() => {
     return buildChannelReferenceIndex(
       [
         ...workspaceChats
           .filter((item) => !item.directMessage)
-          .map((item) => ({ channelId: item.room.id, name: item.room.name })),
+          .map((item) => ({ channelId: item.room.id, name: item.room.name }))
+          .sort((left, right) => left.channelId.localeCompare(right.channelId)),
         ...(roomSurface?.parent
           ? [{ channelId: roomSurface.parent.id, name: roomSurface.parent.name }]
           : []),
@@ -1306,6 +1312,13 @@ export function BuzzChatSurface({
     routeChannelTitle,
     workspaceChats,
   ]);
+  // Room previews change on each arrival; links depend only on ids and names.
+  const channelReferenceIndex = useStable(rawChannelReferenceIndex, (previous, next) =>
+    previous.rooms.length === next.rooms.length &&
+    previous.corners.length === next.corners.length &&
+    previous.rooms.every((room, index) => shallowEqualRecord(room, next.rooms[index]!)) &&
+    previous.corners.every((corner, index) => shallowEqualRecord(corner, next.corners[index]!)),
+  );
   const desktopWorkPanePrimary: DesktopWorkPanePrimary = isDirectMessage
     ? 'direct-message'
     : isCorner
@@ -1592,9 +1605,10 @@ export function BuzzChatSurface({
     enabled: !isCorner,
   });
   const { dividerMessageId: firstNewMessageId } = unreadLine;
+  const foldRoomRows = useMemo(createTranscriptRowFolder, [decodedId, messageRecordScope]);
   const foldedTranscript = useMemo(
-    () => foldTranscriptRows(combinedMessages, firstNewMessageId),
-    [combinedMessages, firstNewMessageId],
+    () => foldRoomRows(combinedMessages, firstNewMessageId),
+    [combinedMessages, firstNewMessageId, foldRoomRows],
   );
   const foldedMessages = foldedTranscript.rows;
   // Every message id, folded ones included, to the id of the row that shows it.
@@ -1707,7 +1721,7 @@ export function BuzzChatSurface({
     ) : transcriptHistoryStatus === 'complete' ? (
       <LedgerHistoryLine text={isCorner ? 'Beginning of corner' : `Beginning of ${ROOM_LABEL}`} />
     ) : null;
-  const availableAgents = useMemo(
+  const rawAvailableAgents = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'agent')
@@ -1722,7 +1736,11 @@ export function BuzzChatSurface({
         ),
     [conversationIdentities, roomSurface?.members, roomSurface?.room.workspaceId],
   );
-  const availablePeople = useMemo(
+  const availableAgents = useStable(rawAvailableAgents, (previous, next) =>
+    previous.length === next.length &&
+    previous.every((agent, index) => shallowEqualRecord(agent, next[index]!)),
+  );
+  const rawAvailablePeople = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
@@ -1733,6 +1751,7 @@ export function BuzzChatSurface({
         })),
     [conversationIdentities, roomSurface?.members],
   );
+  const availablePeople = useStable(rawAvailablePeople, sameSelectedMembers);
   const selectedMembersRaw = useMemo(
     () =>
       (roomSurface?.members ?? []).map((member) => {
@@ -1789,7 +1808,7 @@ export function BuzzChatSurface({
       speechMessageText,
     ],
   );
-  const personProfiles = useMemo(
+  const rawPersonProfiles = useMemo(
     () =>
       (roomSurface?.members ?? [])
         .filter((member) => member.identity.kind === 'human')
@@ -1804,6 +1823,10 @@ export function BuzzChatSurface({
           };
         }),
     [conversationIdentities, roomSurface?.members],
+  );
+  const personProfiles = useStable(rawPersonProfiles, (previous, next) =>
+    previous.length === next.length &&
+    previous.every((profile, index) => shallowEqualRecord(profile, next[index]!)),
   );
   const participantsHydrated = roomSurface !== null;
   const agentByPubkey = useMemo(
@@ -2004,7 +2027,7 @@ export function BuzzChatSurface({
   // roster sheet and @-mention menu.
   /** Each agent's model as its Workspace profile holds it — the one source
    *  every agent byline reads, step rows and replies alike. */
-  const agentProfileModelByPubkey = useMemo(
+  const agentProfileModelByPubkey = useStable(useMemo(
     () =>
       new Map(
         (workspaceRoster?.agents ?? []).flatMap((agent) =>
@@ -2012,7 +2035,7 @@ export function BuzzChatSurface({
         ),
       ),
     [workspaceRoster],
-  );
+  ), sameMessageRefMap);
   const describedRoomParticipants = useMemo(() => {
     const workspaceAgents = new Map(
       (workspaceRoster?.agents ?? []).map((agent) => [agent.identity.pubkey, agent]),
@@ -3728,7 +3751,7 @@ export function BuzzChatSurface({
       const messageId = message.relayId ?? message.id;
       if (reactingRef.current.has(messageId)) return;
       reactingRef.current.add(messageId);
-      const previous = optimisticReactions[messageId] ?? message.reactions ?? [];
+      const previous = optimisticReactionsRef.current[messageId] ?? message.reactions ?? [];
       const existing = previous.find((reaction) => reaction.emoji === emoji);
       const next = existing
         ? previous.map((reaction) => reaction.emoji === emoji ? {
@@ -3761,7 +3784,7 @@ export function BuzzChatSurface({
         reactingRef.current.delete(messageId);
       }
     },
-    [applyRoomMessageResult, decodedId, optimisticReactions],
+    [applyRoomMessageResult, decodedId],
   );
 
   const messageIsBookmarked = useCallback(
@@ -4286,6 +4309,10 @@ export function BuzzChatSurface({
     return () => removeViewerConversation(decodedId);
   }, [decodedId, handleSend, isFocused, roomSurface]));
 
+  // A row action needs the latest send state when tapped, without subscribing
+  // every transcript cell to the send handler's draft and Room dependencies.
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
   const handleCornerProposalDecision = useCallback(
     (message: ChatDisplayMessage, decision: 'open' | 'cancel') => {
       if (sendInFlightRef.current) return;
@@ -4294,7 +4321,7 @@ export function BuzzChatSurface({
         ...(message.reference ? { reference: message.reference } : {}),
       };
       setCornerProposalAction({ messageId: message.id, decision });
-      void handleSend({
+      void handleSendRef.current({
         text: decision === 'open' ? 'go' : 'cancel',
         replyTarget: proposalReplyTarget,
       }).finally(() =>
@@ -4303,7 +4330,7 @@ export function BuzzChatSurface({
         ),
       );
     },
-    [handleSend, replyTargetForMessage],
+    [replyTargetForMessage],
   );
 
   const pickPhoto = useCallback(async () => {
@@ -5609,6 +5636,15 @@ export function BuzzChatSurface({
     const textId = storeTempText(text);
     router.push({ pathname: '/text-selection', params: { textId } } as Href);
   }, []);
+  const rowActions = useScopedCallbacks({
+    handleWritePermission,
+    beginForward,
+    handleForwardToNewCorner,
+    handleConfirmTargetBranch,
+    retryOutboxMessage,
+    handleOpenChannelReference,
+    handleOpenMention
+  }, `${decodedId}\0${cacheViewerPubkey}`);
   const renderMessage = useCallback(
     (
       item: ChatDisplayMessage,
@@ -5616,11 +5652,13 @@ export function BuzzChatSurface({
         continued: attributionContinued,
         immediatelyPrecedingMessage,
         referencedMessage,
-      }: {
-        continued: boolean;
-        immediatelyPrecedingMessage?: ChatDisplayMessage;
-        referencedMessage?: ChatDisplayMessage;
-      },
+        firstBylineOfDay,
+        untaggedHint,
+        deliveryFailed = false,
+        speakerWorking: rowSpeakerWorking = false,
+        cornerProposalAnswer,
+        cornerProposalAction: rowCornerProposalAction,
+      }: RoomMessageRenderContext,
     ) => {
       // An agent's order or report is ordinary transcript: the recipient leads
       // the text as an @mention and the row keeps its own author's byline.
@@ -5647,7 +5685,7 @@ export function BuzzChatSurface({
             viewerCanManage={canManageWorkspace}
             actionId={permissionActionId}
             targetBranch={roomRepository?.targetBranch}
-            onDecision={handleWritePermission}
+            onDecision={rowActions.handleWritePermission}
             onOpenCorner={openCorner}
           />
         );
@@ -5822,7 +5860,7 @@ export function BuzzChatSurface({
             viewerIsAgent={viewerIsAgent}
             actionId={targetBranchActionId}
             notice={notice}
-            onConfirm={handleConfirmTargetBranch}
+            onConfirm={rowActions.handleConfirmTargetBranch}
             viewerPubkey={cacheViewerPubkey}
             onDeny={async () => {
               if (targetBranchActionId) return;
@@ -5906,7 +5944,7 @@ export function BuzzChatSurface({
       const ledgerMessage = (
         <OrdinaryLedgerMessage
           message={item}
-          firstBylineOfDay={bylineOpeners.has(item.id)}
+          firstBylineOfDay={firstBylineOfDay}
           // The byline shows the agent's model from its profile; an agent
           // with no profile model keeps the plain `AGENT` word.
           agentModel={item.pubkey ? agentProfileModelByPubkey.get(item.pubkey) : undefined}
@@ -5916,43 +5954,41 @@ export function BuzzChatSurface({
           participantsHydrated={participantsHydrated}
           {...(personName ? { personName } : {})}
           viewerPubkey={cacheViewerPubkey}
-          speakerWorking={Boolean(item.pubkey && speakerWorking[item.pubkey])}
+          speakerWorking={rowSpeakerWorking}
           continued={attributionContinued}
           {...(immediatelyPrecedingMessage ? { immediatelyPrecedingMessage } : {})}
           {...(referencedTarget ? { referencedTarget } : {})}
           participantHandles={roomParticipants}
           channelIndex={channelReferenceIndex}
-          untaggedHint={hintMessageIds.has(item.id)}
-          deliveryFailed={failedOutboxIds.has(item.id)}
-          onChannelReference={handleOpenChannelReference}
+          untaggedHint={untaggedHint}
+          deliveryFailed={deliveryFailed}
+          onChannelReference={rowActions.handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
           onOpenSource={handleOpenMessageSource}
-          onMention={handleOpenMention}
+          onMention={rowActions.handleOpenMention}
           onOpenProfile={handleOpenProfile}
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
           onMessageActions={openMessageActions}
           onReact={handleReactToMessage}
-          onForward={beginForward}
+          onForward={rowActions.beginForward}
           onBookmark={handleBookmarkMessage}
           onReportIssue={handleReportMessage}
           {...(!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
-            ? { onForwardToNewCorner: handleForwardToNewCorner }
+            ? { onForwardToNewCorner: rowActions.handleForwardToNewCorner }
             : {})}
           {...(!isCorner &&
           !isArchived &&
           !viewerIsAgent &&
           !isReadOnlyDirectMessage &&
-          !answerByMessageId.has(item.relayId ?? item.id)
+          !cornerProposalAnswer
             ? { onCornerProposalDecision: handleCornerProposalDecision }
             : {})}
-          cornerProposalAnswer={answerByMessageId.get(item.relayId ?? item.id) ?? null}
-          cornerProposalAction={
-            cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null
-          }
-          onRetry={retryOutboxMessage}
+          cornerProposalAnswer={cornerProposalAnswer}
+          cornerProposalAction={rowCornerProposalAction}
+          onRetry={rowActions.retryOutboxMessage}
           onDismiss={dismissOutboxMessage}
         />
       );
@@ -5966,20 +6002,12 @@ export function BuzzChatSurface({
       );
     },
     [
+      rowActions,
       openCorner,
-      hintMessageIds,
-      voice.call,
-      voice.connecting,
-      voice.error,
-      voice.join,
       isDirectMessage,
-      roomSurface?.members,
-      bylineOpeners,
       agentByPubkey,
       agentProfileModelByPubkey,
-      answerByMessageId,
       isDesktop,
-      handleWritePermission,
       handleGrantDecision,
       handleChoiceAnswer,
       handleChoiceSkip,
@@ -5989,12 +6017,8 @@ export function BuzzChatSurface({
       handleOpenMessageSource,
       handleReactToMessage,
       handleBookmarkMessage,
-      messageIsBookmarked,
       handleReportMessage,
       handleCornerProposalDecision,
-      cornerProposalAction,
-      beginForward,
-      handleForwardToNewCorner,
       grantActionId,
       connectorOfferActionId,
       appSignInActionId,
@@ -6002,31 +6026,27 @@ export function BuzzChatSurface({
       cacheViewerPubkey,
       decodedId,
       handleAcceptConnectorOffer,
-      openConnectorOfferCeremony,
+      continueConnectorOffer,
+      openCornerApp,
       openWorkbench,
       choiceActionId,
-      handleConfirmTargetBranch,
       openCorner,
       participantsHydrated,
       permissionActionId,
       personProfileByPubkey,
       cacheViewerPubkey,
-      roomRepository,
+      roomRepository?.targetBranch,
+      roomName,
       roomParticipants,
       targetBranchActionId,
       targetBranchNotice,
       canManageWorkspace,
       viewerIsAgent,
-      speakerWorking,
       beginReply,
       dismissOutboxMessage,
-      failedOutboxIds,
       replyTargetForMessage,
-      retryOutboxMessage,
       channelReferenceIndex,
       dismissComposerKeyboard,
-      handleOpenChannelReference,
-      handleOpenMention,
       handleOpenProfile,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,
@@ -6039,8 +6059,19 @@ export function BuzzChatSurface({
       decodedId,
     ],
   );
+  // Resolve changing transcript-wide indexes before the memo boundary. A new
+  // hint, byline opener or working speaker changes only that row's props.
+  const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
+    firstBylineOfDay: bylineOpeners.has(item.id),
+    untaggedHint: hintMessageIds.has(item.id),
+    deliveryFailed: failedOutboxIds.has(item.id),
+    speakerWorking: Boolean(item.pubkey && speakerWorking[item.pubkey]),
+    cornerProposalAnswer: answerByMessageId.get(item.relayId ?? item.id) ?? null,
+    cornerProposalAction: cornerProposalAction?.messageId === item.id ? cornerProposalAction.decision : null,
+  }), [bylineOpeners, hintMessageIds, failedOutboxIds, speakerWorking, answerByMessageId, cornerProposalAction]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
+    presentationForMessage,
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,
@@ -6669,7 +6700,7 @@ export function BuzzChatSurface({
                       />
                     )}
                     {cornerOpenRepoPrompt && (roomRepoAccessIssue ? (
-                      <ErrorBanner title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}
+                      <ErrorBanner inline title={roomRepoAccessIssue.reason === 'revoked' ? 'ACCESS TO THIS REPO WAS REVOKED' : 'THIS REPO ISN’T IN THE BEELINE INSTALLATION'}
                         description={`${roomRepoAccessIssue.fullName} must be reconnected before a ${CORNER_LABEL} can open.`}
                         retryLabel={roomRepoAccessIssue.reason === 'not_granted' ? 'Add this repo to the Beeline installation →' : `Connect ${roomRepoAccessIssue.fullName.split('/')[0]} →`}
                         onRetry={() => void handleReconnectRoomRepository()} retryTestID="corner-open-repo-connect"

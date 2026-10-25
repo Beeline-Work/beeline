@@ -1,0 +1,11 @@
+{
+  "at": "2026-10-25T01:06:32.661Z",
+  "load": [
+    21.65,
+    16.71,
+    11.52
+  ],
+  "cpuPressure": "some avg10=23.28 avg60=16.80 avg300=10.41 total=115365857266\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+  "ioPressure": "some avg10=3.33 avg60=2.10 avg300=1.46 total=24035376889\nfull avg10=0.73 avg60=0.63 avg300=0.62 total=17362826019\n",
+  "freeMemory": 86814826496
+}

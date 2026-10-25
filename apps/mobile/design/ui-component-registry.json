@@ -179,6 +179,8 @@
     "components/buzz/HullSwitch.tsx": ["HullSwitch"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
     "components/buzz/IndexRow.tsx": ["IndexRow",
+      "IndexRowInsetContext",
+      "InlineActionRow",
       "TranscriptFactRow", "body", "trailingColumn", "trailingMark", "InlineRow", "TranscriptNavigationRow", "chevron", "ContentTarget"],
     "components/buzz/Ledger.tsx": [
       "Byline",

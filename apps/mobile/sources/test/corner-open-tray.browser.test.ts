@@ -18,7 +18,7 @@ const FRAMES = {
   },
   'corners-failed': {
     'corner-open-row-failed': 'Corner not openedNo response from server after 15s',
-    'corner-open-failed': "Couldn't reach BeelineCheck your connection, then retry.Retry",
+    'corner-open-failed': "Couldn't reach BeelineRetry",
   },
   'room-list-pending': {
     'corner-open-pending': 'Opening corner…Still opening…',

@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
+import assetGuard from '../../../infra/web-assets/worker.mjs';
 
 const mobile = resolve(import.meta.dirname, '..');
 const original = execFileSync('git', ['show', '3c6163fe7:apps/mobile/sources/buzz/web-chunk-recovery.web.ts'], { encoding: 'utf8' });
@@ -55,12 +56,12 @@ async function bundle(fixed) {
   });
   return result.outputFiles[0].text;
 }
-const bundles = { baseline: await bundle(false), fixed: await bundle(true) };
-const visits = { baseline: 0, fixed: 0 };
-const reads = { baseline: 0, fixed: 0 };
+const bundles = { baseline: await bundle(false), fixed: await bundle(true), guarded: await bundle(true) };
+const visits = { baseline: 0, fixed: 0, guarded: 0 };
+const reads = { baseline: 0, fixed: 0, guarded: 0 };
 const server = createServer((req, res) => {
-  const mode = req.headers.referer?.includes('/fixed') ? 'fixed' : 'baseline';
-  if (req.url === '/baseline' || req.url === '/fixed') {
+  const mode = req.headers.referer?.includes('/guarded') ? 'guarded' : req.headers.referer?.includes('/fixed') ? 'fixed' : 'baseline';
+  if (req.url === '/baseline' || req.url === '/fixed' || req.url === '/guarded') {
     const key = req.url.slice(1);
     if (req.headers['sec-fetch-dest'] === 'document') visits[key]++;
     reads[key]++;
@@ -68,7 +69,7 @@ const server = createServer((req, res) => {
     res.end(`<body>Loading<script defer src="/_expo/static/js/web/index-${reads[key] > 1 ? 'new' : 'old'}.js"></script><script type="module">${bundles[key]}</script></body>`);
   } else if (req.url.includes('/index-')) {
     res.setHeader('Content-Type', 'application/javascript'); res.end('/* export boot identifier */');
-  } else if (mode === 'fixed' && visits.fixed > 1 && req.url.includes('native-crash-reporting-new')) {
+  } else if (mode !== 'baseline' && visits[mode] > 1 && req.url.includes('native-crash-reporting-new')) {
     res.setHeader('Content-Type', 'application/javascript');
     res.end('window.feature = "working";');
   } else {
@@ -78,23 +79,39 @@ const server = createServer((req, res) => {
   }
 });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
+const guardedFailures = [];
+const edge = createServer(async (req, res) => {
+  try {
+    const response = await assetGuard.fetch(new Request(`http://127.0.0.1:${server.address().port}${req.url}`, {
+      method: req.method, headers: req.headers,
+    }));
+    if (req.url.includes('native-crash-reporting-1e3fd')) {
+      guardedFailures.push({ status: response.status, type: response.headers.get('content-type') });
+    }
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(Buffer.from(await response.arrayBuffer()));
+  } catch (error) { res.writeHead(500).end(String(error)); }
+});
+await new Promise(r => edge.listen(0, '127.0.0.1', r));
 try {
-  for (const mode of ['baseline', 'fixed']) {
+  for (const mode of ['baseline', 'fixed', 'guarded']) {
     const profile = await mkdtemp(join(tmpdir(), 'beeline-chunk-proof-'));
     try {
       const output = await new Promise((resolveOutput, reject) => {
-        const child = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', `--user-data-dir=${profile}`, '--dump-dom', '--virtual-time-budget=4000', `http://127.0.0.1:${server.address().port}/${mode}`], { timeout: 15000 });
+        const port = (mode === 'guarded' ? edge : server).address().port;
+        const child = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', `--user-data-dir=${profile}`, '--dump-dom', '--virtual-time-budget=4000', `http://127.0.0.1:${port}/${mode}`], { timeout: 15000 });
         let stdout = ''; let stderr = '';
         child.stdout.on('data', data => { stdout += data; });
         child.stderr.on('data', data => { stderr += data; });
         child.on('error', reject);
         child.on('close', code => code === 0 ? resolveOutput(stdout) : reject(new Error(stderr)));
       });
-      const expected = mode === 'fixed'
+      const expected = mode !== 'baseline'
         ? '"visits":2,"restored":"Draft survives stale chunk","feature":"working"'
         : '"visits":1,"restored":"Draft survives stale chunk","feature":"broken"';
-      if (!output.includes(expected) || !output.includes('Unexpected token') || visits[mode] !== (mode === 'fixed' ? 2 : 1)) throw new Error(`${mode} failed: ${output}`);
-      console.log(`STALE-CHUNK-HTML-1 ${mode}: ${output.match(/<body>(.*?)<\/body>/s)?.[1]}; HTTP page loads=${visits[mode]}`);
+      if (!output.includes(expected) || (mode !== 'guarded' && !output.includes('Unexpected token')) || visits[mode] !== (mode !== 'baseline' ? 2 : 1)) throw new Error(`${mode} failed: ${output}`);
+      if (mode === 'guarded' && (guardedFailures.length !== 1 || guardedFailures[0].status !== 404 || !guardedFailures[0].type.startsWith('text/plain'))) throw new Error(`Missing asset was not a plain 404: ${JSON.stringify(guardedFailures)}`);
+      console.log(`BEELINE-MOBILE-9 / STALE-CHUNK-HTML-1 ${mode}: ${output.match(/<body>(.*?)<\/body>/s)?.[1]}; HTTP page loads=${visits[mode]}; missing assets=${JSON.stringify(guardedFailures)}`);
     } finally { await rm(profile, { recursive: true, force: true }); }
   }
-} finally { server.close(); }
+} finally { edge.close(); server.close(); }

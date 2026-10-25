@@ -336,3 +336,9 @@ Shared section headers use `sectionLabel` (13px, tracking 2) and `sectionCount` 
 ### System log rows
 
 `LedgerDisclosure` owns every expandable system row: steps, event runs, inline tool output and card scripts. Its 14px muted chevron points right when closed and down when open, on the text edge; the Space Grotesk meta label starts 22px from that edge. Targets are at least 44px tall with no top rule. `TranscriptNavigationRow` owns tool, check, payment and repository children: flush with the text edge, with a hairline only between siblings (never above the first or a standalone row), and a trailing brass chevron when they open a destination. Runs longer than three show two children and an “N more” row; reopening starts capped again. `LedgerLogGroup` adds no outer margins; transcript spacing stays unchanged. Single events have no header or card. Failures use brass; monospace is reserved for machine text such as commands, paths and durations. Room updates share system-line spacing and upright text; corner status links use sans text and a 44px target.
+
+### Contextual actions
+
+Inside a row, card, toast, strip or message line, use `Button size="inline"`: meta text, brass by default, no border or fill, with a 44-point touch target supplied by hit slop. Quiet and destructive variants recolour the text. Inline failures use `ErrorBanner inline`: red explanation followed by Retry and any secondary action on one wrapping line. Whole-page failures retain the boxed banner with 16-point page margins.
+
+The approved button-sizing mock retains main Send, Sign in, Allow, Connect and Reopen actions, file-viewer dock actions and live browser controls. Repository mode switches also retain their selection outlines. `inline-actions.design.test.ts` checks the mobile tree for framed primary/secondary contextual buttons.

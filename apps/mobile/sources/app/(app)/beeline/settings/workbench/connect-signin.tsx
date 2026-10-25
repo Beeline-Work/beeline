@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -68,6 +70,7 @@ function ConnectorSignInOverlay() {
   const [attempt, setAttempt] = useState(0);
   const [fallback, setFallback] = useState(false);
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const WebView = useSandboxWebView();
 
   const finish = useCallback(() => router.replace(roomId ? (connectorOfferCompletionRoute(roomId) as Href )
@@ -113,7 +116,7 @@ function ConnectorSignInOverlay() {
   return (
     <View style={styles.scrim} testID="signin-overlay">
     <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
-    <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
+    <View style={[styles.card, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
       <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Connectors" prominent onBack={() => router.back()} testID="signin-header" title={squire ? 'Sign in to Google' : `Sign in to ${connectorName}`} />
         {squire ? <Text style={styles.note}>Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.</Text> : null}
         {observed.error || pageError ? (
@@ -122,6 +125,7 @@ function ConnectorSignInOverlay() {
               {observed.error ?? pageError}
             </Text>
             <Button
+              size="inline"
               label="Retry"
               variant="secondary"
               style={{ alignSelf: 'flex-end' }}

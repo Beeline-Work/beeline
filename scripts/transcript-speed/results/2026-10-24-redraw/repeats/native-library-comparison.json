@@ -1,0 +1,18 @@
+[
+  {
+    "apk": "scripts/latency-rig/.local/before.apk",
+    "libraries": {
+      "lib/x86_64/libhermestooling.so": "aea347e33e96f4fc52709cb86f3b5249f2ec3c6267ad4e66c72aae8b92f67f5e",
+      "lib/x86_64/libhermesvm.so": "7b0586fe33ab915f79e4967058f3e22d09a4e53005b2841e87ba3cac8c834ab3",
+      "lib/x86_64/libreactnative.so": "7ef96d20cd06bcc961fccc8a8cc7fb53cc06d784a4bd0ff90b4c7559e9f8a6b2"
+    }
+  },
+  {
+    "apk": "scripts/latency-rig/.local/redraw-measured.apk",
+    "libraries": {
+      "lib/x86_64/libhermestooling.so": "aea347e33e96f4fc52709cb86f3b5249f2ec3c6267ad4e66c72aae8b92f67f5e",
+      "lib/x86_64/libhermesvm.so": "7b0586fe33ab915f79e4967058f3e22d09a4e53005b2841e87ba3cac8c834ab3",
+      "lib/x86_64/libreactnative.so": "7ef96d20cd06bcc961fccc8a8cc7fb53cc06d784a4bd0ff90b4c7559e9f8a6b2"
+    }
+  }
+]

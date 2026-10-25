@@ -13,7 +13,8 @@ const chatSource = readFileSync(path.join(__dirname, '_chat-surface.tsx'), 'utf8
 
 describe('opening a corner from inside a corner', () => {
   it('offers the swipe-right forward in corners as in Rooms', () => {
-    const start = chatSource.indexOf('? { onForwardToNewCorner: handleForwardToNewCorner }');
+    const start = chatSource.indexOf('? { onForwardToNewCorner: rowActions.handleForwardToNewCorner }');
+    expect(start).toBeGreaterThan(-1);
     const gate = chatSource.slice(chatSource.lastIndexOf('{...(', start), start);
     expect(gate).toContain('!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience');
     expect(gate).not.toContain('isCorner');

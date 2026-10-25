@@ -198,6 +198,8 @@ jobs:
               - '.github/workflows/checks.yml'
             # This lane owns the canonical static site and Pages byte contract.
             appLinkAssociations:
+              - 'infra/web-assets/**'
+              - 'scripts/web-asset-guard.test.mjs'
               - 'apps/api/**'
               - 'web/**'
               - 'scripts/app-associations.mjs'
@@ -924,7 +926,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
       - name: Verify the committed app associations, Pages build, and bundle merge
-        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs
+        run: node --test scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
       - name: Run the public website contract test
         run: npm test -w @beeline/public-web-tests -- --run src/invite-web.test.ts
 

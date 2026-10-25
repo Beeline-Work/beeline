@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -53,6 +55,7 @@ export default function ConnectionDetailScreen() {
   const viewerId = singleParam(params.viewerId) ?? '';
   const connectionId = singleParam(params.connectionId) ?? '';
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const { value: detail, address: detailAddress, error: loadError, refresh: retry } =
     useSharedConnectionDetail({ workspaceId, viewerId }, connectionId);
   useLatencyRouteFrame('/beeline/settings/workbench/connection', detail !== null, true);
@@ -63,6 +66,7 @@ export default function ConnectionDetailScreen() {
 
   const revoke = useCallback(async () => {
     if (!detail) return;
+    setError(null);
     setRevoking(true);
     try {
       const { revoked, pending } = await getWorkbenchSource().revokeAllGrants({ workspaceId, connectionId });
@@ -114,7 +118,7 @@ export default function ConnectionDetailScreen() {
 
   return (
     <View
-      style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       testID="connection-detail-screen"
     >
       <PageHeader
@@ -306,7 +310,7 @@ export default function ConnectionDetailScreen() {
           </Text>
         ) : null}
         {error || loadError ? (
-          <ErrorBanner
+          <ErrorBanner inline
             title={error ?? (loadError?.includes('Key not found')
                 ? 'Key not found — it belongs to another member or no longer exists'
                 : 'Key unavailable right now')}
@@ -314,7 +318,7 @@ export default function ConnectionDetailScreen() {
             testID="connection-error-state"
             retryLabel="Retry"
             retryTestID="connection-retry"
-            onRetry={!detail ? () => void retry() : undefined} />
+            onRetry={() => void (detail && error ? revoke() : retry())} />
         ) : null}
       </ScrollView>
     </View>

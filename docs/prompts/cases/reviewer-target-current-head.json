@@ -194,7 +194,7 @@
         },
         "result": {
           "number": 88,
-          "headSha": "5d6e7f8",
+          "headSha": "5d6e7f8000000000000000000000000000000000",
           "author": "juniper",
           "diff": "- if (expiresAt < now) return 401;\n+ if (expiresAt <= now) return 401;",
           "body": "Token expiry fix."
@@ -230,6 +230,45 @@
           "exitCode": 0,
           "stdout": "{\"headRefOid\": \"5d6e7f8\", \"files\": [{\"path\": \"apps/server/src/auth.ts\"}], \"title\": \"Fix token expiry\", \"body\": \"Expired tokens return 401.\"}"
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "gh pr diff 88"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "- if (expiresAt < now) return 401;\n+ if (expiresAt <= now) return 401;"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^gh pr view 88 --json headRefOid,files,headRefName,baseRefName$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "{\"headRefOid\": \"5d6e7f8000000000000000000000000000000000\", \"files\": [{\"path\": \"apps/server/src/auth.ts\"}], \"headRefName\": \"feature/corner-case\", \"baseRefName\": \"main\"}"
+        }
+      },
+      {
+        "call": "approve_merge",
+        "args": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "headSha": "5d6e7f8000000000000000000000000000000000"
+        },
+        "result": {
+          "approved": true,
+          "headSha": "5d6e7f8000000000000000000000000000000000"
+        }
+      },
+      {
+        "call": "approve_merge",
+        "result": {
+          "error": "Review target or head does not match the recorded PR."
+        }
       }
     ],
     "connect": {
@@ -246,7 +285,7 @@
       "approved": false,
       "held": false,
       "mergeAllowed": false,
-      "headSha": "5d6e7f8"
+      "headSha": "5d6e7f8000000000000000000000000000000000"
     }
   }
 }

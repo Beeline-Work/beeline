@@ -155,7 +155,7 @@
     "checks": {
       "reviewerWake": {
         "state": "delivered",
-        "headSha": "5d6e7f8"
+        "headSha": "5d6e7f8000000000000000000000000000000000"
       },
       "mergeAllowed": false,
       "held": false

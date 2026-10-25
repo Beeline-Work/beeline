@@ -359,6 +359,42 @@
           "exitCode": 0,
           "stdout": "/opt/android/platform-tools/adb\n"
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls(?: -[a-z]+)* (?:(?:\"?\\$ANDROID_AVD_HOME\"?)|/replay/avd)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "Pixel_8.avd\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls(?: -[a-z]+)* (?:(?:\"?\\$ANDROID_HOME\"?)|/opt/android)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "emulator\nplatform-tools\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^which(?: beeline| adb| emulator)+$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/usr/local/bin/beeline\n/opt/android/platform-tools/adb\n/opt/android/emulator/emulator\n"
+        }
       }
     ],
     "connect": {

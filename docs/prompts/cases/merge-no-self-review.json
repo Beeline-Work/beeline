@@ -155,7 +155,7 @@
         },
         "result": {
           "number": 88,
-          "headSha": "5d6e7f8",
+          "headSha": "5d6e7f8000000000000000000000000000000000",
           "author": "ruby",
           "repository": "example/app"
         }
@@ -175,7 +175,7 @@
       "approved": false,
       "held": false,
       "mergeAllowed": false,
-      "headSha": "5d6e7f8"
+      "headSha": "5d6e7f8000000000000000000000000000000000"
     }
   }
 }

@@ -144,6 +144,30 @@
         "result": {
           "revisions": []
         }
+      },
+      {
+        "call": "run_granted_command",
+        "args": {
+          "argv": {
+            "matches": "^\\[\"(?:ps|pgrep)\""
+          }
+        },
+        "result": {
+          "error": "No approved command grant covers host process inspection."
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:ps|pgrep)\\b[^;&|\\n]*$"
+          }
+        },
+        "result": {
+          "exitCode": 1,
+          "stdout": "",
+          "stderr": "Sandbox blocks host process inspection."
+        }
       }
     ],
     "connect": {

@@ -206,6 +206,13 @@
       "discover": {
         "apps": []
       }
+    },
+    "checks": {
+      "checks": "unknown",
+      "reason": "No PR is recorded for the token-audit corner.",
+      "approved": false,
+      "held": false,
+      "mergeAllowed": false
     }
   }
 }

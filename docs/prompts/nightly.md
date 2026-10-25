@@ -67,6 +67,9 @@ Compound shell observations compose only case-recorded command results and file
 contents. Quoted separators stay literal; pipes support only `head`. No shell is
 invoked. Unknown commands, paths, redirects or substitutions remain explicit
 missing facts rather than receiving a successful default.
+Native argv commands and Bash commands share argument matching and recorded
+facts, including the same forbidden-command assertions. Raw calls keep their
+original names and arguments in the result.
 
 Each case receives exactly three independent samples in baseline, unchanged control,
 and candidate, with sample-index seeds paired across arms. There is no stopping

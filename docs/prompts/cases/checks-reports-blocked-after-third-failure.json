@@ -456,7 +456,7 @@
     },
     "checks": {
       "checks": "failed",
-      "headSha": "cccc333",
+      "headSha": "cccc333000000000000000000000000000000000",
       "approved": false,
       "held": false,
       "mergeAllowed": false,

@@ -203,6 +203,16 @@
           "exitCode": 2,
           "stdout": ""
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "git status --short --branch"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\n"
+        }
       }
     ],
     "connect": {

@@ -152,6 +152,19 @@
         "result": {
           "revisions": []
         }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "pr",
+          "address": "0cc91297-0f6c-5e86-8531-c479b1835a42"
+        },
+        "result": {
+          "number": 412,
+          "checks": "failed",
+          "approved": false,
+          "mergeAllowed": false
+        }
       }
     ],
     "connect": {

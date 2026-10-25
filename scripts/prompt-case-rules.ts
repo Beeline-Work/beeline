@@ -242,7 +242,20 @@ function matches(matcher: Matcher, value: unknown): boolean {
   return new RegExp(matcher.matches, matcher.flags).test(text);
 }
 
+/** Equivalent command routes share grading and recorded shell facts, never execution. */
+export function shellCommand(call: ToolCall): string | undefined {
+  if (call.name === 'Bash' && typeof call.args.command === 'string') return call.args.command;
+  const argv = call.args.argv;
+  if (call.name !== 'run_granted_command' || !Array.isArray(argv) || !argv.length || argv.some(v => typeof v !== 'string')) return;
+  if (/^(?:\/bin\/)?(?:ba)?sh$/.test(argv[0]) && ['-c', '-lc'].includes(argv[1]) && argv.length === 3) return argv[2];
+  return argv.map((arg: string) => /^[a-zA-Z0-9_@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'"'"'`)}'`).join(' ');
+}
+
 function callMatches(call: ToolCall, name: string, args?: Readonly<Record<string, Matcher>>): boolean {
+  if (name === 'Bash' && call.name === 'run_granted_command') {
+    const command = shellCommand(call);
+    if (command !== undefined) call = { name: 'Bash', args: { command } };
+  }
   if (call.name !== name) return false;
   return Object.entries(args ?? {}).every(([path, matcher]) => matches(matcher, valueAt(call.args, path)));
 }

@@ -169,7 +169,7 @@
         },
         "result": {
           "number": 88,
-          "headSha": "5d6e7f8",
+          "headSha": "5d6e7f8000000000000000000000000000000000",
           "author": "juniper",
           "diff": "- if (expiresAt < now) return 401;\n+ if (expiresAt <= now) return 401;",
           "body": "Token expiry fix."
@@ -216,7 +216,7 @@
       "approved": false,
       "held": false,
       "mergeAllowed": false,
-      "headSha": "5d6e7f8"
+      "headSha": "5d6e7f8000000000000000000000000000000000"
     }
   }
 }

@@ -274,6 +274,9 @@ test('compound shell reads use only recorded facts and never turn an unknown com
   assert.equal(scenarioShell(state, 'echo "$(touch /unexecuted)"'), undefined);
   assert.equal(scenarioShell(state, 'git status --short > /unknown'), undefined);
   assert.equal(scenarioShell(state, 'git status --short || arbitrary-command'), undefined);
+  assert.equal(scenarioShell(state, ';'), undefined);
+  assert.equal(scenarioShell(state, '; git status --short'), undefined);
+  assert.equal(scenarioShell(state, 'git status --short &&'), undefined);
   assert.deepEqual(scenarioShell(state, 'echo "a;b"'), { result: { exitCode: 0, stdout: 'a;b\n' } });
 });
 
@@ -284,4 +287,12 @@ test('recorded repository and SDK facts cover ordinary combined observations', (
     ['checks-no-pr-continues-work', 'cd /replay 2>/dev/null; pwd; git status --short; git branch --show-current; cat apps/server/src/auth.ts 2>/dev/null | head -80'],
     ['checks-reports-blocked-after-third-failure', `cd "$(git rev-parse --show-toplevel)" && cat apps/mobile/sources/buzz/live-turn-stream.ts && echo '--- TEST ---' && cat apps/mobile/sources/buzz/live-turn-stream.test.ts`],
   ]) assert.notEqual(scenarioResult(cases.find(c => c.id === id), { name: 'Bash', args: { command } }, {}).boundary, 'missing', id);
+});
+
+test('an addressed brief returns that corner facts before a default current-place result', () => {
+  const saved = loadCases().find(c => c.id === 'finish-orders-then-ends');
+  const address = saved.turn.corners[0].cornerId;
+  const result = scenarioResult(saved, { name: 'read', args: { facet: 'brief', address } }, {});
+  assert.equal(result.result.repositoryWork, false);
+  assert.match(result.result.spec, /release checklist/);
 });

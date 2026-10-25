@@ -36,8 +36,8 @@
     "call": "merge_corner"
   },
   "toolResults": {
-    "read": "{\"address\": \"13dd83e5-e17f-599c-8054-c4ce8cdab974\", \"stage\": \"review\", \"checks\": {\"state\": \"success\", \"headSha\": \"5d6e7f8\"}, \"approved\": true, \"held\": false, \"mergeAllowed\": true, \"brief\": {\"repositoryWork\": true, \"spec\": \"## Intent\\nFix the token expiry check so expired tokens are refused.\\n## Acceptance criteria\\n1. An expired token gets 401.\\n## Assigned files\\napps/server/src/auth.ts\", \"approval\": {\"sourceMessageId\": \"m1\", \"text\": \"Go ahead.\", \"approvedBy\": \"dana-id\", \"approverName\": \"dana\"}}}",
-    "merge_corner": "{\"ok\": true, \"merged\": true, \"pullRequest\": 88, \"headSha\": \"5d6e7f8\"}"
+    "read": "{\"address\": \"13dd83e5-e17f-599c-8054-c4ce8cdab974\", \"stage\": \"review\", \"checks\": {\"state\": \"success\", \"headSha\": \"5d6e7f8000000000000000000000000000000000\"}, \"approved\": true, \"held\": false, \"mergeAllowed\": true, \"brief\": {\"repositoryWork\": true, \"spec\": \"## Intent\\nFix the token expiry check so expired tokens are refused.\\n## Acceptance criteria\\n1. An expired token gets 401.\\n## Assigned files\\napps/server/src/auth.ts\", \"approval\": {\"sourceMessageId\": \"m1\", \"text\": \"Go ahead.\", \"approvedBy\": \"dana-id\", \"approverName\": \"dana\"}}}",
+    "merge_corner": "{\"ok\": true, \"merged\": true, \"pullRequest\": 88, \"headSha\": \"5d6e7f8000000000000000000000000000000000\"}"
   },
   "scenario": {
     "history": [],
@@ -57,7 +57,7 @@
       "stage": "review",
       "checks": {
         "state": "success",
-        "headSha": "5d6e7f8"
+        "headSha": "5d6e7f8000000000000000000000000000000000"
       },
       "approved": true,
       "held": false,

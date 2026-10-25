@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import ts from 'typescript';
 import { check, loadCases, loadSource, replayPrompt, toolsFor } from './prompt-cases.ts';
-import { evaluateRule, skillPath } from './prompt-case-rules.ts';
+import { evaluateRule, skillPath, shellCommand } from './prompt-case-rules.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = 'apps/body/src/prompt-assembly.ts';
@@ -182,6 +182,8 @@ export function scenarioShell(state, command) {
   }
   if (quote || depth) return;
   parts.push({ command: command.slice(start).trim(), operator });
+  if (!parts.some(p => p.command) || parts.slice(0, -1).some(p => !p.command) ||
+      !parts.at(-1).command && parts.at(-1).operator !== ';') return;
   let stdout = '', exitCode = 0, cwd = '', pipeStart = 0;
   for (const part of parts) {
     if (!part.command || part.operator === '&&' && exitCode) continue;
@@ -216,14 +218,16 @@ export function scenarioShell(state, command) {
 export function scenarioResult(testCase, call, skills) {
   if (call.name === 'Read' && Object.hasOwn(skills, call.args.file_path)) return { result: skills[call.args.file_path] };
   const state = testCase.scenario ?? {};
-  const explicit = state.results?.find(entry => evaluateRule({ call: entry.call, args: entry.args }, { calls: [call], text: '' }).pass);
+  const explicit = state.results?.filter(entry => evaluateRule({ call: entry.call, args: entry.args }, { calls: [call], text: '' }).pass)
+    .sort((a, b) => Object.keys(b.args ?? {}).length - Object.keys(a.args ?? {}).length)[0];
   if (explicit) return { result: explicit.result, ...(explicit.boundary ? { boundary: explicit.boundary } : {}) };
   if (call.name === 'Read' && Object.hasOwn(state.files ?? {}, call.args.file_path)) return { result: state.files[call.args.file_path] };
   // Equivalent native file reads use the same recorded fact, without running a shell.
-  if (call.name === 'Bash') {
-    const path = /^cat\s+([/a-zA-Z0-9_.-]+)\s*$/.exec(call.args.command)?.[1];
+  const command = shellCommand(call);
+  if (command !== undefined) {
+    const path = /^cat\s+([/a-zA-Z0-9_.-]+)\s*$/.exec(command)?.[1];
     if (path && Object.hasOwn(state.files ?? {}, path)) return { result: { exitCode: 0, stdout: state.files[path] } };
-    const composed = scenarioShell(state, call.args.command);
+    const composed = scenarioShell(state, command);
     if (composed) return composed;
   }
   if (call.name === 'read') {

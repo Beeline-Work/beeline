@@ -179,6 +179,34 @@
           "id": "simulated-message",
           "committed": true
         }
+      },
+      {
+        "call": "run_granted_command",
+        "args": {
+          "argv": {
+            "equals": [
+              "git",
+              "ls-remote",
+              "--exit-code",
+              "origin",
+              "feature/corner-proof"
+            ]
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "1111111111111111111111111111111111111111\trefs/heads/feature/corner-proof\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "git status --short && git log --oneline -1 && git rev-parse HEAD && git ls-remote --exit-code origin feature/corner-proof"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "1111111 Prepared fix\n1111111111111111111111111111111111111111\n1111111111111111111111111111111111111111\trefs/heads/feature/corner-proof\n"
+        }
       }
     ]
   }

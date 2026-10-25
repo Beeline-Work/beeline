@@ -436,6 +436,66 @@
           "exitCode": 0,
           "stdout": "./apps/server/src/auth.ts:1:export function status(expiresAt: number, now: number) {\n./apps/server/src/auth.test.ts:1:test(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));\n"
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git log --oneline -3 -- apps/server/src/auth\\.ts$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "cccc333 Token expiry boundary\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls apps/server/src$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "auth.ts\nauth.test.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^grep -rn \"status\\(\" --include=\\*\\.ts apps$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "apps/server/src/auth.ts:1:export function status(expiresAt: number, now: number) {\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git show --stat HEAD$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "cccc333 Token expiry boundary\n apps/server/src/auth.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls apps/server/src apps/mobile/sources/buzz$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "auth.ts\nauth.test.ts\nlive-turn-stream.ts\n"
+        }
       }
     ],
     "connect": {

@@ -208,7 +208,7 @@
       "approved": false,
       "held": false,
       "mergeAllowed": false,
-      "headSha": "bbbb222",
+      "headSha": "bbbb222000000000000000000000000000000000",
       "failures": [
         "MOBILE TESTS"
       ]

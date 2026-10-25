@@ -197,7 +197,31 @@
           "error": "No browser session exists for this DM."
         },
         "boundary": "error"
+      },
+      {
+        "call": "app_tool",
+        "args": {
+          "app": "beeline:github"
+        },
+        "result": {
+          "error": "Unknown application key: beeline:github"
+        }
+      },
+      {
+        "call": "open_corner",
+        "args": {
+          "room": "b9f02ade-0577-5996-8bd6-c61ead1f6e37"
+        },
+        "result": {
+          "address": "1636608f-61e5-51ce-91a5-ab2359703fee",
+          "ok": true
+        }
       }
-    ]
+    ],
+    "checks": {
+      "checks": "unknown",
+      "reason": "This DM has no repository App checkout or PR.",
+      "mergeAllowed": false
+    }
   }
 }

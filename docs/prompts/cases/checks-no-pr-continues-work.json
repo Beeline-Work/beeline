@@ -489,6 +489,27 @@
           "exitCode": 0,
           "stdout": ""
         }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "sed -n '1,50p' apps/server/src/auth.ts; echo ---; node -e \"const s=(e,n)=>e<n?401:200; console.log('before fix:', s(1,1));\""
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "export function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n\n---\nbefore fix: 200\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "cd \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\""
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": ""
+        }
       }
     ],
     "connect": {

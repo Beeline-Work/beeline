@@ -2943,7 +2943,7 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
         expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(true);
         expected = 'a merge attempt for this head is still awaiting GitHub confirmation';
       }
-      expect(await mergeDaemon(operations).execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: expected });
+      expect(await mergeDaemon(operations).execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: expected, holds: [] });
       expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     },
   );

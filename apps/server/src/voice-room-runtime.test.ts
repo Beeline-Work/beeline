@@ -2960,3 +2960,33 @@ it('VOICE-EXTERNAL-2: the contact read overlaps existing input startup reads', a
     console.log('VOICE-EXTERNAL-2 input startup controlled reads', { inputReadyMs: readyAt - began });
   } finally { await runtime.close(); vi.useRealTimers(); }
 });
+
+it.each(Array.from({ length: 4 }, (_, run) => [
+  { contact: 'Grok', fragment: 'Grok', run },
+  ...['Grok', 'Grok bot', 'Grok Bot?'].map(fragment => ({ contact: 'Grok bot', fragment, run })),
+]).flat())('SPEEDY-CONTACT-1: stored contact fragment $fragment ($contact, run $run) is retained without eager or final handoff', async ({ contact, fragment }) => {
+  const { service } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, args) => sql.includes("source='webhook'")
+    ? { rowCount: 1, rows: [{ name: contact }] } : original(sql, args));
+  let receive!: (event: any) => void;
+  service.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
+  service.config.brain.answer.mockResolvedValue({ text: 'On it.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    const words = fragment.split(' ').map(word => ({ word, confidence: .99, start: 0, end: .4 }));
+    receive({ event: 'EagerEndOfTurn', transcript: fragment, turn_index: 0, words });
+    receive({ event: 'EndOfTurn', transcript: fragment, turn_index: 0, words });
+    await vi.waitFor(() => expect(service.recordHuman).toHaveBeenCalledOnce());
+    expect(service.recordHuman.mock.calls[0]?.[4]).toBe(fragment);
+    await runtime.utterance('human', fragment);
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    await runtime.utterance('human', 'Tell Grok bot hello');
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(service.dispatch).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});

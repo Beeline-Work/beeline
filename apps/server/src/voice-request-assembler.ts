@@ -112,3 +112,14 @@ export function voiceNameOnly(text: string, agents: readonly VoiceAgent[]): Voic
     .match(/[\p{L}\p{N}]+/gu)?.join(' ');
   return [agent.name, agent.handle].some(alias => normalized(alias) === normalized(words.join(' '))) ? agent : undefined;
 }
+
+/** Match only a stored contact name, including its short name without a trailing bot label. */
+export function voiceContactNameOnly(text: string, contacts: readonly string[] = []): boolean {
+  const normalize = (value: string) => value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu)?.join(' ') ?? '';
+  const words = normalize(text).replace(/^(hey|hi|hello|okay|ok|yo) /, '');
+  return !!words && contacts.some(contact => {
+    const name = normalize(contact);
+    return words === name || words === name.replace(/ bot$/, '');
+  });
+}

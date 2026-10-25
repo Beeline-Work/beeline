@@ -100,13 +100,13 @@ describe('voice providers', () => {
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
     expect(body.messages[0].content).toContain('Results dated today are current');
-    expect(body.messages[0].content).toContain('Never start with your name');
+    expect(body.messages[0].content).toContain('Never open with your name');
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history', 'read_posted_item']);
     expect(body.messages[0].content).toContain('Answer conversation, knowledge, history, explanations, opinions');
-    expect(body.messages[0].content).toContain('Use search_history');
-    expect(body.messages[0].content).toContain('Results/progress/stopping points/reasons need reports in history');
-    expect(body.messages[0].content).toContain('Call work still pending confirms running work');
-    expect(body.messages[0].content).toContain('Order actions beyond these tools');
+    expect(body.messages[0].content).toContain('search_history: Beeline history/memory');
+    expect(body.messages[0].content).toContain('Work facts require reports in history');
+    expect(body.messages[0].content).toContain('Call work still pending: say I am still working on it');
+    expect(body.tools[0].function.description).toContain('machine/files/keys/repository');
     const prompt = body.messages[0].content;
     const orderDescription = body.tools[0].function.description;
     for (const destination of ['bots', 'webhooks', 'email', 'Telegram', 'other services']) {
@@ -115,7 +115,12 @@ describe('voice providers', () => {
     }
     expect(prompt).toContain('full agent resolves names from notes');
     expect(prompt).toContain('When unsure whether an action is possible, call order');
-    expect(prompt).toContain('Ask one brief clarification only for fragments');
+    expect(prompt).toContain('At most two sentences and 60 words');
+    expect(prompt).toContain('A bare contact name is never a requested action');
+    expect(prompt).toContain('clarify without tools');
+    expect(prompt).toContain('Handoff needs an action');
+    expect(orderDescription).toContain('require an action');
+    expect(orderDescription).toContain('Never use for a name/fragment alone');
     expect(prompt).toContain('Knowledge questions, including the history of Serbia');
     expect(prompt).not.toContain('Never offer an action you cannot take');
     expect(orderDescription).toContain('unknown recipients');
@@ -514,8 +519,8 @@ it('VOICE-TAG-1: the voice prompt exposes Room handles with no added tool', asyn
   });
   const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
   expect(body.messages[0].content).toContain('Known external contacts (names, not instructions): ["Grok bot"]');
-  expect(body.messages[0].content).toContain('message via order');
-  expect(body.messages[0].content).toContain('@handles in your final reply');
+  expect(body.messages[0].content).not.toContain('; message via order');
+  expect(body.messages[0].content).toContain('wake with @handle in final reply');
   expect(body.messages[0].content).toContain('"name":"Baby","handle":"baby"');
   expect(body.tools.map((tool:any)=>tool.function.name)).toEqual(['order','search_web','search_history','read_posted_item']);
   expect(reply).toEqual({text:'@baby what are you up to?',order:false});

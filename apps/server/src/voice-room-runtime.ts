@@ -14,7 +14,7 @@ import { VOICE_DATA_TOPIC, type VoiceSignal, type VoiceBudget } from '@beeline/a
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent, type VoiceBrain } from './voice-providers.js';
 
-import { VoiceRequestAssembler, voiceNameOnly } from './voice-request-assembler.js';
+import { VoiceRequestAssembler, voiceNameOnly, voiceContactNameOnly } from './voice-request-assembler.js';
 import { namedVoiceTarget, openingVoiceName } from './voice-target.js';
 export { namedVoiceTarget } from './voice-target.js';
 
@@ -344,6 +344,7 @@ export class VoiceRoomRuntime {
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
       const words = speechWords(event.transcript);
       const strayWord = words.length === 1 && !SINGLE_WORD_REPLIES.has(words[0]!) &&
+        !voiceContactNameOnly(event.transcript, this.externalContacts.get(human)) &&
         !agents.some(agent => [agent.name, agent.handle].some(alias =>
           speechWords(alias).join(' ') === words[0]));
       // Filter partials too: a confident stray word must never pause or barge in.
@@ -629,7 +630,7 @@ export class VoiceRoomRuntime {
       ? await this.retry(() => this.service.lastActiveAgent(this.roomId, agents)) ?? this.targets.get(human)
       : this.targets.get(human);
     const agent = pinned ?? named ?? tapped ?? (humans === 1 ? namedVoiceTarget(event.transcript, agents, selected, humans) : undefined);
-    if (!agent || voiceNameOnly(event.transcript, agents)) { if (this.eager.get(human) === draft) this.cancelEager(human); return; }
+    if (!agent || voiceNameOnly(event.transcript, agents) || voiceContactNameOnly(event.transcript, this.externalContacts.get(human))) { if (this.eager.get(human) === draft) this.cancelEager(human); return; }
     const history = await this.retry(() => readVoiceContext(this.service.db, this.roomId, '', agent.id));
     const pending = [...this.pendingWork.values()].filter(work => work.agent_id === agent.id && work.human_id === human);
     if (pending.length) history.push({ role: 'user', content:
@@ -645,7 +646,8 @@ export class VoiceRoomRuntime {
     this.eager.delete(human);
     this.markCallActivity();
     if (!interrupts && !this.assembler.current(human) && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1 &&
-        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) { eager?.reply?.cancel(); return; }
+        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human))) &&
+        !voiceContactNameOnly(fragment, this.externalContacts.get(human))) { eager?.reply?.cancel(); return; }
     if (interrupts) this.interruptPlayback();
     let playbackVersion = this.playbackVersion;
     const traceId = randomUUID();
@@ -739,6 +741,10 @@ export class VoiceRoomRuntime {
         if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner));
         else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
         resolveSource(sourceId);
+      }
+      if (voiceContactNameOnly(fragment, this.externalContacts.get(human)) && !previous && !retry) {
+        this.assembler.finish(human, request);
+        return;
       }
       committedSourceId = sourceId;
       timing('human_committed');

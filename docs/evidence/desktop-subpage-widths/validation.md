@@ -12,4 +12,6 @@
 
 The original fixture failures are resolved; the full mobile rerun completed successfully.
 
-Production before measurements for every route, the complete required screenshot matrix, reviewer-bypass sign-in and shared token integration remain outstanding. See inventory.md for the browser routes attempted and their results. This work is a draft pending those proofs and Ruby's rebase order after PR #2915.
+Production-before proof accepted by revision 2 is complete for members, a profile, tray, Appearance and Interface size sheets, and a cancelled member-removal confirmation, at native 1279 and emulated 1920 CSS layout widths. See the measurement table and viewport caveats in inventory.md. Shared token integration remains deferred until Ruby orders the rebase after PR #2915.
+
+Fresh pre-push reruns for this evidence delivery also passed: full mobile suite (614 files; 5413 tests passed, 6 skipped) and server shard 1/4 (53 files; 781 tests passed, 1 skipped).

@@ -64,6 +64,12 @@ try {
   await db.query(`UPDATE messages SET text='@owner please read this' WHERE id='preference-1'`);
   assert.equal(await loop.runOnce(),1,'Editing parked prose into a mention must reach the provider');
   assert.equal(sent.at(-1).messageId,'preference-1');
+  await db.query(`UPDATE messages SET text='Ordinary conversation again' WHERE id='preference-1'`);
+  assert.equal(await loop.runOnce(),0,'Removing a delivered mention must not resend it');
+  await db.query(`UPDATE messages SET text='@owner mention again' WHERE id='preference-1'`);
+  assert.equal(await loop.runOnce(),0,'Re-adding a delivered mention must not resend it');
+  assert.equal(sent.filter(message=>message.messageId==='preference-1').length,1,
+    'Edited mention must reach the provider exactly once');
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('retry-edit',$1,$2,'@owner retry')`,[room,peer]);
   await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,next_retry_at)
     VALUES('retry-edit','isolated-proof-device','retryable',now()+interval '5 minutes')`);
@@ -72,7 +78,7 @@ try {
   assert.deepEqual((await db.query(`SELECT not_before FROM push_outbox WHERE message_id='retry-edit'`)).rows,retryBefore,
     'Message edits must preserve provider retry deadlines');
   assert.equal(await loop.runOnce(),0,'Provider retry must stay asleep after editing');
-  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',editedMentionDelivered:true,providerRetryPreserved:true}));
+  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',editedMentionDelivered:true,alreadyDeliveredNotResent:true,providerRetryPreserved:true}));
   await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`,[owner]);
   const woken = Number((await db.query(`SELECT count(*) woken FROM push_outbox WHERE not_before<=now() AND message_id LIKE 'preference-%'`)).rows[0].woken);
   assert.equal(woken,1099,'Preference change must wake retained messages');

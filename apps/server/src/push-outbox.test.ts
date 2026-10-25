@@ -471,6 +471,11 @@ it('BEELINE-SERVER-17: message edits wake parked mentions but preserve retry dea
     await db.query(`UPDATE messages SET text='@owner please read this' WHERE id='edited-prose'`);
     expect(await loop.runOnce()).toBe(1);
     expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({messageId:'edited-prose'}));
+    await db.query(`UPDATE messages SET text='Ordinary conversation again' WHERE id='edited-prose'`);
+    expect(await loop.runOnce()).toBe(0);
+    await db.query(`UPDATE messages SET text='@owner mention again' WHERE id='edited-prose'`);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledOnce();
     await post(db,'edited-retry');
     await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,next_retry_at)
       VALUES('edited-retry','proof-device','retryable',now()+interval '5 minutes')`);

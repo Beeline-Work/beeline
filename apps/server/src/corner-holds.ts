@@ -10,7 +10,8 @@ export async function activeCornerHolds(
 ): Promise<CornerMergeHold[]> {
   return (
     await db.query<CornerMergeHold>(
-      `SELECT id::text,actor_id "actorId",standing,set_at::text "setAt"
+      `SELECT id::text,actor_id "actorId",actor_id "holderId",
+       (SELECT name FROM identities WHERE identities.id=actor_id) "holderName",standing,set_at::text "setAt"
      FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL ORDER BY set_at,id`,
       [cornerId],
     )

@@ -437,7 +437,7 @@ export type DaemonOperationMap = {
   mergeCorner: Operation<
     CornerInput,
     | { readonly status: 'merge-started' | 'queued'; readonly headSha: string }
-    | { readonly status: 'blocked'; readonly blocker: string }
+    | { readonly status: 'blocked'; readonly blocker: string; readonly holds?: CornerMergeHold[] }
   >;
   /**
    * Any corner member closes the corner's own pull request without merging.
@@ -1060,6 +1060,7 @@ export type CornerRestoreResult = {
   readonly closeRequested: boolean;
   /** True while a human hold stands on this corner; a held corner publishes nothing. */
   readonly held?: boolean;
+  readonly holds?: CornerMergeHold[];
   /** Server-indexed GitHub facts retained across a helper restart. */
   readonly lifecycle?: CornerLifecycleView;
   /** The latest manager merge request, bound to the exact PR revision it approved. */

@@ -3478,12 +3478,13 @@ async function executeAgentOperation(
               stage: verdict.stage,
               approved: verdict.approved,
               held: verdict.held,
+              holds: verdict.holds,
               mergeAllowed: verdict.mergeAllowed,
               reviewer: verdict.reviewer,
               reviewerExists: verdict.reviewerExists,
               reviewerWake: verdict.reviewerWake,
             }
-          : { mergeAllowed: false, status: 'unavailable' },
+          : { mergeAllowed: false, status: 'unavailable', held: status.held === true, holds: status.holds ?? [] },
         merge: {
           mergeability: pr?.mergeability ?? 'unknown',
           ...(pr?.mergedAt ? { mergedAt: pr.mergedAt } : {}),

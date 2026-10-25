@@ -101,6 +101,42 @@ it('Reproduction FR-report: rejects corner progress disguised as done before a P
   expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(false);
   console.info('Demonstrated FR-report: unready done refused; progress remains in the corner; commander receives no wake');
 });
+// Real GitHub/webhook timing is represented by the provider fixture: no webhook is sent.
+it.each([true, false])('DONE-PR-1: report resolves an unregistered PR (exists: %s)', async exists => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const branch = 'feature/corner-report-race';
+  await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [opened.cornerId, branch]);
+  await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+    VALUES(77,$1,'42','owner','User','selected','active') ON CONFLICT DO NOTHING`, [HUMAN]);
+  await db.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+    VALUES(101,77,'owner/widgets','main') ON CONFLICT DO NOTHING`);
+  await db.query(`UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository',github_installation_id=77 WHERE id=$1`, [ROOM]);
+  const app = {
+    installationToken: vi.fn(async () => ({ token: 'fixture-token' })),
+    openPullRequestsForBranch: vi.fn(async () => exists ? [42] : []),
+    readPullRequest: vi.fn(async () => ({ number: 42, state: 'open', merged: false, headRef: branch,
+      headSha: '9'.repeat(40), baseRef: 'main', title: 'Widget', url: 'https://github.com/owner/widgets/pull/42' })),
+  };
+  const github = new GitHubOperations(db, {} as GitHubOAuthClient, app as never, 'fixture-secret');
+  Object.assign(daemon, { github });
+  try {
+    const send = () => daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: widget delivered' }, WORKER);
+    if (exists) {
+      await send();
+      expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('done: widget delivered');
+      expect((await db.query(`SELECT lifecycle->'pr'->>'number' number FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0]?.number).toBe('42');
+      expect(app.readPullRequest).toHaveBeenCalledTimes(1);
+      await send();
+      expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
+      expect(app.readPullRequest).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(send()).rejects.toThrow('done requires an opened or merged PR');
+      expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(false);
+      expect(app.readPullRequest).not.toHaveBeenCalled();
+    }
+    expect(app.openPullRequestsForBranch).toHaveBeenCalledWith('fixture-token', 'owner/widgets', branch);
+  } finally { Object.assign(daemon, { github: undefined }); }
+});
 it('requires a status that matches the report prefix', async () => {
   await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'Delivered without a prefix' }, RUBY))
     .rejects.toThrow('received status "done" and text prefix null');

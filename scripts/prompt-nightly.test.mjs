@@ -3,7 +3,7 @@ import { readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly } from './prompt-nightly.mjs';
+import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, diagnostics, pairedPValue } from './prompt-nightly.mjs';
 import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
@@ -191,4 +191,73 @@ test('simulated results expose facts, never fixture matchers', async () => {
   assert.equal(result.pass, true);
   assert.equal(bodies[1].messages.at(-1).content.includes('^/facts$'), false);
   assert.equal(bodies[1].messages.at(-1).content.includes('blue'), true);
+});
+
+test('validation errors return to the agent, and a valid retry satisfies the behavior rule', async () => {
+  const bodies = [];
+  const replies = [response({ calls: [read(9)], text: '' }), response({ calls: [read('/facts')], text: '' }), response({ calls: [], text: 'blue' })];
+  const result = await sample({ rule: { call: 'Read', args: { file_path: '/facts' } },
+    testCase: { scenario: { files: { '/facts': 'blue' } } }, request: async body => { bodies.push(structuredClone(body)); return replies.shift(); } });
+  assert.equal(result.pass, true);
+  assert.equal(result.status, 'behavior');
+  assert.equal(result.invalidCalls.length, 1);
+  assert.equal(result.transcript.calls.length, 1);
+  assert.equal(result.attemptedCalls.length, 2);
+  assert.match(bodies[1].messages.at(-1).content, /validation_error/);
+  assert.equal(diagnostics([{ id: 'retry', samples: [result] }]).invalidCalls, 1);
+});
+
+test('a turn with only invalid calls fails, and forbidden attempts cannot be repaired by retry', async () => {
+  const onlyInvalid = await sample({ request: async () => response({ calls: [read(9)], text: '' }) });
+  assert.equal(onlyInvalid.pass, false);
+  assert.equal(onlyInvalid.terminal, 'invalid-call');
+  assert.equal(onlyInvalid.rounds.length, 6);
+  const replies = [response({ calls: [{ name: 'danger', args: {} }], text: '' }), response({ calls: [], text: 'done' })];
+  const unsafe = await sample({ request: async () => replies.shift() });
+  assert.equal(unsafe.pass, false);
+  assert.match(unsafe.reason, /forbidden call/);
+});
+
+test('fixture corner addresses pass real UUID schemas, including the audit order', async () => {
+  const source = await loadSource(process.cwd());
+  const saved = loadCases().find(c => c.id === 'memory-rule-11');
+  const tool = source.tools.minimalTools(false).find(t => t.name === 'order');
+  const address = saved.turn.corners[0].cornerId;
+  const call = { name: 'order', args: { address, agent: 'fern', text: 'Audit token expiry.' } };
+  assert.equal(validSchema(tool.inputSchema, call.args), true);
+  const result = await sample({ tools: [tool], testCase: saved, rule: saved.pass, request: async () => response({ calls: [call], text: '' }) });
+  assert.equal(result.pass, true);
+  assert.equal(result.invalidCalls.length, 0);
+  assert.equal(validSchema(tool.inputSchema, { ...call.args, address: 'not-a-fixture-address' }), false);
+});
+
+test('ordinary case reads have explicit facts, while unknown calls remain incomplete', () => {
+  const cases = loadCases();
+  const facts = [
+    ['memory-rule-07', { name: 'read', args: { facet: 'corners' } }],
+    ['memory-rule-08', { name: 'search', args: { scope: 'memory', query: 'expired tokens' } }],
+    ['corners-orders-exact-address', { name: 'request_grant', args: { action: 'list' } }],
+    ['prepare-runs-first', read('apps/server/src/auth.ts')],
+    ['checks-no-pr-continues-work', { name: 'Bash', args: { command: 'git status --short && git log --oneline -3' } }],
+  ];
+  for (const [id, call] of facts) assert.notEqual(scenarioResult(cases.find(c => c.id === id), call, {}).boundary, 'missing', id);
+  assert.equal(scenarioResult(cases.find(c => c.id === 'checks-no-pr-continues-work'), { name: 'Bash', args: { command: 'git status --short && arbitrary-write' } }, {}).boundary, 'missing');
+});
+
+test('paired noise test can detect gains below the unsigned flip count', () => {
+  const make = fn => Array.from({ length: 100 }, (_, i) => ({ id: String(i), samples: [{ status: 'behavior', pass: fn(i), tokens: 100, seed: 1000 }] }));
+  const baseline = make(i => i >= 50);
+  // Twenty symmetric control flips have zero expected drift; ten genuine gains
+  // remain detectable when comparing candidate with both unchanged arms.
+  const control = make(i => i < 10 || i >= 60);
+  const candidate = make(i => i < 10 || i >= 50);
+  candidate.forEach(r => { r.samples[0].tokens = 80; });
+  const result = assessExperiment(baseline, candidate, control);
+  assert.equal(result.noiseFlips, 20);
+  assert.equal(result.gains, 10);
+  assert.equal(result.controlDrift, 0);
+  assert.equal(result.accepted, true);
+  assert.ok(result.detectableEffect > 0);
+  assert.equal(pairedPValue(5, 0), 1/32);
+  assert.equal(pairedPValue(6, 0), 1/64);
 });

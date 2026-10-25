@@ -97,7 +97,125 @@
           "slug": "workspace-core",
           "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
         }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+              "name": "checks-reports-blocked-after-third-failure",
+              "kind": "code-corner"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "name": "checks-reports-blocked-after-third-failure",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": null,
+          "worktree": {
+            "featureBranch": "feature/corner-case",
+            "targetBranch": "main"
+          },
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:(?:cd \"\\$\\(git rev-parse --show-toplevel\\)\"|pwd|ls(?: -[a-z]+)?(?: /replay(?: 2>/dev/null)?| apps/mobile/sources/buzz/)?|git status(?: --short)?(?: --branch)?|git branch --show-current|git log --oneline -(?:3|5)|cat apps/server/src/auth\\.ts|sed -n '(?:1,200p|1,240p)' apps/server/src/auth\\.ts|head -50)(?:\\s*(?:&&|;|\\|)\\s*|$))+$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\nWorking tree clean\ncccc333 Token expiry boundary\napps/server/src/auth.ts\napps/mobile/sources/buzz/live-turn-stream.test.ts\napps/mobile/sources/buzz/draft-settle.test.ts\n"
+        }
       }
-    ]
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    },
+    "checks": {
+      "checks": "failed",
+      "headSha": "cccc333",
+      "approved": false,
+      "held": false,
+      "mergeAllowed": false,
+      "failures": [
+        "live-turn-stream.test.ts",
+        "draft-settle.test.ts"
+      ]
+    }
   }
 }

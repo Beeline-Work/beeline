@@ -120,7 +120,7 @@ export function toolsFor(source: PromptSource, testCase: PromptCase): ToolDefini
 function briefFrom(value: unknown): Assembly.SessionPromptContext['brief'] {
   if (!value || typeof value !== 'object') return undefined;
   return {
-    id: 'case-corner',
+    id: '13dd83e5-e17f-599c-8054-c4ce8cdab974',
     revision: 1,
     authorId: 'case-author',
     sourceRoomId: 'case-room',

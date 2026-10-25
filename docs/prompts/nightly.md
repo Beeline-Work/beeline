@@ -64,16 +64,28 @@ blocked/error boundary, or the existing six-round limit. It never executes a
 simulated call. Missing scenario facts are `incomplete`, never invented success.
 Legacy `toolResults` remain readable while fixtures migrate to argument matching.
 
-Each case receives exactly two independent samples in baseline, unchanged control,
+Each case receives exactly three independent samples in baseline, unchanged control,
 and candidate, with sample-index seeds paired across arms. There is no stopping
 after a success. Seeds aid pairing; they do not promise provider determinism.
-Each row reports behavior pass proportion and a Wilson 95% interval. With two
+Each row reports behavior pass proportion and a Wilson 95% interval. With three
 samples these intervals are intentionally wide.
+
+Three samples increase the paired cohort to 219 samples per arm for the current
+73 eligible cases. The previous two-sample run cost $0.18 but used 3.69 million
+tokens; the unchanged six-million-token cap, rather than the dollar cap, limits
+sampling growth. Every run still stops within its existing reservations and
+lists all budget-limited samples explicitly.
 
 Output uses a JSON schema response constraint and requires providers to support
 the requested parameters. Raw output is parsed strictly, without extracting or
 repairing JSON. `format` samples have no behavior verdict. Invalid callable tool
-names or arguments are behavior failures. Truncation, transport failures, absent
+names or arguments return validation errors to the same simulated turn and allow
+retry within the six-round limit. Invalid attempts are counted separately and
+retained verbatim; only valid calls satisfy positive behavior rules. A turn that
+finishes or exhausts its rounds without any valid call after validation errors
+fails behavior. Forbidden attempts still fail safety rules even if rejected by
+validation. Fixture addresses are UUIDs, including references in tasks and rules.
+Truncation, transport failures, absent
 usage, missing scenario facts, round limits and exhausted budgets are
 `incomplete`, with an explicit terminal reason. A format/incomplete sample never
 passes a negative-only rule. The restart fixture also records a separate
@@ -99,7 +111,21 @@ case against the candidate. Retain rejected outcomes without changing prompts.
 The unchanged control estimates baseline/control sample flips. The removal
 comparison pairs case and sample index, reporting gains, losses and an effect
 interval. It is **too little data** when cohorts are missing or unscored, the
-net gain is inside control noise, or the paired effect interval includes zero.
+candidate does not beat both baseline and unchanged control in one-sided exact
+paired sign tests (each p < 0.025). Unsigned control flips describe variability,
+not an expected positive gain; increasing samples cannot make a net-gain-greater-
+than-all-flips rule sensitive to smaller effects. Control gains, losses and signed
+drift are reported alongside the flip rate and the paired effect interval.
+
+The smallest resolvable improvement with no losses is six discordant gains
+(6/219, about 2.74 percentage points). That is a significance threshold, not a
+power guarantee. At the prior control flip rate (12/102), a planning approximation
+for 80% power at two-sided 5% is `2.8 * sqrt(2 * flipRate / pairedSamples)`:
+about 9.2 percentage points with 219 complete pairs. The run reports this
+noise-dependent estimate as `detectableEffect`, floored at the six-gain threshold;
+it assumes independent paired samples and comparable discordance across arms.
+Actual detectability depends on discordance and how gains distribute between
+cases; three samples cannot resolve tiny per-case effects.
 A proposal additionally requires no passing sample to regress and lower median
 tokens per turn. Safety/authority paragraphs are always protected. The controller
 writes `proposal.md` and candidate source only after these conditions hold.
@@ -140,6 +166,11 @@ and records per-arm sample class counts (`pass`, `behavior`, `format`,
 `incomplete`). `pass: null` means behavior was not scored. Per-case rows retain
 `pass` (now null when samples are unscored) and add `status`, alongside `passed`, `scored`, `proportion`, `interval`
 and fixed `samples`. Each sample includes its seed and raw `rounds`.
+It also includes valid `transcript.calls`, all `attemptedCalls`, and rejected
+`invalidCalls` with validation results. Per-arm `diagnostics` separately counts
+invalid calls and scenario incompletes, and lists every incomplete case/seed and
+reason. The summary lists the same incomplete reasons; JSONL history retains
+these diagnostics without requiring old lines to contain them.
 `experiment` includes paired gains/losses, `noiseFlips`, `noiseRate`, `noisePairs`,
 `effectInterval` and verdict; `noise` also retains the baseline/control comparison
 when there is no eligible removal. Summary and JSONL history retain the old

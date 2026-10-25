@@ -15,8 +15,8 @@
     "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
     "corners": [
       {
-        "cornerId": "c-audit",
-        "parentRoomId": "room-case",
+        "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+        "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
         "name": "token-audit",
         "createdBy": "opal-id",
         "archived": false
@@ -66,7 +66,7 @@
       {
         "call": "open_corner",
         "result": {
-          "address": "c-simulated",
+          "address": "1636608f-61e5-51ce-91a5-ab2359703fee",
           "ok": true
         }
       }

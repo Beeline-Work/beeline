@@ -20,8 +20,8 @@
     "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Authentication fixes normally go to Reviewer-A, who wrote the session code. Worker-B is another capable agent."
   },
   "toolResults": {
-    "read": "{\"roomAddress\":\"room-1\",\"reviewer\":\"@reviewer-a\",\"procedure\":\"Write a brief and open the corner. Both agents are available.\"}",
-    "open_corner": "{\"address\":\"c-1\",\"ok\":true}"
+    "read": "{\"roomAddress\":\"09c40034-77e4-5fe3-8c40-cc637d013185\",\"reviewer\":\"@reviewer-a\",\"procedure\":\"Write a brief and open the corner. Both agents are available.\"}",
+    "open_corner": "{\"address\":\"082f3b91-2d42-5092-aa6c-92f5a2112a5b\",\"ok\":true}"
   },
   "pass": {
     "all": [
@@ -53,7 +53,7 @@
               {
                 "call": "order",
                 "args": {
-                  "address": "c-1",
+                  "address": "082f3b91-2d42-5092-aa6c-92f5a2112a5b",
                   "agent": {
                     "matches": "^@?worker-b$",
                     "flags": "i"

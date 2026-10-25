@@ -47,7 +47,9 @@
   },
   "scenario": {
     "history": [],
-    "files": {},
+    "files": {
+      "apps/server/src/auth.ts": "export function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n"
+    },
     "brief": {
       "repositoryWork": true,
       "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
@@ -80,7 +82,114 @@
           "exitCode": 0,
           "stdout": "Workspace dependencies and builds prepared."
         }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+              "name": "prepare-runs-first",
+              "kind": "code-corner"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "name": "prepare-runs-first",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": null,
+          "worktree": {
+            "featureBranch": "feature/corner-case",
+            "targetBranch": "main"
+          },
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:(?:cd \"\\$\\(git rev-parse --show-toplevel\\)\"|pwd|ls(?: -[a-z]+)?(?: /replay(?: 2>/dev/null)?| apps/mobile/sources/buzz/)?|git status(?: --short)?(?: --branch)?|git branch --show-current|git log --oneline -(?:3|5)|cat apps/server/src/auth\\.ts|sed -n '(?:1,200p|1,240p)' apps/server/src/auth\\.ts|head -50)(?:\\s*(?:&&|;|\\|)\\s*|$))+$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\nWorking tree clean\ncccc333 Token expiry boundary\napps/server/src/auth.ts\napps/mobile/sources/buzz/live-turn-stream.test.ts\napps/mobile/sources/buzz/draft-settle.test.ts\nexport function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n"
+        }
       }
-    ]
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

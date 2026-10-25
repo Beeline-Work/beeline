@@ -9,14 +9,14 @@
   "turn": {
     "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- On a merge wake, order the next authorized step in that turn; never claim unassigned work.",
     "task": {
-      "body": "Merge event: the token fix merged. The owner previously authorized the next step: order @fern in corner c-audit to audit token expiry after merge. No audit order has been sent yet.",
+      "body": "Merge event: the token fix merged. The owner previously authorized the next step: order @fern in corner 3161ef0f-0cd0-5c4e-a789-67058508b8ae to audit token expiry after merge. No audit order has been sent yet.",
       "commandReason": "subscribed_event"
     },
     "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
     "corners": [
       {
-        "cornerId": "c-audit",
-        "parentRoomId": "room-case",
+        "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+        "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
         "name": "token-audit",
         "createdBy": "opal-id",
         "archived": false
@@ -32,7 +32,7 @@
       {
         "call": "order",
         "args": {
-          "address": "c-audit",
+          "address": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
           "agent": {
             "matches": "^@?fern$"
           }
@@ -61,7 +61,130 @@
           "slug": "workspace-core",
           "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
         }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "memory-rule-11",
+              "kind": "room"
+            },
+            {
+              "address": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "name": "token-audit",
+              "kind": "corner",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": [
+            {
+              "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "token-audit",
+              "createdBy": "opal-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+          "name": "memory-rule-11",
+          "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+          "repository": null,
+          "worktree": null,
+          "corners": [
+            {
+              "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "token-audit",
+              "createdBy": "opal-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
       }
-    ]
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

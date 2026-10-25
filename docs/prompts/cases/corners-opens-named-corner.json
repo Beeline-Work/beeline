@@ -29,7 +29,7 @@
     }
   },
   "toolResults": {
-    "read": "{\"roomAddress\":\"room-1\",\"messages\":[{\"id\":\"m5\",\"author\":\"dana\",\"text\":\"@ruby please fix the flaky login test in apps/server. Go ahead and start the work.\"}],\"procedure\":\"Write a brief with Intent, Acceptance criteria and Non-goals; the dispatching message is the approval.\"}"
+    "read": "{\"roomAddress\":\"09c40034-77e4-5fe3-8c40-cc637d013185\",\"messages\":[{\"id\":\"m5\",\"author\":\"dana\",\"text\":\"@ruby please fix the flaky login test in apps/server. Go ahead and start the work.\"}],\"procedure\":\"Write a brief with Intent, Acceptance criteria and Non-goals; the dispatching message is the approval.\"}"
   },
   "scenario": {
     "history": [],
@@ -48,10 +48,114 @@
       {
         "call": "open_corner",
         "result": {
-          "address": "c-simulated",
+          "address": "1636608f-61e5-51ce-91a5-ab2359703fee",
           "ok": true
         }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "corners-opens-named-corner",
+              "kind": "room"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "corners-opens-named-corner",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": {
+            "name": "acme/app",
+            "branch": "main"
+          },
+          "worktree": null,
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
       }
-    ]
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

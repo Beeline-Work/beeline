@@ -5,7 +5,7 @@
   "place": "code-corner",
   "turn": {
     "task": {
-      "body": "Report the blocker to your commander Juniper, who will relay it to Dana in room-demo. Dana has not read this corner.",
+      "body": "Report the blocker to your commander Juniper, who will relay it to Dana in 4aad6a5a-e5d3-55e4-a9b7-65edc69b23a1. Dana has not read this corner.",
       "commandReason": "order",
       "fromName": "juniper"
     }
@@ -45,7 +45,7 @@
       {
         "noCall": "post",
         "args": {
-          "address": "room-demo"
+          "address": "4aad6a5a-e5d3-55e4-a9b7-65edc69b23a1"
         }
       }
     ]

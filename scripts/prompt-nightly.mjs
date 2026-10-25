@@ -61,8 +61,17 @@ export function chooseBlock(blocks, baseline, cases, previousId, skipped = []) {
   return candidates[(previous + 1) % candidates.length];
 }
 
+// One-sided exact paired sign test: discordant pairs have equal signs under no effect.
+export function pairedPValue(gains, losses) {
+  const n = gains + losses;
+  if (!n || gains <= losses) return 1;
+  let term = 2 ** -n, sum = term;
+  for (let k = 1; k <= losses; k++) { term *= (n - k + 1) / k; sum += term; }
+  return sum;
+}
+
 export function assessExperiment(baseline, candidate, control = []) {
-  const pairs = (other) => baseline.flatMap(row => row.samples.map((s, index) => ({ id: row.id, baseline: s,
+  const pairs = (other) => baseline.flatMap(row => row.samples.map((s, index) => ({ id: row.id, index, baseline: s,
     other: other.find(c => c.id === row.id)?.samples[index] })));
   const changed = pairs(candidate), unchanged = pairs(control);
   const valid = p => p.baseline.status === 'behavior' && p.other?.status === 'behavior';
@@ -73,6 +82,11 @@ export function assessExperiment(baseline, candidate, control = []) {
   const gains = changed.filter(p => valid(p) && !p.baseline.pass && p.other.pass).length;
   const losses = changed.filter(p => valid(p) && p.baseline.pass && !p.other.pass).length;
   const flips = unchanged.filter(p => valid(p) && p.baseline.pass !== p.other.pass).length;
+  const controlGains = unchanged.filter(p => valid(p) && !p.baseline.pass && p.other.pass).length;
+  const controlLosses = unchanged.filter(p => valid(p) && p.baseline.pass && !p.other.pass).length;
+  const aboveControl = changed.filter((p, i) => valid(p) && valid(unchanged[i]));
+  const excessGains = aboveControl.filter(p => !control.find(r => r.id === p.id).samples[p.index].pass && p.other.pass).length;
+  const excessLosses = aboveControl.filter(p => control.find(r => r.id === p.id).samples[p.index].pass && !p.other.pass).length;
   const before = median(baseline.flatMap(r => r.samples.map(s => s.tokens)));
   const after = median(candidate.flatMap(r => r.samples.map(s => s.tokens)));
   const regressions = [...new Set(changed.filter(p => valid(p) && p.baseline.pass && !p.other.pass).map(p => p.id))];
@@ -80,9 +94,20 @@ export function assessExperiment(baseline, candidate, control = []) {
   // Conservative paired discordance interval; a zero-effect result needs more data.
   const margin = 1.96 * Math.sqrt(gains + losses);
   const effectInterval = changed.length ? [(net-margin)/changed.length, (net+margin)/changed.length] : [-1, 1];
-  const enough = complete && net > flips && effectInterval[0] > 0;
+  const effectPValue = pairedPValue(gains, losses), excessPValue = pairedPValue(excessGains, excessLosses);
+  // Compare against both baseline and the unchanged control. Flips are unsigned
+  // noise, not expected drift; requiring net > all flips never improves with N.
+  const enough = complete && effectPValue < 0.025 && excessPValue < 0.025;
+  const noisePairs = unchanged.filter(valid).length;
+  const noiseRate = noisePairs ? flips / noisePairs : null;
+  // Planning approximation: 80% power, two-sided 5%, independent discordance
+  // in two comparisons. Floor prevents claiming zero uncertainty at zero flips.
+  const detectableEffect = noisePairs ? Math.min(1, Math.max(6 / noisePairs,
+    2.8 * Math.sqrt(2 * Math.max(noiseRate, 1 / noisePairs) / noisePairs))) : null;
   return { accepted: enough && !losses && after < before, outcome: !enough ? 'too little data' : !losses && after < before ? 'propose removal' : 'rejected',
-    gains, losses, pairedSamples: changed.filter(valid).length, noiseFlips: flips, noisePairs: unchanged.filter(valid).length, noiseRate: unchanged.filter(valid).length ? flips / unchanged.filter(valid).length : null,
+    gains, losses, pairedSamples: changed.filter(valid).length, noiseFlips: flips, noisePairs, noiseRate,
+    controlGains, controlLosses, controlDrift: noisePairs ? (controlGains-controlLosses)/noisePairs : null,
+    excessGains, excessLosses, effectPValue, excessPValue, detectableEffect,
     effectInterval, regressions, before, after };
 }
 
@@ -171,13 +196,18 @@ function safetyViolation(rule, transcript) {
 export async function replaySample({ prompt, skills, rule, model, request, ledger, testCase = {}, tools = [], seed = 1, structured = true }) {
   const messages = [{ role: 'user', content: prompt }];
   const transcript = { calls: [], text: '' };
-  const requests = [], rounds = [];
+  const requests = [], rounds = [], invalidCalls = [], attemptedCalls = [];
   let tokens = 0, cost = 0;
   const finish = (status, reason, terminal) => {
-    const unsafe = safetyViolation(rule, transcript);
+    const unsafe = safetyViolation(rule, { ...transcript, calls: attemptedCalls });
     if (unsafe && status === 'incomplete') { status = 'behavior'; reason = unsafe; terminal = 'unsafe-action'; }
-    const verdict = status === 'behavior' ? evaluateRule(rule, transcript) : { pass: null, reason };
-    return { ...verdict, status, terminal, transcript, tokens, cost, requests, rounds, seed,
+    if (invalidCalls.length && !transcript.calls.length && ['final', 'round-limit'].includes(terminal)) {
+      status = 'behavior'; reason = 'No valid tool call after validation errors'; terminal = 'invalid-call';
+    }
+    let verdict = { pass: null, reason };
+    if (status === 'behavior') verdict = unsafe || terminal === 'invalid-call'
+      ? { pass: false, reason: unsafe ?? reason } : evaluateRule(rule, transcript);
+    return { ...verdict, status, terminal, transcript, attemptedCalls, invalidCalls, tokens, cost, requests, rounds, seed,
       truthfulness: testCase.truthfulness ? evaluateRule(testCase.truthfulness, transcript) : undefined };
   };
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -209,14 +239,18 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
     } catch (error) { return finish('format', error.message, 'json'); }
     if (answer.text) transcript.text += `${transcript.text ? '\n' : ''}${answer.text}`;
     if (!answer.calls.length) return finish('behavior', undefined, 'final');
-    transcript.calls.push(...answer.calls);
+    attemptedCalls.push(...answer.calls);
+    const validCalls = [];
     for (const call of answer.calls) {
       const definition = tools.find(t => t.name === call.name);
       if (!definition || !validSchema(definition.inputSchema, call.args)) {
-        return { ...finish('behavior', undefined, 'invalid-call'), pass: false, reason: `Invalid simulated tool call: ${call.name}` };
-      }
+        const result = { error: 'validation_error', message: definition ? `Arguments must match ${JSON.stringify(definition.inputSchema)}` : `Unknown tool: ${call.name}` };
+        invalidCalls.push({ round, call, result });
+        trace.results.push({ call, result });
+      } else validCalls.push(call);
     }
-    for (const call of answer.calls) {
+    transcript.calls.push(...validCalls);
+    for (const call of validCalls) {
       // These calls end the assigned turn; trailing calls are never silently dropped.
       if (['order', 'report', 'no_reply_needed'].includes(call.name)) {
         if (answer.calls.at(-1) !== call) return { ...finish('behavior', undefined, 'invalid-sequence'), pass: false, reason: 'Calls after terminal action' };
@@ -237,7 +271,7 @@ export async function replaySample({ prompt, skills, rule, model, request, ledge
   return finish('incomplete', 'Continuation exceeded six rounds', 'round-limit');
 }
 
-export const FIXED_SAMPLES = 2;
+export const FIXED_SAMPLES = 3;
 export function proportion(samples) {
   const scored = samples.filter(s => s.status === 'behavior');
   const n = scored.length, k = scored.filter(s => s.pass).length;
@@ -251,6 +285,14 @@ export function classCounts(rows) {
   const counts = { pass: 0, behavior: 0, format: 0, incomplete: 0 };
   for (const row of rows) for (const sample of row.samples) counts[sample.status === 'behavior' && sample.pass ? 'pass' : sample.status]++;
   return counts;
+}
+
+export function diagnostics(rows) {
+  const incomplete = rows.flatMap(row => row.samples.filter(s => s.status === 'incomplete')
+    .map(s => ({ id: row.id, seed: s.seed, terminal: s.terminal, reason: s.reason,
+      ...(s.terminal === 'scenario' ? { call: s.rounds.at(-1)?.results?.at(-1)?.call } : {}) })));
+  return { invalidCalls: rows.reduce((n, r) => n + r.samples.reduce((a, s) => a + s.invalidCalls.length, 0), 0),
+    scenarioIncomplete: incomplete.filter(s => s.terminal === 'scenario').length, incomplete };
 }
 
 /** Browser-session cases stay outside both arms of the weekly cohort. */
@@ -361,16 +403,27 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     save();
   }
   result.classes = { baseline: classCounts(result.baseline), control: classCounts(result.control), candidate: classCounts(result.candidate) };
+  result.diagnostics = Object.fromEntries(['baseline', 'control', 'candidate'].map(arm => [arm, diagnostics(result[arm])]));
   save();
   const passed = result.baseline.filter((row) => row.pass).length;
   const total = median(result.baseline.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
   const rate = result.status === 'complete'
     ? `${passed}/${cases.length} passed (${(100 * passed / cases.length).toFixed(1)}%)`
-    : `${result.baseline.length}/${cases.length} cases recorded, ${passed} fully passing; overall pass rate unavailable`;
-  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
+    : `${result.baseline.length}/${cases.length} cases recorded, ${passed} majority passing with all samples scored; overall pass rate unavailable`;
+  const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([arm, d]) => [arm, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));
+  const reasons = Object.entries(result.diagnostics).flatMap(([arm, d]) => {
+    const groups = new Map();
+    for (const s of d.incomplete) {
+      const key = `${s.terminal}: ${s.reason}${s.call ? ` (${JSON.stringify(s.call)})` : ''}`;
+      const group = groups.get(key) ?? [];
+      group.push(`${s.id}@${s.seed}`); groups.set(key, group);
+    }
+    return [...groups].map(([reason, ids]) => `${arm} incomplete — ${reason}: ${ids.join(', ')}`);
+  });
+  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; diagnostics ${JSON.stringify(diagnosticCounts)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; detectable effect (80% power approximation) ${result.noise?.detectableEffect ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.\n${reasons.join('\n')}`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
-  appendFileSync(history, `${JSON.stringify({ schemaVersion: 2, classes: result.classes, startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,
+  appendFileSync(history, `${JSON.stringify({ schemaVersion: 2, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,
     tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, pass, medianTokensPerTurn, proportion, interval, scored }) => ({ id, pass, medianTokensPerTurn, proportion, interval, scored })), experiment: result.experiment })}\n`);
   console.log(summary);
   return { ...result, tokens: ledger.tokens, cost: ledger.cost };

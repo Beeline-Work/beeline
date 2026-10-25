@@ -2384,6 +2384,28 @@ ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS next_retry_at timestam
 ALTER TABLE push_delivery_claims ADD COLUMN IF NOT EXISTS read_cleared_at timestamptz;
 -- Content-free observations written only when a real client operation ends.
 -- The dashboard reads a bounded recent window; no timer produces samples.
+CREATE TABLE IF NOT EXISTS x_ad_signups (
+  identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  twclid text, campaign_id text, ad_id text, ad_group_id text,
+  captured_at timestamptz NOT NULL, created_at timestamptz NOT NULL,
+  conversion_id text NOT NULL UNIQUE, event_id text,
+  sent_at timestamptz, attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(), delivery_failed boolean NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS x_ad_signups_date ON x_ad_signups(created_at);
+CREATE INDEX IF NOT EXISTS x_ad_signups_pending ON x_ad_signups(next_attempt_at) WHERE sent_at IS NULL;
+CREATE TABLE IF NOT EXISTS x_ad_daily (
+  day date NOT NULL, level text NOT NULL CHECK(level IN ('campaign','ad_group','ad')),
+  entity_id text NOT NULL, name text NOT NULL, campaign_id text, ad_group_id text,
+  currency text NOT NULL, spend_micros bigint NOT NULL CHECK(spend_micros>=0),
+  impressions bigint NOT NULL CHECK(impressions>=0), link_clicks bigint NOT NULL CHECK(link_clicks>=0),
+  PRIMARY KEY(day,level,entity_id)
+);
+CREATE TABLE IF NOT EXISTS x_ad_sync (
+  id text PRIMARY KEY, completed_at timestamptz, failed_at timestamptz,
+  next_attempt_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS signin_funnel_installs (
   install_id uuid PRIMARY KEY,
   internal boolean NOT NULL DEFAULT false,

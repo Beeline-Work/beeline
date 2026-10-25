@@ -1,3 +1,4 @@
+import { dashboardXAds } from './x-ads.js';
 import { dashboardSigninFunnel } from './signin-funnel.js';
 import { dashboardDownloads } from './operator-dashboard-downloads.js';
 import type { SqlDatabase } from './database.js';
@@ -563,6 +564,7 @@ export async function readOperatorDashboard(
     dashboardHealth(database, measuredAt),
     dashboardOps(database, measuredAt, releaseVersion, minRuntimes),
   ]);
+  const xAds = await dashboardXAds(database, measuredAt).catch(sectionError);
   const overview = await dashboardOverview(database, platforms, measuredAt).catch(sectionError);
   const periods = await dashboardPeriods(database, measuredAt).catch(sectionError);
   const platformBreakdown = await dashboardPlatformBreakdown(database).catch(sectionError);
@@ -593,6 +595,7 @@ export async function readOperatorDashboard(
   };
   return {
     schemaVersion: 1,
+    xAds,
     periods,
     platformBreakdown,
     downloads,

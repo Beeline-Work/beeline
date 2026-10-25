@@ -18,6 +18,7 @@ const REQUIRED_STATIC_PATHS = [
   'review/index.html',
   'join/index.html',
   'join/invite.js',
+  'x-attribution.js',
   '404.html',
   'CNAME',
   '.nojekyll',

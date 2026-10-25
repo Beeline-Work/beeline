@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { Check } from 'typebox/value';
 import {
   INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
   INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
-  INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES,
+  INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
   INSTITUTIONAL_HISTORY_RESULT_MIN,
   INSTITUTIONAL_HISTORY_SNIPPET_MAX_BYTES,
@@ -69,21 +70,17 @@ export const AUTHORIZED_ROOMS_CTE = `authorized_rooms AS (
        )`;
 
 function boundedQuery(value: unknown): string {
-  if (typeof value !== 'string' || value.includes('\0')) {
-    throw new Error('institutional history query is invalid');
+  if (typeof value !== 'string' || !Check(INSTITUTIONAL_HISTORY_QUERY_SCHEMA, value)) {
+    throw new Error('institutional history query is invalid: use 1–500 characters, including a non-whitespace character, without NUL');
   }
-  const query = value.trim();
-  if (!query || Buffer.byteLength(query, 'utf8') > INSTITUTIONAL_HISTORY_QUERY_MAX_BYTES) {
-    throw new Error('institutional history query is invalid');
-  }
-  return query;
+  return value.trim();
 }
 
 function boundedLimit(value: unknown): number {
   if (value === undefined) return 5;
   if (!Number.isSafeInteger(value) || (value as number) < INSTITUTIONAL_HISTORY_RESULT_MIN ||
       (value as number) > INSTITUTIONAL_HISTORY_RESULT_MAX) {
-    throw new Error('institutional history limit is invalid');
+    throw new Error(`institutional history limit is invalid: use an integer from ${INSTITUTIONAL_HISTORY_RESULT_MIN} to ${INSTITUTIONAL_HISTORY_RESULT_MAX}`);
   }
   return Math.min(value as number, INSTITUTIONAL_HISTORY_RESULT_MAX);
 }

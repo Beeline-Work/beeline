@@ -4,7 +4,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { declareCornerProofOutput } from '../apps/body/src/corner-proof-output.js';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -27,7 +28,8 @@ async function main() {
   const { createBeelineServer } = await import(built('server', 'server.js')) as typeof import('../apps/server/src/server.js');
   const { DaemonApiClient } = await import(built('body', 'daemon-api-client.js')) as typeof import('../apps/body/src/daemon-api-client.js');
   const db = new PgliteDatabase();
-  const scratch = await mkdtemp(resolve('.command-proof-'));
+  const proofRoot = await declareCornerProofOutput(process.cwd(), basename(resolve(process.cwd())));
+  const scratch = await mkdtemp(join(proofRoot, 'public-post-'));
   const live = new LiveHub();
   const auth = new TokenAuth(db, async () => ({ subject: 'command-proof', login: 'proofcaptain', name: 'Proof Captain' }));
   const server = createBeelineServer({ database: db, auth, live,

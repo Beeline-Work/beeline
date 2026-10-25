@@ -23,7 +23,7 @@ warning packets and transport disconnection.
 1. Start a task-owned LiveKit v1.9.12 development container on host TCP 18884,
    TCP 18885 and UDP 18886, mapped to container 7880/7881/7882.
 2. Generate local speech PCM with
-   `ffmpeg -f lavfi -i "flite=text='Ready'" -ar 24000 -ac 1 -f s16le .voice-proof/budget/warning.pcm`.
+   `ffmpeg -f lavfi -i "flite=text='Ready'" -ar 24000 -ac 1 -f s16le .beeline-proof/budget/warning.pcm`.
 3. Run `node --import tsx scripts/prove-voice-budget.ts` (loopback HTTP 38597).
 4. Prebuild the ordinary Android entry. Only in ignored generated native files,
    enable cleartext HTTP and disable updates. Build `:app:assembleRelease` for

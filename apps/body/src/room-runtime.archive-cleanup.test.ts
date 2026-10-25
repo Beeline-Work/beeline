@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { materializeCornerWorktree, RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
+import { declareCornerProofOutput } from './corner-proof-output.js';
 
 /**
  * An archived corner whose worktree has commits no origin ref contains can
@@ -66,6 +67,29 @@ function runtimeAt(root: string): AgentRuntimeRecord {
 }
 
 describe('archived corner branch cleanup', () => {
+  it('retains declared proof and persists one archive timestamp without calling GitHub', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-proof-reap-'));
+    roots.push(root);
+    const path = resolve(root, 'beeline/corners/proof-corner');
+    await mkdir(path, { recursive: true });
+    await declareCornerProofOutput(path, 'proof-corner');
+    const execute = vi.fn();
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), resolve(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: { execute } as unknown as DaemonApiClient });
+    const internal = coordinator as unknown as { reapCornerWorktree(worktree: object): Promise<void> };
+    const worktree = { cornerId: 'proof-corner', path, branch: FEATURE, parentRoomId: 'parent', gitCommonDir: resolve(root, 'repo.git'), token: '' };
+    try {
+      await internal.reapCornerWorktree(worktree);
+      const ownerPath = resolve(root, 'beeline/storage-owners/corners-proof-corner.json');
+      const first = JSON.parse(await readFile(ownerPath, 'utf8'));
+      expect(first.ended).toBe(true);
+      expect(first.endedAt).toEqual(expect.any(Number));
+      await internal.reapCornerWorktree(worktree);
+      expect(JSON.parse(await readFile(ownerPath, 'utf8')).endedAt).toBe(first.endedAt);
+      expect(execute).not.toHaveBeenCalled();
+    } finally { await coordinator.shutdown(); }
+  });
+
   it('switches new shared activations off for two Rooms in the same Workspace', async () => {
     const root = await mkdtemp(resolve(tmpdir(), 'beeline-shared-toggle-'));
     roots.push(root);

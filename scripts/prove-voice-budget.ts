@@ -1,3 +1,5 @@
+import { basename as proofBasename, resolve as proofResolve } from 'node:path';
+import { declareCornerProofOutput } from '../apps/body/src/corner-proof-output.js';
 /** Disposable Android call-limit proof. RTC/HTTP/runtime/ledger are real;
  * STT and synthesis are deterministic local doubles, with spoken PCM from flite.
  * Run with the normal Android index.ts entry; no production identity or provider. */
@@ -18,10 +20,11 @@ import { createBeelineServer } from '../apps/server/src/server.js';
 import { VOICE_DATA_TOPIC } from '@beeline/api-contract/phone';
 
 async function main() {
+  await declareCornerProofOutput(process.cwd(), proofBasename(proofResolve(process.cwd())));
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64);
 const W = randomUUID(), R = randomUUID();
 const db = new PgliteDatabase(), live = new LiveHub();
-const pcm = await readFile('.voice-proof/budget/warning.pcm');
+const pcm = await readFile('.beeline-proof/budget/warning.pcm');
 const peerSignals: unknown[] = [];
 let peerVoicedFrames = 0, inputMs = 0, peerDisconnected = false;
 let onFirstInput = () => {};
@@ -116,7 +119,7 @@ server.on('request', (request, response) => {
       const result = { inputMs, budget, peerBudget, peerSignals, peerVoicedFrames, peerDisconnected,
         survivors: call?.participants.map(p => p.pubkey) ?? [], callStillActive: !!call,
         ended: (await db.query('SELECT text FROM messages WHERE card_type=$1 ORDER BY created_at DESC LIMIT 1', ['voice-call'])).rows[0] };
-      await writeFile('.voice-proof/budget/result.json', JSON.stringify(result, null, 2)); json(result);
+      await writeFile('.beeline-proof/budget/result.json', JSON.stringify(result, null, 2)); json(result);
     })(); return;
   }
   ordinary.call(server, request, response);

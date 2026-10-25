@@ -5,7 +5,8 @@ import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { declareCornerProofOutput } from '../apps/body/src/corner-proof-output.js';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -31,7 +32,8 @@ async function main() {
   const { AgentScheduleLoop } = await import(built('server', 'agent-schedules.js')) as typeof import('../apps/server/src/agent-schedules.js');
   const { GitHubOperations } = await import(built('server', 'github-operations.js')) as typeof import('../apps/server/src/github-operations.js');
   const db = new PgliteDatabase();
-  const scratch = await mkdtemp(resolve('.command-proof-'));
+  const proofRoot = await declareCornerProofOutput(process.cwd(), basename(resolve(process.cwd())));
+  const scratch = await mkdtemp(join(proofRoot, 'command-'));
   const live = new LiveHub();
   const payloads: string[] = [];
   class ListenClient extends EventEmitter {

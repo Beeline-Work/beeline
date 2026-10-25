@@ -41,6 +41,8 @@
         // Reproduction IDLE-1 invokes the isolated built-service proof by path.
         "scripts/prove-idle-corner.mjs",
         "scripts/prove-corner-stall.mjs",
+        // The development guide invokes the built storage retention proof by path.
+        "scripts/prove-corner-proof-retention.mjs",
         "scripts/check-acp-adapters.mjs",
         "scripts/prove-voice-mode.ts",
         "scripts/prove-voice-call-errors.ts",

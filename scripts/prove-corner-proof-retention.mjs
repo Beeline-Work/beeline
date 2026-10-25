@@ -1,0 +1,30 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import assert from 'node:assert/strict';
+import { declareCornerProofOutput } from '../apps/body/dist/corner-proof-output.js';
+import { rememberStorageOwner, reclaimOwnedCheckout } from '../apps/body/dist/storage-owners.js';
+import { helperStorageReport } from '../apps/body/dist/storage-report.js';
+const root = await mkdtemp(resolve(tmpdir(), 'cleanup-disk-user-path-'));
+const checkout = resolve(root, 'beeline/corners/corner');
+const git = (...args) => execFileSync('git', ['-C', checkout, ...args], { encoding: 'utf8', stdio: ['ignore','pipe','pipe'] }).trim();
+try {
+  await mkdir(checkout, { recursive: true }); git('init');
+  await writeFile(resolve(checkout, '.gitignore'), '.beeline-proof/\n');
+  await writeFile(resolve(checkout, 'source.ts'), 'unpublished source');
+  git('add', '.'); git('-c','user.name=Proof','-c','user.email=proof@example.test','commit','-m','unpublished');
+  const head = git('rev-parse','HEAD');
+  await writeFile(resolve(checkout, 'source.ts'), 'tracked local edit');
+  const proof = await declareCornerProofOutput(checkout, 'corner');
+  await writeFile(resolve(proof, 'recording.mp4'), Buffer.alloc(1024 * 1024, 1));
+  const owner = { workspaceId: 'workspace', roomId: 'corner', kind: 'corners', itemId: 'corner', ended: true, endedAt: Date.now()-8*86400000 };
+  await rememberStorageOwner(root, owner);
+  const before = (await helperStorageReport(root)).archivedCheckouts[0];
+  await reclaimOwnedCheckout(root, owner);
+  const after = (await helperStorageReport(root)).archivedCheckouts[0];
+  assert.ok(before.allocatedBytes > after.allocatedBytes);
+  assert.equal(git('rev-parse','HEAD'), head);
+  assert.equal(await readFile(resolve(checkout, 'source.ts'),'utf8'), 'tracked local edit');
+  console.log(JSON.stringify({ reproduction: 'CLEANUP-DISK-1', before, after, unpublishedHeadPreserved: head, trackedEditPreserved: true }, null, 2));
+} finally { await rm(root, { recursive: true, force: true }); }

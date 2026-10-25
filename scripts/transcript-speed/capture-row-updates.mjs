@@ -20,7 +20,9 @@ const artifact = androidArtifact(adb);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const dump = () => {
   adb('shell', 'uiautomator', 'dump', '/sdcard/row-updates.xml');
-  return adb('shell', 'cat', '/sdcard/row-updates.xml');
+  return adb('shell', 'cat', '/sdcard/row-updates.xml')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)));
 };
 const tap = point => {
   if (!point) throw new Error('Expected visible control missing');

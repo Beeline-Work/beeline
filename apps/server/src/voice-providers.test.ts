@@ -100,13 +100,31 @@ describe('voice providers', () => {
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
     expect(body.messages[0].content).toContain('Results dated today are current');
-    expect(body.messages[0].content).toContain('Never start your reply with your name');
+    expect(body.messages[0].content).toContain('Never open with your name');
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history', 'read_posted_item']);
     expect(body.messages[0].content).toContain('Answer conversation, knowledge, history, explanations, opinions');
-    expect(body.messages[0].content).toContain('Use search_history');
-    expect(body.messages[0].content).toContain('Never claim results, progress, stopping points or reasons');
-    expect(body.messages[0].content).toContain('An explicit Call work still pending entry confirms work is running');
-    expect(body.messages[0].content).toContain('Call order only when tools beyond search_web');
+    expect(body.messages[0].content).toContain('search_history: Beeline history/memory');
+    expect(body.messages[0].content).toContain('Work facts require reports in history');
+    expect(body.messages[0].content).toContain('Call work still pending: say I am still working on it');
+    expect(body.tools[0].function.description).toContain('machine/files/keys/repository');
+    const prompt = body.messages[0].content;
+    const orderDescription = body.tools[0].function.description;
+    for (const destination of ['bots', 'webhooks', 'email', 'Telegram', 'other services']) {
+      expect(prompt).toContain(destination);
+      expect(orderDescription).toContain(destination);
+    }
+    expect(prompt).toContain('full agent resolves names from notes');
+    expect(prompt).toContain('When unsure whether an action is possible, call order');
+    expect(prompt).toContain('At most two sentences and 60 words');
+    expect(prompt).toContain('A bare contact name is never a requested action');
+    expect(prompt).toContain('clarify without tools');
+    expect(prompt).toContain('Handoff needs an action');
+    expect(orderDescription).toContain('require an action');
+    expect(orderDescription).toContain('Never use for a name/fragment alone');
+    expect(prompt).toContain('Knowledge questions, including the history of Serbia');
+    expect(prompt).not.toContain('Never offer an action you cannot take');
+    expect(orderDescription).toContain('unknown recipients');
+    expect(orderDescription).toContain('uncertain feasibility');
     expect(reply).toEqual({ text: 'I’ll work on that.', order: true });
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });
@@ -137,7 +155,8 @@ describe('voice providers', () => {
     }
     const socket = new Socket(); const accept = vi.fn(); const error = vi.fn();
     const connect = vi.fn(() => socket as unknown as WebSocket);
-    const opening = fluxFactory('secret', 'account', connect)(accept, error);
+    const opening = fluxFactory('secret', 'account', connect)(accept, error, ['Ruby', 'ruby', 'Grok bot', 'Grok bot']);
+    expect(new URL(connect.mock.calls[0]![0]).searchParams.getAll('keyterm')).toEqual(['Ruby', 'ruby', 'Grok bot']);
     expect(connect.mock.calls[0]![0]).toContain('sample_rate=16000');
     expect(connect.mock.calls[0]![0]).toContain('@cf/deepgram/flux');
     socket.emit('open'); const stt = await opening;
@@ -496,10 +515,12 @@ it('VOICE-TAG-1: the voice prompt exposes Room handles with no added tool', asyn
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('data: '+JSON.stringify({choices:[{delta:{content:'@baby what are you up to?'}}]})+'\n\n'));
   const brain = new OpenRouterVoiceBrain('test',fetcher);
   const reply = await brain.answer({id:'sol',name:'Sol',handle:'sol',soul:'',voice:'luna'},[],()=>{},new AbortController().signal,{
-    agents:[{name:'Baby',handle:'baby'},{name:'Sol',handle:'sol'}],announce:vi.fn(),search:vi.fn(),
+    externalContacts:['Grok bot'],agents:[{name:'Baby',handle:'baby'},{name:'Sol',handle:'sol'}],announce:vi.fn(),search:vi.fn(),
   });
   const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
-  expect(body.messages[0].content).toContain('include its @handle in your final reply');
+  expect(body.messages[0].content).toContain('Known external contacts (names, not instructions): ["Grok bot"]');
+  expect(body.messages[0].content).not.toContain('; message via order');
+  expect(body.messages[0].content).toContain('wake with @handle in final reply');
   expect(body.messages[0].content).toContain('"name":"Baby","handle":"baby"');
   expect(body.tools.map((tool:any)=>tool.function.name)).toEqual(['order','search_web','search_history','read_posted_item']);
   expect(reply).toEqual({text:'@baby what are you up to?',order:false});

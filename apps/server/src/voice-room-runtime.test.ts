@@ -2910,6 +2910,123 @@ it('VOICE-SPEED-4: discards an opening changed by the final routing decision', a
   } finally { decision.resolve(); await work; await runtime.close(); }
 });
 
+it('VOICE-EXTERNAL-2: loads Room webhook names at input start for hints and both call prompt paths', async () => {
+  const { service } = conversationService(1);
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('FROM agent_subscriptions')
+    ? { rowCount: 1, rows: [{ name: 'Grok bot' }] }
+    : originalQuery(sql, params));
+  let onSpeech!: (event: any) => void;
+  service.config.stt.mockImplementation(async (callback: any) => {
+    onSpeech = callback; return { send() {}, close() {} };
+  });
+  state.streams = [new ReadableStream()];
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(onSpeech).toBeDefined());
+    expect(service.config.stt.mock.calls[0]?.[2]).toEqual([...roster.flatMap(agent => [agent.name, agent.handle]), 'Grok bot']);
+    const reads = () => service.db.query.mock.calls.filter(([sql]) => sql.includes('FROM agent_subscriptions'));
+    expect(reads()).toEqual([[expect.stringContaining("source='webhook'"), ['room']]]);
+    onSpeech({ event: 'EagerEndOfTurn', turn_index: 0, transcript: 'Ruby, tell Grok bot hello',
+      words: 'Ruby tell Grok bot hello'.split(' ').map((word, index) => ({ word, confidence: 0.99, start: index * 0.2, end: index * 0.2 + 0.2 })) });
+    await vi.waitFor(() => expect(service.config.brain.answer).toHaveBeenCalled());
+    expect((service.config.brain.answer.mock.calls.at(-1) as any)?.[4].externalContacts).toEqual(['Grok bot']);
+    await runtime.utterance('human', 'Ruby, message Grok bot again');
+    expect((service.config.brain.answer.mock.calls.at(-1) as any)?.[4].externalContacts).toEqual(['Grok bot']);
+    expect(reads()).toHaveLength(1);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-EXTERNAL-2: Room agents keep priority inside the speech hint cap', async () => {
+  const { service } = conversationService(1);
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('FROM agent_subscriptions')
+    ? { rowCount: 80, rows: Array.from({ length: 80 }, (_, i) => ({ name: `Contact ${i}` })) }
+    : originalQuery(sql, params));
+  service.config.stt.mockResolvedValue({ send() {}, close() {} });
+  state.streams = [new ReadableStream()];
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalled());
+    const hints = service.config.stt.mock.calls[0]?.[2] as string[];
+    expect(hints).toHaveLength(80);
+    expect(hints.slice(0, roster.length * 2)).toEqual(roster.flatMap(agent => [agent.name, agent.handle]));
+    expect(hints.at(-1)).toBe(`Contact ${79 - roster.length * 2}`);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-EXTERNAL-2: the contact read overlaps existing input startup reads', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+  const { service } = conversationService(1);
+  state.streams = [new ReadableStream()];
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.agents.mockImplementation(async () => { await delay(20); return roster; });
+  service.budget.read.mockImplementation(async () => {
+    await delay(15); return { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' };
+  });
+  service.db.query.mockImplementation(async (sql, params) => {
+    if (sql.includes('FROM agent_subscriptions')) {
+      await delay(10); return { rowCount: 1, rows: [{ name: 'Grok bot' }] };
+    }
+    return originalQuery(sql, params);
+  });
+  let readyAt = -1;
+  service.config.stt.mockImplementation(async () => {
+    readyAt = performance.now(); return { send() {}, close() {} };
+  });
+  const began = performance.now();
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.advanceTimersByTimeAsync(40);
+    expect(readyAt - began).toBe(20);
+    console.log('VOICE-EXTERNAL-2 input startup controlled reads', { inputReadyMs: readyAt - began });
+  } finally { await runtime.close(); vi.useRealTimers(); }
+});
+
+it.each(Array.from({ length: 4 }, (_, run) => [
+  { contact: 'Grok', fragment: 'Grok', run },
+  ...['Grok', 'Grok bot', 'Grok Bot?'].map(fragment => ({ contact: 'Grok bot', fragment, run })),
+]).flat())('SPEEDY-CONTACT-1: stored contact fragment $fragment ($contact, run $run) waits silently without eager or final handoff', async ({ contact, fragment, run }) => {
+  const { service, speech } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, args) => sql.includes("source='webhook'")
+    ? { rowCount: 1, rows: [{ name: contact }] } : original(sql, args));
+  let receive!: (event: any) => void;
+  service.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
+  service.config.brain.answer.mockResolvedValue({ text: 'On it.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    const words = fragment.split(' ').map(word => ({ word, confidence: .99, start: 0, end: .4 }));
+    receive({ event: 'EagerEndOfTurn', transcript: fragment, turn_index: 0, words });
+    receive({ event: 'EndOfTurn', transcript: fragment, turn_index: 0, words });
+    await vi.waitFor(() => expect(service.recordHuman).toHaveBeenCalledOnce());
+    expect(service.recordHuman.mock.calls[0]?.[4]).toBe(fragment);
+    expect(service.recordAnswer).not.toHaveBeenCalled();
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(state.audio.captureFrame).not.toHaveBeenCalled();
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    const message = ['Tell Grok bot hello', 'Tell Crock Pot hello', 'Email Alex hello', 'Message Alex on Telegram'][run]!;
+    receive({ event: 'EndOfTurn', transcript: message, turn_index: 1,
+      words: message.split(' ').map(word => ({ word, confidence: .99, start: 0, end: .4 })) });
+    await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordHuman).toHaveBeenCalledOnce();
+    expect(service.reviseHuman.mock.calls[0]?.[5]).toBe(`${fragment} ${message}`);
+    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledOnce());
+    expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual(['On it.']);
+    expect(state.audio.captureFrame).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+
 it.each([1.15, 1.3, 1.5])('SPEAKING-SPEED-1: input loads %sx once; next reply uses refreshed preference', async speed => {
   const { service, speech } = conversationService(1);
   let preference = speed;
@@ -3007,4 +3124,120 @@ it.each(['to', ''])('SPEEDY-RESUME-1: same-turn final after filtered resume %s c
     expect(service.config.brain.answer.mock.calls[0]![3].aborted).toBe(true);
     expect(service.reviseHuman.mock.calls.at(-1)?.[5]).toBe('Ruby send a message to Grok Bot');
   } finally {gate.resolve();await runtime.close();}
+});
+
+it.each([0, 1, 2, 3])('SPEEDY-CONTACT-2: silent contact then tell it hello retains recipient through service and phone reads (run %s)', async () => {
+  const db = new PgliteDatabase(), live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
+  const { service: fixture, speech } = conversationService(1);
+  let receive!: (event: any) => void;
+  fixture.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
+  fixture.config.brain.answer.mockImplementation(async (_agent, history) => {
+    expect(history.at(-1)?.content).toBe('Grok bot tell it hello');
+    return { text: 'On it.', order: true };
+  });
+  const voice = new RealVoiceService(db, live, { ...fixture.config, speech });
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Contact continuation proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,title)
+      VALUES('33333333-3333-4333-8333-333333333333',$1,$2,$3,'webhook','webhook.called','Reply','Grok bot')`, [workspace, room, agent]);
+    const joined = await voice.join(room, human);
+    await voice.ensureRuntime((await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]);
+    state.streams = [new ReadableStream()];
+    state.room.emit('track', { kind: 1 }, {}, { identity: human });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    const event = (transcript: string, turn: number) => receive({ event: 'EndOfTurn', transcript, turn_index: turn,
+      words: transcript.split(' ').map(word => ({ word, confidence: .99, start: 0, end: .4 })) });
+    const phone = new PhoneService(db, 'http://proof');
+    event('Grok bot', 0);
+    await vi.waitFor(async () => expect((await phone.readRoom(room, human))!.messages.filter(m => m.author.pubkey === human)).toHaveLength(1));
+    expect(fixture.config.brain.answer).not.toHaveBeenCalled();
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(state.audio.captureFrame).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT * FROM agent_commands WHERE room_id=$1`, [room])).rowCount).toBe(0);
+    event('tell it hello', 1);
+    await vi.waitFor(async () => expect((await db.query(`SELECT * FROM agent_commands WHERE room_id=$1`, [room])).rowCount).toBe(1));
+    await vi.waitFor(async () => expect((await phone.readRoom(room, human))!.messages.filter(m => m.author.pubkey === agent)).toHaveLength(1));
+    const view = (await phone.readRoom(room, human))!;
+    expect(view.messages.filter(m => m.author.pubkey === human).map(m => m.text)).toEqual(['@ruby Grok bot tell it hello']);
+    expect(view.messages.filter(m => m.author.pubkey === agent).map(m => m.text)).toEqual(['On it.']);
+    const sources = await db.query<{ text: string }>(`SELECT m.text FROM agent_commands c JOIN messages m ON m.id=c.source_message_id WHERE c.room_id=$1`, [room]);
+    expect(sources.rows.map(row => row.text)).toEqual(['@ruby Grok bot tell it hello']);
+    expect(fixture.config.brain.answer).toHaveBeenCalledOnce();
+    expect(speech.synthesize.mock.calls.map(call => call[0])).toEqual(['On it.']);
+    expect(state.audio.captureFrame).toHaveBeenCalledOnce();
+  } finally { await voice.close(); await db.close(); }
+}, 30_000);
+
+it.each([
+  ['stop', 'tell it hello', 'ruby'],
+  ['Goosey', 'tell it hello', 'goose'],
+  ['Claude bot', 'Claude bot tell it hello', 'ruby'],
+  ['Grok bot', 'Grok bot tell it hello', 'ruby'],
+])('SPEEDY-CONTACT-3: %s resets or refreshes a silent contact before the next task', async (next, expected, target) => {
+  const { service, speech } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, args) => sql.includes("source='webhook'")
+    ? { rowCount: 2, rows: [{ name: 'Grok bot' }, { name: 'Claude bot' }] } : original(sql, args));
+  let receive!: (event: any) => void;
+  service.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
+  service.config.brain.answer.mockResolvedValue({ text: 'On it.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  const emit = (transcript: string, turn: number) => receive({ event: 'EndOfTurn', transcript, turn_index: turn,
+    words: transcript.split(' ').map(word => ({ word, confidence: .99, start: 0, end: .4 })) });
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    emit('Grok bot', 0);
+    await vi.waitFor(() => expect(service.recordHuman).toHaveBeenCalledOnce());
+    emit(next!, 1);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(service.recordAnswer).not.toHaveBeenCalled();
+    emit('tell it hello', 2);
+    await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
+    const call = service.config.brain.answer.mock.calls[0]!;
+    expect(call[0].id).toBe(target);
+    expect(call[1].at(-1)?.content).toBe(expected);
+    const recorded = service.reviseHuman.mock.calls.at(-1)?.[5] ?? service.recordHuman.mock.calls.at(-1)?.[4];
+    expect(recorded).toBe(expected);
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+
+it.each([9999, 10000])('SPEEDY-CONTACT-4: silent contact draft has a ten-second idle limit (%s ms)', async delay => {
+  const { service, speech } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, args) => sql.includes("source='webhook'")
+    ? { rowCount: 1, rows: [{ name: 'Grok bot' }] } : original(sql, args));
+  service.config.stt.mockResolvedValue({ send() {}, close() {} });
+  service.config.brain.answer.mockResolvedValue({ text: 'On it.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    await runtime.utterance('human', 'Grok bot');
+    await vi.advanceTimersByTimeAsync(delay);
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(state.audio.captureFrame).not.toHaveBeenCalled();
+    await runtime.utterance('human', 'tell it hello');
+    const expected = delay < 10000 ? 'Grok bot tell it hello' : 'tell it hello';
+    expect(service.config.brain.answer.mock.calls[0]?.[1].at(-1)?.content).toBe(expected);
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordHuman).toHaveBeenCalledTimes(delay < 10000 ? 1 : 2);
+  } finally { await runtime.close(); vi.useRealTimers(); }
 });

@@ -14,7 +14,7 @@ import { VOICE_DATA_TOPIC, type VoiceSignal, type VoiceBudget } from '@beeline/a
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent, type VoiceBrain } from './voice-providers.js';
 
-import { VoiceRequestAssembler, voiceNameOnly } from './voice-request-assembler.js';
+import { VoiceRequestAssembler, voiceNameOnly, voiceContactNameOnly } from './voice-request-assembler.js';
 import { namedVoiceTarget, openingVoiceName } from './voice-target.js';
 export { namedVoiceTarget } from './voice-target.js';
 
@@ -128,6 +128,7 @@ export class VoiceRoomRuntime {
   private readonly resumedFinals = new Map<string, { turn: number; text: string }>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
+  private readonly externalContacts = new Map<string, readonly string[]>();
   private readonly eager = new Map<string, { turn: number; text: string; reply?: VoiceEagerReply }>();
   private readonly assembler = new VoiceRequestAssembler();
   private spokenWrites = Promise.resolve();
@@ -346,13 +347,20 @@ export class VoiceRoomRuntime {
       await this.retry(() => this.service.access(this.roomId, human));
       if (!(await this.retry(() => this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
         [this.callId, human]))).rowCount) { this.stopInput(human); return; }
-      const [agents, budget] = await Promise.all([
-        this.retry(() => this.service.agents(this.roomId, human)), this.retry(() => this.service.budget.read(this.workspaceId)), this.refreshSpeakingSpeed(human),
+      const [agents, budget, contacts] = await Promise.all([
+        this.retry(() => this.service.agents(this.roomId, human)), this.retry(() => this.service.budget.read(this.workspaceId)),
+        this.retry(() => this.service.db.query<{ name: string }>(
+          `SELECT btrim(title) AS name FROM agent_subscriptions
+           WHERE room_id=$1 AND source='webhook' AND btrim(title)<>''
+           GROUP BY btrim(title) ORDER BY name LIMIT 80`, [this.roomId])),
+        this.refreshSpeakingSpeed(human),
       ]);
       if (this.closed || this.inputVersions.get(human) !== version) return;
       this.task(() => this.enforceBudget(budget));
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
-      const hints = agents.flatMap(agent => [agent.name, agent.handle]);
+      const externalContacts = contacts.rows.map(contact => contact.name.slice(0, 80));
+      this.externalContacts.set(human, externalContacts);
+      const hints = [...new Set([...agents.flatMap(agent => [agent.name, agent.handle]), ...externalContacts])].slice(0, 80);
       stt = await this.service.config.stt(event => {
       const receivedAt = performance.now();
       this.task(async () => {
@@ -384,6 +392,7 @@ export class VoiceRoomRuntime {
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
       const words = speechWords(event.transcript);
       const strayWord = words.length === 1 && !SINGLE_WORD_REPLIES.has(words[0]!) &&
+        !voiceContactNameOnly(event.transcript, this.externalContacts.get(human)) &&
         !agents.some(agent => [agent.name, agent.handle].some(alias =>
           speechWords(alias).join(' ') === words[0]));
       // Filter partials too: a confident stray word must never pause or barge in.
@@ -429,6 +438,15 @@ export class VoiceRoomRuntime {
       const stop = /^(stop|cancel|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
       if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
         this.turnIndices.set(human, event.turn_index);
+        const draft = this.assembler.current(human);
+        const contacts = this.externalContacts.get(human) ?? [];
+        if (draft && voiceContactNameOnly(draft.text, contacts)) {
+          const contact = contacts.find(name => voiceContactNameOnly(event.transcript, [name]));
+          const named = openingVoiceName(event.transcript, agents);
+          if (voiceNameOnly(event.transcript, agents) || (named && named.id !== draft.agent?.id) ||
+              (contact && !voiceContactNameOnly(draft.text, [contact]))) this.assembler.cancel(human, 'contact recipient changed');
+          else if (contact) return;
+        }
         const resumed = this.resumedFinals.get(human);
         this.resumedFinals.delete(human);
         const fragment = resumed?.turn === event.turn_index && event.transcript.startsWith(resumed.text)
@@ -472,6 +490,7 @@ export class VoiceRoomRuntime {
     this.resumedFinals.delete(human);
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
+    this.externalContacts.delete(human);
     this.speakingSpeeds.delete(human);
     this.speedRefreshes.delete(human);
     const input = this.inputs.get(human);
@@ -687,14 +706,14 @@ export class VoiceRoomRuntime {
       ? await this.retry(() => this.service.lastActiveAgent(this.roomId, agents)) ?? this.targets.get(human)
       : this.targets.get(human);
     const agent = pinned ?? named ?? tapped ?? (humans === 1 ? namedVoiceTarget(event.transcript, agents, selected, humans) : undefined);
-    if (!agent || voiceNameOnly(event.transcript, agents)) { if (this.eager.get(human) === draft) this.cancelEager(human); return; }
+    if (!agent || voiceNameOnly(event.transcript, agents) || voiceContactNameOnly(event.transcript, this.externalContacts.get(human))) { if (this.eager.get(human) === draft) this.cancelEager(human); return; }
     const history = await this.retry(() => readVoiceContext(this.service.db, this.roomId, '', agent.id));
     const pending = [...this.pendingWork.values()].filter(work => work.agent_id === agent.id && work.human_id === human);
     if (pending.length) history.push({ role: 'user', content:
       'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.map(row => row.text)) });
     history.push({ role: 'user', content: event.transcript });
     if (this.eager.get(human) !== draft || this.closed || event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
-    draft.reply = new VoiceEagerReply(this.service.config.brain, agent, history, agents.map(({ name, handle }) => ({ name, handle })));
+    draft.reply = new VoiceEagerReply(this.service.config.brain, agent, history, agents.map(({ name, handle }) => ({ name, handle })), this.externalContacts.get(human));
     console.info('[voice-eager]', JSON.stringify({ callId: this.callId, outcome: 'started' }));
   }
 
@@ -704,7 +723,8 @@ export class VoiceRoomRuntime {
     this.eager.delete(human);
     this.markCallActivity();
     if (!interrupts && !this.assembler.current(human) && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1 &&
-        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) { eager?.reply?.cancel(); return; }
+        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human))) &&
+        !voiceContactNameOnly(fragment, this.externalContacts.get(human))) { eager?.reply?.cancel(); return; }
     if (interrupts) this.interruptPlayback();
     let playbackVersion = this.playbackVersion;
     const traceId = randomUUID();
@@ -801,6 +821,12 @@ export class VoiceRoomRuntime {
         else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
         resolveSource(sourceId);
       }
+      if (voiceContactNameOnly(fragment, this.externalContacts.get(human)) && !previous && !retry) {
+        // Retain the recorded contact draft so the next phrase includes its recipient.
+        this.assembler.waitForContact(human, request);
+        this.assembler.address(human, agent.id);
+        return;
+      }
       committedSourceId = sourceId;
       timing('human_committed');
       if (generation.signal.aborted || this.closed || !sourceId) return;
@@ -821,7 +847,7 @@ export class VoiceRoomRuntime {
       let streamed = false;
       let firstAudio = false;
       const brain: VoiceBrain = { answer: (selectedAgent, selectedHistory, delta, signal, search) => {
-        if (eager?.text === request.text && search && eager.reply?.matches(selectedAgent, selectedHistory, search.agents)) {
+        if (eager?.text === request.text && search && eager.reply?.matches(selectedAgent, selectedHistory, search.agents, search.externalContacts)) {
           console.info('[voice-eager]', JSON.stringify({ traceId, callId: this.callId, outcome: 'used' }));
           return eager.reply.consume(delta, search, signal);
         }
@@ -848,6 +874,7 @@ export class VoiceRoomRuntime {
           });
         }, generation.signal, {
           agents: agents.map(({ name, handle }) => ({ name, handle })),
+          externalContacts: this.externalContacts.get(human),
           diagnostic: metadata => console.info('[voice-brain-trace]', JSON.stringify({ traceId, callId: this.callId, ...metadata })),
           search: (search, signal) => {
             console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: search.name }));

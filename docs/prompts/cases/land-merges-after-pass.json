@@ -127,8 +127,7 @@
           "name": "land-merges-after-pass",
           "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
           "repository": {
-            "name": "example/app",
-            "branch": "main"
+            "linked": true
           },
           "worktree": {
             "featureBranch": "feature/corner-case",

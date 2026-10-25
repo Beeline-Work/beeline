@@ -129,8 +129,7 @@
           "name": "prepare-runs-first",
           "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
           "repository": {
-            "name": "example/app",
-            "branch": "main"
+            "linked": true
           },
           "worktree": {
             "featureBranch": "feature/corner-case",
@@ -277,6 +276,165 @@
         "result": {
           "exitCode": 0,
           "stdout": "## feature/corner-case\nWorking tree clean\ncccc333 Token expiry boundary\nexit=2\nexport function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n\n{\"name\":\"replay-workspace\",\"scripts\":{\"corner:prepare\":\"npm ci && npm run build\"}}\n{\"name\":\"@beeline/mobile\",\"scripts\":{\"test\":\"vitest run\"}}\ntest(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));\nauth.ts\nauth.test.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd (?:\"\\$\\((?:pwd|git rev-parse --show-toplevel)\\)\"|/replay)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd apps/mobile$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": "apps/mobile"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^pwd$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/replay\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git(?: -C \\.)? status(?: --short| --branch| -sb)*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git branch --show-current$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "feature/corner-case\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git(?: -C \\.)? log(?: --oneline| -[0-9]+)*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "cccc333 Token expiry boundary\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git ls-remote --exit-code origin feature/corner-case$"
+          }
+        },
+        "result": {
+          "exitCode": 2,
+          "stdout": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls(?: /replay)?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "apps\npackage.json\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls apps/server/src/auth\\.ts$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "apps/server/src/auth.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls apps/server/src apps/server$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "src\nauth.ts\nauth.test.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls apps/server/test\\* apps/server/src/\\*\\.test\\.\\*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "apps/server/src/auth.test.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cat auth\\.test\\.ts$"
+          }
+        },
+        "result": {
+          "exitCode": 1,
+          "stdout": "",
+          "stderr": "cat: auth.test.ts: No such file or directory"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^grep -rn \"status\\(\" --include=\\*\\.ts \\.$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "./apps/server/src/auth.ts:1:export function status(expiresAt: number, now: number) {\n./apps/server/src/auth.test.ts:1:test(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));\n"
         }
       }
     ],

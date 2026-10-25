@@ -115,8 +115,7 @@
           "name": "github-app-only-access",
           "members": "",
           "repository": {
-            "name": "example/app",
-            "branch": "main"
+            "linked": true
           },
           "worktree": {
             "featureBranch": "feature/corner-proof",

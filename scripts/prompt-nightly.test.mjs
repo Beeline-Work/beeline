@@ -3,7 +3,7 @@ import { readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, diagnostics, pairedPValue } from './prompt-nightly.mjs';
+import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly, scenarioResult, scenarioShell, diagnostics, pairedPValue } from './prompt-nightly.mjs';
 import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
@@ -260,4 +260,28 @@ test('paired noise test can detect gains below the unsigned flip count', () => {
   assert.ok(result.detectableEffect > 0);
   assert.equal(pairedPValue(5, 0), 1/32);
   assert.equal(pairedPValue(6, 0), 1/64);
+});
+
+test('compound shell reads use only recorded facts and never turn an unknown command into success', () => {
+  const state = { files: { 'apps/mobile/package.json': 'first\nsecond\n' }, results: [
+    { call: 'Bash', args: { command: 'cd apps/mobile' }, result: { exitCode: 0, stdout: '', cwd: 'apps/mobile' } },
+    { call: 'Bash', args: { command: 'git status --short' }, result: { exitCode: 0, stdout: 'clean\n' } },
+  ] };
+  assert.deepEqual(scenarioShell(state, 'git status --short && cd apps/mobile && cat package.json | head -1'),
+    { result: { exitCode: 0, stdout: 'clean\nfirst' } });
+  assert.equal(scenarioShell(state, 'git status --short && npm run unrecorded'), undefined);
+  assert.equal(scenarioShell(state, 'cat /unknown'), undefined);
+  assert.equal(scenarioShell(state, 'echo "$(touch /unexecuted)"'), undefined);
+  assert.equal(scenarioShell(state, 'git status --short > /unknown'), undefined);
+  assert.equal(scenarioShell(state, 'git status --short || arbitrary-command'), undefined);
+  assert.deepEqual(scenarioShell(state, 'echo "a;b"'), { result: { exitCode: 0, stdout: 'a;b\n' } });
+});
+
+test('recorded repository and SDK facts cover ordinary combined observations', () => {
+  const cases = loadCases();
+  for (const [id, command] of [
+    ['android-uses-leased-emulator', 'echo $ANDROID_HOME $ANDROID_AVD_HOME; ls $ANDROID_AVD_HOME 2>&1; which adb; git status --short; git branch --show-current'],
+    ['checks-no-pr-continues-work', 'cd /replay 2>/dev/null; pwd; git status --short; git branch --show-current; cat apps/server/src/auth.ts 2>/dev/null | head -80'],
+    ['checks-reports-blocked-after-third-failure', `cd "$(git rev-parse --show-toplevel)" && cat apps/mobile/sources/buzz/live-turn-stream.ts && echo '--- TEST ---' && cat apps/mobile/sources/buzz/live-turn-stream.test.ts`],
+  ]) assert.notEqual(scenarioResult(cases.find(c => c.id === id), { name: 'Bash', args: { command } }, {}).boundary, 'missing', id);
 });

@@ -63,6 +63,10 @@ results, and resumes until a final reply (including silence), an approval or
 blocked/error boundary, or the existing six-round limit. It never executes a
 simulated call. Missing scenario facts are `incomplete`, never invented success.
 Legacy `toolResults` remain readable while fixtures migrate to argument matching.
+Compound shell observations compose only case-recorded command results and file
+contents. Quoted separators stay literal; pipes support only `head`. No shell is
+invoked. Unknown commands, paths, redirects or substitutions remain explicit
+missing facts rather than receiving a successful default.
 
 Each case receives exactly three independent samples in baseline, unchanged control,
 and candidate, with sample-index seeds paired across arms. There is no stopping

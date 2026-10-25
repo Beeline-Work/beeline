@@ -159,6 +159,60 @@ export function validSchema(schema, value) {
   return true;
 }
 
+// Compose recorded observational shell results without invoking a shell. Unknown
+// commands, redirects, paths and substitutions remain missing scenario facts.
+export function scenarioShell(state, command) {
+  const parts = [];
+  let start = 0, quote = '', depth = 0, operator = ';';
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (c === '\\') { i++; continue; }
+    if (quote) { if (c === quote) quote = ''; continue; }
+    if (c === '"' || c === "'") { quote = c; continue; }
+    if (c === '(') depth++;
+    if (c === ')') depth--;
+    if (c === '`' || depth < 0) return;
+    if (!depth && (c === ';' || c === '|' || command.slice(i, i+2) === '&&')) {
+      if (command.slice(i, i+2) === '||') return;
+      parts.push({ command: command.slice(start, i).trim(), operator });
+      operator = c === '&' ? '&&' : c;
+      if (c === '&') i++;
+      start = i+1;
+    }
+  }
+  if (quote || depth) return;
+  parts.push({ command: command.slice(start).trim(), operator });
+  let stdout = '', exitCode = 0, cwd = '', pipeStart = 0;
+  for (const part of parts) {
+    if (!part.command || part.operator === '&&' && exitCode) continue;
+    const head = /^head -(\d+)$/.exec(part.command);
+    if (part.operator === '|') {
+      if (!head) return;
+      stdout = stdout.slice(0, pipeStart) + stdout.slice(pipeStart).split('\n').slice(0, Number(head[1])).join('\n');
+      continue;
+    }
+    const cmd = part.command.replace(/ 2>(?:\/dev\/null|&1)$/, '');
+    const call = { name: 'Bash', args: { command: cmd } };
+    const recorded = state.results?.find(entry => entry.call === 'Bash' &&
+      evaluateRule({ call: entry.call, args: entry.args }, { calls: [call], text: '' }).pass);
+    let result = recorded?.result;
+    if (recorded?.boundary) return;
+    if (!result) {
+      const cat = /^(?:cat|sed -n '1,\d+p') ([a-zA-Z0-9_./-]+)$/.exec(cmd);
+      const path = cat && (cwd ? `${cwd}/${cat[1]}` : cat[1]);
+      if (path && Object.hasOwn(state.files ?? {}, path)) result = { exitCode: 0, stdout: state.files[path] };
+      const echo = /^echo (["'])([^\n]*)\1$/.exec(cmd);
+      if (echo && !/[`$\\]/.test(echo[2].replace(/\$\?/g, ''))) result = { exitCode: 0, stdout: echo[2].replace(/\$\?/g, String(exitCode)) + '\n' };
+    }
+    if (!result || typeof result.exitCode !== 'number' || typeof result.stdout !== 'string') return;
+    if (result.cwd !== undefined) cwd = result.cwd;
+    pipeStart = stdout.length;
+    stdout += result.stdout;
+    exitCode = result.exitCode;
+  }
+  return { result: { exitCode, stdout } };
+}
+
 export function scenarioResult(testCase, call, skills) {
   if (call.name === 'Read' && Object.hasOwn(skills, call.args.file_path)) return { result: skills[call.args.file_path] };
   const state = testCase.scenario ?? {};
@@ -169,6 +223,8 @@ export function scenarioResult(testCase, call, skills) {
   if (call.name === 'Bash') {
     const path = /^cat\s+([/a-zA-Z0-9_.-]+)\s*$/.exec(call.args.command)?.[1];
     if (path && Object.hasOwn(state.files ?? {}, path)) return { result: { exitCode: 0, stdout: state.files[path] } };
+    const composed = scenarioShell(state, call.args.command);
+    if (composed) return composed;
   }
   if (call.name === 'read') {
     const facts = { brief: state.brief ?? testCase.session?.brief, messages: state.history ?? testCase.messages, checks: state.checks, usage: state.usage };
@@ -407,7 +463,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   save();
   const passed = result.baseline.filter((row) => row.pass).length;
   const total = median(result.baseline.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
-  const rate = result.status === 'complete'
+  const rate = result.baseline.length === cases.length && result.baseline.every(row => row.scored === FIXED_SAMPLES)
     ? `${passed}/${cases.length} passed (${(100 * passed / cases.length).toFixed(1)}%)`
     : `${result.baseline.length}/${cases.length} cases recorded, ${passed} majority passing with all samples scored; overall pass rate unavailable`;
   const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([arm, d]) => [arm, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));

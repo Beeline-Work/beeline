@@ -127,8 +127,7 @@
           "name": "android-uses-leased-emulator",
           "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
           "repository": {
-            "name": "example/app",
-            "branch": "main"
+            "linked": true
           },
           "worktree": {
             "featureBranch": "feature/corner-case",
@@ -249,6 +248,116 @@
         "result": {
           "exitCode": 0,
           "stdout": "ANDROID_HOME=/opt/android\nANDROID_AVD_HOME=/replay/avd\nPixel_8.avd\nList of devices attached\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd (?:\"\\$\\((?:pwd|git rev-parse --show-toplevel)\\)\"|/replay)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd apps/mobile$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": "apps/mobile"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^pwd$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/replay\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git(?: -C \\.)? status(?: --short| --branch| -sb)*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git branch --show-current$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "feature/corner-case\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git(?: -C \\.)? log(?: --oneline| -[0-9]+)*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "cccc333 Token expiry boundary\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git ls-remote --exit-code origin feature/corner-case$"
+          }
+        },
+        "result": {
+          "exitCode": 2,
+          "stdout": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^echo \\$ANDROID_HOME \\$ANDROID_AVD_HOME$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/opt/android /replay/avd\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^which adb$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/opt/android/platform-tools/adb\n"
         }
       }
     ],

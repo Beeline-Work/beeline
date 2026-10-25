@@ -19,3 +19,9 @@ Fresh pre-push reruns for this evidence delivery also passed: full mobile suite 
 After shared-token integration: root typecheck and UI policy passed; full mobile suite passed (615 files passed, 5 skipped; 5426 tests passed, 6 skipped). This includes desktop sheet placement/scrolling and real schedule page browser proofs.
 
 Final server shard 1/4 passed after integration (53 files; 781 tests passed, 1 skipped). The confirmation opener was verified by screenshot before clicking; the open dialog was measured at both widths and closed with Cancel.
+
+## Wallet review follow-up (DESKTOP-WALLET-1)
+
+The shared Wallet shell now owns the desktop detail cap across populated, loading and error states. The built-page browser matrix passed all 12 cases, as did the pre-fix baseline matrix. It displays a fixture address, balance and asset row rather than merely checking an inner style. Before/after phone PNGs at 500 px are byte-identical; desktop after widths are centred at 640 px. Typecheck and UI component policy passed. Full mobile suite passed (616 files passed, 5 skipped; 5438 tests passed, 6 skipped).
+
+Wallet pre-push server shard 1/4 passed (53 files; 781 tests passed, 1 skipped). Diff check passed.

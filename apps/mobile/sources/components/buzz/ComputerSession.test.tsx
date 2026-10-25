@@ -1,3 +1,4 @@
+import { ViewerConversationDock } from './ViewerConversationDock';
 import * as React from 'react';
 import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import { displayRoomMessages, foldSettledActivityRuns } from '@/buzz/room-view-presentation';
@@ -278,5 +279,13 @@ it('Reproduction SHARE-CARD-DM-1: renders a parsed live DM card independently of
   await act(async () => { tree = create(<ComputerSessionCard session={message!.computerSession!} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open' }).length).toBeGreaterThan(0);
+  await act(async () => tree!.unmount());
+});
+
+
+it.each([false, true])('assigns keyboard avoidance to the correct computer viewer host (warm: %s)', async (warm) => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} warm={warm} onClose={() => {}} />); });
+  expect(tree!.root.findByType(ViewerConversationDock).props.keyboardAvoidedByParent).toBe(!warm);
   await act(async () => tree!.unmount());
 });

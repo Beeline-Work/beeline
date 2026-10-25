@@ -305,7 +305,7 @@ export function ComputerSessionViewer({ session, onClose, roomId, agentHandle, a
         ) : null}
       </View>
       {active ? (
-        <ViewerConversationDock kind="computer" title={session.title} roomId={roomId}
+        <ViewerConversationDock keyboardAvoidedByParent={!warm} kind="computer" title={session.title} roomId={roomId}
       agentHandle={agentHandle} captureScreen={() => captureRef.current?.() ?? Promise.resolve(null)} />
       ) : null}
     </View>

@@ -17,7 +17,7 @@ type Entry = { id: string; speaker: string; text: string; context?: string };
 
 /** Small conversation controls that float above a full-height viewer. */
 export function ViewerConversationDock({
-  kind, title, roomId, agentHandle, artifact, captureScreen,
+  kind, title, roomId, agentHandle, artifact, captureScreen, keyboardAvoidedByParent = false,
 }: {
   kind: 'artifact' | 'computer';
   title: string;
@@ -25,6 +25,8 @@ export function ViewerConversationDock({
   agentHandle?: string;
   artifact?: AttachmentReference;
   captureScreen?: () => Promise<string | null>;
+  /** HullModal already moves its content above the keyboard; warm viewers do not. */
+  keyboardAvoidedByParent?: boolean;
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -61,10 +63,10 @@ export function ViewerConversationDock({
   const keyboardHeight = useKeyboardState((state) => state.height);
   const keyboardLift = Platform.OS !== 'web' && focused && open ? keyboardHeight : 0;
   const bottom = keyboardLift > 0
-    ? keyboardLift + 12
+    ? (keyboardAvoidedByParent ? 12 : keyboardLift + 12)
     : insets.bottom + (kind === 'computer' ? 12 + 42 + 12 : 12);
   const transcriptMaxHeight = Math.max(0, Math.min(
-    windowHeight * 0.4, windowHeight - insets.top - bottom - pillHeight - 9 - 12,
+    windowHeight * 0.4, windowHeight - insets.top - (keyboardAvoidedByParent ? keyboardLift : 0) - bottom - pillHeight - 9 - 12,
   ));
   const context = viewerContext(kind, title);
   const currentAgent = viewerAgentHandle(kind, agentHandle, conversation?.messages ?? []);

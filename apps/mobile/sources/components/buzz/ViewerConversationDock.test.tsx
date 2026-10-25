@@ -251,3 +251,23 @@ it('uses one outer border and the shared bubble in both toggle states', () => {
   expect(opened.props.style[1].borderRightColor).toBe(pill.borderColor);
   expect(opened.props.icon.props.color).not.toBe(closedColor);
 });
+
+
+it.each(['artifact', 'computer'] as const)('does not lift the %s dock twice inside a keyboard-avoiding modal', async (kind) => {
+  act(() => renderer.update(<ViewerConversationDock keyboardAvoidedByParent kind={kind} title="Checkout" roomId="viewer-test" />));
+  toggle();
+  type('Explain this viewer');
+  await act(async () => { await composer().props.onSend(); });
+  const bottom = () => node('viewer-conversation-pill').props.style[1].bottom;
+  const restingBottom = kind === 'computer' ? 66 : 12;
+  expect(bottom()).toBe(restingBottom);
+  act(() => { keyboard.height = 420; composer().props.onFocus(); });
+  // The modal supplies the 420-point displacement. Adding it here again
+  // leaves a keyboard-sized gap between the pill and the keyboard.
+  expect(bottom()).toBe(12);
+  const panel = Object.assign({}, ...node('viewer-conversation-transcript').props.style);
+  expect(panel.bottom).toBe(65);
+  expect(panel.maxHeight).toBe(279);
+  act(() => { keyboard.height = 0; composer().props.onChangeText('Keyboard dismissed'); });
+  expect(bottom()).toBe(restingBottom);
+});

@@ -19,10 +19,32 @@ vi.mock('@/auth/auth-session', () => ({ authSessionOptions: () => ({}) }));
 vi.mock('@/auth/desktop-auth-session', () => ({ openAccountAuthSession: vi.fn(), subscribeToAuthUrls: vi.fn() }));
 vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: () => 'beeline://beeline/github-installation', runGitHubInstallationSession: vi.fn(), clearPendingGitHubInstallation: vi.fn(async () => undefined) }));
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
+import { Platform } from 'react-native';
 const H='a'.repeat(64);
 const card: Card = { id:'b'.repeat(64), roomId:'11111111-1111-4111-8111-111111111111', agentId:'c'.repeat(64), requesterId:H,
   kind:'repository', canLink:true, state:'repo_linked', status:'open', repository:'test/current', defaultName:'new-project-123456', installationId:77,
   repositories:[{ id:42, fullName:'test/current', installationId:77, defaultBranch:'main', current:true }, { id:43, fullName:'test/other', installationId:77, defaultBranch:'main', current:false }], starters:[] };
+it('R-GITHUB-PADDING: balances only the native actionable GitHub connect footer', async () => {
+  const missing: Card = { ...card, repository: undefined, installationId: undefined, githubLinked: false };
+  const cases = [
+    { os: 'android', value: missing, expected: true },
+    { os: 'ios', value: missing, expected: true },
+    { os: 'web', value: missing, expected: false },
+    { os: 'android', value: card, expected: false },
+    { os: 'android', value: { ...missing, canLink: false }, expected: false },
+    { os: 'android', value: { ...missing, status: 'settled' as const }, expected: false },
+    { os: 'android', value: { ...missing, kind: 'starters' as const }, expected: false },
+  ];
+  try {
+    for (const { os, value, expected } of cases) {
+      Object.assign(Platform, { OS: os });
+      let renderer: any;
+      await act(async () => { renderer = create(<RepositoryOnboardingCard card={value} viewerId={H} />); });
+      expect(renderer.root.findByType('TranscriptCard').props.balancedFooterInset, `${os}/${value.kind}/${value.status}`).toBe(expected);
+      await act(async () => renderer.unmount());
+    }
+  } finally { Object.assign(Platform, { OS: 'android' }); }
+});
 it('marks the current repo and sends the other repository id to the server', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
   let rendered: any;

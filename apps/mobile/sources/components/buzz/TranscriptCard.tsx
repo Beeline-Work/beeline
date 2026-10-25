@@ -92,6 +92,8 @@ export type TranscriptCardProps = {
   primaryBody?: boolean;
   inlineError?: { title: string; description: string };
   footerDivider?: boolean;
+  /** Match the bottom inset to the card's side inset for an enclosed action. */
+  balancedFooterInset?: boolean;
   /** Controls an ask needs beyond rows and choices (a field, a step list). */
   children?: ReactNode;
   rows?: readonly TranscriptCardRow[];
@@ -245,6 +247,7 @@ export function TranscriptCard({
   primaryBody = false,
   inlineError,
   footerDivider = true,
+  balancedFooterInset = false,
   rows = [],
   choices = [],
   noteInput,
@@ -524,7 +527,7 @@ export function TranscriptCard({
             </View>
           ) : null}
           {hasFooter ? (
-            <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider]}>
+            <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider, balancedFooterInset && styles.balancedFooterInset]}>
               {decisionScope ? <Text style={styles.decisionScope}>{`Scope: ${decisionScope}`}</Text> : null}
               {footerNote !== undefined ? (
                 <Text
@@ -796,6 +799,7 @@ const styles = StyleSheet.create((theme) => {
     bodyPrimary: { color: card.textPrimary },
     bodyCompact: { ...card.type.meta },
     footerWithoutDivider: { borderTopWidth: 0 },
+    balancedFooterInset: { paddingBottom: metric.side },
     bodyQuiet: { color: card.ledgerQuiet },
     code: {
       marginTop: metric.codeTop,

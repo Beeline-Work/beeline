@@ -291,7 +291,7 @@ function ArtifactCardShell({
         </Text>
       </View>
       {fileFooter ? (
-        <View style={styles.fileFooter}>
+        <InlineRow style={styles.fileFooter}>
           {actions.includes('browser') ? (
             <Button
               accessibilityLabel="Open in browser"
@@ -315,7 +315,7 @@ function ArtifactCardShell({
               appearance={{ control: undefined, label: styles.footerPrimary }}
             />
           ) : null}
-        </View>
+        </InlineRow>
       ) : (
         <InlineRow style={styles.footer}>
           {actions.includes('browser') ? (

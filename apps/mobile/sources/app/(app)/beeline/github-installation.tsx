@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -18,6 +20,7 @@ function InstallationReturn({ path }: { path: string }) {
 
 /** Keep progress and recoverable errors in Beeline after GitHub's consent page. */
 function EnhancedGitHubInstallation() {
+  const desktopPageLayout = useDesktopPageLayout();
   useLatencyRouteFrame('/beeline/github-installation');
   const { installed, error: connectionError } = useLocalSearchParams<{ installed?: string; error?: string }>();
   const [returnPath, setReturnPath] = useState<string | null>(null);
@@ -47,7 +50,7 @@ function EnhancedGitHubInstallation() {
     return () => { alive = false; };
   }, [installed, connectionError]);
   if (returnPath) return <InstallationReturn path={returnPath} />;
-  return <View style={styles.page} testID="github-installation-return">
+  return <View style={[styles.page, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]} testID="github-installation-return">
     <PageHeader title={error ? 'GitHub needs another try' : 'Connecting GitHub'} />
     {error ? <ErrorBanner title="Continue connecting GitHub"
       description="Return to your Room to refresh repositories and finish setup."

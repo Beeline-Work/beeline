@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { IndexRow, InlineRow } from '@/components/buzz/IndexRow';
 import { EmptyState } from '@/components/buzz/EmptyState';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -42,6 +44,7 @@ export default function CommunityInviteJoin() {
   useLatencyRouteFrame('/join/[token]');
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const { token: routeToken } = useLocalSearchParams<{ token?: string | string[] }>();
   const incomingUrl = useURL();
   const token = parseCommunityInviteToken(routeToken);
@@ -154,7 +157,7 @@ export default function CommunityInviteJoin() {
       style={styles.container}
       testID="invite-join"
     >
-      <View style={styles.column}>
+      <View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>
         {loading ? (
           <View style={styles.loadingBlock}>
             <SurfaceGlyphLoader compact testID="invite-loader" />

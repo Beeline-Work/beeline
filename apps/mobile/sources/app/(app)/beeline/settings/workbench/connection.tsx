@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -53,6 +55,7 @@ export default function ConnectionDetailScreen() {
   const viewerId = singleParam(params.viewerId) ?? '';
   const connectionId = singleParam(params.connectionId) ?? '';
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const { value: detail, address: detailAddress, error: loadError, refresh: retry } =
     useSharedConnectionDetail({ workspaceId, viewerId }, connectionId);
   useLatencyRouteFrame('/beeline/settings/workbench/connection', detail !== null, true);
@@ -115,7 +118,7 @@ export default function ConnectionDetailScreen() {
 
   return (
     <View
-      style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       testID="connection-detail-screen"
     >
       <PageHeader

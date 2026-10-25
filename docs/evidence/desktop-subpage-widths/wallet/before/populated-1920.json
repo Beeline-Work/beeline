@@ -1,0 +1,9 @@
+{
+  "width": 1920,
+  "centred": true,
+  "address": "0x1234567890abcdef",
+  "balance": "$42.00",
+  "asset": true,
+  "loading": false,
+  "error": false
+}

@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -65,6 +67,7 @@ function ListAttribution({ agent, corner, roomName, isDirectMessage }: {
 export default function ScheduledWork() {
   useLatencyRouteFrame('/beeline/settings/schedules');
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const params = useLocalSearchParams<{
     roomId?: string | string[];
     workspaceId?: string | string[];
@@ -118,7 +121,7 @@ export default function ScheduledWork() {
   );
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel={work?.isDirectMessage ? 'Back to DM' : 'Back to Room'}
         eyebrow={work?.isDirectMessage ? 'DM' : roomTitle(work?.roomName) ?? 'Room'}

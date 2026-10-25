@@ -28,6 +28,24 @@ describe('ACP streaming lane classifier', () => {
     update: { sessionUpdate, ...fields },
   });
 
+  it.each(['agent_thought_chunk', 'agent_thought', 'reasoning', 'reasoning_chunk',
+    'thinking', 'thinking_chunk', 'analysis', 'analysis_chunk'])(
+    'R-REASONING-POST: %s cannot modify post arguments or final text', (kind) => {
+      const arguments_ = { address: 'room', text: 'The answer stays **unchanged**.' };
+      const updates = [
+        update(kind, { content: { type: 'text', text: 'PRIVATE_SENTINEL' } }),
+        update('tool_call', { toolCallId: 'post-1', title: 'post', rawInput: arguments_ }),
+        update('tool_call_update', { toolCallId: 'post-1', status: 'completed' }),
+        update('agent_message_chunk', { content: { type: 'text', text: 'Finished.' } }),
+      ];
+      const before = JSON.stringify(updates);
+      expect(toolCallEntries(updates)[0]?.rawInput).toEqual(arguments_);
+      expect(finalAgentMessageText(updates)).toBe('Finished.');
+      expect(agentStreamSnapshot(updates).messageText).toBe('Finished.');
+      expect(JSON.stringify(updates)).toBe(before);
+    },
+  );
+
   it('merges start, update, and result notifications into one tool call', () => {
     expect(
       toolCallEntries([

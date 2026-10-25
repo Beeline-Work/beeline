@@ -90,6 +90,21 @@ describe('free agent model proxy', () => {
       body: JSON.stringify(body),
     });
 
+  it.each([false, true])('R-REASONING-POST: preserves separate reasoning and tool arguments (stream=%s)', async (stream) => {
+    const args = JSON.stringify({ text: 'Final **reply** stays unchanged.' });
+    const message = { role: 'assistant', content: null, reasoning_content: 'PRIVATE_SENTINEL',
+      reasoning_details: [{ type: 'reasoning.text', text: 'PRIVATE_SENTINEL', index: 0 }],
+      tool_calls: [{ id: 'post-1', type: 'function', function: { name: 'post', arguments: args } }] };
+    const wire = stream
+      ? `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: message.reasoning_content } }] })}\n\n` +
+        `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: message.tool_calls } }] })}\n\ndata: [DONE]\n\n`
+      : JSON.stringify({ choices: [{ message }] });
+    reply = () => new Response(wire, { headers: { 'content-type': stream ? 'text/event-stream' : 'application/json' } });
+    const response = await call({ messages: [{ role: 'user', content: 'Reply using post' }], stream });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe(wire);
+  });
+
   it('Reproduction SUB0ZERO-admission: admits the reconstructed refusal size and settles exact usage', async () => {
     config = { ...CONFIG, dailyTokenCap: 3_000_000, lifetimeTokenCap: 0 };
     await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,current_date,2135302)`, [OWNER]);

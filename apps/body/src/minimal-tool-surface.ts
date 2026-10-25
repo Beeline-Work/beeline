@@ -1,4 +1,9 @@
-import { ARTIFACT_MIME_TYPES } from '@beeline/api-contract/daemon';
+import {
+  ARTIFACT_MIME_TYPES,
+  INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
+  INSTITUTIONAL_HISTORY_RESULT_MIN,
+  INSTITUTIONAL_HISTORY_RESULT_MAX,
+} from '@beeline/api-contract/daemon';
 
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
@@ -631,8 +636,8 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "type": "object",
       "properties": {
         "scope": {"type": "string", "enum": ["history", "memory"]},
-        "query": {"type": "string", "minLength": 1, "maxLength": 500},
-        "limit": {"type": "integer", "minimum": 1, "maximum": 10}
+        "query": INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
+        "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX}
       },
       "required": ["scope", "query"],
       "additionalProperties": false

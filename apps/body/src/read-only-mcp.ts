@@ -2754,7 +2754,7 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
         return !action || Check(action, requestedAction);
       }) }
       : tool.inputSchema;
-    const details = tool.name === 'wake' || tool.name === 'revise_corner'
+    const details = tool.name === 'wake' || tool.name === 'revise_corner' || tool.name === 'search'
       ? Errors(diagnosticSchema, args).filter(error => error.keyword !== 'anyOf')
         .map(error => `${error.instancePath || 'input'}: ${error.message}`).join('; ')
       : '';

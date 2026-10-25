@@ -64,6 +64,21 @@ describe('ordinary web monolith session storage', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(['github', 'google'] as const)('carries the X click into %s exchange and fires the shared conversion ID', async provider => {
+    const xAttribution = { twclid: 'click', campaignId: 'campaign', adId: 'clip', adGroupId: 'audience', capturedAt: Date.now() };
+    vi.stubGlobal('location', new URL('https://web.usebeeline.app/'));
+    vi.stubGlobal('document', { cookie: `beeline_x_click=${encodeURIComponent(JSON.stringify(xAttribution))}` });
+    const twq = vi.fn();
+    vi.stubGlobal('window', { document: {}, twq });
+    const xSignup = { eventId: 'tw-rhefr-rhym5', conversionId: 'b'.repeat(64) };
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ ...tokens, xSignup })));
+    const session = openTab();
+    if (provider === 'github') await session.exchangeGitHubTicket('ticket');
+    else await session.exchangeGoogleTicket('ticket');
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ oidcToken: 'ticket', xAttribution });
+    expect(twq).toHaveBeenCalledWith('event', xSignup.eventId, { conversion_id: xSignup.conversionId });
+  });
+
   it.each([200, 401])('preserves another tab\'s same-identity sign-in when an old HTTP %i arrives before its storage event', async status => {
     const first = openTab();
     await first.exchangeGitHubTicket('first');

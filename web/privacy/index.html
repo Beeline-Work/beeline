@@ -23,7 +23,7 @@
     <main>
       <div class="mark">Beeline</div>
       <h1>Privacy Policy</h1>
-      <p class="updated">Effective: 18 October 2026 · <a href="/privacy/2026-10-16.html">Previous version</a></p>
+      <p class="updated">Effective: 25 October 2026 · <a href="/privacy/2026-10-18.html">Previous version</a></p>
       <p>Beeline lets people and AI agents work together in shared Workspaces and Rooms, from the phone, desktop and web apps. This policy describes the information Beeline handles, why, and who else receives it. Moon Rice Limited operates Beeline.</p>
 
       <h2>Information we handle</h2>
@@ -52,14 +52,14 @@
       </ul>
 
       <h2>How we use it</h2>
-      <p>We use this information to sign you in, run your Workspaces and agents, deliver notifications, keep the service safe and working, and fix problems. We do not sell personal information or use it for advertising.</p>
+      <p>We use this information to sign you in, run your Workspaces and agents, deliver notifications, keep the service safe and working, and fix problems. We do not sell personal information. We measure the performance of our own X ads as described below. We do not use Room content or data from your connected apps for advertising.</p>
 
       <h2 id="service-review">Service review</h2>
       <p>To find bugs and improve Beeline, a small number of Moon Rice Limited staff, and AI agents that Moon Rice Limited runs under staff direction, may read workspace content. This includes Room messages, agent activity and error records. We do this only to operate, secure and improve the service. We never publish this content. Any findings we share describe problems without quoting you or naming you or your Rooms. You can turn this off in Workspace settings → Allow fix sweep. Reports you send with Report issue are still read.</p>
       <p>The AI agents that perform service review run on models from third-party AI providers, which process the content they review. The current providers are listed at <a href="/subprocessors/">usebeeline.app/subprocessors</a>.</p>
 
       <h2>Analytics</h2>
-      <p>Some builds may include PostHog product analytics: screen names without their contents, app lifecycle and software-update events. A build sends no PostHog analytics unless it is configured to. We do not use analytics for advertising or to sell data. The public website has no advertising analytics.</p>
+      <p>Some builds may include PostHog product analytics: screen names without their contents, app lifecycle and software-update events. A build sends no PostHog analytics unless it is configured to. We do not use PostHog data for advertising or sell it.</p>
 
       <p>To understand sign-in drop-off, our production apps (iOS, Android, web and desktop) send Beeline a small set of sign-in steps: app opened, sign-in screen shown, provider tapped, callback outcome and signed in. Each contains random install and short-lived attempt IDs, platform, app version, time, provider and a fixed outcome or error code. These events contain no account ID, email, name, provider login, device name, authorization code or token. IP addresses are used in memory to rate-limit this endpoint and are not stored with the events. At authenticated sign-in we exclude staff, test and review installs; no account identifier is saved in the funnel. We keep event records for 90 days, then only anonymous daily counts. We use these counts to improve sign-in, not for advertising.</p>
 
@@ -77,6 +77,7 @@
         <li><strong>Composio</strong>: connections to Google and other apps.</li>
         <li><strong>Coinbase</strong> and <strong>Stripe</strong>: agent wallets and payments, if you turn them on.</li>
         <li><strong>Sentry</strong>: redacted error reports and diagnostic context. <strong>Resend</strong>: verified recipient email addresses and policy notice content.</li>
+        <li><strong>X</strong>: measurement of our own X ads, as described above.</li>
         <li><strong>Expo</strong>: app updates. <strong>PostHog</strong>: analytics, where configured.</li>
         <li>Model providers and apps <strong>you</strong> connect receive data under their own terms.</li>
       </ul>
@@ -93,6 +94,11 @@
         <li><strong>YouTube.</strong> Beeline uses YouTube API Services. By connecting YouTube you agree to the <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>, and Google's handling of your data is described in the <a href="http://www.google.com/policies/privacy">Google Privacy Policy</a>.</li>
         <li><strong>Revoking access.</strong> You can disconnect a Google app at any time in the Workbench, which revokes Beeline's connection. You can also revoke access from your <a href="https://security.google.com/settings/security/permissions">Google security settings</a>. Deleting your Beeline account revokes all of your app connections.</li>
       </ul>
+
+      <h2>X ad measurement</h2>
+      <p>When you arrive at usebeeline.app or web.usebeeline.app from an X ad, we keep the X click identifier and campaign, ad and audience identifiers in a first-party cookie for up to 30 days. If you create a new Beeline account on the web during that time, we save those identifiers with the account so we can count which ad brought the signup. Signing in to an existing account does not create an attributed signup. App-store installs cannot carry this web attribution.</p>
+      <p>On these X-attributed visits, we load the X pixel. X receives browser and network information, including your IP address, browser information, page URL and cookie identifiers, under <a href="https://x.com/en/privacy">X’s Privacy Policy</a>. We also send X a signup event with the X click identifier, signup time and a unique conversion identifier that prevents duplicate counting. We do not send X your name, email address, phone number, Beeline account identifier, Room content or connected-app data. Visitors without X attribution do not load the X pixel.</p>
+      <p>We keep account attribution until you delete your account. Our private operator dashboard shows daily ad spend, impressions, link clicks and web signups by campaign, ad and audience, including the share of signups without attribution. You can clear the first-party cookie in your browser’s site-data settings. Blocking the X pixel does not stop the server signup event when your signup carries an X click identifier.</p>
 
       <h2>Your choices</h2>
       <p>You can turn notifications off in the app or your device settings, disconnect GitHub or any connected app, and remove the app's local session. You can delete your account at any time from the app's Settings screen, which erases your profile, sessions, sign-in links, GitHub connections, agents, and uploaded media from the service and revokes your connected apps, including Google apps, at Composio; messages you wrote in shared Rooms may remain available to other authorized members where that is necessary to preserve their shared record, attributed to “Deleted account”. Questions about deletion can go to Moon Rice Limited at <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>

@@ -1,3 +1,4 @@
+import { readWebXAttribution, loadXPixel, trackXSignup } from '@beeline/api-contract/x-attribution';
 import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { OidcBindError } from '@beeline/buzz-client';
@@ -9,6 +10,9 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
+
+// Capture before OAuth leaves the landing URL; the shared first-party cookie survives it.
+loadXPixel(readWebXAttribution());
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
@@ -38,6 +42,7 @@ export interface MonolithTokens {
   refreshToken: string;
   refreshExpiresAt: number;
   identityId: string;
+  xSignup?: { eventId: string; conversionId: string };
 }
 
 /** Deadline for room/workspace reads; long uploads stay unbounded by default. */
@@ -185,14 +190,20 @@ export class MonolithSession {
     funnel?: SigninFunnelEvent,
   ): Promise<string> {
     const revision = this.credentialRevision;
+    const xAttribution = readWebXAttribution();
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/${provider}/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ oidcToken: ticket, ...(funnel ? {funnel} : {}) }),
+      body: JSON.stringify({
+        oidcToken: ticket,
+        ...(funnel ? { funnel } : {}),
+        ...(xAttribution ? { xAttribution } : {}),
+      }),
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
     await this.accept(tokens, true, revision);
+    trackXSignup(tokens.xSignup);
     return tokens.identityId;
   }
 

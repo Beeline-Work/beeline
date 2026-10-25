@@ -91,7 +91,9 @@
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile",
     "prompt:discovery": "node --import tsx scripts/discovery-live.mjs",
-    "test:prompt-discovery": "node --import tsx --test scripts/discovery-score.test.mjs scripts/discovery-service.test.mjs scripts/discovery-launch.test.mjs"
+    "test:prompt-discovery": "node --import tsx --test scripts/discovery-score.test.mjs scripts/discovery-service.test.mjs scripts/discovery-launch.test.mjs",
+    "build:x-attribution": "esbuild web/x-attribution-source.ts --bundle --format=iife --minify --platform=browser --target=es2022 --outfile=web/x-attribution.js",
+    "prove:x-attribution": "npm run build -w @beeline/server && node --import tsx scripts/prove-x-attribution.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

@@ -86,11 +86,16 @@ try {
   const restoredComposer = pointFor(dump(), 'content-desc', 'Message');
   if (!restoredComposer || Math.abs(restoredComposer[1] - restingComposer[1]) > 3) throw new Error('Composer did not return after keyboard dismissal');
   proof.keyboardDock = { restingComposer, raisedComposer, restoredComposer };
-  adb('shell', 'input', 'swipe', '500', '650', '500', '1900', '500');
-  await pause(1000);
-  const beforeScroll = dump();
-  const anchor = [...beforeScroll.matchAll(/<node\b[^>]*>/g)].map(match => match[0])
-    .find(node => /text="Fixture \d{4}/.test(node) && !node.includes('bounds="[0,0][0,0]"'));
+  let beforeScroll;
+  let anchor;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    adb('shell', 'input', 'swipe', '500', '650', '500', '1900', '500');
+    await pause(1000);
+    beforeScroll = dump();
+    anchor = [...beforeScroll.matchAll(/<node\b[^>]*>/g)].map(match => match[0])
+      .find(node => /text="Fixture \d{4}/.test(node) && !node.includes('bounds="[0,0][0,0]"'));
+    if (anchor) break;
+  }
   const anchorText = anchor?.match(/text="([^"]*)"/)?.[1];
   const beforePoint = anchorText && pointFor(beforeScroll, 'text', anchorText);
   if (!beforePoint) throw new Error('Older visible scroll anchor missing');

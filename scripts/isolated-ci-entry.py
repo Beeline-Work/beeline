@@ -10,6 +10,8 @@ def wait_for_child():
     while time.monotonic() < deadline:
         try:
             pid = int(Path('/ci/run/rootlesskit/child_pid').read_text())
+            if pid > 1 and os.stat(f'/proc/{pid}').st_uid != os.getuid():
+                raise SystemExit('Engine child is not owned by shard UID')
             if pid > 1 and os.path.samefile(f'/proc/{pid}/exe', '/usr/bin/rootlesskit'):
                 if all(not os.path.samefile(f'/proc/{pid}/ns/{ns}', f'/proc/self/ns/{ns}')
                        for ns in ['user', 'net']):
@@ -19,13 +21,6 @@ def wait_for_child():
         time.sleep(0.1)
     raise SystemExit('Engine child namespace not ready after 30 seconds')
 
-
-def listener_command(pid):
-    return ['nsenter', '--user', '--net', '--target', str(pid),
-        '--setuid=0', '--setgid=0', '--', '/usr/bin/setpriv',
-        '--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
-        '--securebits=+noroot,+noroot_locked,+no_setuid_fixup,+no_setuid_fixup_locked',
-        '--no-new-privs', '--', '/ci/runner/bin/Runner.Listener', 'run']
 
 if sys.argv[1] == 'configure':
     token = sys.stdin.readline(4096).strip()
@@ -37,4 +32,8 @@ else:
     pid = wait_for_child()
     # Namespace root maps to this shard's unprivileged host UID.
     os.environ['RUNNER_ALLOW_RUNASROOT'] = '1'
-    os.execv('/usr/bin/nsenter', listener_command(pid))
+    os.execv('/usr/bin/nsenter', ['nsenter', '--user', '--net', '--target', str(pid),
+        '--setuid=0', '--setgid=0', '--', '/usr/bin/setpriv',
+        '--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
+        '--securebits=+noroot,+noroot_locked,+no_setuid_fixup,+no_setuid_fixup_locked',
+        '--no-new-privs', '--', '/ci/runner/bin/Runner.Listener', 'run'])

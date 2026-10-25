@@ -20,7 +20,10 @@ class CleanupTest(unittest.TestCase):
         return scope
 
     def test_listener_drops_caps_before_executing_runner(self):
-        command = self.entry_functions({})['listener_command'](123)
+        tree = ast.parse(Path(__file__).with_name('isolated-ci-entry.py').read_text())
+        call = tree.body[-1].orelse[-1].value
+        self.assertEqual(ast.unparse(call.func), 'os.execv')
+        command = eval(compile(ast.Expression(call.args[1]), '<entry argv>', 'eval'), {'pid': 123})
         self.assertEqual(command[command.index('--') + 1], '/usr/bin/setpriv')
         for option in ['--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
                        '--no-new-privs', '--securebits=+noroot,+noroot_locked,+no_setuid_fixup,+no_setuid_fixup_locked']:
@@ -32,7 +35,9 @@ class CleanupTest(unittest.TestCase):
         path = Mock()
         path.return_value.read_text.side_effect = [FileNotFoundError(), '123']
         samefile = Mock(side_effect=[True, False, False])
-        scope = self.entry_functions({'time': clock, 'Path': path, 'os': SimpleNamespace(path=SimpleNamespace(samefile=samefile))})
+        owner = Mock(return_value=SimpleNamespace(st_uid=1003))
+        scope = self.entry_functions({'time': clock, 'Path': path, 'os': SimpleNamespace(
+            path=SimpleNamespace(samefile=samefile), stat=owner, getuid=lambda: 1003)})
         self.assertEqual(scope['wait_for_child'](), 123)
         clock.sleep.assert_called_once_with(0.1)
         clock.monotonic.side_effect = [0, 0, 31]
@@ -41,6 +46,10 @@ class CleanupTest(unittest.TestCase):
         samefile.side_effect = None
         samefile.return_value = False
         with self.assertRaises(SystemExit):
+            scope['wait_for_child']()
+        clock.monotonic.side_effect = [0, 0]
+        owner.return_value = SimpleNamespace(st_uid=1004)
+        with self.assertRaisesRegex(SystemExit, 'not owned by shard UID'):
             scope['wait_for_child']()
 
     def test_extracted_runner_is_enterable_executable_and_writable(self):

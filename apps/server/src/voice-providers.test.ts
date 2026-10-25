@@ -107,6 +107,20 @@ describe('voice providers', () => {
     expect(body.messages[0].content).toContain('Never claim results, progress, stopping points or reasons');
     expect(body.messages[0].content).toContain('An explicit Call work still pending entry confirms work is running');
     expect(body.messages[0].content).toContain('Call order only when tools beyond search_web');
+    const prompt = body.messages[0].content;
+    const orderDescription = body.tools[0].function.description;
+    for (const destination of ['bots', 'webhooks', 'email', 'Telegram', 'other services']) {
+      expect(prompt).toContain(destination);
+      expect(orderDescription).toContain(destination);
+    }
+    expect(prompt).toContain('tell Grok Bot hello');
+    expect(prompt).toContain('full agent resolves the name from its notes');
+    expect(prompt).toContain('When unsure whether an action is possible, call order');
+    expect(prompt).toContain('If speech is only a fragment, ask one brief clarification');
+    expect(prompt).toContain('Knowledge questions, including the history of Serbia');
+    expect(prompt).not.toContain('Never offer an action you cannot take');
+    expect(orderDescription).toContain('unknown recipients');
+    expect(orderDescription).toContain('order when unsure an action is possible');
     expect(reply).toEqual({ text: 'I’ll work on that.', order: true });
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });

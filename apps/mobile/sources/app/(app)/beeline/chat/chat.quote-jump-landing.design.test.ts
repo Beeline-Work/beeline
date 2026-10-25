@@ -98,9 +98,12 @@ describe('message-source landing', () => {
 
   it('measures a new window from scratch and lands again when the list measures a row', () => {
     expect(surface).toContain(
-      'const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;',
+      'const phoneRowKey = useCallback((rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`, []);',
     );
-    expect(surface).toContain('keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}');
+    expect(surface).toContain(
+      'const phoneMessageKey = useCallback((item: ChatDisplayMessage) => phoneRowKey(item.id), [phoneRowKey]);',
+    );
+    expect(surface).toContain('keyExtractor={phoneMessageKey}');
     expect(surface).toContain('CellRendererComponent={PhoneTranscriptCell}');
     expect(surface).toContain(
       'if (scrollController.isLanding()) scrollController.observeLayout();',

@@ -167,7 +167,7 @@ describe('Room composer status layout', () => {
 
 describe('Room composer keyboard dismissal', () => {
   const transcript = source.slice(
-    source.indexOf('<FlatList'),
+    source.indexOf('<PhoneTranscriptList'),
     source.indexOf('renderItem={renderItem}'),
   );
 

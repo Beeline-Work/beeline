@@ -1,0 +1,16 @@
+{
+  "surface": "profile",
+  "physicalViewport": {
+    "screenshot_id": "26dc2cf5-b6a8-4cb9-b343-01d7d586034a",
+    "height": 936,
+    "width": 1279,
+    "coordinate_space": "image_pixels"
+  },
+  "layoutViewport": {
+    "width": 1279,
+    "height": 936
+  },
+  "zoom": 1,
+  "measurement": "W1279 S0 P939",
+  "route": "https://web.usebeeline.app/beeline/human-profile?communityId=18e555f7-e191-452b-9b0f-b825f58ee4ba&memberId=a20051619213d49342620f14e5dfbf5bd73c4c794c835e6cab4f8e1e050645b9"
+}

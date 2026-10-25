@@ -1,6 +1,6 @@
 # Desktop surface width inventory
 
-Baseline: `6c2a6c1bec0fabc25862e510718ccf7882db30b1`. Initial source inventory; rendered measurements and screenshots are pending.
+Baseline: `6c2a6c1bec0fabc25862e510718ccf7882db30b1`. Source inventory with separately labelled production-before and built-component measurements below.
 
 ## Measurement contract
 
@@ -117,14 +117,11 @@ The shared `HullActionSheetModal` already uses center on desktop (460 px source 
 | Modal.prompt → WebPromptModal | 460 / 460 cap (source) | 460 / 460 | Centred small input dialog |
 | Modal.actionSheet → WebAlertModal action-sheet mode | HullActionSheetModal; 460 / 460 cap (source) | ≤560 centred | Shared action menu |
 
-## Remaining proof before implementation / PR
+## Delivery and deferred integration
 
-- Replace unmeasured entries with rendered bounding boxes at both desktop widths; inspect delegated components and style overrides.
-- Capture members, a profile, tray, two sheets and a confirm before and after at both widths; capture phone page and sheet unchanged.
-- Exercise the signed-in production web path using the reviewer bypass, then the affected built app path.
-- Reproduction identifier is pending a rendered failure; this source audit alone does not prove a visible defect.
-- Rebase after #2915 lands, reuse its primitive, and retain the inventory as the first standalone commit.
-- Run sheet placement regressions, the mobile suite and server shard before a push. Page-local implementation and proof updates are recorded below.
+Revision 2 accepts the production-before set below and built-component after proof. Reviewer-bypass authentication is superseded by the existing owner GitHub session. DESKTOP-SHEET-1 is the recorded reproduction. Other routes retain explicitly source-derived widths; they are not claimed as individually browser-measured.
+
+Ruby will order the rebase and shared-width wiring after #2915 merges. Until then these page-local changes remain independent of its shared layout files.
 
 ## Page-local implementation and measured sheet reproduction
 
@@ -143,8 +140,27 @@ Machine output intentionally retains its existing wider content cap (`ToolOutput
 
 Page-local detail caps are implemented for human profiles, workflow definitions, schedules, subscriptions, connector details and wallet forms, onboarding and GitHub return status. Community, create-workspace and join columns expand to 640 px only on desktop. Schedule/workflow lists and workflow-run ledgers cap at 720 px. Members, agent profiles and settings/identity remain owned by PR #2915. Temporary local numeric caps will be replaced with its shared widths after the commanded rebase.
 
-Outstanding: measurements for every production route at 1440/1920 (and original brief's 1280), full page screenshot set, second distinct sheet and confirm screenshots, reviewer-bypass authentication, and integration with PR #2915. Squire opened members and the play-review profile using the existing owner session. A subsequent DOM-title probe could read the viewport, but the browser stayed at 1279 px even when launch viewport settings and popup window dimensions requested 1440 px. No controlled 1440/1920 production viewport was established. The probe popup and session were closed. Local browser-use CLI and local CDP endpoint were absent; the generic browser connector returned an unrelated signup goal. The vault metadata lookup for the reviewer-bypass credential returned an owner-approval/resource-unavailable denial. No successful reviewer-bypass authentication is claimed.
+Production-before proof required by revision 2 is recorded below. Shared-width integration remains deferred until Ruby orders the rebase.
 
 ## Built page measurements
 
 The real Schedules list, Schedule detail and Subscription detail were rendered with the repository browser harness, actual bundled fonts, and synthetic service responses. The list is 720 px and the two detail pages are 640 px at desktop widths 1280, 1440 and 1920; all are horizontally centred. At phone-class width 500, each remains 500 px. Screenshots and bounding-box JSON are under `pages/`. These are local after measurements, not production before measurements or proof of an unchanged phone page compared with baseline.
+
+## Production-before measurements (revision 2)
+
+Captured on web.usebeeline.app through Squire in the owner's GitHub-authenticated session. Native viewport is 1279 × 936 (the accepted 1280 class). Wide proof emulates a 1920 × 1404 layout within that physical browser, rather than claiming a physical 1920 screenshot. The workspace strip was confirmed present for every wide measurement.
+
+| Surface | Native 1280 class before | Emulated 1920 before | Planned width / rule |
+| --- | --- | --- | --- |
+| Members page outer pane | 939 | 1504 | 640 detail column, owned by #2915 |
+| Play Review human profile outer pane | 939 | 1504 | 640 detail column |
+| Tray list | 390 | 390 | 720 maximum list width; retain detail split |
+| Appearance bottom sheet | 460 | 460 | 560 maximum centred sheet |
+| Interface size bottom sheet | 460 | 460 | 560 maximum centred sheet |
+| Remove Play Review confirmation inner surface | 460 | 460 | Retain 460 small-dialog cap |
+
+Images and JSON are in `production-before/`. Appearance and Interface size heights were 257 / 258; confirmation heights were 172 / 173 (native / emulated, rounded CSS pixels). Measurements divide bounding rectangles by the document zoom. The confirmation's test ID covers the overlay; its inner surface is measured from the Cancel button's third parent. The dialog was cancelled without submitting removal; neither picker option was changed.
+
+For wide emulation, set document zoom to 0.6667, override window innerWidth/innerHeight and documentElement clientWidth/clientHeight to 1920/1404, and set body/root dimensions to those CSS pixels. Also override visualViewport width/height and dispatch resize on visualViewport as well as window: the app needs that event to recalculate its desktop breakpoint. Run through a javascript navigation URL; Squire reports ERR_ABORTED although the script executes. Reapply after hard navigation, confirm the workspace strip, then measure. Native proof resets these values to 1279/936 and zoom 1. Hard navigation restored the browser afterward.
+
+Unrelated conversation previews were hidden with visibility:hidden before captures, preserving layout. Tray bookmark author/excerpt text was also hidden. No screenshot is evidence that this branch is deployed. Production after is a post-release check; built real components remain the PR's after proof.

@@ -9711,6 +9711,7 @@ describe('monolith integration', () => {
     expect(Object.keys(viewed!.cornerBrief!).sort()).toEqual([
       'approval',
       'attachments',
+      'authorHandle',
       'revision',
       'spec',
     ]);

@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 
 payload = Path('/home/lunchbox/.local/state/beeline/corners/d0dedb54-162b-4185-a9ef-0e241540a1d4/scripts/ci-runner-systemd/rollout.py')
-expected = 'c5cba3648c0fb3aba39f2bd6f553e8c7418705443e7a5e8fb1735f8b1c25d95d'
+expected = 'da7abb25611cfa6fcf5f65abbb692c16727df80fe238fe6e079e9e659b0ee3d4'
 if hashlib.sha256(payload.read_bytes()).hexdigest() != expected:
     raise SystemExit('Rollout payload SHA-256 mismatch; refusing execution')
 # Two owner browser steps can each take twenty minutes, beyond a command turn.

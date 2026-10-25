@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import socket
 import stat
+import subprocess
 import time
 
 ROOT = Path(__file__).resolve().parent
@@ -14,7 +15,7 @@ EXPECTED_INSTALLATION = 175234307
 EXPECTED_SLUG = 'beeline-squire-ci-lmiac-g0'
 OLD_ARGV = [b'/usr/bin/python3', b'/home/lunchbox/.local/state/beeline/corners/d0dedb54-162b-4185-a9ef-0e241540a1d4/scripts/activate-isolated-ci-runners.py']
 SOCKET_PATH = '/run/beeline-ci-registration/relay.sock'
-PINS = {'rollout.py': 'c5cba3648c0fb3aba39f2bd6f553e8c7418705443e7a5e8fb1735f8b1c25d95d', 'broker.py': 'a416af17af98a1e79d8017f7fe03ddfc0dac2c97d0732ad2d47a4aedf6d1926e'}
+PINS = {'rollout.py': 'da7abb25611cfa6fcf5f65abbb692c16727df80fe238fe6e079e9e659b0ee3d4', 'broker.py': 'a416af17af98a1e79d8017f7fe03ddfc0dac2c97d0732ad2d47a4aedf6d1926e'}
 
 
 def load(name):
@@ -136,13 +137,27 @@ def main():
             if installed.is_symlink() or hashlib.sha256(installed.read_bytes()).hexdigest() != digest:
                 raise RuntimeError('Installed permanent companion differs: ' + name)
         for index in [1, 2]:
-            import subprocess
             status = subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet', f'beeline-ci-shard-{index}.service'], capture_output=True).returncode
             if status != 3:
                 raise RuntimeError('Expected existing inactive runners')
-        verify_old_listener(EXPECTED_PID)  # All checks above are read-only/token issuance only.
-        rollout.log('ROLLOUT RESUME: old helper identity and sole socket ownership verified')
-        stop_verified_listener()
+        # A retry after takeover uses the already installed permanent socket.
+        # Never signal the old PID once systemd owns registration.
+        socket_active = subprocess.run(['/usr/bin/systemctl', 'is-active', '--quiet',
+            'beeline-ci-registration.socket'], capture_output=True).returncode
+        if socket_active != 0:
+            # A stopped permanent socket after our rollback needs no old helper.
+            with socket.socket(socket.AF_UNIX) as probe:
+                probe.settimeout(2)
+                try:
+                    probe.connect(SOCKET_PATH)
+                except OSError as error:
+                    import errno
+                    if error.errno not in (errno.ECONNREFUSED, errno.ENOENT):
+                        raise RuntimeError('Cannot establish registration socket state') from None
+                else:
+                    verify_old_listener(EXPECTED_PID)
+                    rollout.log('ROLLOUT RESUME: old helper identity and sole socket ownership verified')
+                    stop_verified_listener()
         folder = Path(SOCKET_PATH).parent
         if not stat.S_ISDIR(folder.lstat().st_mode):
             raise RuntimeError('Relay parent is not a real directory')
@@ -150,6 +165,8 @@ def main():
         folder.chmod(0o700)
         rollout.run(['/usr/bin/systemctl', 'reset-failed', 'beeline-ci-registration.socket'])
         rollout.run(['/usr/bin/systemctl', 'enable', '--now', 'beeline-ci-registration.socket'])
+        rollout.ensure_mount_targets()
+        rollout.run(['/usr/bin/systemctl', 'stop', 'beeline-ci-shard-3-docker.service', 'beeline-ci-shard-4-docker.service'])
         group = rollout.group_setup(token(), int(repos['repositories'][0]['id']))
         if group != int(os.environ['GITHUB_RUNNER_GROUP_ID']):
             raise RuntimeError('Existing recorded runner group ID differs')
@@ -160,24 +177,24 @@ def main():
         if policy.get('approval_policy') != 'all_external_contributors':
             raise RuntimeError('External approval policy changed')
         since = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+        rollout.run(['/usr/bin/systemctl', 'enable', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'])
+        rollout.run(['/usr/bin/systemctl', 'start', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'], timeout=240)
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            rows = rollout.api(f'orgs/{rollout.ORG}/actions/runner-groups/{group}/runners?per_page=100', token())
+            online = {r['name'] for r in rows['runners'] if r['status'] == 'online'}
+            if {'beeline-ci-shard-1', 'beeline-ci-shard-2'} <= online:
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError('Both runners did not become online in the approved group')
+        rollout.verify_logs(since)
+        rollout.log('ROLLOUT PASS: resumed existing App; runners 1 and 2 online in beeline-server-ci')
+    except BaseException as error:
         try:
-            rollout.run(['/usr/bin/systemctl', 'enable', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'])
-            rollout.run(['/usr/bin/systemctl', 'start', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'], timeout=240)
-            deadline = time.monotonic() + 180
-            while time.monotonic() < deadline:
-                rows = rollout.api(f'orgs/{rollout.ORG}/actions/runner-groups/{group}/runners?per_page=100', token())
-                online = {r['name'] for r in rows['runners'] if r['status'] == 'online'}
-                if {'beeline-ci-shard-1', 'beeline-ci-shard-2'} <= online:
-                    break
-                time.sleep(2)
-            else:
-                raise RuntimeError('Both runners did not become online in the approved group')
-            rollout.verify_logs(since)
-            rollout.log('ROLLOUT PASS: resumed existing App; runners 1 and 2 online in beeline-server-ci')
-        except BaseException:
-            subprocess.run(['/usr/bin/systemctl', 'disable', '--now', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'], capture_output=True, timeout=120)
-            raise
-    except Exception as error:
+            rollout.stop_ci()
+        except Exception:
+            rollout.log('ROLLOUT FAILED: CI cleanup failed; inspect unit states')
         safe = str(error) if isinstance(error, rollout.Failure) or type(error) is RuntimeError else type(error).__name__
         rollout.log('ROLLOUT FAILED: resume: ' + safe)
         raise SystemExit(1)

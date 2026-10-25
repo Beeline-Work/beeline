@@ -338,6 +338,47 @@ def verify_logs(since):
     log('Journal and runner diagnostic token audit PASS')
 
 
+def ensure_mount_targets(host_root=Path('/')):
+    # RootDirectoryStartOnly leaves ExecStartPre in the host root, but its
+    # BindPaths still targets /ci. Prepare cannot repair a namespace that fails
+    # before Python starts. Create both destinations before starting either unit.
+    destinations = [host_root / 'ci']
+    for index in [1, 2]:
+        base = host_root / f'var/lib/beeline-ci-shard-{index}'
+        source = base / 'state'
+        if source.is_symlink() or not source.is_dir():
+            raise Failure('Missing or unsafe bind source for shard ' + str(index))
+        jail = base / 'root'
+        if jail.is_symlink() or not jail.is_dir():
+            raise Failure('Missing or unsafe jail for shard ' + str(index))
+        destinations.append(jail / 'ci')
+    for path in destinations:
+        if path.is_symlink():
+            raise Failure('Mount destination is a symlink')
+        path.mkdir(mode=0o755, exist_ok=True)
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0:
+            raise Failure('Mount destination must be a root-owned directory')
+
+
+def stop_ci():
+    # Stop restart-always listeners first, then every experimental engine,
+    # including the idle engines left by the earlier four-shard provisioning.
+    batches = [
+        ['disable', '--now', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'],
+        ['stop', *[f'beeline-ci-shard-{i}-docker.service' for i in range(1, 5)]],
+        ['stop', 'beeline-ci-registration.socket', 'beeline-ci-registration.service'],
+    ]
+    failures = []
+    for args in batches:
+        try:
+            run(['/usr/bin/systemctl', *args], timeout=120)
+        except Exception as error:
+            failures.append(str(error) if isinstance(error, Failure) else type(error).__name__)
+    if failures:
+        raise Failure('CI cleanup failed: ' + '; '.join(failures))
+
+
 def main():
     if os.geteuid() != 0:
         raise Failure('Root required')
@@ -374,6 +415,8 @@ def main():
     install_files()
     since = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
     try:
+        ensure_mount_targets()
+        run(['/usr/bin/systemctl', 'stop', 'beeline-ci-shard-3-docker.service', 'beeline-ci-shard-4-docker.service'])
         run(['/usr/bin/systemctl', 'enable', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'])
         run(['/usr/bin/systemctl', 'start', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'], timeout=240)
         deadline = time.monotonic() + 180
@@ -389,8 +432,8 @@ def main():
         verify_logs(since)
         log('ROLLOUT PASS: runners 1 and 2 online in beeline-server-ci; actual-job/load/timing proofs remain')
     except BaseException:
-        # Stop and disable only the new runner units; keep journal and broker evidence.
-        subprocess.run(['/usr/bin/systemctl', 'disable', '--now', 'beeline-ci-shard-1.service', 'beeline-ci-shard-2.service'], capture_output=True, timeout=120)
+        # Preserve evidence on disk; stop the complete experimental runtime.
+        stop_ci()
         raise
 
 

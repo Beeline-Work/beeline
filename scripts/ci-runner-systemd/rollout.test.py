@@ -4,6 +4,8 @@ import importlib.util
 import io
 import os
 import tempfile
+import subprocess
+import sys
 from types import SimpleNamespace
 from pathlib import Path
 import unittest
@@ -15,6 +17,70 @@ spec.loader.exec_module(r)
 
 
 class RolloutTests(unittest.TestCase):
+    def test_missing_prestart_mount_destination_with_real_bind(self):
+        # Reproduction CI-MOUNT-2: the jail destination exists, host /ci does
+        # not; RootDirectoryStartOnly pre-start uses the latter. Mounts stay
+        # entirely inside an unprivileged, throwaway user/mount namespace.
+        script = r'''import importlib.util, os, subprocess, tempfile
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('rollout', __import__('sys').argv[1])
+r = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(r)
+with tempfile.TemporaryDirectory() as folder:
+    root = Path(folder)
+    for i in [1, 2]:
+        base = root / f'var/lib/beeline-ci-shard-{i}'
+        (base / 'state').mkdir(parents=True)
+        (base / 'root/ci').mkdir(parents=True)
+    source = root / 'var/lib/beeline-ci-shard-2/state'
+    target = root / 'ci'
+    before = subprocess.run(['mount', '--bind', str(source), str(target)], capture_output=True)
+    assert before.returncode != 0 and not target.exists(), before
+    print('CI-MOUNT-2 before: bind fails with absent host destination; jail/ci exists')
+    r.ensure_mount_targets(root)
+    r.ensure_mount_targets(root)  # Retry is idempotent.
+    for target in [root / 'ci', root / 'var/lib/beeline-ci-shard-2/root/ci']:
+        subprocess.run(['mount', '--bind', str(source), str(target)], check=True)
+        try:
+            (source / 'marker').write_text('bound')
+            assert (target / 'marker').read_text() == 'bound'
+        finally:
+            subprocess.run(['umount', str(target)], check=True)
+    print('CI-MOUNT-2 after: host and jail bind mounts PASS; retry PASS')
+'''
+        result = subprocess.run(['unshare', '--user', '--map-root-user', '--mount',
+            sys.executable, '-c', script, str(Path(r.__file__).resolve())],
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        print(result.stdout, end='')
+
+    def test_mount_preflight_rejects_symlinks_and_missing_sources(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with self.assertRaisesRegex(r.Failure, 'bind source'):
+                r.ensure_mount_targets(root)
+            for i in [1, 2]:
+                base = root / f'var/lib/beeline-ci-shard-{i}'
+                (base / 'state').mkdir(parents=True)
+                (base / 'root').mkdir()
+            (root / 'ci').symlink_to(root / 'var')
+            with self.assertRaisesRegex(r.Failure, 'symlink'):
+                r.ensure_mount_targets(root)
+
+    def test_rollback_stops_all_engines_even_if_listener_cleanup_fails(self):
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv)
+            if 'disable' in argv:
+                raise r.Failure('injected listener stop failure')
+        with patch.object(r, 'run', side_effect=run):
+            with self.assertRaisesRegex(r.Failure, 'CI cleanup failed'):
+                r.stop_ci()
+        self.assertEqual(calls[1], ['/usr/bin/systemctl', 'stop',
+            *[f'beeline-ci-shard-{i}-docker.service' for i in range(1, 5)]])
+        self.assertEqual(calls[2][-2:], ['beeline-ci-registration.socket', 'beeline-ci-registration.service'])
+        print('CI-CLEANUP-2: all four engines and broker stopped after injected failure PASS')
+
     def test_manifest_has_exact_scope_and_no_webhook(self):
         value = r.manifest('fixture', 'http://127.0.0.1:34567')
         self.assertEqual(value['default_permissions'], {'organization_self_hosted_runners': 'write', 'administration': 'read'})

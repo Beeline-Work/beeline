@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 
 payload = Path('/home/lunchbox/.local/state/beeline/corners/d0dedb54-162b-4185-a9ef-0e241540a1d4/scripts/ci-runner-systemd/resume.py')
-expected = 'a4e3ce7e61bc789a9ea503d4489654612f4b3f69b7983b2f7a2f529aaa11dfac'
+expected = '49b02dcb5939e81d9b002971f89203b29ecd18cb1fa6285fd34c1d07d6d74ac7'
 if hashlib.sha256(payload.read_bytes()).hexdigest() != expected:
     raise SystemExit('Resume payload SHA-256 mismatch; refusing execution')
 subprocess.run(['/usr/bin/systemd-run', '--unit=beeline-ci-existing-app-resume',

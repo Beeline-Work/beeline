@@ -64,3 +64,48 @@ Non-secret output appends to /run/beeline-ci-rollout/status and the journal.
 A failure before the credential-bearing service starts may appear only in its
 unit status; this draft does not claim that unsealing has passed. Actual-job
 reset, concurrent load and three-PR timing remain after a successful resume.
+
+## CI-MOUNT-2 recovery revision (review required)
+
+The owner-authorized resume reached the permanent broker, and Ruby's host
+journal records shard one registering successfully before rollback. Shard two
+failed before preparation at 19:18:55 EDT:
+
+> Failed to mount /var/lib/beeline-ci-shard-2/state to /run/systemd/mount-rootfs/ci: No such file or directory
+
+Its ExecStartPre has no recorded start time; state still dates to 15:06.
+`prepare.py` deletes only children of `state`, never `state` or `root/ci`.
+The installer combines `RootDirectoryStartOnly=yes`, a privileged pre-start
+command and `BindPaths=.../state:/ci`. Systemd skips the jail for pre-start,
+but still compiles bind mounts. Thus host `/ci` is also a destination. It
+was first created during this launch (19:18), explaining why inspecting only
+`root/ci` after failure misses the pre-start boundary. Missing destination
+at that boundary is the diagnosis; the exact concurrent systemd creation
+sequence has not been captured in a privileged replay.
+
+Sources: systemd v255 [control-process chroot flags](https://github.com/systemd/systemd/blob/v255/src/core/service.c#L1488)
+and [unconditional bind-mount compilation](https://github.com/systemd/systemd/blob/v255/src/core/exec-invoke.c#L2771).
+
+The revised recovery creates and validates root-owned host `/ci` and both
+jail destinations before either runner starts. Missing bind sources, symlink
+sources/jails/destinations and non-root-owned destinations fail closed.
+The preflight does not recreate or clear job state.
+
+Retry accepts the installed active permanent socket, or a stopped socket with
+no listener; it only considers the old PID if a non-systemd listener is still
+alive, retaining all identity/pidfd checks. It reuses the same App, encrypted
+key, group and installation. No enrollment endpoint or GitHub UI is involved.
+Idle engines three/four are stopped before runner start. Failure cleanup
+first disables/stops runners one/two, then stops engines one through four,
+then the permanent socket/broker. Cleanup attempts later batches even if an
+earlier batch fails, and reports failure rather than claiming shutdown passed.
+
+Proof: `python3 scripts/ci-runner-systemd/rollout.test.py` runs real bind mounts
+in an isolated unprivileged user/mount namespace. With existing state and
+jail/ci but absent host/ci, the bind fails. The same bind passes after the
+recovery preflight, for both host and jail destinations, including a repeat
+preflight. This is a missing-path stand-in, not a replay of systemd's concurrent
+auto-creation. Resume tests cover reuse of the existing broker and cleanup on
+an injected start failure; cleanup tests cover every engine even when stopping
+a runner fails. No privileged host retry or idle-engine shutdown was executed
+for this revision. Ruby must review before a new approval request is filed.

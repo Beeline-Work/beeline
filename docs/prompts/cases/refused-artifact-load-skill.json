@@ -124,6 +124,38 @@
         "result": {
           "revisions": []
         }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "request",
+          "kind": "path",
+          "target": "/tmp/demo-report.html"
+        },
+        "result": {
+          "state": "pending_approval"
+        },
+        "boundary": "approval"
+      },
+      {
+        "call": "post_artifact",
+        "args": {
+          "path": "/tmp/demo-report.html"
+        },
+        "result": {
+          "error": "refused: path outside allowed artifact roots"
+        },
+        "boundary": "error"
+      },
+      {
+        "call": "Read",
+        "args": {
+          "file_path": "/tmp/demo-report.html"
+        },
+        "result": {
+          "error": "path outside allowed roots; a path grant is required"
+        },
+        "boundary": "error"
       }
     ],
     "connect": {

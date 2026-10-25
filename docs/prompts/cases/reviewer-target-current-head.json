@@ -141,7 +141,10 @@
           "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
           "name": "reviewer-target-current-head",
           "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
-          "repository": null,
+          "repository": {
+            "name": "example/app",
+            "branch": "main"
+          },
           "worktree": {
             "featureBranch": "feature/corner-case",
             "targetBranch": "main"
@@ -196,6 +199,37 @@
           "author": "juniper",
           "diff": "- if (expiresAt < now) return 401;\n+ if (expiresAt <= now) return 401;",
           "body": "Token expiry fix."
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^gh pr view 88 --json headRefOid,files(?:,title,body)?(?: && echo '---DIFF---' && gh pr diff 88)?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "{\"headRefOid\": \"5d6e7f8\", \"files\": [{\"path\": \"apps/server/src/auth.ts\"}], \"title\": \"Fix token expiry\", \"body\": \"Expired tokens return 401.\"}\n- if (expiresAt < now) return 401;\n+ if (expiresAt <= now) return 401;"
+        }
+      },
+      {
+        "call": "run_granted_command",
+        "args": {
+          "argv": {
+            "equals": [
+              "gh",
+              "pr",
+              "view",
+              "88",
+              "--json",
+              "headRefOid,files"
+            ]
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "{\"headRefOid\": \"5d6e7f8\", \"files\": [{\"path\": \"apps/server/src/auth.ts\"}], \"title\": \"Fix token expiry\", \"body\": \"Expired tokens return 401.\"}"
         }
       }
     ],

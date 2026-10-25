@@ -48,7 +48,10 @@
   "scenario": {
     "history": [],
     "files": {
-      "apps/server/src/auth.ts": "export function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n"
+      "apps/server/src/auth.ts": "export function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n",
+      "package.json": "{\"name\":\"replay-workspace\",\"scripts\":{\"corner:prepare\":\"npm ci && npm run build\"}}",
+      "apps/mobile/package.json": "{\"name\":\"@beeline/mobile\",\"scripts\":{\"test\":\"vitest run\"}}",
+      "apps/server/src/auth.test.ts": "test(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));"
     },
     "brief": {
       "repositoryWork": true,
@@ -125,7 +128,10 @@
           "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
           "name": "prepare-runs-first",
           "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
-          "repository": null,
+          "repository": {
+            "name": "example/app",
+            "branch": "main"
+          },
           "worktree": {
             "featureBranch": "feature/corner-case",
             "targetBranch": "main"
@@ -179,6 +185,98 @@
         "result": {
           "exitCode": 0,
           "stdout": "## feature/corner-case\nWorking tree clean\ncccc333 Token expiry boundary\napps/server/src/auth.ts\napps/mobile/sources/buzz/live-turn-stream.test.ts\napps/mobile/sources/buzz/draft-settle.test.ts\nexport function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:cd apps/mobile && )?cat apps/server/src/auth\\.ts(?: 2>/dev/null)?(?: \\| head -(?:40|60))?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "export function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:cd apps/mobile && )?cat package\\.json(?: 2>/dev/null)?(?: \\| head -(?:40|60))?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "{\"name\":\"replay-workspace\",\"scripts\":{\"corner:prepare\":\"npm ci && npm run build\"}}"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:cd apps/mobile && )?cat package\\.json(?: 2>/dev/null)?(?: \\| head -(?:40|60))?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "{\"name\":\"@beeline/mobile\",\"scripts\":{\"test\":\"vitest run\"}}"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:cd apps/mobile && )?cat apps/server/src/auth\\.test\\.ts(?: 2>/dev/null)?(?: \\| head -(?:40|60))?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "test(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "cd \"$(git rev-parse --show-toplevel)\" && git log --oneline -3 && ls && cat package.json 2>/dev/null | head -40"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "feature/corner-case\nWorking tree clean\ncccc333 Token expiry boundary\n{\"name\":\"replay-workspace\",\"scripts\":{\"corner:prepare\":\"npm ci && npm run build\"}}\ntest(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));\nauth.ts\nauth.test.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "cd \"$(git rev-parse --show-toplevel)\" && git ls-remote --exit-code origin feature/corner-case; echo \"exit=$?\"; cat apps/server/src/auth.test.ts 2>/dev/null; ls apps/server/src"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "exit=2\ntest(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));\nauth.ts\nauth.test.ts\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:git status --short --branch && )?git ls-remote --exit-code origin feature/corner-case; echo \"(?:exit=|exit:|ls-remote exit: )\\$\\?\"(?: && cat apps/server/src/auth\\.ts)?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "exit=2\nexport function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:(?:cd \"\\$\\((?:pwd|git rev-parse --show-toplevel)\\)\"|cd apps/(?:mobile|server)|pwd|git(?: -C \\.)? status(?: --short| --branch| -sb)*|git branch --show-current|git(?: -C \\.)? log(?: --oneline| -[1-9][0-9]*)*|git ls-remote --exit-code origin feature/corner-case|echo \"(?:exit[:=]|ls-remote exit[:=] ?)\\$\\?\"|ls(?: -[a-z]+)?(?: (?:/replay|apps/server(?:/src)?(?:/auth\\.ts|/\\*\\.test\\.\\*)?|apps/server/test\\*|apps/mobile/sources/buzz/))*|cat (?:package\\.json|apps/mobile/package\\.json|apps/server/src/auth(?:\\.test)?\\.ts)|sed -n '1,[0-9]+p' (?:package\\.json|apps/mobile/package\\.json|apps/server/src/auth(?:\\.test)?\\.ts)|head -[0-9]+)(?: 2>/dev/null)?(?:\\s*(?:&&|;|\\|)\\s*|$))+$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\nWorking tree clean\ncccc333 Token expiry boundary\nexit=2\nexport function status(expiresAt: number, now: number) {\n  return expiresAt < now ? 401 : 200;\n}\n\n{\"name\":\"replay-workspace\",\"scripts\":{\"corner:prepare\":\"npm ci && npm run build\"}}\n{\"name\":\"@beeline/mobile\",\"scripts\":{\"test\":\"vitest run\"}}\ntest(\"expired tokens are refused\", () => expect(status(1, 1)).toBe(401));\nauth.ts\nauth.test.ts\n"
         }
       }
     ],

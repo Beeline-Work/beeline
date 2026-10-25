@@ -162,6 +162,13 @@
       "discover": {
         "apps": []
       }
+    },
+    "checks": {
+      "checks": "failed",
+      "approved": false,
+      "held": false,
+      "mergeAllowed": false,
+      "number": 412
     }
   }
 }

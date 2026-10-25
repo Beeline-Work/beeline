@@ -101,6 +101,12 @@
               "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
               "name": "github-dm-linked-repo-write",
               "kind": "dm"
+            },
+            {
+              "address": "b9f02ade-0577-5996-8bd6-c61ead1f6e37",
+              "name": "widgets-room",
+              "kind": "room",
+              "repository": "owner/widgets"
             }
           ]
         }
@@ -181,6 +187,16 @@
         "result": {
           "revisions": []
         }
+      },
+      {
+        "call": "app_tool",
+        "args": {
+          "app": "beeline:browser_share"
+        },
+        "result": {
+          "error": "No browser session exists for this DM."
+        },
+        "boundary": "error"
       }
     ]
   }

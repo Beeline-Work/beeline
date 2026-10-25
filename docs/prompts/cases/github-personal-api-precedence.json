@@ -134,7 +134,10 @@
           "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
           "name": "github-personal-api-precedence",
           "members": "",
-          "repository": null,
+          "repository": {
+            "name": "example/app",
+            "branch": "main"
+          },
           "worktree": {
             "featureBranch": "feature/corner-proof",
             "targetBranch": "main"

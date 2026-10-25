@@ -76,11 +76,15 @@ def broker():
 
 def jailed(index, args):
     name = f'beeline-ci-shard-{index}'
-    return run(['systemd-run', '--wait', '--pipe', '--collect',
+    command = ['systemd-run', '--wait', '--pipe', '--collect',
         f'--unit={name}-rollout-proof', '-p', f'User={name}',
         '-p', f'RootDirectory=/var/lib/{name}/root', '-p', 'MountAPIVFS=yes',
         '-p', 'BindReadOnlyPaths=/usr /etc/ssl/certs /etc/ld.so.cache',
-        '-p', f'BindPaths=/var/lib/{name}/state:/ci', '-p', 'NoNewPrivileges=yes', *args])
+        '-p', f'BindPaths=/var/lib/{name}/state:/ci', '-p', 'NoNewPrivileges=yes', *args]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=5 if args[-1] == 'info' else 240)
+    if result.returncode:
+        raise RuntimeError(f'Jailed command failed ({result.returncode}): {args!r}; stderr: {result.stderr[-2000:]}')
+    return result.stdout
 
 
 def main():
@@ -92,12 +96,18 @@ def main():
     os.environ['GH_CONFIG_DIR'] = '/nonexistent-beeline-ci-gh-config'
     policy()
     expected = {
-        ROOT / 'prepare-ephemeral-ci-runner.py': 'b3373576fb59016b050ab60c8ca7a1d7bf24deee379a880e7416223bcb02e835',
+        ROOT / 'prepare-ephemeral-ci-runner.py': 'ff9a084d9431719b579c45aae381bf4321a608347fd3d1cb8f0cb0c3e718f033',
         Path('/usr/local/lib/beeline-ci/prepare.py'): 'b3373576fb59016b050ab60c8ca7a1d7bf24deee379a880e7416223bcb02e835',
     }
     for path, digest in expected.items():
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise RuntimeError('Preflight digest mismatch')
+    # Upgrade only the previously verified installed preflight, without setup.
+    installed = Path('/usr/local/lib/beeline-ci/prepare.py')
+    installed.write_bytes((ROOT / 'prepare-ephemeral-ci-runner.py').read_bytes())
+    installed.chmod(0o600)
+    if hashlib.sha256(installed.read_bytes()).hexdigest() != 'ff9a084d9431719b579c45aae381bf4321a608347fd3d1cb8f0cb0c3e718f033':
+        raise RuntimeError('Installed preflight update mismatch')
     for index in [1, 2]:
         name = f'beeline-ci-shard-{index}'
         if subprocess.run(['systemctl', 'is-active', '--quiet', name + '.service']).returncode == 0:
@@ -120,7 +130,7 @@ def main():
 
     real_run = subprocess.run
     def reset_run(argv, **kwargs):
-        if argv[0] == 'systemd-run':
+        if argv[0] == 'systemd-run' and 'configure' in argv:
             if 'configure' not in argv or '--ephemeral' not in argv:
                 raise RuntimeError('Unexpected preflight command')
             return subprocess.CompletedProcess(argv, 0, stdout='Configuration deliberately skipped in reset proof\n')
@@ -149,6 +159,15 @@ def main():
             for directory in ['home', 'work', 'runner', 'docker']:
                 if (state / directory / 'beeline-reset-proof').exists():
                     raise RuntimeError('Reset marker survived')
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    jailed(index, ['/usr/bin/docker', '--host=unix:///ci/run/docker.sock', 'info'])
+                    break
+                except (RuntimeError, subprocess.TimeoutExpired) as error:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f'Docker readiness timed out: {error}') from error
+                    time.sleep(min(1, max(0, deadline - time.monotonic())))
             volumes = jailed(index, ['/usr/bin/docker', '--host=unix:///ci/run/docker.sock', 'volume', 'ls', '-q'])
             if 'beeline-reset-proof' in volumes:
                 raise RuntimeError('Docker volume survived reset')

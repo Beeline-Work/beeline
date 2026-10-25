@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import time
 
 
 def restore_runner_ownership(runner, user):
@@ -49,6 +50,28 @@ with archive.open('rb') as stream:
         files.extractall(state / 'runner', filter='data')
 restore_runner_ownership(state / 'runner', user)
 subprocess.run(['systemctl', 'start', name + '-docker.service'], check=True)
+# Starting the service does not mean the Docker API is ready.
+ready_command = ['systemd-run', '--wait', '--pipe', '--collect',
+    f'--unit={name}-engine-ready', '-p', f'User={name}',
+    '-p', f'RootDirectory={base}/root', '-p', 'BindReadOnlyPaths=/usr',
+    '-p', f'BindPaths={state}:/ci', '-p', 'NoNewPrivileges=yes',
+    '/usr/bin/docker', '--host=unix:///ci/run/docker.sock', 'info']
+deadline = time.monotonic() + 60
+while True:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise SystemExit('Docker API readiness timed out')
+    try:
+        ready = subprocess.run(ready_command, capture_output=True, text=True,
+                               timeout=min(5, remaining))
+        if ready.returncode == 0:
+            break
+        last_error = ready.stderr[-2000:]
+    except subprocess.TimeoutExpired:
+        last_error = 'Docker info command timed out'
+    if time.monotonic() >= deadline:
+        raise SystemExit('Docker API readiness timed out: ' + last_error)
+    time.sleep(min(1, max(0, deadline - time.monotonic())))
 # The relay is outside every jail and serves only root peer credentials.
 with socket.socket(socket.AF_UNIX) as relay:
     relay.settimeout(60)

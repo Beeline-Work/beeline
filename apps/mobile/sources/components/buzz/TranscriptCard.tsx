@@ -545,7 +545,7 @@ export function TranscriptCard({
                     footerNoteTone === 'failed' && styles.footerNoteFailed,
                   ]}
                 >
-                  {decisionScope ? `${decisionScope} · ` : null}{footerNote}
+                  {decisionScope && typeof footerNote === 'string' ? `${decisionScope} · ${footerNote}` : footerNote}
                 </Text>
               ) : decisions.length ? null : (
                 <View style={styles.footerSpacer} />

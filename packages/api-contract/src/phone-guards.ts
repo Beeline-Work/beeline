@@ -853,7 +853,6 @@ function readMessageCorner(value: unknown): NonNullable<RoomViewMessage['corner'
       item.state !== 'waiting' &&
       item.state !== 'idle' &&
       item.state !== 'review' &&
-      item.state !== 'scheduled' &&
       item.state !== 'archived')
   ) {
     return null;
@@ -1290,13 +1289,12 @@ function readCornerBlocker(value: unknown): import('./phone-types.js').CornerBlo
 
 function readChatCorner(value: unknown): ChatListCorner | null {
   const item = record(value);
-  const state = oneOf(item?.state, ['working', 'waiting', 'idle', 'review', 'scheduled']);
+  const state = oneOf(item?.state, ['working', 'waiting', 'idle', 'review']);
   if (!item || !uuid(item.id) || typeof item.name !== 'string' || !state) return null;
   return {
     id: item.id,
     name: item.name,
     state,
-    ...field('nextRunAt', integer(item.nextRunAt) ? item.nextRunAt : undefined),
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
     ...field('blocker', readCornerBlocker(item.blocker)),
@@ -1480,7 +1478,6 @@ function readCorner(value: unknown): CornerListItem | null {
       item.state !== 'waiting' &&
       item.state !== 'idle' &&
       item.state !== 'review' &&
-      item.state !== 'scheduled' &&
       item.state !== 'archived')
   ) {
     return null;
@@ -1490,7 +1487,6 @@ function readCorner(value: unknown): CornerListItem | null {
     corner,
     lifecycle,
     state: item.state,
-    ...field('nextRunAt', integer(item.nextRunAt) ? item.nextRunAt : undefined),
     ...field('stateAt', integer(item.stateAt) ? item.stateAt : undefined),
     ...field('closedAt', integer(item.closedAt) ? item.closedAt : undefined),
     ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),

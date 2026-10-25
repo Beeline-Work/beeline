@@ -1,6 +1,6 @@
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { createHash } from 'node:crypto';
-import { deriveCornerState, deriveCornerStall, type DerivedCornerState } from './corner-state.js';
+import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
@@ -24,8 +24,6 @@ export type CornerStateRow = {
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
   worker_active?: boolean;
-  scheduled_wait?: boolean;
-  next_run_at?: Date | null;
   last_turn_ended_at?: Date | null;
   ci_started_at?: Date | null;
   reviewer_active?: boolean;
@@ -34,8 +32,6 @@ export type CornerStateRow = {
   waiting_reason?: CornerStateReason | null;
   waiting_person_id?: string | null;
   waiting_since?: Date | null;
-  /** A worker `blocked:` report is still open. It is not a question. */
-  blocked_report?: boolean;
   /** Selected blocker is a report addressed to the agent commander. */
   agent_commander?: boolean | null;
   /** Another blocker in the same corner is addressed to a person. */
@@ -47,33 +43,19 @@ export type CornerStateRow = {
   follows_viewer?: boolean | null;
 };
 
-/** Worker `blocked:` report to an agent commander. The body is the command payload, so the chat list does not scan messages. */
-export function blockedReportSql(corner = 'c'): string {
-  return `EXISTS (
-    SELECT 1 FROM corner_report_blockers report
-    JOIN agent_commands command ON command.id=report.report_id
-    WHERE report.corner_id=${corner}.id
-      AND command.private_payload->>'text' LIKE 'blocked:%')`;
-}
-
-function cornerRowFacts(row: CornerStateRow) {
+export function cornerRowState(row: CornerStateRow): DerivedCornerState {
   const agentCommander = row.agent_commander === true && row.human_blocker !== true;
-  // Only blocked reports to the agent commander establish a reviewer stall.
-  const stallReport = agentCommander && row.blocked_report === true;
-  return {
+  return deriveCornerState({
     archived: Boolean(row.archived_at),
-    scheduled: row.scheduled_wait,
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
     reviewerActive: row.reviewer_active,
     lastTurnEndedAt: row.last_turn_ended_at
       ? new Date(row.last_turn_ended_at).getTime() / 1000
       : undefined,
-    ciStartedAt: row.ci_started_at ? new Date(row.ci_started_at).getTime() / 1000 : undefined,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
-    stallReport,
     owed: row.blocking ?? false,
     ...(agentCommander ? { agentCommanderReport: true } : {}),
     ...(row.waiting_item_id && row.waiting_reason
@@ -104,21 +86,7 @@ function cornerRowFacts(row: CornerStateRow) {
           },
         }
       : {}),
-  };
-}
-
-export function cornerRowState(row: CornerStateRow): DerivedCornerState {
-  return deriveCornerState(cornerRowFacts(row));
-}
-
-export function cornerRowStall(row: CornerStateRow) {
-  return deriveCornerStall(cornerRowFacts(row));
-}
-
-export function cornerScheduleSql(corner = 'c'): string {
-  return `EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=${corner}.id
-    AND schedule.next_run_at>now()
-    AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))`;
+  });
 }
 
 /** Mine is followed or owed to this viewer. */
@@ -138,15 +106,10 @@ export function cornerFactsSql(viewerExpr: string): {
     columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
       activity.worker_active,activity.reviewer_active,
       span.last_turn_ended_at,span.ci_started_at,
-      ${cornerScheduleSql()} scheduled_wait,
-      (SELECT min(schedule.next_run_at) FROM agent_schedules schedule WHERE schedule.room_id=c.id
-        AND schedule.next_run_at>now()
-        AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) next_run_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,
       blocker.agent_commander,blocker.human_blocker,
-      ${blockedReportSql('c')} blocked_report,
       turn.status latest_turn_status,turn.created_at latest_turn_created_at,
       lm.created_at latest_created_at,
       ${followsCornerSql('c', viewerExpr)} follows_viewer,
@@ -310,7 +273,6 @@ export function chatCornerCounts(
       id: row.id,
       name: row.name,
       state,
-      ...(state === 'scheduled' && row.next_run_at ? { nextRunAt: Math.floor(new Date(row.next_run_at).getTime() / 1000) } : {}),
       ...(reason ? { reason } : {}),
       ...(blocker ? { blocker } : {}),
       ...(itemId ? { itemId } : {}),

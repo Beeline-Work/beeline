@@ -22,7 +22,6 @@ export type CornerDisplayState = {
 export type CornerDisplayItem = {
   readonly state: CornerState;
   readonly stateAt?: number;
-  readonly nextRunAt?: number;
   readonly reason?: CornerStateReason;
   readonly itemId?: string;
   readonly blocker?: import('@beeline/api-contract/phone').CornerBlocker;
@@ -72,9 +71,7 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
     state === 'working' ? 'working' : state === 'review' ? 'needs-you' : state === 'waiting' ? 'waiting' : 'idle';
   const headerSuffix = item.lifecycle.checks === 'failing' || item.lifecycle.checksSummary?.status === 'failing'
     ? 'checks failed' as const : undefined;
-  const detail = state === 'scheduled' && item.nextRunAt !== undefined
-    ? `Next run ${new Date(item.nextRunAt * 1000).toLocaleString()}`
-    : cornerStatusLine(item.lifecycle, state === 'archived');
+  const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
     visual,

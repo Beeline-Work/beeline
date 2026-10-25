@@ -5,9 +5,7 @@ import type { LiveHub } from './live.js';
 import {
   cornerWorkSql,
   cornerBlockerSql,
-  blockedReportSql,
   cornerRowState,
-  cornerRowStall,
   type CornerStateRow,
 } from './chat-corner-counts.js';
 import { reportToCommander } from './commander.js';
@@ -146,7 +144,6 @@ function attentionSql() {
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
     blocker.agent_commander,blocker.human_blocker,
-    ${blockedReportSql('c')} blocked_report,
     span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,
     EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.next_run_at>now()
@@ -166,21 +163,25 @@ export async function refreshCornerAttention(
     const row = (await tx.query<Row>(attentionSql(), [cornerId])).rows[0];
     if (!row) return;
     const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
+    // Pending CI and standing scheduled waits are not idle-alert episodes.
+    // Ending a wait can open a real episode.
+    const summary = row.lifecycle?.checksSummary;
+    const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' ||
+      (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
+    const suppressed = row.scheduled_wait || pendingHead || row.worker_active || row.reviewer_active;
+    if (suppressed) {
+      await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
+      return { parentId: row.parent_id, deadlines: [] };
+    }
     const state = cornerRowState(row).state;
-    const stall = cornerRowStall(row);
-    const signal = stall ?? state;
-    const episode = BigInt(row.episode) + ((stall !== undefined || state === 'idle') && row.last_state !== signal ? 1n : 0n);
+    const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
     await tx.query(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
-      [cornerId, signal, episode.toString()],
+      [cornerId, state, episode.toString()],
     );
-    if ((stall !== undefined || state === 'idle') && row.last_state !== signal) {
+    if (state === 'idle' && row.last_state !== 'idle') {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
-      const text = stall === 'repair-expired'
-        ? `blocked: Corner ${row.name} has stalled. Checks are failing and nothing has been pushed for 30 minutes.`
-        : stall === 'review-blocked'
-          ? `blocked: Corner ${row.name} has stalled. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`
-          : `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
+      const text = `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
       await reportToCommander(
         tx,
         cornerId,
@@ -192,13 +193,9 @@ export async function refreshCornerAttention(
       );
     }
     const now = Date.now();
-    // Pending checks stay review until a final result or a new push.
-    // Only a red head arms the 30-minute repair deadline.
+    // Only the existing post-turn gap has an activity deadline.
     const deadlines = [
       row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
-      checks === 'failing' && row.ci_started_at
-        ? new Date(row.ci_started_at).getTime() + 30 * 60_000
-        : 0,
     ].filter((due) => due > now);
     return { parentId: row.parent_id, deadlines };
   });
@@ -214,7 +211,7 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** The turn-gap deadline, plus one 30-minute deadline while checks are failing. Pending checks have none. */
+/** The existing post-turn gap deadline; check duration never changes state. */
 export class CornerAttentionDeadlines {
   private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;

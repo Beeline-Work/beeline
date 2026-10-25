@@ -17,11 +17,6 @@ export type CornerStateFacts = {
   readonly workerQueued?: boolean;
   readonly now?: number;
   readonly lastTurnEndedAt?: number;
-  /**
-   * Start of the failing-check repair window. Pending checks record a time
-   * here too, and that time does not end review.
-   */
-  readonly ciStartedAt?: number;
   readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
@@ -41,13 +36,6 @@ export type CornerStateFacts = {
    */
   readonly agentCommanderReport?: boolean;
   readonly blocker?: { readonly reason: CornerStateReason; readonly itemId?: string; readonly blocker?: CornerBlocker };
-  /**
-   * A worker `blocked:` report while the reviewer cannot be dispatched.
-   * Failing checks keep the repair window. Pending or not-yet-reported
-   * checks remain review; attention is derived separately. A needs-decision report does not set this.
-   */
-  readonly stallReport?: boolean;
-  readonly scheduled?: boolean;
 };
 
 export type DerivedCornerState = {
@@ -97,9 +85,16 @@ export function cornerRunFromLifecycle(input: {
 }
 
 /**
- * Precedence: archived, live reviewer, live worker, failing repair report,
- * explicit blocker, failing repair window, pending checks, turn gap, schedule,
- * idle. Stall attention is derived independently from visible activity.
+ * Precedence, first match. Workflow stages do not add activity of their own.
+ *
+ * 1. `archived` — the corner is archived, or its run or lifecycle is landed or closed.
+ * 2. `review` — a reviewer turn is active and checks are not failing.
+ * 3. `working` — a worker turn is running. A queued worker is not running.
+ * 4. `waiting` — an unresolved blocker, unless checks are pending on the
+ *    current head and every blocker is an agent-commander report.
+ * 5. `review` — pending or not-yet-reported checks, until a final result or push.
+ * 6. `working` — the last turn ended within 30 seconds.
+ * 7. `idle` — the fall-through, including failing checks without work or a blocker.
  */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
@@ -110,18 +105,13 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   const checks = lifecycle?.checksSummary?.status ?? lifecycle?.checks;
   const now = facts.now ?? Date.now() / 1000;
   const pendingCi = checks !== 'failing' && (checks === 'pending' || checksNotReported(lifecycle));
-  const repairOpen = facts.ciStartedAt !== undefined && now - facts.ciStartedAt < 30 * 60;
-  if (facts.reviewerActive) return { state: 'review' };
+  if (facts.reviewerActive && checks !== 'failing') return { state: 'review' };
   if (facts.turnRunning) return { state: 'working' };
-  if (checks === 'failing' && facts.stallReport === true)
-    return repairOpen ? { state: 'working' } : { state: 'idle' };
   if ((facts.blocker || facts.owed === true) && !(facts.agentCommanderReport && pendingCi))
     return { state: 'waiting', ...facts.blocker };
-  if (checks === 'failing') return repairOpen ? { state: 'working' } : { state: 'idle' };
   if (pendingCi) return { state: 'review' };
   if (facts.lastTurnEndedAt !== undefined && now - facts.lastTurnEndedAt < 30)
     return { state: 'working' };
-  if (facts.scheduled && !lifecycle?.pr) return { state: 'scheduled' };
   return { state: 'idle' };
 }
 
@@ -134,16 +124,4 @@ function checksNotReported(lifecycle: CornerLifecycleView | undefined): boolean 
   const summary = lifecycle?.checksSummary;
   return Boolean(lifecycle?.pr) && summary?.status === 'unknown' && summary.total === 0 &&
     summary.fetchStartedAt === undefined;
-}
-
-/** Commander attention is independent of a corner's visible work. */
-export function deriveCornerStall(facts: CornerStateFacts): 'repair-expired' | 'review-blocked' | undefined {
-  if (deriveCornerState(facts).state === 'archived') return;
-  if ((facts.owed || facts.blocker) && !facts.agentCommanderReport) return;
-  const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
-  if (checks === 'failing' && facts.ciStartedAt !== undefined &&
-      (facts.now ?? Date.now() / 1000) - facts.ciStartedAt >= 30 * 60)
-    return 'repair-expired';
-  if (facts.stallReport && checks !== 'failing' &&
-      (checks === 'pending' || checksNotReported(facts.lifecycle))) return 'review-blocked';
 }

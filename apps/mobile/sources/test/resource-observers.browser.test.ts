@@ -51,7 +51,7 @@ describe('resource observers in the desktop web renderer', () => {
           output.signInError = document.querySelector('[data-testid="signin-retry"]')?.textContent;
           output.installerError = document.querySelector('[data-testid="connect-error"]')?.textContent;
           output.inspectorRetry = document.querySelector('[data-testid="desktop-corner-retry"]')?.textContent;
-          output.inspectorError = document.querySelector('[data-testid="desktop-corner-retry"]')?.parentElement?.textContent;
+          output.inspectorError = document.querySelector('[data-testid="desktop-corner-retry"]')?.closest('[role="alert"]')?.textContent;
           output.staleTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]'); }, 7600);
         setTimeout(() => { output.stoppedReads = globalThis.__installReads;
           document.querySelector('[data-testid="signin-retry"]')?.click();

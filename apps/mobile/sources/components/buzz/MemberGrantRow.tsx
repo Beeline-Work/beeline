@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkspaceMemberGrantView } from '@beeline/api-contract/phone';
 import { grantProvenanceLine } from '@/buzz/agent-grant-copy';
 import { SettingsRow } from './SettingsRow';
 import { IdentityMark } from './IdentityMark';
+import { InlineRow, indexRowTitleInset } from './IndexRow';
 import { Button } from './Button';
 
 /** `@handle` when the identity has one, its name otherwise. */
@@ -34,6 +35,7 @@ export function MemberGrantRow({
   readonly onRevoke?: () => void;
   readonly revokeBusy?: boolean;
 }) {
+  const { theme } = useUnistyles();
   const [expanded, setExpanded] = useState(false);
   const provenance = grantProvenanceLine(grant);
   const script = grant.script;
@@ -51,7 +53,7 @@ export function MemberGrantRow({
             avatarUrl={grant.agent.avatar}
             face={grant.agent.face}
             name={grant.agent.name}
-            size={26}
+            size={theme.buzz.transcriptCard.identitySize}
           />
         }
         onPress={() => setExpanded((open) => !open)}
@@ -59,7 +61,7 @@ export function MemberGrantRow({
         title={grant.target}
       />
       {expanded ? (
-        <View style={styles.body} testID={`member-grant-${grant.grantId}-details`}>
+        <InlineRow style={styles.body} testID={`member-grant-${grant.grantId}-details`}>
           <Text style={styles.line}>{`Requested by ${named(grant.requestedBy)}`}</Text>
           <Text style={styles.line}>{`Room ${roomName ?? grant.roomId}`}</Text>
           {script ? (
@@ -72,14 +74,15 @@ export function MemberGrantRow({
           ) : null}
           {grant.kind === 'shared_asset' && grant.status === 'approved' && onRevoke ? (
             <Button
-              label="Make shared again"
+              label="Revoke"
+              size="inline"
               variant="secondary"
               disabled={revokeBusy}
               onPress={onRevoke}
               testID={`member-grant-${grant.grantId}-revoke`}
             />
           ) : null}
-        </View>
+        </InlineRow>
       ) : null}
     </View>
   );
@@ -89,8 +92,9 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     body: {
+      flexDirection: 'column',
       paddingBottom: hull.space.md,
-      paddingLeft: hull.space.xl,
+      paddingLeft: indexRowTitleInset(hull.space, hull.transcriptCard.identitySize),
       paddingRight: hull.space.sm,
       paddingTop: hull.space.sm,
       gap: hull.space.sm,

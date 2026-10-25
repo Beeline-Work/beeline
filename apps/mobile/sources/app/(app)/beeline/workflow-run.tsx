@@ -88,7 +88,7 @@ export default function WorkflowRun() {
         title={run ? workflowDisplayName(run.workflowSlug) : 'Workflow'}
 
       />
-      {error && <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
+      {error && <ErrorBanner inline title={error} retryLabel="Retry" onRetry={retry}
           />}
       {loading && !detail ? (
         <View style={styles.loading}>

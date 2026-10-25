@@ -53,16 +53,15 @@ export function CornerOpenToast() {
   if (status.status === 'failed')
     return (
       <View pointerEvents="box-none" style={[styles.dock, { bottom: insets.bottom + theme.buzz.space.md }]}>
-        <ErrorBanner
+        <InlineRow style={styles.plate}><ErrorBanner inline
           title="Couldn't reach Beeline"
-          description='Check your connection, then retry.'
           retryLabel="Retry"
           onRetry={status.retry}
           retryTestID="corner-open-retry"
           secondaryAction={{ label: '', accessibilityLabel: 'Dismiss', iconOnly: true, onPress: cornerOpenEnded,
             icon: <Svg width={18} height={18} viewBox="0 0 18 18"><Path d="M4 4L14 14M14 4L4 14" stroke={theme.buzz.textPrimary} strokeWidth={1.5} /></Svg> }}
           testID="corner-open-failed"
-        />
+        /></InlineRow>
       </View>
     );
   return (

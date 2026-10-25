@@ -355,7 +355,7 @@ export const RepoPicker = memo(function RepoPicker({
         </Text>
       )}
       {error && (
-        <ErrorBanner title={`! ${error}`} />
+        <ErrorBanner inline title={`! ${error}`} />
       )}
     </View>
   );

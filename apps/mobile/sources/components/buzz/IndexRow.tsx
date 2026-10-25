@@ -18,6 +18,20 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 import { HullSwitch } from './HullSwitch';
 import { StateDot } from './StateDot';
 
+export type IndexRowInset = 'row' | 'sheet' | 'flush';
+export const IndexRowInsetContext = React.createContext<IndexRowInset>('row');
+
+/** Title edge after the row's leading identity mark. */
+export function indexRowTitleInset(
+  space: { sm: number; md: number },
+  markSize: number,
+  inset: IndexRowInset = 'row',
+): number {
+  return (
+    (inset === 'flush' ? 0 : inset === 'sheet' ? HULL_SHEET_INSET : space.sm) + markSize + space.md
+  );
+}
+
 /** Shared rich-content target: preserves the content surface's layout and nested actions. */
 export function ContentTarget(props: PressableProps) {
   return <Pressable {...props} />;
@@ -29,6 +43,11 @@ export function ContentTarget(props: PressableProps) {
 export function InlineRow({ style, onPress, ...props }: ViewProps & { onPress?: () => void }) {
   if (onPress) return <Pressable {...props} onPress={onPress} style={[inlineStyles.row, style]} />;
   return <View {...props} style={[inlineStyles.row, style]} />;
+}
+
+/** A contextual action or failure occupying the standard list footer height. */
+export function InlineActionRow(props: Omit<ViewProps, 'style'>) {
+  return <View {...props} style={inlineStyles.actionRow} />;
 }
 
 /** Transcript navigation keeps rich text, an optional hanging glyph, and two
@@ -52,7 +71,9 @@ export function TranscriptNavigationRow({
   testID?: string;
 }) {
   const chevron = (
-    <View style={singleDestination ? navigationStyles.inlineChevron : navigationStyles.cornerTarget}>
+    <View
+      style={singleDestination ? navigationStyles.inlineChevron : navigationStyles.cornerTarget}
+    >
       <ChevronGlyph
         color={navigationStyles.chevron.color}
         direction="right"
@@ -98,7 +119,7 @@ export function TranscriptNavigationRow({
   );
 }
 
-const inlineStyles = StyleSheet.create(() => ({ row: { flexDirection: 'row' } }));
+const inlineStyles = StyleSheet.create(() => ({ row: { flexDirection: 'row' }, actionRow: { minHeight: 44, justifyContent: 'center' } }));
 const navigationStyles = StyleSheet.create(({ buzz }) => ({
   row: { minHeight: 44, flexDirection: 'row', alignItems: 'flex-start', gap: buzz.space.sm },
   divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },
@@ -123,8 +144,7 @@ export type IndexRowTrailingPress = {
   testID?: string;
 };
 
-/** The compact bordered action control on the trailing axis: one word, boxed —
- *  the Connect button a tool row carries while it is not connected. */
+/** The inline text action on the trailing axis, such as Connect. */
 export type IndexRowActionControl = {
   accessibilityLabel?: string;
   disabled?: boolean;
@@ -153,7 +173,7 @@ export type IndexRowProps = {
   /** `page` rows are `layout.row` tall; `sheet` rows are the sheet row height. */
   density?: 'page' | 'sheet';
   /** `row` aligns with page section headers; `sheet` is the sheet's own edge. */
-  inset?: 'row' | 'sheet';
+  inset?: 'row' | 'sheet' | 'flush';
   /** Which edge carries the hairline. Sheets part rows above; pages below. */
   divider?: 'top' | 'bottom';
   /** Approved Workbench app-board row metrics. */
@@ -163,7 +183,7 @@ export type IndexRowProps = {
   accessibilityState?: AccessibilityState;
   /** A single action word on the trailing axis. */
   action?: string;
-  /** The compact bordered action control on the trailing axis. */
+  /** The inline text action on the trailing axis. */
   actionControl?: IndexRowActionControl;
   /** The trailing chevron of a row that opens something. */
   chevron?: 'right' | 'down' | 'up';
@@ -231,7 +251,7 @@ const DESCRIPTION_GAP = 2;
  *   - `value`          the row's current state (pairs with `chevron` and
  *                      `statusGlyph`);
  *   - `action`         one word, for a row that acts on the thing it names;
- *   - `actionControl`  the compact bordered Connect control;
+ *   - `actionControl`  the inline Connect action;
  *   - `toggle`         the one switch;
  *   - `trailing`       caller-owned controls (a roster's actions);
  *   - nothing          for a plain fact, or a row whose TITLE is the action.
@@ -256,7 +276,7 @@ export function IndexRow({
   descriptionTone,
   disabled = false,
   divider,
-  inset = 'row',
+  inset: ownInset,
   leading,
   onPress,
   selected = false,
@@ -272,6 +292,8 @@ export function IndexRow({
   valueTone,
   wholeTitle = false,
 }: IndexRowProps) {
+  const inheritedInset = React.useContext(IndexRowInsetContext);
+  const inset = ownInset ?? inheritedInset;
   const shownValue = selected ? 'SELECTED' : value;
   const spoken = [
     shownValue ?? action ?? actionControl?.label,
@@ -334,6 +356,7 @@ export function IndexRow({
   ) : actionControl !== undefined ? (
     <View style={styles.trailingSlot}>
       <Button
+        size="inline"
         label={actionControl.label}
         variant="secondary"
         accessibilityLabel={actionControl.accessibilityLabel ?? actionControl.label}
@@ -423,10 +446,17 @@ export function IndexRow({
           </View>
         ) : null}
         {descriptionDetail || descriptionDetailContent ? (
-          <View style={[styles.descriptionRow, Boolean(descriptionDetailContent) && styles.inlineDetail]}>
-            {descriptionDetailContent ?? <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>
-              {descriptionDetail}
-            </Text>}
+          <View
+            style={[
+              styles.descriptionRow,
+              Boolean(descriptionDetailContent) && styles.inlineDetail,
+            ]}
+          >
+            {descriptionDetailContent ?? (
+              <Text numberOfLines={DESCRIPTION_LINES} style={styles.description}>
+                {descriptionDetail}
+              </Text>
+            )}
           </View>
         ) : null}
       </View>
@@ -443,11 +473,13 @@ export function IndexRow({
     </>
   );
 
-  const described = Boolean(description || descriptionContent || descriptionDetail || descriptionDetailContent);
+  const described = Boolean(
+    description || descriptionContent || descriptionDetail || descriptionDetailContent,
+  );
   const rowStyle = [
     styles.row,
     density === 'sheet' ? styles.sheetRow : styles.pageRow,
-    inset === 'sheet' ? styles.sheetInset : styles.rowInset,
+    inset === 'flush' ? undefined : inset === 'sheet' ? styles.sheetInset : styles.rowInset,
     (divider ?? (density === 'sheet' ? 'top' : 'bottom')) === 'top'
       ? styles.dividerTop
       : styles.dividerBottom,
@@ -601,13 +633,21 @@ const styles = StyleSheet.create((theme) => {
 
 /** Compact, wrapping facts inside a transcript card. */
 export function TranscriptFactRow({ label, value }: { label: string; value: string }) {
-  return <View style={factStyles.row}>
-    <Text style={factStyles.label}>{label}</Text>
-    <Text style={factStyles.value}>{value}</Text>
-  </View>;
+  return (
+    <View style={factStyles.row}>
+      <Text style={factStyles.label}>{label}</Text>
+      <Text style={factStyles.value}>{value}</Text>
+    </View>
+  );
 }
 const factStyles = StyleSheet.create(({ buzz }) => ({
-  row: { flexDirection: 'row', gap: buzz.space.sm, paddingVertical: buzz.space.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: buzz.border },
+  row: {
+    flexDirection: 'row',
+    gap: buzz.space.sm,
+    paddingVertical: buzz.space.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: buzz.border,
+  },
   label: { ...buzz.type.meta, color: buzz.ledgerQuiet },
   value: { ...buzz.type.meta, color: buzz.textPrimary, flex: 1, textAlign: 'right' },
 }));

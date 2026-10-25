@@ -1635,7 +1635,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
           <LedgerUntaggedHint messageId={message.id} />
         ) : null}
         {message.isUser && deliveryFailed ? (
-          <ErrorBanner
+          <ErrorBanner inline
             title="Delivery failed"
             retryLabel="Retry"
             onRetry={() => onRetry(message.id)}

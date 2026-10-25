@@ -801,7 +801,7 @@ describe('Room deck live path', () => {
 
     await act(async () => fail(new TypeError('Network request failed')));
     expect(text(toast.root.findByProps({ testID: 'corner-open-failed' }))).toBe(
-      "Couldn't reach BeelineCheck your connection, then retry.",
+      "Couldn't reach Beeline",
     );
     expect(router.push).not.toHaveBeenCalled();
     await act(async () => toast.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());

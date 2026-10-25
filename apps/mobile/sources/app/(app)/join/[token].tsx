@@ -196,7 +196,7 @@ export default function CommunityInviteJoin() {
             />
             <Button variant="quiet" label="This isn’t my invite" onPress={() => void otherWay()} testID="invite-not-mine" />
             {error ? (
-              <ErrorBanner title={error} />
+              <ErrorBanner inline title={error} />
             ) : null}
           </>
         ) : failure === 'unreachable' ? (

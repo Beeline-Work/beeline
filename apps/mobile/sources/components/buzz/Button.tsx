@@ -27,6 +27,7 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   icon?: React.ReactNode;
   /** Fixed 44-point target without label padding. */
   iconOnly?: boolean;
+  size?: 'default' | 'inline';
   /** Compact filters for a mouse; touch keeps the house target. */
   compact?: boolean;
   iconPosition?: 'start' | 'end';
@@ -70,6 +71,7 @@ function RecoveryButton({
   icon,
   iconOnly = false,
   compact = false,
+  size = 'default',
   iconPosition = 'start',
   variant = 'primary',
   labelTone,
@@ -135,6 +137,7 @@ function ButtonFrame({
   icon,
   iconOnly = false,
   compact = false,
+  size = 'default',
   iconPosition = 'start',
   variant = 'primary',
   labelTone,
@@ -150,7 +153,8 @@ function ButtonFrame({
 }: ButtonProps) {
   const finePointer = useFinePointer();
   const isDisabled = Boolean(disabled || loading);
-  const primary = variant === 'primary';
+  const inline = size === 'inline';
+  const primary = !inline && variant === 'primary';
   const filled = primary || variant === 'provider';
   const borderless = variant === 'quiet' || variant === 'destructive';
   return (
@@ -163,6 +167,9 @@ function ButtonFrame({
         busy: loading || accessibilityState?.busy === true,
       }}
       disabled={isDisabled}
+      hitSlop={
+        inline ? (props.hitSlop ?? { top: 13, bottom: 13, left: 22, right: 22 }) : props.hitSlop
+      }
       onPress={(event) => {
         if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onPress?.(event);
@@ -190,6 +197,8 @@ function ButtonFrame({
                     : !borderless && styles.outlinedDisabled),
               fullWidth && styles.fullWidth,
               iconOnly && styles.iconOnly,
+              inline && styles.inline,
+              inline && state.pressed && !isDisabled && styles.inlinePressed,
               style,
             ]
       }
@@ -198,7 +207,7 @@ function ButtonFrame({
       {iconPosition === 'start' && icon}
       {label ? (
         <Text
-          numberOfLines={appearance ? undefined : 1}
+          numberOfLines={appearance || inline ? undefined : 1}
           style={[
             ...(appearance
               ? [appearance.label]
@@ -217,6 +226,11 @@ function ButtonFrame({
                             ? styles.destructiveLabel
                             : styles.secondaryLabel,
                   labelTone === 'quiet' && styles.quietLabel,
+                  inline && styles.inlineLabel,
+                  inline && variant === 'quiet' && styles.inlineQuietLabel,
+                  inline &&
+                    (variant === 'destructive' || variant === 'danger') &&
+                    styles.destructiveLabel,
                   isDisabled && variant !== 'provider' && styles.disabledLabel,
                 ]),
           ]}
@@ -243,6 +257,19 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       gap: buzz.space.sm,
     },
+    inline: {
+      maxWidth: '100%',
+      flexShrink: 1,
+      minHeight: 0,
+      minWidth: 0,
+      paddingHorizontal: 0,
+      borderWidth: 0,
+      backgroundColor: 'transparent',
+      alignSelf: 'flex-start',
+    },
+    inlinePressed: { opacity: 0.6 },
+    inlineLabel: { ...buzz.type.meta, color: buzz.accent },
+    inlineQuietLabel: { color: buzz.textSecondary },
     compact: { minHeight: 32 },
     iconOnly: { width: 44, height: 44, paddingHorizontal: 0 },
     primary: { backgroundColor: buzz.buttonPrimaryFill, borderColor: buzz.buttonPrimaryFill },

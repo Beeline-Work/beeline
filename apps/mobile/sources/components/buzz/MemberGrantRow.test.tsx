@@ -32,6 +32,7 @@ const theme = vi.hoisted(() => ({
     },
     space: { xs: 4, sm: 8, md: 16, lg: 24, xl: 32, xxl: 48 },
     layout: { row: 64 },
+    transcriptCard: { identitySize: 26 },
     radius: 3,
     border: '#333',
     borderStrong: '#555',
@@ -138,5 +139,20 @@ describe('MemberGrantRow', () => {
     expect(lines).toContain(`Room ${BASE.roomId}`);
     expect(lines.some((line) => line.startsWith('Script fix.py'))).toBe(true);
     expect(lines).toContain('print("repair the fixture")\n');
+  });
+});
+
+describe('shared row insets', () => {
+  it('inherits flush alignment and lets a row override its parent', async () => {
+    const { IndexRow, IndexRowInsetContext, indexRowTitleInset } = await import('./IndexRow');
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(<IndexRowInsetContext.Provider value="flush"><IndexRow title="Inherited" testID="flush-row" /><IndexRow title="Override" inset="sheet" testID="sheet-row" /></IndexRowInsetContext.Provider>); });
+    const flat = (parts: any): any => Array.isArray(parts) ? Object.assign({}, ...parts.map(flat)) : parts || {};
+    const row = (id: string) => tree.root.findAllByProps({ testID: id }).find((node: any) => node.type === 'View')!;
+    expect(flat(row('flush-row').props.style).paddingHorizontal).toBeUndefined();
+    expect(flat(row('sheet-row').props.style).paddingHorizontal).toBeGreaterThan(0);
+    expect(indexRowTitleInset(theme.buzz.space, 26)).toBe(50);
+    expect(indexRowTitleInset(theme.buzz.space, 26, 'flush')).toBe(42);
+    act(() => tree.unmount());
   });
 });

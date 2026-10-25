@@ -1,4 +1,4 @@
-import { IndexRow, InlineRow } from './IndexRow';
+import { IndexRow, IndexRowInsetContext, InlineRow } from './IndexRow';
 import { Button } from './Button';
 import { ErrorBanner } from './ErrorBanner';
 import { HullActionSheetRow } from './HullActionSheet';
@@ -232,6 +232,7 @@ export function RepositoryChoice({
       : 0;
 
   return (
+    <IndexRowInsetContext.Provider value="flush">
     <View style={styles.repoBlock}>
       {reserved > 0 && <View style={{ height: reserved }} testID={`${p}-owner-menu-space`} />}
       <View
@@ -255,7 +256,7 @@ export function RepositoryChoice({
         </View>
       )}
       {!!error && (
-        <ErrorBanner title={error} testID={`${p}-repo-error`} />
+        <ErrorBanner inline title={error} testID={`${p}-repo-error`} />
       )}
       {mode !== 'none' && !error && !!notice && (
         <Text accessibilityLiveRegion="polite" style={styles.hint}>
@@ -263,6 +264,7 @@ export function RepositoryChoice({
         </Text>
       )}
     </View>
+    </IndexRowInsetContext.Provider>
   );
 }
 

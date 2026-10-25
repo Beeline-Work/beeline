@@ -1,3 +1,8 @@
+import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
+import { waitForConnection } from './connection-wait.js';
+import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
+import { companyForMcp } from './company-mcp-discovery.js';
+import { COMPANY_REGISTRY } from './company-registry.js';
 import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
@@ -214,7 +219,6 @@ import {
   connectApp,
   disconnectApp,
   hasExistingAppRoute,
-  OFFICIAL_REGISTRY_APPS,
   readOwnerApps,
   recordOwnerGitHubSelection,
 } from './app-connections.js';
@@ -1044,10 +1048,13 @@ export class PhoneService {
     private readonly composio?: ComposioApps,
     private readonly linkWallet?: LinkAgentWallet,
   ) {
+    this.connectorDiscovery = new ConnectorDiscoveryCache(database, mcpRegistry);
     this.database = new CornerAccessDatabase(database);
     this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
     if (live) this.outlineCache = new HistoryOutlineCache(live);
   }
+
+  private readonly connectorDiscovery: ConnectorDiscoveryCache;
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
     let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -8991,20 +8998,42 @@ export class PhoneService {
     input: Input<'searchWorkbenchApps'>,
     viewerId: string,
   ): Promise<Output<'searchWorkbenchApps'>> {
-    const view = await this.readWorkbench({ workspaceId: '' }, viewerId);
     const query = typeof input.query === 'string' ? input.query.trim() : '';
     if (query.length > 80) throw new Error('App search is too long');
     if (!query) {
+      const view = await this.readWorkbench({ workspaceId: '' }, viewerId);
       return view.companies!.suggestions.map(item => ({ appKey: item.appKey, name: item.name, domain: item.domain, description: item.purpose, company: item, mark: item.logo, logo: item.logo.kind === 'image' ? item.logo.uri : undefined }));
     }
-    const key = appIdentity(query)?.key;
-    const officialName = key ? OFFICIAL_REGISTRY_APPS[key] : undefined;
-    const official = officialName
-      ? (await this.mcpRegistry.search(key!)).find((row) =>
-          row.name === officialName && row.remotes.some((remote) => remote.type === 'streamable-http') &&
-          row.secretInputNames.length === 0)
-      : undefined;
-    const rows = this.composio ? await this.composio.searchToolkits(query) : [];
+    const company = companyForMcp(query);
+    const companyKey = company ? `company:${company.id}` : undefined;
+    const searchKey = `search:${query.toLowerCase()}`;
+    const [view, cached, rows] = await Promise.all([
+      this.readWorkbench({ workspaceId: '' }, viewerId),
+      this.connectorDiscovery.read([searchKey, ...(companyKey ? [companyKey] : [])]),
+      this.composio ? this.composio.searchToolkits(query) : [],
+    ]);
+    this.connectorDiscovery.warm(searchKey, viewerId, cached.get(searchKey));
+    if (companyKey) this.connectorDiscovery.warm(companyKey, viewerId, cached.get(companyKey));
+    const hosted = companyKey ? cached.get(companyKey)?.manifests ?? [] : [];
+    const listed = cached.get(searchKey)?.manifests ?? [];
+    const manifests = [...hosted, ...listed];
+    const official = company && manifests.some(manifest =>
+      registryServerAppKey(manifest.name) === appIdentity(company.domain!)?.key
+      && company.hosts.includes(registryServerDomain(manifest.name) ?? '')
+      && manifest.remotes.some(remote => remote.type === 'streamable-http') && !manifest.secretInputNames.length);
+    const registryResults = manifests.flatMap(manifest => {
+      if (official && registryServerAppKey(manifest.name) !== appIdentity(company.domain!)?.key) return [];
+      const appKey = registryServerAppKey(manifest.name);
+      const domain = registryServerDomain(manifest.name);
+      if (!appKey || !domain || manifest.secretInputNames.length ||
+          !manifest.remotes.some(remote => remote.type === 'streamable-http')) return [];
+      // Namespace ownership, never title/website text, identifies the publisher.
+      const known = COMPANY_REGISTRY.find(company => appIdentity(company.domain ?? '')?.key === appKey);
+      if (known && !known.hosts.includes(domain)) return [];
+      const publisher = companyForMcp(domain);
+      return [{ appKey, name: publisher?.name ?? domain, domain,
+        description: manifest.description, registryServerName: manifest.name, registryVersion: manifest.version }];
+    });
     const composioResults = rows.flatMap((row) => {
       const identity = appIdentity(row.name);
       if (!identity || composioToolkitForApp(identity.key) !== row.slug) return [];
@@ -9019,14 +9048,16 @@ export class PhoneService {
         },
       ];
     });
-    if (official && key) return companySearchResults(view, [{
-      appKey: key,
-      name: key === 'stripe' ? 'Stripe' : 'Linear',
-      domain: key === 'stripe' ? 'stripe.com' : 'linear.app',
-      registryServerName: official.name,
-      registryVersion: official.version,
-    }, ...composioResults], query, this.publicOrigin);
-    return companySearchResults(view, composioResults, query, this.publicOrigin);
+    const baseline = companySearchResults(view, composioResults, query, this.publicOrigin);
+    const enriched = companySearchResults(view, [...registryResults, ...composioResults], query, this.publicOrigin);
+    const rowKey = (row: typeof enriched[number]) => row.companyId ?? row.company?.providerId ?? row.appKey;
+    const base = new Map(baseline.map((row, index) => [rowKey(row), { row, index }]));
+    // Keep existing positions and visible copy; only the hidden connection choice changes.
+    return enriched.map(row => {
+      const original = base.get(rowKey(row))?.row;
+      return original ? { ...row, name: original.name, description: original.description, mark: original.mark } : row;
+    }).sort((a, b) => (base.get(rowKey(a))?.index ?? baseline.length + (a.registryServerName ? 0 : 1))
+      - (base.get(rowKey(b))?.index ?? baseline.length + (b.registryServerName ? 0 : 1)));
   }
 
   /** Project the end cause without changing the stored System card or its wording. */
@@ -9434,7 +9465,29 @@ export class PhoneService {
             : seconds(row.created_at),
       })),
     };
-    return { ...view, companies: projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database)) };
+    const companies = projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database));
+    const keys = companies.rows.flatMap(company => {
+      const known = companyForMcp(company.domain ?? company.id);
+      return known ? [`company:${known.id}`, `search:${known.id}`] : [];
+    });
+    const cached = await this.connectorDiscovery.read(keys);
+    const rows = companies.rows.map(company => {
+      if (company.kind !== 'company' || company.items.some(item => item.kind === 'connection')) return company;
+      const known = companyForMcp(company.domain ?? company.id);
+      if (!known) return company;
+      const cacheKey = `company:${known.id}`;
+      this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
+      const manifest = [...cached.get(cacheKey)?.manifests ?? [], ...cached.get(`search:${known.id}`)?.manifests ?? []]
+        .find(manifest => registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key
+          && known.hosts.includes(registryServerDomain(manifest.name) ?? '') && !manifest.secretInputNames.length
+          && manifest.remotes.some(remote => remote.type === 'streamable-http'));
+      if (!manifest) return company;
+      return { ...company, mcp: { appKey: registryServerAppKey(manifest.name)!, appName: company.name,
+        name: company.name, purpose: manifest.description ?? '', providerId: company.id, providerName: company.name,
+        domain: company.domain, logo: company.logo, registryServerName: manifest.name,
+        registryVersion: manifest.version, flow: 'app' as const } };
+    });
+    return { ...view, companies: { ...companies, rows } };
   }
 
   /**
@@ -9519,11 +9572,19 @@ export class PhoneService {
     // official sign-in to new connections, but it must not migrate an
     // existing Composio or Squire connection implicitly.
     const hasRoute = await hasExistingAppRoute(this.database, viewerId, identity.key);
-    if ((input.registryServerName || input.registryVersion) && !hasRoute) {
-      const expected = OFFICIAL_REGISTRY_APPS[identity.key];
-      if (!expected || input.registryServerName !== expected || !input.registryVersion)
+    const existingRoute = (await this.database.query<{ transport: string }>(
+      `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active'`,
+      [viewerId, identity.key],
+    )).rows[0];
+    if ((input.registryServerName || input.registryVersion) &&
+        (!hasRoute || !existingRoute || existingRoute.transport === 'squire-api')) {
+      if (!input.registryServerName || !input.registryVersion ||
+          registryServerAppKey(input.registryServerName) !== identity.key)
         throw new Error('Select the official sign-in from search results');
-      const manifest = await this.mcpRegistry.exact(expected, input.registryVersion);
+      const publisher = registryServerDomain(input.registryServerName);
+      const known = COMPANY_REGISTRY.find(company => appIdentity(company.domain ?? '')?.key === identity.key);
+      if (!publisher || known && !known.hosts.includes(publisher)) throw new Error('Select the official sign-in from search results');
+      const manifest = await this.mcpRegistry.selected(input.registryServerName, input.registryVersion);
       if (!manifest || !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
           manifest.secretInputNames.length > 0)
         throw new Error('The official sign-in is unavailable');
@@ -9533,8 +9594,16 @@ export class PhoneService {
       const dm = await this.resolveDirectMessage(
         { workspaceId: ws.workspace_id, participantId: matched.agent_id }, viewerId,
       );
-      const row = await this.database.transaction((database) =>
-        armRegistryConnector(database, {
+      const row = await this.database.transaction(async (database) => {
+        // Serialize with automatic route selection; only this person's explicit
+        // verified MCP choice may replace a Squire API app. Keys are untouched.
+        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`app:${viewerId}:${identity.key}`]);
+        const current = (await database.query<{ transport: string }>(
+          `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active' FOR UPDATE`,
+          [viewerId, identity.key],
+        )).rows[0];
+        if (current && current.transport !== 'squire-api') throw new Error('This app already has a connection');
+        const connector = await armRegistryConnector(database, {
           workspaceId: ws.workspace_id,
           ownerId: viewerId,
           machineId,
@@ -9542,8 +9611,25 @@ export class PhoneService {
           manifest,
           installRoomId: dm.id,
           installCommandId: null,
-        }),
-      );
+        });
+        if (connector.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
+        await database.query(
+          `UPDATE workspace_apps SET transport='registry-mcp',route='registry-mcp',connector_id=$3::uuid,
+             machine_id=$4,display_name=$5,domain=$6,state='active',updated_at=now()
+           WHERE owner_identity_id=$1 AND app_key=$2 AND transport='squire-api'`,
+          [viewerId, identity.key, connector.id, machineId, manifest.title ?? identity.key,
+            registryServerDomain(manifest.name) ?? null],
+        );
+        const app = (await database.query<{ id: string }>(
+          `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`, [viewerId, identity.key],
+        )).rows[0];
+        if (app) await database.query(
+          `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+           VALUES ($1,$2,'registry-mcp','registry-mcp','person selected verified company MCP',$3)`,
+          [randomUUID(), app.id, viewerId],
+        );
+        return connector;
+      });
       if (row.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
       await backfillRegistryApps(this.database, row.id);
       if (row.created) await notifyConnectorHelper(this.database, row.id);
@@ -9553,12 +9639,22 @@ export class PhoneService {
         [viewerId, identity.key, row.id],
       )).rows[0];
       if (!installed) throw new Error('The official sign-in could not be attached');
+      // Wait outside the transaction for the helper's existing OAuth ceremony.
+      // The phone keeps one request open; it never polls connector state.
+      const ready = row.sign_in?.url || row.status === 'connected' ? row : await waitForConnection(async () => {
+        const current = (await this.database.query<{ status: string; sign_in: ConnectorStatus['signIn'] | null; status_error: string | null }>(
+          `SELECT status,sign_in,status_error FROM workspace_connectors WHERE id=$1::uuid AND owner_identity_id=$2`,
+          [row.id, viewerId],
+        )).rows[0];
+        return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
+      }, 15_000);
+      if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,
-        status: row.status === 'connected' ? 'connected' : 'connecting',
+        status: ready?.status === 'connected' ? 'connected' : 'connecting',
         transport: 'registry-mcp',
         route: 'registry-mcp',
-        ...(row.sign_in?.url ? { authorizationUrl: row.sign_in.url } : {}),
+        ...(ready?.sign_in?.url ? { authorizationUrl: ready.sign_in.url } : {}),
       };
     }
     const existing = await this.database.query(

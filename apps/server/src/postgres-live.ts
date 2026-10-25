@@ -777,11 +777,11 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     if (payload.ownerId && (payload.table === 'workspace_connectors' ||
-      payload.table === 'workspace_connections' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
+      payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
       payload.table === 'agent_avatars' || payload.table === 'avatar_job' || payload.table === 'free_agent_usage')) {
       this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
         resource: payload.table === 'workspace_connectors' ? 'install'
-          : payload.table === 'workspace_connections' || payload.table === 'wallet_bindings' ? 'workbench' : 'agent',
+          : payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' ? 'workbench' : 'agent',
         ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
         ...(payload.version ? { version: payload.version } : {}) });
       if (payload.squireReportChanged)

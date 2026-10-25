@@ -108,7 +108,8 @@ vi.mock('@/components/buzz/PulsingText', async () => {
 import { companyWorkbench, companyOption, companyRow } from '@/test/company-workbench';
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-1' }));
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
+const discoveryLive = vi.hoisted(() => ({ listener: undefined as undefined | ((event: any) => void) }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_filter: unknown, listener: (event: any) => void) => { discoveryLive.listener = listener; return () => {}; } }) }));
 import ConnectAppScreen from './connect-app';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -182,4 +183,24 @@ describe('server-owned connector search', () => {
   it('keeps the bottom safe area on the scroll content', async () => {
     safeArea.bottom = 48; const renderer = await render(); expect(renderer.root.findByProps({ testID: 'connect-app-scroll' }).props.contentContainerStyle.paddingBottom).toBe(48);
   });
+});
+
+
+it('MCP-DISCOVERY-1: a committed discovery refreshes the current query without clearing existing rows or polling', async () => {
+  let discovered = false;
+  source.readWorkbench = async () => companyWorkbench([], [companyOption('resend', 'Resend')]);
+  const existing = { appKey: 'vercel', name: 'Vercel', companyId: 'vercel' };
+  const added = { appKey: 'fly', name: 'Fly.io', company: { ...companyOption('fly', 'Fly.io'), registryServerName: 'io.fly/company-mcp', registryVersion: '1' } };
+  const calls = vi.fn(async () => discovered ? [existing, added] : [existing]);
+  source.searchApps = calls;
+  const renderer = await render();
+  await search(renderer, 'fly');
+  expect(renderer.root.findAllByType('SettingsRow').map((row: any) => row.props.title)).toEqual(['Vercel']);
+  discovered = true;
+  await act(async () => { discoveryLive.listener?.({ monolithLive: { type: 'resource-change', roomId: '', resource: 'workbench' } }); await Promise.resolve(); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  expect(renderer.root.findAllByType('SettingsRow').map((row: any) => row.props.title)).toEqual(['Vercel', 'Fly.io']);
+  const count = calls.mock.calls.length;
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 260)); });
+  expect(calls).toHaveBeenCalledTimes(count);
 });

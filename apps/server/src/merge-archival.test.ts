@@ -22,7 +22,7 @@ let requestId: string;
 const app = {
   deleteBranch: vi.fn(async () => undefined),
   installationToken: vi.fn(async () => ({ token: 'github-test-token' })),
-  branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false, openBasePullRequest: false })),
+  branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false })),
   openPullRequestsForBranch: vi.fn(async () => []),
 };
 const event = {

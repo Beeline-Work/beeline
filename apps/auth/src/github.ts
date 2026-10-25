@@ -1142,8 +1142,12 @@ export class GitHubAppClient {
     const pulls = await this.readRepositoryJson(accessToken, fullName,
       `pulls?state=open&base=${encodeURIComponent(branch)}&per_page=1`);
     if (!Array.isArray(pulls)) throw new Error('GitHub branch pull requests are invalid');
+    const comparison = await this.readRepositoryJson(accessToken, fullName,
+      `compare/${encodeURIComponent(repository.default_branch)}...${encodeURIComponent(branch)}?per_page=1`);
+    if (!Number.isSafeInteger(comparison.ahead_by) || Number(comparison.ahead_by) < 0)
+      throw new Error('GitHub branch commit comparison is missing');
     return { defaultBranch: repository.default_branch, protected: details.protected,
-      openBasePullRequest: pulls.length > 0 };
+      openBasePullRequest: pulls.length > 0, aheadBy: Number(comparison.ahead_by) };
   }
 
   /** Delete one installation-scoped branch after its corner has been archived. */
@@ -1281,6 +1285,16 @@ export class GitHubAppClient {
       repositoryIds: [repositoryId],
       permissions: { pull_requests: 'write' },
     });
+    const current = await this.readRepositoryJson(token.token, fullName, `pulls/${pullRequestNumber}`);
+    if (current.merged === true) throw new Error('The pull request is already merged');
+    if (current.state === 'closed') return;
+    const head = current.head as { ref?: unknown } | undefined;
+    if (current.state !== 'open' || typeof head?.ref !== 'string')
+      throw new Error('GitHub pull request state or branch is missing');
+    const dependents = await this.readRepositoryJson(token.token, fullName,
+      `pulls?state=open&base=${encodeURIComponent(head.ref)}&per_page=1`);
+    if (!Array.isArray(dependents)) throw new Error('GitHub dependent pull requests are invalid');
+    if (dependents.length) throw new Error('The pull request branch is the base of an open pull request');
     const response = await githubFetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}/pulls/${pullRequestNumber}`,
       {

@@ -9,6 +9,9 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
+import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
+import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
+import { enqueueCornerPullRequestClosure } from './corner-close.js';
 import { systemLine } from './system-line.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { addressedToPersonSql } from './corner-owed.js';
@@ -125,7 +128,7 @@ beforeAll(async () => {
   githubRollupState = 'pending';
   githubHead = '';
   githubApp = {
-    branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false, openBasePullRequest: false })),
+    branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false })),
     openPullRequestsForBranch: vi.fn(async () => []),
     deleteBranch: vi.fn(async () => undefined),
     mergePullRequest: vi.fn(async () => undefined),
@@ -216,7 +219,7 @@ beforeEach(async () => {
   githubApp.deleteBranch.mockReset();
   githubApp.deleteBranch.mockResolvedValue(undefined);
   githubApp.branchDeletionSafety.mockReset();
-  githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', protected: false, openBasePullRequest: false });
+  githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false });
   githubApp.openPullRequestsForBranch.mockReset();
   githubApp.openPullRequestsForBranch.mockResolvedValue([]);
   githubApp.closePullRequest.mockReset();
@@ -4368,7 +4371,7 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
 
   it.each(['head', 'base'])('keeps a branch used as an open PR %s', async role => {
     if (role === 'head') githubApp.openPullRequestsForBranch.mockResolvedValue([42]);
-    else githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', protected: false, openBasePullRequest: true });
+    else githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: true });
     await closeAndClean();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
@@ -4412,7 +4415,7 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
   it('rechecks live protection before retrying a failed deletion', async () => {
     githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
     const cornerId = await closeAndClean();
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', protected: true });
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: true });
     await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
     await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
@@ -4445,6 +4448,97 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
     expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
       .toMatchObject({ finished_at: expect.anything(), last_error: null });
+  });
+
+  it('CLEANUP-GIT-1: retries the phone archive PR close after an outage without reopening work', async () => {
+    const cornerId = await inReview();
+    githubApp.closePullRequest.mockRejectedValueOnce(new Error('GitHub unavailable'))
+      .mockRejectedValueOnce(new Error('still unavailable'));
+    await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
+    expect((await db.query(`SELECT finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ finished_at: null });
+    await github.retryBranchDeletions();
+    expect((await db.query(`SELECT attempts,last_error,finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ attempts: 1, last_error: 'still unavailable', finished_at: null });
+    await github.retryBranchDeletions();
+    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(2);
+    await db.query(`UPDATE corner_pr_closures SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
+    await github.retryBranchDeletions();
+    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(3);
+    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
+    expect(await currentState(cornerId)).toBe('closed');
+    expect((await db.query(`SELECT finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0]!.finished_at).not.toBeNull();
+    console.log('CLEANUP-GIT-1 Demonstrated: phone close archives during outage; durable retry closes the PR without reopening the corner.');
+  });
+
+  it('CLEANUP-GIT-1: backfills historical archives once and keeps live corners out', async () => {
+    const archived = await inReview();
+    const live = await recordedCorner();
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [archived]);
+    await backfillArchivedCornerCleanup(db);
+    await backfillArchivedCornerCleanup(db);
+    expect((await db.query(`SELECT corner_id FROM corner_pr_closures WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
+    expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id IN ($1,$2)`, [archived, live])).rows)
+      .toEqual([{ corner_id: archived }]);
+    await enqueueCornerBranchDeletion(db);
+    await enqueueCornerPullRequestClosure(db);
+    expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
+  });
+
+  it.each(['head', 'base', 'corner'])('CLEANUP-GIT-1: retries after temporary %s blocker clears', async kind => {
+    const cornerId = await recordedCorner();
+    if (kind === 'head') githubApp.openPullRequestsForBranch.mockResolvedValue([42]);
+    if (kind === 'base') githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: true });
+    if (kind === 'corner') {
+      const sibling = await recordedCorner();
+      await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [sibling, branchOf(cornerId)]);
+    }
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    await github.retryBranchDeletions();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ finished_at: null, last_error: expect.any(String) });
+    githubApp.openPullRequestsForBranch.mockResolvedValue([]);
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false });
+    if (kind === 'corner') await db.query(`UPDATE rooms SET archived_at=now() WHERE id IN
+      (SELECT corner_id FROM corner_facts WHERE feature_branch=$1)`, [branchOf(cornerId)]);
+    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
+    await github.retryBranchDeletions();
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
+  });
+
+  it('CLEANUP-GIT-1: records retention when the repository mapping is unavailable', async () => {
+    const cornerId = await recordedCorner();
+    const parent = (await db.query<{ repository_key: string; repository_remote: string }>(`SELECT repository_key,repository_remote FROM rooms WHERE id=$1`, [R])).rows[0]!;
+    await db.query(`UPDATE rooms SET repository_key='unknown/missing',repository_remote=NULL
+      WHERE id=(SELECT parent_id FROM rooms WHERE id=$1)`, [cornerId]);
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    await enqueueCornerBranchDeletion(db, cornerId);
+    await db.query(`UPDATE rooms SET repository_key=$2,repository_remote=$3 WHERE id=$1`, [R, parent.repository_key, parent.repository_remote]);
+    expect((await db.query(`SELECT finished_at,last_error,repository_id FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ finished_at: expect.anything(), repository_id: null, last_error: 'GitHub repository is unavailable; branch retained' });
+  });
+
+  it('CLEANUP-GIT-1: records why unpublished branch commits are kept', async () => {
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 3, protected: false, openBasePullRequest: false });
+    const cornerId = await closeAndClean();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ finished_at: expect.anything(), last_error: 'branch has commits absent from the default branch' });
+  });
+
+  it('CLEANUP-GIT-1: historical containment retains a squash-merged branch while normal merge cleanup still works', async () => {
+    const cornerId = await approved();
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 2, protected: false, openBasePullRequest: false });
+    await mergedWebhook(cornerId, 7, SHA);
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
+    githubApp.deleteBranch.mockClear();
+    await db.query(`DELETE FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId]);
+    await enqueueCornerBranchDeletion(db, cornerId, true);
+    await github.retryBranchDeletions();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ finished_at: expect.anything(), last_error: 'branch has commits absent from the default branch' });
   });
 
   it('stops after eight failed attempts', async () => {

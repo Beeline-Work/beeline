@@ -21,7 +21,7 @@ import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cancelCornerAgentCommands } from './corner-close.js';
+import { cancelCornerAgentCommands, retryCornerPullRequestClosures } from './corner-close.js';
 import { captureServerError } from './sentry.js';
 import { retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
@@ -2938,6 +2938,9 @@ export class GitHubOperations {
   }
 
   async retryBranchDeletions(cornerId?: string) {
+    if (!cornerId) {
+      await retryCornerPullRequestClosures(this.database, id => this.closeCornerPullRequest(id));
+    }
     await retryCornerBranchDeletions(this.database, this.app, cornerId);
   }
 

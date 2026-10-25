@@ -6,10 +6,11 @@ import { androidArtifact } from './android-artifact.mjs';
 import { pointFor } from '../latency-rig/capture-ui.mjs';
 import { rooms, workspace } from './fixture.mjs';
 const device = process.env.LATENCY_RIG_DEVICE;
-if (!/^emulator-\d+$/.test(device ?? '')) throw new Error('Select a leased fixture emulator');
+if (!/^(emulator-\d+|127\.0\.0\.1:\d+)$/.test(device ?? '')) throw new Error('Select a leased fixture emulator');
 const output = process.argv[2] ?? '/tmp/transcript-keypaint-results';
 await mkdir(output, { recursive: true });
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 16e6 });
+if (adb('shell', 'getprop', 'ro.kernel.qemu').trim() !== '1') throw new Error('Disposable emulator required');
 const artifact = androidArtifact(adb);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 adb('shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d',

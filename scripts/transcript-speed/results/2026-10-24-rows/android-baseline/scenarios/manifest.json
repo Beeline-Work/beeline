@@ -1,0 +1,23 @@
+{
+  "capture.json.gz": {
+    "uncompressedSha256": "f45b4d678f8671767029fe7cf012e57312ed2d2b2798ef00fcf9a26c558d1feb"
+  },
+  "streams-1.png": {
+    "sha256": "e280045c0af72d75cc5afe6631de2e68287282fa5a3d67d2ee8c73ad5e124665"
+  },
+  "streams-0.png": {
+    "sha256": "f21689118e0f21693ed8932e2f9f1a2be5f05e4cc5cf53588695ee7f0736ee03"
+  },
+  "streams-2.png": {
+    "sha256": "78752ee17319413ca4c4c038cef71a34ebc6b0dd5a9424f4e048b60ae4846fb1"
+  },
+  "streams-1.txt.gz": {
+    "uncompressedSha256": "645800e0e80ebe64a505a2cf46eebb32e5708f05ccee68284eefddc1c0f13b0c"
+  },
+  "streams-2.txt.gz": {
+    "uncompressedSha256": "a21f5ac8e41a2e03acedc92afdd16d3e784d4d7f6f5db0d985d04ac152bc8ccb"
+  },
+  "streams-0.txt.gz": {
+    "uncompressedSha256": "ded8dceb811afaa861e79d50f7892a2692e3f51c873cec21e535709605d3426d"
+  }
+}

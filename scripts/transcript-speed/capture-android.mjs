@@ -37,6 +37,7 @@ const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
 if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3)
   throw new Error('TRANSCRIPT_REPEAT_COUNT must be an integer from 1 to 3');
 const regressionOnly = process.env.TRANSCRIPT_REGRESSION_ONLY === '1';
+const rowScenariosOnly = process.env.TRANSCRIPT_ROW_SCENARIOS_ONLY === '1';
 const profileRows = process.env.TRANSCRIPT_PROFILE_ROWS === '1';
 const profiledScenarios = new Set(['fling', 'history-prepend', 'concurrent-streams', 'optimistic-send']);
 const control = startControl();
@@ -87,13 +88,15 @@ try {
   const newest = newestPoint(xml);
   if (newest) { tap(newest); await pause(2000); }
   for (let repeat = 0; repeat < repeatCount; repeat++) {
-    await capture('idle', 2000, async () => {});
-    const composer = pointFor(dump(), 'content-desc', 'Message');
-    tap(composer); await pause(500);
-    for (const char of 'measure') await capture('keystroke', 650, async () => { adb('shell', 'input', 'text', char); });
-    adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
-    adb('shell', 'input', 'keyevent', 'KEYCODE_DEL'); adb('shell', 'input', 'keyevent', '4');
-    await pause(500);
+    if (!rowScenariosOnly) {
+      await capture('idle', 2000, async () => {});
+      const composer = pointFor(dump(), 'content-desc', 'Message');
+      tap(composer); await pause(500);
+      for (const char of 'measure') await capture('keystroke', 650, async () => { adb('shell', 'input', 'text', char); });
+      adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
+      adb('shell', 'input', 'keyevent', 'KEYCODE_DEL'); adb('shell', 'input', 'keyevent', '4');
+      await pause(500);
+    }
     await capture('scroll', 4000, async () => {
       for (let i = 0; i < 3; i++) { adb('shell', 'input', 'swipe', '500', '900', '500', '1500', '500'); await pause(150); }
     });
@@ -122,22 +125,31 @@ try {
       await pause(1500);
     }
     if (!atNewest) throw new Error('Android newest-content precondition did not settle');
-    let incoming;
-    await capture('incoming', 2500, async () => { incoming = await stimulus.incoming(); });
-    const incomingXml = dump();
-    samples.at(-1).visible = incomingXml.includes(incoming.text);
-    if (!samples.at(-1).visible) throw new Error('Android incoming message did not become visible');
-    if (!samples.at(-1).rowCommits) throw new Error('Incoming message was not captured inside the sampling window');
+    if (!rowScenariosOnly) {
+      let incoming;
+      await capture('incoming', 2500, async () => { incoming = await stimulus.incoming(); });
+      const incomingXml = dump();
+      samples.at(-1).visible = incomingXml.includes(incoming.text);
+      if (!samples.at(-1).visible) throw new Error('Android incoming message did not become visible');
+      if (!samples.at(-1).rowCommits) throw new Error('Incoming message was not captured inside the sampling window');
+    }
     if (regressionOnly) continue;
-    const memoryBefore = adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline');
-    await capture('warm-room-switches', 30000, async () => {
-      for (let i = 0; i < 20; i++) { open(rooms[i % 2]); await pause(900); }
-    });
-    samples.at(-1).memory = { switches: 20, before: memoryBefore, after: adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline') };
+    if (!rowScenariosOnly) {
+      const memoryBefore = adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline');
+      await capture('warm-room-switches', 30000, async () => {
+        for (let i = 0; i < 20; i++) { open(rooms[i % 2]); await pause(900); }
+      });
+      samples.at(-1).memory = { switches: 20, before: memoryBefore, after: adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline') };
+    }
     open(corner); await pause(2000);
     // Verify the same live path outside the frame sampling window so the
     // accessibility dump does not distort streaming frame times.
     await stimulus.stream(async () => {
+      // Establish the newest reading position outside the timing window. A
+      // retained historical anchor can otherwise leave the second draft below
+      // the composer while the first draft is already visible.
+      adb('shell', 'input', 'swipe', '500', '1900', '500', '500', '150');
+      await pause(700);
       const screenshot = `${output}/streams-${repeat}.png`;
       await writeFile(screenshot, execFileSync('adb', ['-s', device, 'exec-out', 'screencap', '-p']));
       const visible = execFileSync('tesseract', [screenshot, 'stdout'], { encoding: 'utf8' });
@@ -157,7 +169,7 @@ try {
     if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
-    scenarioOptions: { repeatCount, regressionOnly, profileRows, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
+    scenarioOptions: { repeatCount, regressionOnly, rowScenariosOnly, profileRows, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     refreshHz,

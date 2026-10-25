@@ -1,0 +1,14 @@
+{
+  "rows-typecheck-final.log.gz": {
+    "uncompressedSha256": "0d61e61f89d11105f82f940864de43518d6abaddf71d929290e39946e67b0a09"
+  },
+  "rows-dead-code-final.log.gz": {
+    "uncompressedSha256": "35f700d553556c2034604b490270886e5a4fe9d8a100d811ab028564e96e782b"
+  },
+  "rows-mobile-final.log.gz": {
+    "uncompressedSha256": "6829ba39fdcd7fd58c0c326cd6b9cf4e8bae10afb34a9f1893fbf976a37fcb06"
+  },
+  "rows-fingerprint-base.log.gz": {
+    "uncompressedSha256": "2302efb59837cd5ae74a5dba7875d453f5451a07e46e0c39b0a247b0b7b2f7b3"
+  }
+}

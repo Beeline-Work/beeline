@@ -1,0 +1,11 @@
+{
+  "record.log.gz": {
+    "uncompressedSha256": "5c9e9ed23ce5af0b61a4fecebeb38a16329010b0c77ab0daf861744078ffa5cd"
+  },
+  "perf.data.gz": {
+    "uncompressedSha256": "d329fa0e47c5f0878f19db2c3353b7ae6f3e389cb0852f74d84b6c13998e288e"
+  },
+  "report.txt.gz": {
+    "uncompressedSha256": "4aef4614c24680da3c9d21ecaf44a3114d554541b5539337baf612c207c577ae"
+  }
+}

@@ -7,6 +7,9 @@ import { summarize, percentile } from './metrics.mjs';
 const output = process.argv[2];
 const binary = process.env.TRANSCRIPT_DESKTOP_BINARY;
 const packaged = process.env.TRANSCRIPT_DESKTOP_PACKAGE;
+const steadyPointer = process.env.TRANSCRIPT_HOVER_STEADY === '1';
+const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
+if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3) throw new Error('TRANSCRIPT_REPEAT_COUNT must be 1–3');
 if (!output || !binary || !packaged) throw new Error('Supply output, TRANSCRIPT_DESKTOP_BINARY and TRANSCRIPT_DESKTOP_PACKAGE');
 const origin = `http://127.0.0.1:${Number(process.env.TRANSCRIPT_WEBDRIVER_PORT ?? 20085)}`;
 await mkdir(output, { recursive: true });
@@ -41,12 +44,16 @@ try {
   if (!points.length) throw new Error('No visible packaged message row');
   const actions = await evaluate('return document.querySelectorAll(\'[data-testid^="message-actions-"]\').length');
   if (!actions) throw new Error('Packaged desktop action controls are missing');
-  points.push({ x: 10, y: 80, id: 'outside-transcript' });
+  if (steadyPointer) {
+    const row = points[0];
+    points.splice(0, points.length, { ...row, y: row.y - 2 }, { ...row, y: row.y + 2 });
+  } else points.push({ x: 10, y: 80, id: 'outside-transcript' });
+  await move(points[0]); await pause(300);
   await evaluate(`globalThis.__hoverPaint=[];addEventListener('pointermove',event=>{
     if(!event.isTrusted)return;const start=performance.now();requestAnimationFrame(()=>requestAnimationFrame(()=>globalThis.__hoverPaint.push(performance.now()-start)));
   },true)`);
   const samples = [];
-  for (let repeat = 0; repeat < 3; repeat++) {
+  for (let repeat = 0; repeat < repeatCount; repeat++) {
     await evaluate('globalThis.__hoverPaint=[];globalThis.__transcriptSpeed.begin("hover")');
     for (let turn = 0; turn < 30; turn++) { await move(points[turn % points.length]); await pause(75); }
     await pause(100);
@@ -63,7 +70,7 @@ try {
   await writeFile(`${output}/hover-active.png`, Buffer.from(await call('screenshot', undefined, 'GET'), 'base64'));
   const hash = async file => createHash('sha256').update(await readFile(file)).digest('hex');
   await writeFile(`${output}/capture.json`, JSON.stringify({ fixtureFingerprint, platform: 'packaged-tauri-webkit',
-    binarySha256: await hash(binary), packageSha256: await hash(packaged), points, actions, hoveredActionsOpacity: visible,
+    binarySha256: await hash(binary), packageSha256: await hash(packaged), steadyPointer, repeatCount, points, actions, hoveredActionsOpacity: visible,
     viewport: await evaluate('return {width:innerWidth,height:innerHeight,userAgent:navigator.userAgent}'), samples,
-    note: 'Three real pointer trials in the packaged application. Pointer to second rAF is a rendering upper bound, not scanout. WebKit cannot supply a Chrome trace; separate Chromium profiles diagnose the shared row implementation.' }, null, 2));
+    note: 'Real pointer trials in the packaged application; repeatCount records the requested count. Pointer to second rAF is a rendering upper bound, not scanout. WebKit cannot supply a Chrome trace; separate Chromium profiles diagnose the shared row implementation.' }, null, 2));
 } finally { await request(`/session/${session.sessionId}`, undefined, 'DELETE'); }

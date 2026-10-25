@@ -1,0 +1,233 @@
+{
+  "ANDROID-BASELINE.md": {
+    "sha256": "9ab4d5b1e29153b0fdad65fb76fdfb3f63952581dcdf009f8fce49051a77aaa7"
+  },
+  "CHECKS.md": {
+    "sha256": "c9b121d2c278c3b7430ba0973641059f0fe6854a2bcd1867a468ea96d908f909"
+  },
+  "PROFILE-NOTES.md": {
+    "sha256": "9206c02fa698dd05e83eaad6bec57317a549562e87dddf25edd47c133e6d308c"
+  },
+  "README.md": {
+    "sha256": "8a7f085f979153abb56952b40af1a26705acc6584b3e415537125845a0707a37"
+  },
+  "android-baseline/host.json.gz": {
+    "uncompressedSha256": "77f152f7a44d650a6cd7d2d2342a04779f5d6af0013a0d89d12773f7f1a8cf71"
+  },
+  "android-baseline/keypaint/capture.json.gz": {
+    "uncompressedSha256": "f3e141b347f9a488bc1e92207b5e061cc0c163aa5e8d5b55e3041e0a5e243926"
+  },
+  "android-baseline/opens/cache-miss-0.log.gz": {
+    "uncompressedSha256": "c8a10ffcc021665f83b8607e2007ba2a34f84a21832d82092d358835a87f1e1e"
+  },
+  "android-baseline/opens/cache-miss-1.log.gz": {
+    "uncompressedSha256": "375423227e65e5dff7327e313bd64af6b25f7df762f9f0d6ca29228d6952e168"
+  },
+  "android-baseline/opens/cache-miss-2.log.gz": {
+    "uncompressedSha256": "53334cbed61c2f5390ec217c9c33ebceb6405d9cc988e9b7548ffaf721f7efd0"
+  },
+  "android-baseline/opens/capture.json.gz": {
+    "uncompressedSha256": "74470165e745d251140315ecf80a7a3021ddadaf9c9d413731a8370300466a1e"
+  },
+  "android-baseline/opens/cold-process-retained-cache-0.log.gz": {
+    "uncompressedSha256": "3c98eaad5e1a7d85893699be11b1c0d0d6fa78ea87c6afd12e39c3ade17f6f40"
+  },
+  "android-baseline/opens/cold-process-retained-cache-1.log.gz": {
+    "uncompressedSha256": "1ed3ee4a1a491168370b1eb1b44d63b3898d7b8206ac44d31dc02b9067674d60"
+  },
+  "android-baseline/opens/cold-process-retained-cache-2.log.gz": {
+    "uncompressedSha256": "c86ae8e0b86194d46486e54aaeeeb5af1e74556ac1554418120503b3e1af6748"
+  },
+  "android-baseline/opens/warm-0.log.gz": {
+    "uncompressedSha256": "8a359b61c721f60de8d756d11c5d05311cb20813c8fb1cb65d179a990c4f80c5"
+  },
+  "android-baseline/opens/warm-1.log.gz": {
+    "uncompressedSha256": "da91b3a6f2ac1ed468f05d2ff061e31a649e7dfac5004743d641c243079d162f"
+  },
+  "android-baseline/opens/warm-2.log.gz": {
+    "uncompressedSha256": "72b0be9d11951b06c5bbf3b3fd46ef045aeb131e570ae87b8e352e30ae23ff1a"
+  },
+  "android-baseline/overhead-inactive/capture.json.gz": {
+    "uncompressedSha256": "1c7d2c8951c2537f7a886bd47e8ebd515a3cd04fd091ad2868d4ad5e14997caf"
+  },
+  "android-baseline/scenarios/capture.json.gz": {
+    "uncompressedSha256": "f45b4d678f8671767029fe7cf012e57312ed2d2b2798ef00fcf9a26c558d1feb"
+  },
+  "android-baseline/scenarios/streams-0.png": {
+    "sha256": "f21689118e0f21693ed8932e2f9f1a2be5f05e4cc5cf53588695ee7f0736ee03"
+  },
+  "android-baseline/scenarios/streams-0.txt.gz": {
+    "uncompressedSha256": "ded8dceb811afaa861e79d50f7892a2692e3f51c873cec21e535709605d3426d"
+  },
+  "android-baseline/scenarios/streams-1.png": {
+    "sha256": "e280045c0af72d75cc5afe6631de2e68287282fa5a3d67d2ee8c73ad5e124665"
+  },
+  "android-baseline/scenarios/streams-1.txt.gz": {
+    "uncompressedSha256": "645800e0e80ebe64a505a2cf46eebb32e5708f05ccee68284eefddc1c0f13b0c"
+  },
+  "android-baseline/scenarios/streams-2.png": {
+    "sha256": "78752ee17319413ca4c4c038cef71a34ebc6b0dd5a9424f4e048b60ae4846fb1"
+  },
+  "android-baseline/scenarios/streams-2.txt.gz": {
+    "uncompressedSha256": "a21f5ac8e41a2e03acedc92afdd16d3e784d4d7f6f5db0d985d04ac152bc8ccb"
+  },
+  "android-incomplete/scenarios/capture.json.gz": {
+    "uncompressedSha256": "a3d1197b53d739e9a50333edd4f9c2346e053bc642c11e8c97d69e83d8dbe158"
+  },
+  "android-incomplete/scenarios/streams-0.png": {
+    "sha256": "2a0298b9e8beeedbe993087f21b1d6b0597ab3bcf7b6cbb1da2b4d17fb9184e0"
+  },
+  "android-incomplete/scenarios/streams-0.txt.gz": {
+    "uncompressedSha256": "d911729f45ae39be24a75779ad9fe3ec26e5e0efabfe7a2a0c9fe109aea1d5fd"
+  },
+  "android-profile/capture.json.gz": {
+    "uncompressedSha256": "97ed8f7ad1252324123d4266234fb570875814a7333f4008b997f212259bc093"
+  },
+  "android-profile/profile-concurrent-streams-0-symbolicated.json.gz": {
+    "uncompressedSha256": "c463a3385bab8c9f8694106eb3e5b3b62b9640d3332f6ed20ec61a9284d48dd8"
+  },
+  "android-profile/profile-concurrent-streams-0.json.gz": {
+    "uncompressedSha256": "c0d2651cbabebaf26cf74e5e3542515fb4c51520b06a509dc8801b47348f2215"
+  },
+  "android-profile/profile-fling-0-symbolicated.json.gz": {
+    "uncompressedSha256": "6bc68a50c9175ca655eb02f81c6a89d003a79e594ef6019fdec001c6caccf7d1"
+  },
+  "android-profile/profile-fling-0.json.gz": {
+    "uncompressedSha256": "41433566f6ed0f49513fbb3224416f624c1036d2d18895a1f0cfc734dd09e069"
+  },
+  "android-profile/profile-history-prepend-0-symbolicated.json.gz": {
+    "uncompressedSha256": "76962ccca0469607439026ae73c8cc11aa0af99ecd8f76d51872463e2e38df97"
+  },
+  "android-profile/profile-history-prepend-0.json.gz": {
+    "uncompressedSha256": "33cae99944d7861935baacc5520fb0f140dbdfe32b07beef3bcf107640c75e59"
+  },
+  "android-profile/profile-optimistic-send-0-symbolicated.json.gz": {
+    "uncompressedSha256": "b9b89775c19d086ca979a245745d71382bf1f2384dced784a05e487b82e3cba9"
+  },
+  "android-profile/profile-optimistic-send-0.json.gz": {
+    "uncompressedSha256": "cc0147ecf89568f4dcb68c6439d6a53e1fdf71ff13bb78b68afacc29ab381a4a"
+  },
+  "android-profile/profile-summary.json.gz": {
+    "uncompressedSha256": "ba08016df96ce3b70897499a27e689dbcc38d2e30a6714e01ca3b057be8e452a"
+  },
+  "android-profile/streams-0.png": {
+    "sha256": "edf0f500788e12776c0681c16053dd22b9a11dc11fe5f86eb0f68fe077989cad"
+  },
+  "android-profile/streams-0.txt.gz": {
+    "uncompressedSha256": "bced8e267e0019abbd3d40e38c00b79af2f932ca56a86aa5e903f9b5a4f246fd"
+  },
+  "checks/rows-dead-code-final.log.gz": {
+    "uncompressedSha256": "35f700d553556c2034604b490270886e5a4fe9d8a100d811ab028564e96e782b"
+  },
+  "checks/rows-fingerprint-base.log.gz": {
+    "uncompressedSha256": "2302efb59837cd5ae74a5dba7875d453f5451a07e46e0c39b0a247b0b7b2f7b3"
+  },
+  "checks/rows-mobile-final.log.gz": {
+    "uncompressedSha256": "6829ba39fdcd7fd58c0c326cd6b9cf4e8bae10afb34a9f1893fbf976a37fcb06"
+  },
+  "checks/rows-typecheck-final.log.gz": {
+    "uncompressedSha256": "0d61e61f89d11105f82f940864de43518d6abaddf71d929290e39946e67b0a09"
+  },
+  "native-profile/perf.data.gz": {
+    "uncompressedSha256": "d329fa0e47c5f0878f19db2c3353b7ae6f3e389cb0852f74d84b6c13998e288e"
+  },
+  "native-profile/record.log.gz": {
+    "uncompressedSha256": "5c9e9ed23ce5af0b61a4fecebeb38a16329010b0c77ab0daf861744078ffa5cd"
+  },
+  "native-profile/report.txt.gz": {
+    "uncompressedSha256": "4aef4614c24680da3c9d21ecaf44a3114d554541b5539337baf612c207c577ae"
+  },
+  "packaged-control/1-transitions/capture.json.gz": {
+    "uncompressedSha256": "2dbbb08cca350cffb2ec3acbca24244aa9b852bbf4009d4684b0e7b443484dfd"
+  },
+  "packaged-control/1-transitions/host.json.gz": {
+    "uncompressedSha256": "5e7eeed3423ab84280287a0c3c35534ebdb449378b6622eca310f6dba569568c"
+  },
+  "packaged-control/1-transitions/hover-active.png": {
+    "sha256": "dbaec5d00359d67f8a0c9d20ff19cc4535a64619a68dcb412c0bd4df80c3c0b8"
+  },
+  "packaged-control/2-steady/capture.json.gz": {
+    "uncompressedSha256": "96ce7952c36ea04d6b0dd057e165ff1e68ca5e8ef2c71390e53d0eb38db0f149"
+  },
+  "packaged-control/2-steady/host.json.gz": {
+    "uncompressedSha256": "b8f40c3df85d35ae12221b59ec7f160c61f7b6519ed442ede116e2687f60644c"
+  },
+  "packaged-control/2-steady/hover-active.png": {
+    "sha256": "9de2c6f16e74aae175b68410237aac27450eda8bceb993f293e7a3e78d76dbe8"
+  },
+  "packaged-control/3-steady/capture.json.gz": {
+    "uncompressedSha256": "1d8348a2eebe694d5ba8644841d4e3ffc6f9224998555f13fd1783d9424e058f"
+  },
+  "packaged-control/3-steady/host.json.gz": {
+    "uncompressedSha256": "1a392e3b1e0b4e84fa8304be78194f386c0a35669ef68a11992b88edac18228f"
+  },
+  "packaged-control/3-steady/hover-active.png": {
+    "sha256": "9de2c6f16e74aae175b68410237aac27450eda8bceb993f293e7a3e78d76dbe8"
+  },
+  "packaged-control/4-transitions/capture.json.gz": {
+    "uncompressedSha256": "60257143460649bdb0b7b425ba6defc7cdc0b2d93f48187ad3ed227416a5db58"
+  },
+  "packaged-control/4-transitions/host.json.gz": {
+    "uncompressedSha256": "d56e2e295c564abb85c56a74ebf23ca94ac3cbe4982408746d62ce1f32e24314"
+  },
+  "packaged-control/4-transitions/hover-active.png": {
+    "sha256": "dbaec5d00359d67f8a0c9d20ff19cc4535a64619a68dcb412c0bd4df80c3c0b8"
+  },
+  "packaged-control/5-transitions/capture.json.gz": {
+    "uncompressedSha256": "22ba7281dc110abd5a8fbe652f5faf7aed72591906c75a4ec9b203391cfab6e2"
+  },
+  "packaged-control/5-transitions/host.json.gz": {
+    "uncompressedSha256": "1a6745983b46de49ace505799b4dda14402ca9dcf517427ad2e42534bd9580b8"
+  },
+  "packaged-control/5-transitions/hover-active.png": {
+    "sha256": "dbaec5d00359d67f8a0c9d20ff19cc4535a64619a68dcb412c0bd4df80c3c0b8"
+  },
+  "packaged-control/6-steady/capture.json.gz": {
+    "uncompressedSha256": "e21c4d3d029495117708358b9e46b71dc0a02642151a8dfef9b44dfeb3df3376"
+  },
+  "packaged-control/6-steady/host.json.gz": {
+    "uncompressedSha256": "c9565a4b32213a4fcbb0ebe2d8077ddca096a1dbbff64c9f043b2d089cbf5f33"
+  },
+  "packaged-control/6-steady/hover-active.png": {
+    "sha256": "9de2c6f16e74aae175b68410237aac27450eda8bceb993f293e7a3e78d76dbe8"
+  },
+  "packaged-hover/capture.json.gz": {
+    "uncompressedSha256": "57c62b6ffa4023692325d2fc42c80c26e4eba806c227481913e6625a91fbc995"
+  },
+  "packaged-hover/hover-active.png": {
+    "sha256": "1d8a8d47a00be65e699abc6b59c55a86465f8eb2c71a06f291643ece18c942e9"
+  },
+  "web-hover/capture.json.gz": {
+    "uncompressedSha256": "7cac2b7ef22de85d21ce8b14fddda9a45f3057f4f781144ce2ec1612d19bf17b"
+  },
+  "web-hover/hover-1280-bundle-hashes.json.gz": {
+    "uncompressedSha256": "0e0f26cec1a99c2feef648c18c5b7c18750df1511314debdef1980e0e9a9bac4"
+  },
+  "web-hover/hover-1280-profile.json.gz": {
+    "uncompressedSha256": "cccdc0d2368e4d5303b75ca79e02701d26a6a7faed9bb4ab008e8470db5f3c93"
+  },
+  "web-hover/hover-1280-summary.json.gz": {
+    "uncompressedSha256": "49dc26a7fa66831efb07122e2db4084a7373c756a6f74c7a92b3dbf36b7bc184"
+  },
+  "web-hover/hover-1280-trace.json.gz": {
+    "uncompressedSha256": "0a9df8bd24fa3feccc3f354417985b9012e0ea48f06330535e7c33fcd3564fbf"
+  },
+  "web-hover/hover-1280.png": {
+    "sha256": "12eb2fd023ce114f2198ec64ad4bed19d300f6ee86404f9d6f3357c9b155b1fd"
+  },
+  "web-hover/hover-390-bundle-hashes.json.gz": {
+    "uncompressedSha256": "21aaef3103b81a9d9fe628d6b9ac7978fee78108e62aa8860e312714747c450f"
+  },
+  "web-hover/hover-390-profile.json.gz": {
+    "uncompressedSha256": "8243a998edc9edf2eddf670fd97622c71fe553d3c1f8d25957476d3b646760b6"
+  },
+  "web-hover/hover-390-summary.json.gz": {
+    "uncompressedSha256": "1b66ecf4bf844cbcb3f932cb66b47d5afb01db4d79defc6c0918b9c61bf534ff"
+  },
+  "web-hover/hover-390-trace.json.gz": {
+    "uncompressedSha256": "1ed14c02915ddfee416cf226e39c9b54660ab4d92df1e4e875869f75e8efd784"
+  },
+  "web-hover/hover-390.png": {
+    "sha256": "2c74c613b8f2e4dbb0d23862c7ee6f4d66a744552bbca473af5b0ca17db6f5a8"
+  }
+}

@@ -35,6 +35,16 @@ for (const file of readdirSync(directory).filter(name => /^profile-.+-\d+\.json$
     }
   }
   const inclusive = new Map(), nearestProduct = new Map();
+  const groups = {
+    nativeCommit: /\[HostFunction\] completeRoot/,
+    reactRender: /renderRootSync/,
+    markdownParsing: /\/components\/markdown\/parseMarkdown/,
+    codeTokenizing: /\/buzz\/syntax-highlight/,
+    swipeable: /gesture-handler.*Swipeable/,
+    legacyAnimated: /\/Libraries\/Animated\/|\/private\/animated\//,
+    cardComponents: /\/sources\/components\/buzz\/[^/]*Card/,
+  };
+  const sampledGroups = Object.fromEntries(Object.keys(groups).map(name => [name, 0]));
   let selectedSamples = 0, rootOnly = 0;
   for (const tick of trace.samples) {
     const milliseconds = Number(tick.ts) / 1000;
@@ -45,13 +55,16 @@ for (const file of readdirSync(directory).filter(name => /^profile-.+-\d+\.json$
     if (stack.length === 1) rootOnly++;
     const label = frame => frame.original?.source
       ? `${frame.original.functionName || frame.name} (${frame.original.source}:${frame.original.line})` : frame.name;
-    for (const name of new Set(stack.map(label))) inclusive.set(name, (inclusive.get(name) ?? 0) + 1);
+    const labels = new Set(stack.map(label));
+    for (const name of labels) inclusive.set(name, (inclusive.get(name) ?? 0) + 1);
+    for (const [group, expression] of Object.entries(groups))
+      if ([...labels].some(name => expression.test(name))) sampledGroups[group]++;
     const product = stack.find(frame => frame.original?.source?.startsWith('/sources/'));
     if (product) nearestProduct.set(label(product), (nearestProduct.get(label(product)) ?? 0) + 1);
   }
   if (!selectedSamples) throw new Error(`No Hermes samples overlap the frame window: ${file}`);
   summaries.push({ file, scenario, repeat: Number(repeatText), startMs: sample.raw.startMs, endMs: sample.raw.endMs,
-    selectedSamples, rootOnly, inclusiveStacks: rank(inclusive), nearestProductStacks: rank(nearestProduct) });
+    selectedSamples, rootOnly, sampledGroups, inclusiveStacks: rank(inclusive), nearestProductStacks: rank(nearestProduct) });
   writeFileSync(`${directory}/${file.replace('.json', '-symbolicated.json')}`, JSON.stringify(trace));
 }
 if (!summaries.length) throw new Error('No row profiles found');

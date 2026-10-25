@@ -1,0 +1,32 @@
+{
+  "capture.json.gz": {
+    "uncompressedSha256": "74470165e745d251140315ecf80a7a3021ddadaf9c9d413731a8370300466a1e"
+  },
+  "cache-miss-2.log.gz": {
+    "uncompressedSha256": "53334cbed61c2f5390ec217c9c33ebceb6405d9cc988e9b7548ffaf721f7efd0"
+  },
+  "cold-process-retained-cache-0.log.gz": {
+    "uncompressedSha256": "3c98eaad5e1a7d85893699be11b1c0d0d6fa78ea87c6afd12e39c3ade17f6f40"
+  },
+  "warm-1.log.gz": {
+    "uncompressedSha256": "da91b3a6f2ac1ed468f05d2ff061e31a649e7dfac5004743d641c243079d162f"
+  },
+  "warm-2.log.gz": {
+    "uncompressedSha256": "72b0be9d11951b06c5bbf3b3fd46ef045aeb131e570ae87b8e352e30ae23ff1a"
+  },
+  "cold-process-retained-cache-2.log.gz": {
+    "uncompressedSha256": "c86ae8e0b86194d46486e54aaeeeb5af1e74556ac1554418120503b3e1af6748"
+  },
+  "cache-miss-0.log.gz": {
+    "uncompressedSha256": "c8a10ffcc021665f83b8607e2007ba2a34f84a21832d82092d358835a87f1e1e"
+  },
+  "cache-miss-1.log.gz": {
+    "uncompressedSha256": "375423227e65e5dff7327e313bd64af6b25f7df762f9f0d6ca29228d6952e168"
+  },
+  "cold-process-retained-cache-1.log.gz": {
+    "uncompressedSha256": "1ed3ee4a1a491168370b1eb1b44d63b3898d7b8206ac44d31dc02b9067674d60"
+  },
+  "warm-0.log.gz": {
+    "uncompressedSha256": "8a359b61c721f60de8d756d11c5d05311cb20813c8fb1cb65d179a990c4f80c5"
+  }
+}

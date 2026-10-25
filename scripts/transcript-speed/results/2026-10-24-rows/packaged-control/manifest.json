@@ -1,0 +1,56 @@
+{
+  "1-transitions/capture.json.gz": {
+    "uncompressedSha256": "2dbbb08cca350cffb2ec3acbca24244aa9b852bbf4009d4684b0e7b443484dfd"
+  },
+  "1-transitions/hover-active.png": {
+    "sha256": "dbaec5d00359d67f8a0c9d20ff19cc4535a64619a68dcb412c0bd4df80c3c0b8"
+  },
+  "1-transitions/host.json.gz": {
+    "uncompressedSha256": "5e7eeed3423ab84280287a0c3c35534ebdb449378b6622eca310f6dba569568c"
+  },
+  "5-transitions/capture.json.gz": {
+    "uncompressedSha256": "22ba7281dc110abd5a8fbe652f5faf7aed72591906c75a4ec9b203391cfab6e2"
+  },
+  "5-transitions/hover-active.png": {
+    "sha256": "dbaec5d00359d67f8a0c9d20ff19cc4535a64619a68dcb412c0bd4df80c3c0b8"
+  },
+  "5-transitions/host.json.gz": {
+    "uncompressedSha256": "1a6745983b46de49ace505799b4dda14402ca9dcf517427ad2e42534bd9580b8"
+  },
+  "3-steady/capture.json.gz": {
+    "uncompressedSha256": "1d8348a2eebe694d5ba8644841d4e3ffc6f9224998555f13fd1783d9424e058f"
+  },
+  "3-steady/hover-active.png": {
+    "sha256": "9de2c6f16e74aae175b68410237aac27450eda8bceb993f293e7a3e78d76dbe8"
+  },
+  "3-steady/host.json.gz": {
+    "uncompressedSha256": "1a392e3b1e0b4e84fa8304be78194f386c0a35669ef68a11992b88edac18228f"
+  },
+  "2-steady/capture.json.gz": {
+    "uncompressedSha256": "96ce7952c36ea04d6b0dd057e165ff1e68ca5e8ef2c71390e53d0eb38db0f149"
+  },
+  "2-steady/hover-active.png": {
+    "sha256": "9de2c6f16e74aae175b68410237aac27450eda8bceb993f293e7a3e78d76dbe8"
+  },
+  "2-steady/host.json.gz": {
+    "uncompressedSha256": "b8f40c3df85d35ae12221b59ec7f160c61f7b6519ed442ede116e2687f60644c"
+  },
+  "4-transitions/capture.json.gz": {
+    "uncompressedSha256": "60257143460649bdb0b7b425ba6defc7cdc0b2d93f48187ad3ed227416a5db58"
+  },
+  "4-transitions/hover-active.png": {
+    "sha256": "dbaec5d00359d67f8a0c9d20ff19cc4535a64619a68dcb412c0bd4df80c3c0b8"
+  },
+  "4-transitions/host.json.gz": {
+    "uncompressedSha256": "d56e2e295c564abb85c56a74ebf23ca94ac3cbe4982408746d62ce1f32e24314"
+  },
+  "6-steady/capture.json.gz": {
+    "uncompressedSha256": "e21c4d3d029495117708358b9e46b71dc0a02642151a8dfef9b44dfeb3df3376"
+  },
+  "6-steady/hover-active.png": {
+    "sha256": "9de2c6f16e74aae175b68410237aac27450eda8bceb993f293e7a3e78d76dbe8"
+  },
+  "6-steady/host.json.gz": {
+    "uncompressedSha256": "c9565a4b32213a4fcbb0ebe2d8077ddca096a1dbbff64c9f043b2d089cbf5f33"
+  }
+}

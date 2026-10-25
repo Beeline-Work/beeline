@@ -186,6 +186,17 @@ The symbolicator verifies APK and local bytecode hashes before using the compose
 source map. `TRANSCRIPT_MAP_DIRECTORY` can select a retained generated-build
 directory containing `assets/` and `sourcemaps/`. Rankings count sampled stacks,
 not invocations or additive CPU time.
+The summary also counts unique stacks for React rendering, native commits,
+legacy Animated, Swipeable, markdown parsing, code tokenization and card-named
+components. These categories overlap; do not add them or treat a zero sampled
+count as proof that a component costs nothing.
+
+`TRANSCRIPT_ROW_SCENARIOS_ONLY=1` keeps scroll/fling, older history, concurrent
+streams and send settlement while omitting typing, incoming and Room-switch
+timing. It is intended for matched row-cost arms after the full baseline suite;
+both arms must use the same setting. The stream visibility precondition moves
+to newest content outside the sample so a retained reading anchor cannot hide
+the second draft. It does not change gesture behavior in the product.
 
 Hover-only captures use the same seeded Room and real pointer input. Export
 the web build with `--source-maps external`, then set
@@ -200,6 +211,11 @@ binary, `TRANSCRIPT_DESKTOP_PACKAGE` to its Debian package and optionally
 checks that hovered actions become visible and retains a screenshot. WebKit
 does not provide a Chrome trace; the packaged timing and shared-code Chromium
 diagnosis remain distinct evidence. Stop or suspend builds during captures.
+The packaged driver accepts `TRANSCRIPT_REPEAT_COUNT=1` for alternating fresh
+sessions (default three; range one to three). `TRANSCRIPT_HOVER_STEADY=1`
+replaces enter/leave transitions with movement within one already-hovered row,
+as a diagnostic control. Each session warms its first pointer position. Keep
+controls distinct from product before/after timing and retain unfavorable arms.
 
 For alternating-order regression checks, `TRANSCRIPT_REPEAT_COUNT=1`
 (default: 3; accepted range: 1–3) and `TRANSCRIPT_REGRESSION_ONLY=1`

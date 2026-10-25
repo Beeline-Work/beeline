@@ -1,5 +1,6 @@
 import { isWorkbenchCompanyIndex } from './workbench-company-validation';
 import { useCallback, useEffect } from 'react';
+import { useFocusEffect } from 'expo-router';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { getWorkbenchSource } from './workbench-source';
@@ -24,7 +25,7 @@ export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
     Array.isArray(view.connectors) && Array.isArray(view.connections) &&
     (view.companies === undefined || isWorkbenchCompanyIndex(view.companies));
 };
-const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope }>();
+const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope; consumers: number; dirty: boolean }>();
 /** Workbench views the server answered this session; a stored view outside it may be stale. */
 const answeredWorkbench = new Set<string>();
 const ownerErrors = new Map<string, Set<(error: string | null) => void>>();
@@ -32,6 +33,7 @@ let workbenchStop: (() => void) | undefined;
 let workbenchStarting = false;
 subscribeClientReset(() => {
   heldWorkbench.clear(); answeredWorkbench.clear(); workbenchStop?.(); workbenchStop = undefined;
+  workbenchStarting = false;
 });
 /** A server answer written outside this module, such as the one inside the Settings read. */
 export function noteWorkbenchAnswer(address: SurfaceCacheAddress) {
@@ -42,18 +44,30 @@ function reportOwnerError(key: string, error: string | null) {
 }
 export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: WorkbenchScope) {
   const key = JSON.stringify(address);
-  // A stored view can predate live changes this device never heard, such as a
-  // machine's Squire report. Read it again once per session; with no stored
-  // view, the route's own first read covers it.
-  if (!answeredWorkbench.has(key)) {
+  const owner = heldWorkbench.get(key) ?? { address, scope, consumers: 0, dirty: false };
+  owner.consumers++;
+  heldWorkbench.set(key, owner);
+  const release = () => {
+    owner.consumers = Math.max(0, owner.consumers - 1);
+    if (!owner.consumers) owner.dirty = true;
+    for (const [heldKey, held] of heldWorkbench) {
+      if (heldWorkbench.size <= 8) break;
+      if (held.consumers) continue;
+      heldWorkbench.delete(heldKey);
+      answeredWorkbench.delete(heldKey);
+    }
+  };
+  // Focus reconciles changes missed while hidden, including a disconnected socket.
+  if (!answeredWorkbench.has(key) || owner.dirty) {
     answeredWorkbench.add(key);
-    void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => stored &&
-      mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
-        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause))));
+    owner.dirty = false;
+    void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => {
+      if (!owner.consumers) { owner.dirty = true; return; }
+      if (stored) return mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
+        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
+    });
   }
-  heldWorkbench.set(key, { address, scope });
-  if (heldWorkbench.size > 8) heldWorkbench.delete(heldWorkbench.keys().next().value!);
-  if (workbenchStop || workbenchStarting) return;
+  if (workbenchStop || workbenchStarting) return release;
   workbenchStarting = true;
   const generation = clientResetGeneration();
   void sharedLiveConnection().register([], (event) => {
@@ -62,14 +76,19 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
     if ((live.type === 'resource-change' &&
         ['workbench', 'install', 'agent'].includes(live.resource)) ||
         (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')) {
-      for (const [key, owner] of heldWorkbench)
+      for (const [key, owner] of heldWorkbench) {
+        owner.dirty = true;
+        if (!owner.consumers) continue;
+        owner.dirty = false;
         void mobileSurfaceCache.fetch(owner.address, isWorkbenchView,
           () => readWorkbenchWithTimeout(owner.scope))
           .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
+      }
     }
   }).then((stop) => { if (generation !== clientResetGeneration()) stop();
     else { workbenchStarting = false; workbenchStop = stop; } },
     () => { if (generation === clientResetGeneration()) workbenchStarting = false; });
+  return release;
 }
 
 export function useSharedWorkbench(scope: WorkbenchScope | null) {
@@ -77,8 +96,9 @@ export function useSharedWorkbench(scope: WorkbenchScope | null) {
     [scope?.workspaceId, scope?.viewerId]);
   const resource = useSharedSurface('/workspace/:id/workbench', scope ?? undefined,
     isWorkbenchView, request, Boolean(scope?.viewerId));
-  useEffect(() => { if (scope && resource.address) holdSharedWorkbench(resource.address, scope); },
-    [resource.address, scope?.workspaceId, scope?.viewerId]);
+  useFocusEffect(useCallback(() => {
+    if (scope && resource.address) return holdSharedWorkbench(resource.address, scope);
+  }, [resource.address, scope?.workspaceId, scope?.viewerId]));
   useEffect(() => {
     if (!resource.address) return;
     const key = JSON.stringify(resource.address);
@@ -116,7 +136,9 @@ export async function readSharedWorkbench(scope: WorkbenchScope, options?: {
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
   if (!identity) throw new Error('Identity unavailable');
   const address = surfaceAddress(relay, identity.publicKey, '/workspace/:id/workbench', scope);
-  holdSharedWorkbench(address, scope);
+  // Imperative reads do not keep a hidden screen subscribed.
+  const owner = heldWorkbench.get(JSON.stringify(address));
+  if (owner) owner.dirty = true;
   if (!options?.refresh) {
     const held = await mobileSurfaceCache.read(address, isWorkbenchView);
     if (held) return held;

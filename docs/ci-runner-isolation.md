@@ -12,7 +12,7 @@ been observed responding in rootless mode. PostgreSQL readiness has been
 demonstrated on the first engine; the other engines still need that proof.
 
 The revised installer pins the runner archive checksum and the bytes of
-`prepare-ephemeral-ci-runner.py`. It installs root-owned per-job preparation,
+`prepare-ephemeral-ci-runner.py` and `isolated-ci-entry.py`. It installs root-owned per-job preparation,
 an output firewall matching the four UIDs, and resource slices limiting each
 runner plus its engine together to twelve GiB and three CPUs. It does not start
 or enable runners. The previous provisioning script is not rerun: its live
@@ -39,6 +39,16 @@ dedicated runner label. Other events use hosted runners. Existing workflow
 triggers and job conditions are unchanged. The public-fork approval policy is
 also required: an untrusted fork can edit its own workflow to request the
 label, so the trusted workflow expression alone is insufficient protection.
+Whoever approves a fork PR must read its workflow changes before approving
+execution. Repository-level runners are used; organization runner-group
+permissions are not required for this rollout. Keep the routing expression,
+owner-controlled policy, and relay policy check together.
+
+Runner.Listener enters its engine's rootlesskit user/network namespaces, so
+job loopback is private. UID rules also drop host-local destinations, including
+squire's public address. Configuration uses `--replace`, retains shard ownership
+of extracted runner files, and receives registration authorization over stdin
+rather than transient unit environment properties.
 
 ## Required live proof before activation
 
@@ -46,6 +56,9 @@ Use scoped host grants for all host operations:
 
 - Confirm nftables counters cover every shard UID. A curl from each jail to
   squire's tailnet address must fail; a Docker Hub pull must succeed.
+- From the actual runner namespace, curl to `127.0.0.1:11434`,
+  `172.93.111.86:28090`, a tailnet host, and a LAN address must fail, while
+  the private PostgreSQL service remains reachable.
 - Run the PostgreSQL service image on every private engine and confirm readiness.
 - Verify each combined slice's memory/CPU limits and inaccessible private paths.
 - Across two jobs, leave markers in home/work/runner state and a Docker volume;

@@ -159,6 +159,9 @@
         // Screenshot capture bundles these entries by path through esbuild and Gradle.
         "scripts/capture-corner-line-web.mjs",
         "scripts/corner-line-{native,web}-proof.tsx",
+        // The lifecycle glyph runbook invokes capture by path; esbuild and Gradle select these entries.
+        "scripts/capture-lifecycle-glyph-web.mjs",
+        "scripts/lifecycle-glyph-{native,web}-proof.tsx",
         "scripts/transcript-events-native-proof.tsx",
         // Browser bundling and the temporary Metro main select these proof entries by path.
         "scripts/disclosure-rows-{browser,native}-proof.tsx",

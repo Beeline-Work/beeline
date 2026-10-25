@@ -136,12 +136,14 @@ function renderShell(
 }
 
 describe('Workspace drawer', () => {
-  it('keeps the desktop Workspace avatar free of an attention overlay', () => {
+  it('shows an attention dot on the desktop Workspace avatar', () => {
     layout.desktop = true;
     try {
       let renderer: ReactTestRenderer;
       act(() => { renderer = create(React.createElement(CommunitySwitcherTrigger, { community: { communityId: 'sample', name: 'Sample' }, expanded: false, attention: true, onPress: () => undefined })); });
-      expect(renderer!.root.findAllByProps({ testID: 'workspace-attention' })).toHaveLength(0);
+      const dot = renderer!.root.findAll((node) => node.type === 'View' && node.props.testID === 'workspace-attention');
+      expect(dot).toHaveLength(1);
+      expect(dot[0]!.props.style).toMatchObject({ width: 12, height: 12, top: -4, right: -4, borderWidth: 2 });
       act(() => renderer!.unmount());
     } finally { layout.desktop = false; }
   });

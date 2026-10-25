@@ -1,0 +1,12 @@
+[
+  {
+    "theme": "bone",
+    "width": 1600,
+    "navigationX": 0,
+    "background": "color(srgb 0.952941 0.933333 0.894118 / 0.66)",
+    "avatar": true,
+    "escape": true,
+    "shortcut": true,
+    "outsideClick": true
+  }
+]

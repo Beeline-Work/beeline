@@ -5,7 +5,6 @@ import type { ComputerSessionView } from '@/components/buzz/ComputerSession';
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;
 export const DESKTOP_NAV_DEFAULT_WIDTH = 300;
-export const DESKTOP_WORKSPACE_STRIP_WIDTH = 76;
 export const DESKTOP_INSPECTOR_MIN_WIDTH = 320;
 export const DESKTOP_INSPECTOR_MAX_WIDTH = 480;
 export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400;

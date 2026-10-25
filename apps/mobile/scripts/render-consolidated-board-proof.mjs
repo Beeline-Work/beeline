@@ -31,10 +31,10 @@ const groknight = beelineThemes[new URLSearchParams(location.search).get('theme'
 export const StyleSheet = {
   absoluteFillObject: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   hairlineWidth: 1,
-  create: (factory) => (typeof factory === 'function' ? factory({ buzz: groknight, colors: { text: groknight.textPrimary } }) : factory),
+  create: (factory) => (typeof factory === 'function' ? factory({ buzz: groknight, colors: { text: groknight.textPrimary, groupped: { background: groknight.bgTerminal } } }) : factory),
 };
 export function useUnistyles() {
-  return { theme: { buzz: groknight, colors: { text: groknight.textPrimary } } };
+  return { theme: { buzz: groknight, colors: { text: groknight.textPrimary, groupped: { background: groknight.bgTerminal } } } };
 }
 `;
 

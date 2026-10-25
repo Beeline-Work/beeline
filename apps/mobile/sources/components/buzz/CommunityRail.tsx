@@ -350,7 +350,7 @@ export function CommunitySwitcherTrigger({
   const desktop = useIsDesktop();
   const showingPickerTitle = expanded && pickerTitle;
   return (
-    <TouchableOpacity
+    <Button
       accessibilityLabel={
         showingPickerTitle
           ? `Close ${pickerTitle}`
@@ -359,43 +359,48 @@ export function CommunitySwitcherTrigger({
       accessibilityRole="button"
       accessibilityState={{ expanded }}
       onPress={onPress}
-      style={styles.drawerTrigger}
+      label=""
+      variant="quiet"
+      appearance={{ control: styles.drawerTrigger }}
+      icon={
+        <>
+          {!showingPickerTitle && (
+            <View style={styles.drawerTriggerPlate} testID="workspace-header-plate">
+              <View style={styles.drawerTriggerPictureSeat}>
+                <IdentityMark
+                  kind="workspace"
+                  seed={community?.communityId ?? 'workspace-loading'}
+                  avatarUrl={community?.avatar}
+                  name={community?.name}
+                  size={HEADER_PLATE_SEAT.pictureSize}
+                  testID="workspace-avatar-header"
+                />
+              </View>
+              {attention && <View style={desktop ? desktopAttentionStyles.workspaceAttentionDot : styles.workspaceAttentionMark} testID="workspace-attention" />}
+            </View>
+          )}
+          <Text
+            numberOfLines={1}
+            style={styles.drawerTriggerName}
+            testID={
+              showingPickerTitle
+                ? 'workspace-picker-title'
+                : community
+                  ? `workspace-active-${community.communityId}`
+                  : 'workspace-active-loading'
+            }
+          >
+            {showingPickerTitle || community?.name || WORKSPACE_LABEL}
+          </Text>
+          <ChevronGlyph
+            color={styles.drawerTriggerCaret.color}
+            direction={showingPickerTitle ? 'up' : 'down'}
+            size={CHEVRON_ROW_SIZE}
+          />
+        </>
+      }
       testID="workspace-avatar-trigger"
-    >
-      {!showingPickerTitle && (
-        <View style={styles.drawerTriggerPlate} testID="workspace-header-plate">
-          <View style={styles.drawerTriggerPictureSeat}>
-            <IdentityMark
-              kind="workspace"
-              seed={community?.communityId ?? 'workspace-loading'}
-              avatarUrl={community?.avatar}
-              name={community?.name}
-              size={HEADER_PLATE_SEAT.pictureSize}
-              testID="workspace-avatar-header"
-            />
-          </View>
-          {attention && !desktop && <View style={styles.workspaceAttentionMark} testID="workspace-attention" />}
-        </View>
-      )}
-      <Text
-        numberOfLines={1}
-        style={styles.drawerTriggerName}
-        testID={
-          showingPickerTitle
-            ? 'workspace-picker-title'
-            : community
-              ? `workspace-active-${community.communityId}`
-              : 'workspace-active-loading'
-        }
-      >
-        {showingPickerTitle || community?.name || WORKSPACE_LABEL}
-      </Text>
-      <ChevronGlyph
-        color={styles.drawerTriggerCaret.color}
-        direction={showingPickerTitle ? 'up' : 'down'}
-        size={CHEVRON_ROW_SIZE}
-      />
-    </TouchableOpacity>
+    />
   );
 }
 
@@ -512,6 +517,21 @@ export function BuzzCommunityShell({
     </CommunityDrawerContext.Provider>
   );
 }
+
+
+const desktopAttentionStyles = StyleSheet.create((theme) => ({
+    workspaceAttentionDot: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      width: 12,
+      height: 12,
+      borderRadius: 12 / 2,
+      borderWidth: 2,
+      borderColor: theme.colors.groupped.background,
+      backgroundColor: theme.buzz.accent,
+    },
+}));
 
 const styles = StyleSheet.create((theme, runtime) => {
   const groknight = theme.buzz;

@@ -19,6 +19,8 @@ const decorativeAccentFills = new Set([
   // The usage meter's thin bar at 80% or more; a status mark, not a button.
   'components/buzz/AgentUsageSection.tsx:fillWarning',
   'components/buzz/DesktopWorkspaceRail.tsx:pill',
+  // The approved desktop avatar attention dot is a status mark, not a plate.
+  'components/buzz/CommunityRail.tsx:workspaceAttentionDot',
   // The live dictation waveform's level bars.
   'components/buzz/DictationWaveform.tsx:barLive',
   'components/buzz/Ledger.tsx:bylineDotViewer',

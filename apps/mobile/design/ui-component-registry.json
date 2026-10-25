@@ -137,7 +137,6 @@
       "TILE_SEAT",
       "TILE_SIZE"
     ],
-    "components/buzz/DesktopWorkspaceStrip.tsx": ["DesktopWorkspaceStrip"],
     "components/buzz/DictationWaveform.tsx": ["DictationWaveform"],
     "components/buzz/DirectMessageHeaderIdentity.tsx": ["DirectMessageHeaderIdentity"],
     "components/buzz/DirectMessagePickerSheet.tsx": [
@@ -714,11 +713,6 @@
       "6877bc5cb84635bbd4c0": 1,
       "7c38d45ffce96dcc3ca8": 1,
       "a90722aeb79538898ab6": 1
-    },
-    "components/buzz/DesktopWorkspaceStrip.tsx": {
-      "34137c5e1451a13a3f3d": 1,
-      "a6bb31c92bc0d9edb1a2": 1,
-      "b8ffd98e3bdcad87d02d": 1
     },
     "components/buzz/DictationWaveform.tsx": {
       "5e0a83836c3666c967fa": 1

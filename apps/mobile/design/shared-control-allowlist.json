@@ -162,15 +162,6 @@
     "reason": "Shared workspace navigation chrome; command tile and workspace switcher keep composite identity layout."
   },
   {
-    "file": "components/buzz/CommunityRail.tsx",
-    "line": 351,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "bd75811d7fb69d779551",
-    "control": "<TouchableOpacity accessibilityLabel={ showingPickerTitle ? `Close ${pickerTitle}` : `${community?.name ?? WORKSPACE_LABEL} — switch ${WORKSPACE_LABEL}` } accessibilityRole=\"button\" accessibilityState={{ expanded }} onPress={onPress} style={styles.drawerTrigger} testID=\"workspace-avatar-trigger\" > {!showingPickerTitle && ( <View style={styles.drawerTriggerPlate} testID=\"workspace-header-plate\"> <V",
-    "reason": "Shared workspace navigation chrome; command tile and workspace switcher keep composite identity layout."
-  },
-  {
     "file": "components/buzz/ComputerSession.tsx",
     "line": 146,
     "rule": "6a",
@@ -268,15 +259,6 @@
     "id": "e1c925e385f6dea1c2a1",
     "control": "<Pressable accessibilityLabel={label} accessibilityRole=\"button\" accessibilityState={action === 'bookmark' ? { selected } : undefined} onPress={onPress} onFocus={() => { setNamed(true); onFocus(); }} onBlur={() => { setNamed(false); onBlur(); }} onHoverIn={() => setNamed(true)} onHoverOut={() => setNamed(false)} style={({ pressed }) => [styles.button, named && styles.hover, pressed && styles.press",
     "reason": "Shared icon action with hover tooltip; descendant text is the tooltip, not its button label."
-  },
-  {
-    "file": "components/buzz/DesktopWorkspaceStrip.tsx",
-    "line": 69,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "001eb2a9c061bce091c9",
-    "control": "<Pressable accessibilityLabel={viewerName ? `${viewerName} — Settings` : 'Settings'} accessibilityRole=\"button\" onPress={onAccount} onHoverIn={() => setAccountLabelVisible(true)} onHoverOut={() => setAccountLabelVisible(false)} onFocus={() => setAccountLabelVisible(true)} onBlur={() => setAccountLabelVisible(false)} style={styles.account} testID=\"desktop-strip-account\" > <IdentityMark avatarUrl={v",
-    "reason": "Account avatar target includes a hover tooltip, not a visible button label."
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",

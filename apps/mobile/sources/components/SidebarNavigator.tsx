@@ -36,7 +36,6 @@ import {
   DESKTOP_NAV_DEFAULT_WIDTH,
   DESKTOP_NAV_MIN_WIDTH,
   DESKTOP_TRANSCRIPT_MIN_WIDTH,
-  DESKTOP_WORKSPACE_STRIP_WIDTH,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
 } from '@/buzz/desktop-workbench-state';
@@ -83,8 +82,6 @@ export const SidebarNavigator = React.memo(() => {
   React.useEffect(() => setDocument(null), [pathname]);
   const showSidebar = showSessionChrome && !zenMode && desktopLayout.showRoomList;
   const { width: windowWidth } = useWindowDimensions();
-  const workspaceStripWidth =
-    isDesktopLayout && windowWidth >= 1360 ? DESKTOP_WORKSPACE_STRIP_WIDTH : 0;
 
   React.useEffect(() => {
     if (!inDesktopShell) return;
@@ -118,7 +115,7 @@ export const SidebarNavigator = React.memo(() => {
   // Otherwise `Math.min` against a ceiling below that minimum always loses to
   // clampDesktopPaneWidth's floor, pinning the rendered width to the floor no
   // matter what the user drags to — the resize handle stops moving anything.
-  const maxWidthForContent = windowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH - workspaceStripWidth;
+  const maxWidthForContent = windowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH;
   const fullDrawerWidth = isDesktopLayout
     ? clampDesktopPaneWidth(
         'navigation',
@@ -127,7 +124,7 @@ export const SidebarNavigator = React.memo(() => {
           : storedDrawerWidth,
       )
     : DESKTOP_NAV_DEFAULT_WIDTH;
-  const drawerWidth = showSessionChrome && !zenMode ? (showSidebar ? fullDrawerWidth : 0) + workspaceStripWidth : 0;
+  const drawerWidth = showSessionChrome && !zenMode ? (showSidebar ? fullDrawerWidth : 0) : 0;
   React.useEffect(() => {
     setDesktopAvailableWidth(windowWidth - drawerWidth);
   }, [windowWidth, drawerWidth]);

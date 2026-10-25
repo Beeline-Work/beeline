@@ -31,6 +31,7 @@ import {
   migrateRuntimeRecordAccessPolicy,
   runtimeAgentCommand,
   writeDaemonPidRecord,
+  writeRuntimeRecord,
 } from './runtime.js';
 import { retireRemovedAgent } from './agent-retirement.js';
 import { readMachineId } from './connect-command.js';
@@ -149,21 +150,14 @@ export async function runAgentRuntime(
   // stale local runtime.json cache (an id already corrected server-side, or
   // a retired alias) must not re-poison config.modelUnavailable on this
   // restart just because it never received the correction.
-  const serverModelSelection = await daemonApi
-    .execute('getAgentConfiguration', { agentId })
-    .then((result) =>
-      result.model || result.effort
-        ? {
-            ...(result.model ? { model: result.model } : {}),
-            ...(result.effort ? { effort: result.effort } : {}),
-          }
-        : undefined,
-    )
-    .catch(() => undefined);
-  const preflightModelSelection = resolvePreflightModelSelection(
+  const preflightModelSelection = await resolvePreflightModelSelection(
     runtime.modelSelection,
-    serverModelSelection,
+    () => daemonApi.execute('getAgentConfiguration', { agentId }),
   );
+  if (preflightModelSelection) {
+    runtime.modelSelection = preflightModelSelection;
+    await writeRuntimeRecord(runtime);
+  }
   if (preflightModelSelection && !agentProgramError) {
     const validation = host.freeAgent && runtime.agentKind === 'pi' &&
       preflightModelSelection.model?.startsWith('beeline/') ? 'session' : 'startup';
@@ -360,7 +354,10 @@ export async function runAgentRuntime(
           runtimeDir,
           ...(runtime.modelSelection ? { runtimeSelection: runtime.modelSelection } : {}),
           ...(config.modelUnavailable
-            ? { startupUnavailable: config.modelUnavailable.unavailable.label }
+            ? {
+                startupUnavailable: config.modelUnavailable.unavailable.label,
+                startupSelection: config.modelUnavailable.selection,
+              }
             : {}),
         });
         // Report the machine identity once per activation so the server can

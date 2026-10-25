@@ -12,20 +12,22 @@ type LiveValidator = (
 ) => Promise<unknown>;
 
 /**
- * The daemon-start preflight must validate against the SERVER's current
- * selection when it can be read, never the local `runtime.json` cache
- * alone: a stale local copy (an id the owner already corrected server-side,
- * or a retired alias with no same-family replacement) must not re-poison
- * `config.modelUnavailable` on the next restart just because this one
- * process never received the correction. The local cache remains the
- * fallback only when the server is unreachable, matching the runtime
- * record's existing offline-resilience intent.
+ * An unreadable server selection cannot authorize a verdict about the local cache.
+ * An empty successful read retains the initial runtime selection.
  */
-export function resolvePreflightModelSelection(
+export async function resolvePreflightModelSelection(
   local: Selection | undefined,
-  server: Selection | undefined,
-): Selection | undefined {
-  return server ?? local;
+  readServer: () => Promise<{ model?: string | null; effort?: string | null }>,
+): Promise<Selection | undefined> {
+  try {
+    const server = await readServer();
+    return server.model || server.effort ? {
+      ...(server.model ? { model: server.model } : {}),
+      ...(server.effort ? { effort: server.effort } : {}),
+    } : local;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

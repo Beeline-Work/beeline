@@ -1,6 +1,9 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, delimiter } from 'node:path';
+import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
+import { applyRuntimeModelPreflight, resolvePreflightModelSelection } from './runtime-model-validation.js';
+import type { BodyConfig } from './config.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MODEL_CATALOG_HASH_FILE, syncAgentModelCatalog } from './model-catalog-sync.js';
 
@@ -208,6 +211,7 @@ describe('syncAgentModelCatalog', () => {
       workspaceId: 'workspace-1',
       runtimeDir,
       startupUnavailable: 'model',
+      startupSelection: { model: 'claude-fable-5-1[1m]' },
       fetchCatalog,
       log: vi.fn(),
     });
@@ -224,6 +228,72 @@ describe('syncAgentModelCatalog', () => {
       }),
     ]);
   });
+
+  it('does not publish a verdict about a different server selection', async () => {
+    const api = fakeApi({ model: 'grok-4.7-xhigh' });
+    await syncAgentModelCatalog({
+      api: api as never,
+      agent: { command: 'cursor-agent', args: [] }, agentEnv: {},
+      agentId: 'agent-1', workspaceId: 'workspace-1',
+      runtimeDir: await scratchDir('catalog-mismatch-'),
+      startupUnavailable: 'model',
+      startupSelection: { model: 'cursor-grok-4.6-high-fast' },
+      fetchCatalog: async () => ({ catalog: [] }), log: vi.fn(),
+    });
+    expect(api.posted).toHaveLength(1);
+    expect(api.posted[0]).not.toHaveProperty('unavailable');
+  });
+
+  it('MODEL-NOTICE: a server read timeout never validates the stale cache or publishes its verdict', async () => {
+    const runtimeDir = await scratchDir('catalog-stale-');
+    const api = fakeApi({ model: 'gpt-5.6' });
+    api.execute.mockRejectedValueOnce(new Error('getAgentConfiguration timed out'));
+    const local = { model: 'cursor-grok-4.6-high-fast' };
+    const selection = await resolvePreflightModelSelection(local,
+      () => api.execute('getAgentConfiguration', { agentId: 'agent-1' }) as Promise<{ model?: string }>);
+    const config: Pick<BodyConfig, 'agentEnv' | 'modelSelection' | 'modelUnavailable'> = { agentEnv: {} };
+    const validate = vi.fn();
+    if (selection) await applyRuntimeModelPreflight(config, { command: 'unused', args: [] }, selection, validate);
+    expect(validate).not.toHaveBeenCalled();
+    await syncAgentModelCatalog({
+      api: api as never, agent: { command: await fakeCatalogAgent(ADVERTISED), args: [] },
+      agentEnv: { PATH: process.env.PATH ?? '', HOME: runtimeDir },
+      agentId: 'agent-1', workspaceId: 'workspace-1', runtimeDir, runtimeSelection: local,
+      startupUnavailable: config.modelUnavailable?.unavailable.label,
+      startupSelection: config.modelUnavailable?.selection, log: vi.fn(),
+    });
+    expect(api.posted).toHaveLength(1);
+    expect(api.posted[0]).toMatchObject({ selection: { model: 'gpt-5.6' } });
+    expect(api.posted[0]).not.toHaveProperty('unavailable');
+  });
+
+  it.each(['timeout', 'nonzero', 'absent'] as const)(
+    'MODEL-NOTICE: Cursor enumeration %s through ACP and publication', async (failure) => {
+      const runtimeDir = await scratchDir('catalog-cursor-');
+      const binary = resolve(runtimeDir, 'cursor-agent');
+      const successful = '#!/usr/bin/env node\nconsole.log("auto - Auto");\n';
+      await writeFile(binary, failure === 'timeout'
+        ? '#!/usr/bin/env node\nsetInterval(() => {}, 1000);\n'
+        : failure === 'nonzero' ? '#!/usr/bin/env node\nprocess.exit(1);\n' : successful);
+      await chmod(binary, 0o755);
+      const agent = { ...cursorAcpBridgeLaunch(), kind: 'cursor' as const };
+      const agentEnv = { PATH: `${runtimeDir}${delimiter}${process.env.PATH ?? ''}`, HOME: runtimeDir };
+      const config: Pick<BodyConfig, 'agentEnv' | 'modelSelection' | 'modelUnavailable'> = { agentEnv };
+      const selection = { model: 'grok-4.7-xhigh' };
+      await applyRuntimeModelPreflight(config, agent, selection);
+      // Let publication read a healthy catalog after the failed startup lookup.
+      await writeFile(binary, successful);
+      const api = fakeApi(selection);
+      expect(await syncAgentModelCatalog({
+        api: api as never, agent, agentEnv, agentId: 'agent-1', workspaceId: 'workspace-1', runtimeDir,
+        startupUnavailable: config.modelUnavailable?.unavailable.label,
+        startupSelection: config.modelUnavailable?.selection, log: vi.fn(),
+      })).toBe('posted');
+      expect(api.posted).toHaveLength(1);
+      if (failure === 'absent') expect(api.posted[0]).toHaveProperty('unavailable', 'model');
+      else expect(api.posted[0]).not.toHaveProperty('unavailable');
+    }, 35_000,
+  );
 
   it('logs a failed probe once and never throws', async () => {
     const runtimeDir = await scratchDir('buzzy-catalog-runtime-');

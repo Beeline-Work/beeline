@@ -41,6 +41,8 @@ export interface ModelCatalogSyncInput {
   runtimeDir: string;
   runtimeSelection?: Selection;
   startupUnavailable?: 'model' | 'effort' | 'selection';
+  /** Exact selection that produced the startup verdict. */
+  startupSelection?: Selection;
   /** Re-post even when the local snapshot hash matches (a phone refresh clears the server copy first). */
   force?: boolean;
   fetchCatalog?: CatalogFetcher;
@@ -104,8 +106,12 @@ export async function syncAgentModelCatalog(
             ...(configuration.effort ? { effort: configuration.effort } : {}),
           }
         : input.runtimeSelection;
+    const startupUnavailable = input.startupSelection &&
+      input.startupSelection.model === selection?.model &&
+      input.startupSelection.effort === selection?.effort
+      ? input.startupUnavailable : undefined;
     const { catalog } = await withTimeout(
-      fetchCatalog(input.agent, input.agentEnv, input.startupUnavailable ? undefined : selection),
+      fetchCatalog(input.agent, input.agentEnv, startupUnavailable ? undefined : selection),
       input.timeoutMs ?? MODEL_CATALOG_PROBE_TIMEOUT_MS,
       'model catalog probe',
     );
@@ -114,10 +120,10 @@ export async function syncAgentModelCatalog(
     // mistake every activation for an unfinished model switch and hide the
     // harness's live effort choices. An unavailable startup selection is the
     // exception: that probe deliberately describes the harness default.
-    const effectiveCatalog = input.startupUnavailable
+    const effectiveCatalog = startupUnavailable
       ? catalog
       : withEffectiveCurrentValues(catalog, selection);
-    const hash = modelCatalogHash(effectiveCatalog, selection, input.startupUnavailable);
+    const hash = modelCatalogHash(effectiveCatalog, selection, startupUnavailable);
     const previous = await readFile(hashPath, 'utf8').catch(() => '');
     if (!input.force && previous.trim() === hash) return 'unchanged';
     await input.api.execute('postAgentModelCatalog', {
@@ -126,7 +132,7 @@ export async function syncAgentModelCatalog(
       // `fetchAgentModelCatalog` already applied the category allow-list.
       options: effectiveCatalog as Input<'postAgentModelCatalog'>['options'],
       ...(selection ? { selection } : {}),
-      ...(input.startupUnavailable ? { unavailable: input.startupUnavailable } : {}),
+      ...(startupUnavailable ? { unavailable: startupUnavailable } : {}),
       ...(input.agent.kind ? { harness: input.agent.kind } : {}),
     });
     await writeFile(hashPath, `${hash}\n`, { mode: 0o600 });

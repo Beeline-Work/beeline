@@ -347,6 +347,10 @@ async function serveMachineHelper(
       env,
       ...(options.runUpdateWorker ? { prepare: options.runUpdateWorker } : {}),
       idle: () => [...hosted.values()].every((agent) => agent.core.activeTurnCount() === 0),
+      drain: () => {
+        if (!quiesceHostedAgents([...hosted.values()], true))
+          throw new Error('helper could not close intake for release drain');
+      },
       changed: () => writeStatus(),
       interrupt: () => {
         quiesceHostedAgents([...hosted.values()], true);
@@ -783,7 +787,7 @@ async function serveMachineHelper(
 }
 
 /**
- * Close every intake in one synchronous step; permit busy agents only at the update deadline.
+ * Close every intake in one synchronous step without cancelling active turns.
  */
 export function quiesceHostedAgents(
   agents: readonly HostedAgent[],

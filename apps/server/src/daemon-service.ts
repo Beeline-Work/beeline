@@ -34,6 +34,7 @@ import {
   authorizeCommandOutput,
   authorizeFailedTurnOutput,
   claimAgentCommand,
+  StaleWakeClaimRefused,
   supersededReview,
   commandInbox,
   createAgentCommand,
@@ -1176,7 +1177,13 @@ export class DaemonService {
       case 'claimAgentCommand': {
         const claimed = await this.database.transaction(async (db) => {
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
-            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '');
+            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '')
+            .catch((error: unknown) => {
+              // Commit stale cancellations before refusing a cached helper claim.
+              if (error instanceof StaleWakeClaimRefused) return error;
+              throw error;
+            });
+          if (row instanceof StaleWakeClaimRefused) return row;
           const activity = row.reason === 'computer_activity' ? (await db.query<{
             text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
           }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
@@ -1185,6 +1192,10 @@ export class DaemonService {
             : undefined;
           return { row, activity, source };
         });
+        if (claimed instanceof StaleWakeClaimRefused) {
+          claimed.log();
+          throw claimed;
+        }
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),

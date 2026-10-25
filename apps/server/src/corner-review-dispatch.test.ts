@@ -833,6 +833,52 @@ describe('corner message attribution', () => {
     }
   });
 
+  it.each(['delivery', 'claim'])('Reproduction STALE-CAUSE-1: same-timestamp brief wakes retain a successor at %s', async boundary => {
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const assignment = async (revision: number, queue = true) => {
+        await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+          VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, A, R]);
+        if (!queue) return;
+        const line = await systemLine(db, { roomId: C,
+          subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief',
+          object: { text: `Revision ${revision}`, id: C } });
+        await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: line.id,
+          reason: 'corner_brief_revision' });
+      };
+      await assignment(1);
+      const [old] = await commands(A, C);
+      await assignment(2, false);
+      // An incomplete producer cannot take away the only wake.
+      expect((await commands(A, C)).map(c => c.id)).toContain(old!.id);
+      const human = await phone.execute('sendRoomMessage', { roomId: C, text: '@hoots keep this instruction' }, H);
+      const line = await systemLine(db, { roomId: C,
+        subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief',
+        object: { text: 'Revision 2', id: C } });
+      const replacement = await createAgentCommand(db, { roomId: C, agentId: A,
+        sourceMessageId: line.id, reason: 'corner_brief_revision' });
+      // A timestamp comparison cannot distinguish these durable causes.
+      await db.query(`UPDATE corner_brief_revisions SET created_at=now() WHERE corner_id=$1`, [C]);
+      await db.query(`UPDATE agent_commands SET created_at=now() WHERE room_id=$1`, [C]);
+      if (boundary === 'claim') await expect(claim(old!)).rejects.toThrow();
+      const delivered = await commands(A, C);
+      expect(delivered.map(c => c.id)).not.toContain(old!.id);
+      expect(delivered.map(c => c.id)).toContain(replacement!.id);
+      expect(delivered.some(c => c.sourceMessageId === human.messageId)).toBe(true);
+      await expect(claim(old!)).rejects.toThrow();
+      await commands(A, C);
+      const drops = log.mock.calls.flatMap(args => args.filter(arg => typeof arg === 'string' && arg.startsWith('{')))
+        .map(arg => JSON.parse(arg)).filter(entry => entry.event === 'wake_dropped_stale' && entry.commandId === old!.id);
+      expect(drops).toHaveLength(1);
+      expect(drops[0]).toMatchObject({ kind: 'corner_brief_revision',
+        recorded: { brief: { briefRevision: 1 } }, current: { briefRevision: 2 } });
+      await claim(delivered.find(c => c.id === replacement!.id)!);
+    } finally {
+      log.mockRestore();
+      await db.query('DELETE FROM memberships WHERE room_id=$1 AND identity_id=$2', [C, H]);
+    }
+  });
+
   it('Reproduction STALE-2: an implementer assignment wake shows the live brief revision, not the queued one', async () => {
     // Queue the implementer wake a brief revision writes: the revision row,
     // its system line, and the corner_brief_revision assignment command.

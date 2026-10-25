@@ -1732,10 +1732,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:71b9ed9302bf48c9",
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:9ff44edb4483402b",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`)",
+    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
     "literals": [
       "''",
       "`${pr.headSha}:${ended}`",

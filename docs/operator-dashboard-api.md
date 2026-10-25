@@ -428,3 +428,34 @@ once to the latest push registration update or device update receipt. Unknown or
 missing platforms become `unknown`; exact observation-time ties use a stable
 source/device key. The original `platforms` array is unchanged. Failed period or
 platform reads return the existing unavailable-section shape rather than zeros.
+
+### Screen-read X Ads ingestion
+
+`POST /v1/admin/dashboard/x-ads/screen` uses the same dashboard bearer secret.
+Agents submit Ads Manager readings through this route; they never write the
+production database directly. The write scope is only `x_ad_daily` and `x_ad_sync`.
+
+```json
+{"day":"2026-10-24","currency":"USD","rows":[{"level":"campaign","entityId":"actual-x-campaign-id","name":"Launch","spend":10.25,"impressions":1000,"linkClicks":20}]}
+```
+
+Use `campaign`, `ad_group`, or `ad` for `level`; optional `campaignId` and
+`adGroupId` link rows to their parents. Send actual X entity IDs, never names
+as invented IDs: signup joins depend on those IDs. IDs must be nonblank and at
+most 200 characters; names must be nonblank and at most 500 characters.
+`day` must be a real YYYY-MM-DD date no later than today in UTC. Currency is
+three uppercase letters. Supply exactly one of numeric `spend` (currency units,
+at most six decimal places) or `spendMicros` (integer millionths). All integer
+metrics must be nonnegative safe integers. Unknown fields, duplicate level/ID
+pairs, and more than 500 rows are rejected. Invalid JSON or any invalid row
+returns 400 without writing anything; missing/wrong authentication returns 403.
+
+Each successful request atomically replaces that day's screen rows (an empty
+array clears them), skips existing API rows, marks sync completed and clears
+its failure without postponing the API retry schedule. API sync replaces its
+reporting window, including screen rows. Success returns
+`{"written":1,"skipped":0}`. Repeating a snapshot is idempotent. The existing
+36-hour freshness rule applies to screen ingests too. Request bodies are not logged.
+
+Ads Manager account days may use a local time zone while signup joins use UTC
+dates; accept the resulting few-hour offset when comparing cost per signup.

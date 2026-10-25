@@ -22,7 +22,8 @@ describe('desktop layout mode', () => {
     const rail = source('components/buzz/DesktopWorkspaceRail.tsx');
     // Dims to the active theme's own canvas (Obsidian or Bone), not a
     // hardcoded Obsidian aubergine.
-    expect(rail).toContain('backgroundColor: `${hull.bgVoid}A8`');
+    expect(rail).toContain('`color-mix(in srgb, ${hull.bgVoid} 66%, transparent)`');
+    expect(rail).toContain(': `${hull.bgVoid}A8`');
     expect(rail).toContain('<DesktopWorkspacePortal>');
     expect(source('components/buzz/DesktopWorkspacePortal.tsx')).toContain('createPortal(');
     expect(rail).toContain('accessibilityRole="menuitem"');

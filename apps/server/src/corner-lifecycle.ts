@@ -893,8 +893,16 @@ async function ensureReviewDispatch(
       `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
        WHERE command.id=$1`, [ended],
     )).rows[0]?.text;
+    const reason = `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`;
+    // A consumed handback already delivered these findings. In particular,
+    // an implementer's explicit wait must not turn that delivery into a wake
+    // failure, whose report can send the same target back to the reviewer
+    // that ordered the repair.
+    const handbackId = createHash('sha256').update(`review-needed:${cornerId}:${pr.headSha}:${ended}:${reason}`).digest('hex');
+    if ((await db.query('SELECT 1 FROM agent_commands WHERE id=$1', [handbackId])).rowCount ||
+        await cornerReportWaiting(db, cornerId)) return OK;
     return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
-      `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`);
+      reason, false);
   }
   const sourceId = transition.lastCardId ?? (
     await db.query<{ id: string }>(
@@ -1429,6 +1437,7 @@ export async function cornerMergeGate(
                   )
               ) approved,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
+                'holderId',hold.actor_id,'holderName',(SELECT name FROM identities WHERE id=hold.actor_id),
                 'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
                 FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
                 '[]'::jsonb) holds

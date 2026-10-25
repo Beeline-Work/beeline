@@ -87,6 +87,7 @@ export function webProofShims(mobile: string): Record<string, string> {
       'export const useDraftIdentity = explicit => explicit === undefined ? "proof-viewer" : explicit;',
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
     const theme = { buzz: beelineThemes.obsidian };
+    theme.colors ??= { groupped: { background: theme.buzz.bgTerminal } };
     export const StyleSheet = { create: factory => (typeof factory === 'function' ? factory(theme) : factory), hairlineWidth: 1,
       absoluteFillObject: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } };
     export const useUnistyles = () => ({ theme });`,

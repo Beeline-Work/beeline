@@ -159,11 +159,13 @@ export function DesktopWorkspaceRail({
         style={styles.overlay}
         testID="desktop-workspace-rail-overlay"
       >
-        <Pressable
+        <Button
+          label=""
+          variant="quiet"
           accessibilityLabel="Close Workspace switcher"
           accessibilityRole="button"
           onPress={onClose}
-          style={styles.scrim}
+          appearance={{ control: styles.scrim }}
           testID="desktop-workspace-rail-scrim"
         />
         <Animated.View
@@ -343,7 +345,10 @@ const stylesheet = StyleSheet.create((theme) => {
       // The canvas color itself plus alpha, so the dim reads as "this
       // theme's own ground, deepened" on either Obsidian or Bone rather than
       // a hardcoded Obsidian aubergine dimming a Bone app to near-black.
-      backgroundColor: `${hull.bgVoid}A8`,
+      // Web theme colors are CSS variables; hex alpha suffixes are invalid there.
+      backgroundColor: Platform.OS === 'web'
+        ? `color-mix(in srgb, ${hull.bgVoid} 66%, transparent)`
+        : `${hull.bgVoid}A8`,
     },
     rail: {
       position: 'absolute',
@@ -429,7 +434,8 @@ const stylesheet = StyleSheet.create((theme) => {
     labelMeta: {
       ...hull.type.meta,
       color: hull.textMuted,
-    },
+      ...(Platform.OS === 'web' ? { whiteSpace: 'nowrap' } : {}),
+    } as any,
     separator: { width: 32, height: 1, marginVertical: 4, backgroundColor: hull.borderStrong },
     addTile: {
       backgroundColor: 'transparent',

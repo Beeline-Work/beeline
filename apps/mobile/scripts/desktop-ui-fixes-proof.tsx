@@ -1,7 +1,6 @@
 import React from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
-import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
@@ -28,15 +27,6 @@ const corners = ['short', 'a-long-corner-title-that-wraps-across-several-lines']
 
 createRoot(document.getElementById('root')!).render(
   <div style={{ display: 'flex', height: 680 }}>
-    <DesktopWorkspaceStrip
-      workspaces={[{ id: 'workspace', name: 'Sample Workspace' } as any]}
-      activeWorkspaceId="workspace"
-      viewerName="Sample account with a longer name that must wrap"
-      viewerPubkey="viewer"
-      onSelect={() => {}}
-      onAdd={() => {}}
-      onAccount={() => clicks.push('settings')}
-    />
     <div style={{ width: 480, padding: 24 }}>
       <CommunitySwitcherTrigger
         community={{ communityId: 'workspace', name: 'Sample Workspace' }}
@@ -78,25 +68,13 @@ createRoot(document.getElementById('root')!).render(
 setTimeout(async () => {
   const lines: string[] = [];
   const faults: string[] = [];
-  const account = document.querySelector<HTMLElement>('[data-testid="desktop-strip-account"]')!;
-  const caption = [...account.querySelectorAll('*')].find(
-    (node) => node.textContent === 'Settings',
-  );
-  lines.push(`settings caption: ${caption ? 'visible' : 'missing'}`);
-  if (!caption) faults.push('Settings caption missing');
+  const attention = document.querySelector<HTMLElement>('[data-testid="workspace-attention"]');
+  lines.push(`desktop workspace attention: ${attention ? 'present' : 'absent'}`);
+  if (!attention) faults.push('Workspace attention dot missing');
   else {
-    const box = caption.getBoundingClientRect();
-    if (box.bottom > 680 || box.height < 19) faults.push('Settings caption clipped');
+    const box = attention.getBoundingClientRect();
+    if (box.width !== 12 || box.height !== 12) faults.push('Workspace attention dot dimensions');
   }
-  account.focus();
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  const label = document.querySelector('[data-testid="desktop-strip-account-label"]');
-  lines.push(`settings focus label: ${label ? 'visible' : 'missing'}`);
-  if (!label || label.getBoundingClientRect().bottom > 680)
-    faults.push('Settings focus label missing or clipped');
-  const overlay = !!document.querySelector('[data-testid="workspace-attention"]');
-  lines.push(`desktop workspace overlay: ${overlay ? 'present' : 'absent'}`);
-  if (overlay) faults.push('Workspace corner overlay present');
   for (const corner of corners) {
     const cell = document.querySelector(`[data-testid="room-corner-${corner.corner.id}"]`)!;
     const rail = document.querySelector(`[data-testid="room-corner-rail-${corner.corner.id}"]`);

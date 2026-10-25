@@ -622,6 +622,60 @@ describe('a worker records a later waiver in its corner brief', () => {
       sourceMessageId: waiver.sourceMessageId, snapshot: 'Skip the proof.' });
   });
 
+  it('APPROVAL-CITATIONS: accepts the commander order card seen in the transcript', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Use the revised endpoint.' }, RUBY);
+    const card = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND card_type='agent-command' AND card->>'text'=$2`,
+      [opened.cornerId, 'Use the revised endpoint.'])).rows[0]!;
+    expect((await revise(turn, opened.cornerId, 1, card.id)).revision).toBe(2);
+    const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER);
+    expect(restored.brief?.approval).toMatchObject({ sourceMessageId: card.id, text: 'Use the revised endpoint.',
+      approvedBy: RUBY, approverName: 'Ruby' });
+  });
+
+  it('APPROVAL-CITATIONS: accepts a parent Room human message from a worker DM turn', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const id = randomBytes(32).toString('hex');
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: id, text: 'Use the revised endpoint.' }, HUMAN);
+    expect((await revise(turn, opened.cornerId, 1, id)).revision).toBe(2);
+    const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER);
+    expect(restored.brief?.approval).toMatchObject({ sourceMessageId: id, text: 'Use the revised endpoint.',
+      approvedBy: HUMAN, approverName: 'Captain' });
+  });
+
+  it.each(['complete', 'cancelled'])('APPROVAL-CITATIONS: refuses a %s commander order', async (state) => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const command = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null,
+      reason: 'order', privatePayload: { text: 'Skip proof.', authorId: RUBY, fromRoomId: ROOM, kind: 'order' } });
+    await db.query(`UPDATE agent_commands SET state=$2 WHERE id=$1`, [command!.id, state]);
+    await expect(revise(turn, opened.cornerId, 1, command!.id)).rejects.toThrow('must name a human message or commander order');
+  });
+
+  it('APPROVAL-CITATIONS: rejects reuse of a stored order after cancellation', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const command = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null,
+      reason: 'order', privatePayload: { text: 'Skip proof.', authorId: RUBY, fromRoomId: ROOM, kind: 'order' } });
+    expect((await revise(turn, opened.cornerId, 1, command!.id)).revision).toBe(2);
+    await db.query(`UPDATE agent_commands SET state='cancelled' WHERE id=$1`, [command!.id]);
+    await expect(revise(turn, opened.cornerId, 2, command!.id)).rejects.toThrow('must name a human message or commander order');
+  });
+
+  it('APPROVAL-CITATIONS: stored approval does not authorize another agent as commander', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const command = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null,
+      reason: 'order', privatePayload: { text: 'Skip proof.', authorId: OUTSIDER, fromRoomId: ROOM, kind: 'order' } });
+    await db.query(`UPDATE corner_brief_revisions SET approval_basis=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
+      JSON.stringify({ kind: 'commander-order', sourceMessageId: command!.id, approvedBy: OUTSIDER, snapshot: 'Skip proof.' })]);
+    await expect(revise(turn, opened.cornerId, 1, command!.id)).rejects.toThrow('must name a human message or commander order');
+  });
+
+  it('APPROVAL-CITATIONS: refuses an agent-authored parent Room message', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const id = randomBytes(32).toString('hex');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Approved')`, [id, ROOM, RUBY]);
+    await expect(revise(turn, opened.cornerId, 1, id)).rejects.toThrow('must name a human message or commander order');
+  });
+
   it('HUMAN-01: accepts any human member approval in a DM shared with the worker', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
@@ -804,10 +858,9 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
       .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
   }
   console.log('[corner-ancestor-rule] sibling/self/child/parent Room orders delivered; ancestors and DM/agent addresses rejected; broadcasts and nonmembers refused');
-  const grandchildBrief = (await daemon.execute('getCornerRestoreState', { cornerId: grandchild.cornerId }, WORKER)).brief!;
   await daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: grandchild.cornerId, expectedRevision: 1,
     brief: { spec: 'Clarified grandchild widget', change: 'Clarify', repositoryWork: false,
-      approval: { sourceMessageId: grandchildBrief.approval!.sourceMessageId } } }, WORKER);
+      approval: { sourceMessageId: grandchildTurn.sourceMessageId } } }, WORKER);
   await daemon.execute('archiveCorner', { ...authority(turn), cornerId: grandchild.cornerId }, WORKER);
 
 });
@@ -821,7 +874,7 @@ it('issues-triage can order and revise fix corners while opening cannot escape i
   await daemon.execute('order', { ...authority(turn), address: child.cornerId, text: 'Fix the widget' }, WORKER);
   const revised = await daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: child.cornerId,
     expectedRevision: 1, brief: { spec: 'Fix the widget with clarified criteria', repositoryWork: false,
-      change: 'Clarify criteria', approval: { sourceMessageId: turn.sourceMessageId } } }, WORKER);
+      change: 'Clarify criteria' } }, WORKER);
   expect(revised.revision).toBe(2);
   await daemon.execute('archiveCorner', { ...authority(turn), cornerId: child.cornerId }, WORKER);
   expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [child.cornerId])).rows[0]).toEqual({ archived: true });

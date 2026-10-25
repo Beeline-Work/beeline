@@ -2943,7 +2943,7 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
         expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(true);
         expected = 'a merge attempt for this head is still awaiting GitHub confirmation';
       }
-      expect(await mergeDaemon(operations).execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: expected });
+      expect(await mergeDaemon(operations).execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: expected, holds: [] });
       expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     },
   );
@@ -3656,11 +3656,11 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Demonstrated consent-root: HTTP service accepts human-rooted release and preserves the merge gate', async () => {
-    const { createBeelineServer } = await import('./server.js');
-    const { PhoneService: BuiltPhone } = await import('./phone-service.js');
-    const { DaemonService: BuiltDaemon } = await import('./daemon-service.js');
-    const { GitHubOperations: BuiltGitHub } = await import('./github-operations.js');
+  it('Demonstrated HOLD-IDS and consent-root: HTTP service accepts human-rooted release and preserves the merge gate', async () => {
+    const { createBeelineServer } = await import('../dist/server.js');
+    const { PhoneService: BuiltPhone } = await import('../dist/phone-service.js');
+    const { DaemonService: BuiltDaemon } = await import('../dist/daemon-service.js');
+    const { GitHubOperations: BuiltGitHub } = await import('../dist/github-operations.js');
     const { TokenAuth, tokenHash } = await import('./auth.js');
     const auth = new TokenAuth(db, async () => { throw new Error('fixture does not sign in'); });
     const token = 'R4-fixture-phone-token';
@@ -3692,7 +3692,7 @@ describe('the gate stays shut (AC-8)', () => {
       const cornerId = await open('owner/widgets', true);
       await greenHead(cornerId, 7, SHA);
       githubHead = SHA; githubRollupState = 'passed';
-      let holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+      let holdId = (await post('daemon', 'getPrChecksStatus', { cornerId })).holds[0].id;
       const objective = (await post('daemon', 'getAgentCommands', { roomId: cornerId })).commands
         .find((command: AgentCommand) => command.reason === 'corner_objective');
       await post('daemon', 'claimAgentCommand', { roomId: cornerId, commandId: objective.id, generationId: 'g1' });
@@ -3704,6 +3704,17 @@ describe('the gate stays shut (AC-8)', () => {
       const held = await post('daemon', 'getPrChecksStatus', { cornerId });
       expect(held).toMatchObject({ held: true, mergeAllowed: false,
         holds: [{ id: holdId, actorId: H, standing: 'owner', setAt: expect.any(String) }] });
+      const hold = held.holds[0];
+      expect(hold).toMatchObject({ holderId: H, holderName: expect.any(String) });
+      const blocked = await post('daemon', 'mergeCorner', { cornerId });
+      expect(blocked).toMatchObject({ status: 'blocked', holds: held.holds });
+      expect(blocked.blocker).toContain(hold.id);
+      expect(blocked.blocker).toContain(hold.holderName);
+      // Reproduction HOLD-IDS: read -> blocked merge -> release by the returned ID.
+      await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, A]);
+      await post('daemon', 'getPrChecksStatus', { cornerId }, 403);
+      await post('daemon', 'getCornerRestoreState', { cornerId }, 403);
+      await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, A]);
       expect(await implementersMerge(builtGitHub)).toBe(0);
       expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
       await post('phone', 'sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: '@hoots release the hold' });

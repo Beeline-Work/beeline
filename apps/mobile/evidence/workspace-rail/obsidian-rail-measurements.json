@@ -1,0 +1,12 @@
+[
+  {
+    "theme": "obsidian",
+    "width": 1600,
+    "navigationX": 0,
+    "background": "color(srgb 0.0784314 0.0352941 0.101961 / 0.66)",
+    "avatar": true,
+    "escape": true,
+    "shortcut": true,
+    "outsideClick": true
+  }
+]

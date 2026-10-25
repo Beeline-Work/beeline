@@ -2401,6 +2401,7 @@ CREATE TABLE IF NOT EXISTS x_ad_daily (
   impressions bigint NOT NULL CHECK(impressions>=0), link_clicks bigint NOT NULL CHECK(link_clicks>=0),
   PRIMARY KEY(day,level,entity_id)
 );
+ALTER TABLE x_ad_daily ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'api' CHECK(source IN ('api','screen'));
 CREATE TABLE IF NOT EXISTS x_ad_sync (
   id text PRIMARY KEY, completed_at timestamptz, failed_at timestamptz,
   next_attempt_at timestamptz NOT NULL DEFAULT now()

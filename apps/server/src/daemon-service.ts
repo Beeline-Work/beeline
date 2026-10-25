@@ -3692,13 +3692,15 @@ export class DaemonService {
       )
     ).rows[0];
     const derived = row ? cornerRowState(row) : undefined;
-    const held = (await activeCornerHolds(this.database, cornerId)).length > 0;
+    const holds = await activeCornerHolds(this.database, cornerId);
+    const held = holds.length > 0;
     return {
       cornerId,
       ...(row ? { archived: Boolean(row.archived_at), parentRoomId: row.parent_room_id } : {}),
       ...(row?.opened_from_corner_id ? { openedFromCornerId: row.opened_from_corner_id } : {}),
       objective: row?.objective ?? '',
       ...(held ? { held: true } : {}),
+      holds,
       ...(brief ? { brief } : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
       ...(row?.title_generated ? { titleGenerated: true } : {}),
@@ -3789,14 +3791,14 @@ export class DaemonService {
       const blockers = [
         gate.checks !== 'passed' ? `checks are ${gate.checks}` : '',
         gate.approved ? '' : 'no yes on this head',
-        gate.held ? 'a hold stands' : '',
+        gate.held ? `a hold stands: ${gate.holds.map(hold => `${hold.id} (${hold.holderName}, ${hold.holderId})`).join('; ')}` : '',
       ].filter(Boolean);
-      return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed' };
+      return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed', holds: gate.holds };
     }
     let blocker = 'the merge did not start; read the current checks before retrying';
     const landed = await this.landCorner(input.cornerId, reason => { blocker = reason; });
     if (landed.status === 'not-attempted')
-      return { status: 'blocked', blocker };
+      return { status: 'blocked', blocker, holds: await activeCornerHolds(this.database, input.cornerId) };
     if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
     return { status: landed.status === 'queued' ? 'queued' : 'merge-started', headSha: corner.head_sha };
   }

@@ -1012,7 +1012,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "set_corner_hold",
-    "description": "Record a person’s merge hold, or release releaseHoldId with existing holder/standing and command-provenance checks. Does not approve or land.",
+    "description": "Read hold IDs from read(facet:status).verdict.holds. Record a person’s merge hold, or release releaseHoldId with existing holder/standing and command-provenance checks. Does not approve or land.",
     "inputSchema": {
       "type": "object",
       "properties": {

@@ -494,6 +494,8 @@ export async function createAgentCommand(
     action?: AgentCommandAction;
     turnRequestId?: string;
     parent?: CommandRow;
+    /** Report evidence belongs to the reporting turn, while parent retains the return chain. */
+    reportSource?: CommandRow;
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
     /** Conversation tags retain chain depth without inheriting assignment privacy. */
@@ -543,9 +545,10 @@ export async function createAgentCommand(
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
-  let reviewContext: Record<string, unknown> | undefined = ['report', 'order', 'agent_tag'].includes(input.reason) && input.parent?.review_context && input.parent.review_context.purpose !== 'repair'
-    ? { ...input.parent.review_context, purpose: input.reason === 'report' ? 'verdict' : 'repair' } : undefined;
-  if (reviewContext && await supersededReview(db, input.parent!)) return undefined;
+  const reviewSource = input.reason === 'report' ? input.reportSource ?? input.parent : input.parent;
+  let reviewContext: Record<string, unknown> | undefined = ['report', 'order', 'agent_tag'].includes(input.reason) && reviewSource?.review_context && reviewSource.review_context.purpose !== 'repair'
+    ? { ...reviewSource.review_context, purpose: input.reason === 'report' ? 'verdict' : 'repair' } : undefined;
+  if (reviewContext && await supersededReview(db, reviewSource!)) return undefined;
   if ((['order', 'agent_tag'].includes(input.reason) || input.reason === 'corner_review_needed') && !reviewContext) {
     reviewContext = (await db.query<{ context: Record<string, unknown> }>(
       `SELECT jsonb_build_object('cornerId',fact.corner_id,'headSha',fact.lifecycle->'pr'->>'headSha',

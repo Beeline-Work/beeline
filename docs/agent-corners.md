@@ -1,5 +1,7 @@
 # Corner authority and lifecycle invariants
 
+Report review evidence comes from the reporting turn (`createAgentCommand.reportSource`), while its parent retains the commander's incoming order for one-step-up routing. A repair completion may follow a new head without inheriting its commander's stale review verdict. A current reviewer report retains its own head; stale verdicts remain fenced. Coverage: `commander-order-target.integration.test.ts`, Reproduction `report-commander-refused`.
+
 Paths and commands below are relative to the repository root. Read these invariants before editing this area; named code and tests hold implementation detail.
 
 ## Authority and lifecycle

@@ -334,6 +334,7 @@ export async function reportToCommander(
         originCornerId: origin,
       },
       parent,
+      reportSource: command,
       retainDepth: true,
       reason: 'report',
     });

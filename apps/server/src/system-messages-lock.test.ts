@@ -741,7 +741,7 @@ function scan(files: Map<string, string>): Entry[] {
   }
   // commander.ts skips human recipients with agentOnly and suppresses transcript
   // records with automatic. Both are required: agentOnly alone can still render
-  // a report record. Unknown values and spreads keep the call locked.
+  // a report record. Unknown values, spreads, and non-identifier keys stay locked.
   const privateReport = (call: ts.CallExpression): boolean => {
     if (
       !named(call, 'reportToCommander') ||
@@ -766,8 +766,7 @@ function scan(files: Map<string, string>): Entry[] {
     if (!options || !ts.isObjectLiteralExpression(options)) return false;
     if (
       options.properties.some(
-        (property) =>
-          !ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name),
+        (property) => !ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name),
       )
     )
       return false;
@@ -1048,6 +1047,8 @@ it.each([
   '{automatic: true, agentOnly: true, ...options}',
   '{automatic: true, agentOnly: true, [key]: false}',
   '{automatic: true, agentOnly: true, agentOnly: false}',
+  "{automatic: true, agentOnly: true, 'agentOnly': false}",
+  "{automatic: true, agentOnly: true, 'automatic': false}",
 ])('locks reports with a possible human delivery path: %s', (options) => {
   const source = `report(db, room, author, 'hello', undefined, 'id', ${options});`;
   expect(() =>

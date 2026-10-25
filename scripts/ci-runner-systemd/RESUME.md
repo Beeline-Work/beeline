@@ -28,7 +28,7 @@ consistent with the guarded socket cleanup refusing the live old listener.
 
 ## Minimal future resume path
 
-`launch-resume.py` hash-pins `resume.py` and starts a bounded root systemd task.
+`launch-resume-v3.py` hash-pins `resume.py` and starts a bounded root systemd task.
 It supplies the existing non-secret configuration and encrypted App key using
 EnvironmentFile and LoadCredentialEncrypted. No raw PEM is exported or passed
 in argv. The root script imports the exact reviewed rollout/broker sources
@@ -109,3 +109,9 @@ auto-creation. Resume tests cover reuse of the existing broker and cleanup on
 an injected start failure; cleanup tests cover every engine even when stopping
 a runner fails. No privileged host retry or idle-engine shutdown was executed
 for this revision. Ruby must review before a new approval request is filed.
+
+The corrected launcher is now `launch-resume-v3.py`. The old
+`launch-resume.py` is deleted so path-only approvals 4fb0a1aa and 0ebe3e0e
+point to no launcher file. Neither approval authorizes the new filename.
+No new request may be filed until Ruby reviews this revision; after review,
+request only the new path with `/usr/bin/python3 -I -B`.

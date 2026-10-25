@@ -217,7 +217,7 @@ export function ArtifactViewerScreen({
           />
         )}
       </View>
-      <ViewerConversationDock kind="artifact" title={attachment?.name ?? title} roomId={roomId} agentHandle={authorHandle}
+      <ViewerConversationDock keyboardAvoidedByParent kind="artifact" title={attachment?.name ?? title} roomId={roomId} agentHandle={authorHandle}
         {...(attachment ? { artifact: attachment } : {})} />
       {toast}
     </View>

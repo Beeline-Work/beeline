@@ -1,3 +1,4 @@
+import { ViewerConversationDock } from './ViewerConversationDock';
 vi.mock('./Button', () => ({ Button: 'Button' }));
 vi.mock('./RunnableArtifact', () => ({ RunnableArtifact: 'RunnableArtifact' }));
 import * as React from 'react';
@@ -744,4 +745,10 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     const text = failed.findByType('Text' as any).props.children;
     expect(text).toContain('no inline preview');
   });
+});
+
+
+it('lets the artifact modal own keyboard avoidance for its dock', () => {
+  const renderer = render(<ArtifactViewerScreen notice={{ title: 'HTML', message: 'Fixture' }} onClose={mocks.onClose} />);
+  expect(renderer.root.findByType(ViewerConversationDock).props.keyboardAvoidedByParent).toBe(true);
 });

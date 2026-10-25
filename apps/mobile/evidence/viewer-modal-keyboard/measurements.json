@@ -1,0 +1,68 @@
+{
+  "before-computer": {
+    "pillBoundsPx": [
+      32,
+      482,
+      1049,
+      603
+    ],
+    "keyboardTopPx": 1517,
+    "gapPx": 914,
+    "gapDp": 348.1904761904762
+  },
+  "before-artifact": {
+    "pillBoundsPx": [
+      32,
+      482,
+      1049,
+      603
+    ],
+    "keyboardTopPx": 1517,
+    "gapPx": 914,
+    "gapDp": 348.1904761904762
+  },
+  "after-computer": {
+    "pillBoundsPx": [
+      32,
+      1365,
+      1049,
+      1486
+    ],
+    "keyboardTopPx": 1517,
+    "gapPx": 31,
+    "gapDp": 11.80952380952381
+  },
+  "after-warm-computer": {
+    "pillBoundsPx": [
+      32,
+      1365,
+      1049,
+      1486
+    ],
+    "keyboardTopPx": 1517,
+    "gapPx": 31,
+    "gapDp": 11.80952380952381
+  },
+  "after-artifact": {
+    "pillBoundsPx": [
+      32,
+      1365,
+      1049,
+      1486
+    ],
+    "keyboardTopPx": 1517,
+    "gapPx": 31,
+    "gapDp": 11.80952380952381
+  },
+  "device": {
+    "serial": "emulator-5562",
+    "screenPx": [
+      1080,
+      2400
+    ],
+    "density": 420,
+    "keyboard": "Gboard",
+    "SamsungKeyboard": "not installed"
+  },
+  "afterApkSha256": "c6c36d1598b675ee2c469d266495b454fcfae0de92c2ea29d477d5e1e5aa66a1"
+}

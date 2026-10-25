@@ -9,6 +9,15 @@ import subprocess
 import sys
 import tarfile
 
+
+def restore_runner_ownership(runner, user):
+    for directory, directories, files in os.walk(runner):
+        os.chown(directory, user.pw_uid, user.pw_gid)
+        for name in directories + files:
+            os.chown(Path(directory) / name, user.pw_uid, user.pw_gid, follow_symlinks=False)
+    runner.chmod(0o700)
+
+
 index = int(sys.argv[1])
 if os.geteuid() != 0 or index not in range(1, 5):
     raise SystemExit('Expected root and shard index 1..4')
@@ -38,6 +47,7 @@ with archive.open('rb') as stream:
     stream.seek(0)
     with tarfile.open(fileobj=stream) as files:
         files.extractall(state / 'runner', filter='data')
+restore_runner_ownership(state / 'runner', user)
 subprocess.run(['systemctl', 'start', name + '-docker.service'], check=True)
 # The relay is outside every jail and serves only root peer credentials.
 with socket.socket(socket.AF_UNIX) as relay:
@@ -51,12 +61,11 @@ command = ['systemd-run', '--wait', '--pipe', '--collect', f'--unit={name}-confi
     '-p', 'BindReadOnlyPaths=/usr /etc/ssl/certs /etc/ld.so.cache',
     '-p', f'BindPaths={state}:/ci', '-p', 'WorkingDirectory=/ci/runner',
     '-p', 'NoNewPrivileges=yes', '--setenv=HOME=/ci/home',
-    '--setenv=ACTIONS_RUNNER_INPUT_TOKEN', '/ci/runner/bin/Runner.Listener',
-    'configure', '--unattended', '--ephemeral', '--disableupdate',
+    '/usr/bin/python3', '/etc/ci-entry.py',
+    'configure', '--unattended', '--ephemeral', '--replace', '--disableupdate',
     '--url', 'https://github.com/Beeline-Work/beeline', '--name', name,
     '--labels', 'beeline-ci-shard', '--work', '/ci/work']
-result = subprocess.run(command, env=dict(os.environ, ACTIONS_RUNNER_INPUT_TOKEN=token),
+result = subprocess.run(command, input=token + '\n',
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=180)
 print(result.stdout.replace(token, '[redacted]'), flush=True)
 result.check_returncode()
-os.chown(state / 'runner', 0, 0)

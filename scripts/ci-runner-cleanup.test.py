@@ -1,13 +1,39 @@
 """Exercise the real cleanup loop against hostile leftover file types."""
 import ast
 import os
+import io
 from pathlib import Path
 import shutil
+import subprocess
+import tarfile
+from types import SimpleNamespace
 import tempfile
 import unittest
 
 
 class CleanupTest(unittest.TestCase):
+    def test_extracted_runner_is_enterable_executable_and_writable(self):
+        source = Path(__file__).with_name('prepare-ephemeral-ci-runner.py')
+        function = next(node for node in ast.parse(source.read_text()).body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'restore_runner_ownership')
+        scope = {'os': os, 'Path': Path}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), scope)
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = Path(temporary) / 'runner'
+            runner.mkdir(mode=0o700)
+            archive = io.BytesIO()
+            with tarfile.open(fileobj=archive, mode='w') as files:
+                files.add('/usr/bin/true', arcname='bin/Runner.Listener')
+            archive.seek(0)
+            with tarfile.open(fileobj=archive) as files:
+                files.extractall(runner, filter='data')
+            scope['restore_runner_ownership'](runner, SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid()))
+            self.assertEqual(runner.stat().st_uid, os.getuid())
+            self.assertEqual(runner.stat().st_mode & 0o777, 0o700)
+            (runner / '_diag').mkdir()
+            (runner / '_diag/log').write_text('writable')
+            subprocess.run([str(runner / 'bin/Runner.Listener')], cwd=runner, check=True)
+
     def test_removes_all_state_without_following_links(self):
         source = Path(__file__).with_name('prepare-ephemeral-ci-runner.py')
         tree = ast.parse(source.read_text())

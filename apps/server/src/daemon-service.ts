@@ -1,6 +1,7 @@
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
+import { agentPostText } from './agent-post-text.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
@@ -8712,8 +8713,10 @@ export class DaemonService {
 
   /** A public message; tags use the same conversation wake rule as final replies. */
   private async postCornerMessage(input: Input<'postCornerMessage'>, agentId: string) {
-    const text = typeof input.text === 'string' ? input.text.trim() : '';
-    if (!text || text.length > 16000) throw new Error('message text must be 1 to 16000 characters');
+    const rawText = typeof input.text === 'string' ? input.text.trim() : '';
+    if (!rawText || rawText.length > 16000) throw new Error('message text must be 1 to 16000 characters');
+    const text = agentPostText(rawText);
+    if (!text) throw new CommandRefusalError('post refused: reasoning block contains no public reply', 400);
     await this.postAddressAccess(input.cornerId, agentId);
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,

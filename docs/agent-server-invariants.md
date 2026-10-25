@@ -21,6 +21,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
+- **Public agent `post` text excludes leading inline reasoning blocks.** `agent-post-text.ts` removes initial `<think>`/`<thinking>` blocks; `DaemonService.postCornerMessage` refuses reasoning-only input before storage. Ordinary replies and quoted tags later in a reply stay intact. This does not classify untagged model-authored prose or establish the cause of an inaccessible incident. Coverage: `agent-post-text.test.ts`, ACP/proxy `R-REASONING-POST` cases and the built MCP → phone-read proof in `scripts/prove-public-post.ts`.
+
 - **Incoming subscription webhooks** use the existing subscription wake path with fixed saved actions and quoted outside payloads. Workspace admins manage Room links; human DM members manage links in their own DM; tokens are encrypted and only phone reveal/rotate returns them. Ingress and rotation serialize on the subscription. Sender contract and retention: [subscription webhooks](subscription-webhooks.md); proof: `subscription-webhooks.test.ts` and `apps/mobile/evidence/subscription-webhooks/README.md`.
 
 - Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture. Caller validation failures use `ExpectedRefusalError` (or `CommandRefusalError` with an HTTP status); `captureServerError` excludes that shared type, never matching refusal message text. Unexpected exceptions and provider outages remain reportable. Handler proof: `BEELINE-SENTRY-REFUSALS` in `sentry.test.ts`.

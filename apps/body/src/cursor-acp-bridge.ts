@@ -414,7 +414,6 @@ export class CursorAcpServer {
   private readonly env: NodeJS.ProcessEnv;
   private readonly sessions = new Map<string, BridgeSession>();
   private models: CursorModelCatalog | undefined;
-  private modelsLoaded = false;
 
   constructor(options: CursorAcpServerOptions) {
     this.write = options.write;
@@ -470,13 +469,12 @@ export class CursorAcpServer {
     }
   }
 
-  private async loadModels(): Promise<CursorModelCatalog> {
-    if (this.modelsLoaded) {
-      return this.models ?? { currentValue: 'auto', options: [{ id: 'auto', name: 'Auto' }] };
-    }
-    this.modelsLoaded = true;
-    this.models = await this.enumerateModels(this.env);
-    return this.models ?? { currentValue: 'auto', options: [{ id: 'auto', name: 'Auto' }] };
+  private async loadModels(): Promise<CursorModelCatalog | undefined> {
+    if (this.models) return this.models;
+    // A failed lookup is unknown, never proof that only Auto is available.
+    // Retry once and cache only success so a later session can recover.
+    this.models = await this.enumerateModels(this.env) ?? await this.enumerateModels(this.env);
+    return this.models;
   }
 
   private async sessionNew(params: unknown): Promise<Record<string, unknown>> {
@@ -492,12 +490,12 @@ export class CursorAcpServer {
       id: randomUUID(),
       cwd,
       ...(systemPrompt ? { systemPrompt } : {}),
-      model: catalog.currentValue,
+      model: catalog?.currentValue ?? 'auto',
     };
     this.sessions.set(session.id, session);
     return {
       sessionId: session.id,
-      configOptions: [
+      configOptions: catalog ? [
         {
           id: MODEL_AXIS_ID,
           category: 'model',
@@ -507,7 +505,7 @@ export class CursorAcpServer {
             ...(option.name ? { name: option.name } : {}),
           })),
         },
-      ],
+      ] : [],
     };
   }
 

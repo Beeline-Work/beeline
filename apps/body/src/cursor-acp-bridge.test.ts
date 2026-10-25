@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, resolve } from 'node:path';
@@ -546,5 +546,24 @@ const { resolve } = require('node:path');
     expect(JSON.parse(await readFile(resolve(cursorHome, 'mcp.json'), 'utf8')).mcpServers['beeline-agent'].command).toBe(
       process.execPath,
     );
+  });
+});
+
+
+describe('Cursor catalog lookup failures', () => {
+  it('retries once, omits an unknown axis, and recovers on a later session', async () => {
+    const enumerateModels = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ currentValue: 'auto', options: [{ id: 'auto' }, { id: 'grok-4.7-xhigh' }] });
+    const results: Array<{ configOptions: unknown[] }> = [];
+    const server = new CursorAcpServer({ enumerateModels, write: message => {
+      if (message.result) results.push(message.result as typeof results[number]);
+    } });
+    await server.handle({ jsonrpc: '2.0', id: 1, method: 'session/new', params: {} });
+    expect(results[0]?.configOptions).toEqual([]);
+    expect(enumerateModels).toHaveBeenCalledTimes(2);
+    await server.handle({ jsonrpc: '2.0', id: 2, method: 'session/new', params: {} });
+    expect(results[1]?.configOptions).toHaveLength(1);
+    expect(enumerateModels).toHaveBeenCalledTimes(3);
+    server.shutdown();
   });
 });

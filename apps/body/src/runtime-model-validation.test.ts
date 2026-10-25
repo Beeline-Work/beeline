@@ -9,16 +9,16 @@ import {
 const agent = { kind: 'codex' as const, command: 'fake-acp', args: ['stdio'] };
 
 describe('resolvePreflightModelSelection', () => {
-  it('prefers the server selection over a stale local runtime.json cache', () => {
+  it('prefers the server selection over a stale local runtime.json cache', async () => {
     expect(
-      resolvePreflightModelSelection({ model: 'opus[1m]' }, { model: 'sonnet' }),
+      await resolvePreflightModelSelection({ model: 'opus[1m]' }, async () => ({ model: 'sonnet' })),
     ).toEqual({ model: 'sonnet' });
   });
 
-  it('falls back to the local cache only when the server is unreachable', () => {
-    expect(resolvePreflightModelSelection({ model: 'opus[1m]' }, undefined)).toEqual({
-      model: 'opus[1m]',
-    });
+  it('defers validation when the server is unreachable', async () => {
+    expect(await resolvePreflightModelSelection({ model: 'opus[1m]' }, async () => {
+      throw new Error('getAgentConfiguration timed out');
+    })).toBeUndefined();
   });
 });
 

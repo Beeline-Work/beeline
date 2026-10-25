@@ -133,3 +133,13 @@ FROM push_outbox_retirements GROUP BY reason;
 ```
 
 Production recovery remains unverified until that release and observation.
+
+### Edited-message regression
+
+The provider-boundary proof also parks ordinary Attention prose, edits it to
+`@owner please read this`, and runs the built worker again. Before the edit-path
+fix, delivery stayed at (0); afterward the edited mention reaches the provider
+in that cycle (1). Enqueue conflicts now wake only unclaimed rows parked at
+expiry. An edited retry retains its provider deadline and produces no early
+provider call. The same command repeats both backlog proofs. Production recovery
+still requires the post-release observation above.

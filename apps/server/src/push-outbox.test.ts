@@ -456,3 +456,28 @@ it('keeps disabled-platform retries and a preference wake concurrent with parkin
     expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({messageId:'disabled-ios'}));
   } finally { await db.close(); }
 });
+
+it('BEELINE-SERVER-17: message edits wake parked mentions but preserve retry deadlines', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`,[person]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('edited-prose',$1,$2,'Ordinary conversation')`,[room,author]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(db,{send});
+    await loop.runOnce();
+    expect((await db.query(`SELECT * FROM push_outbox WHERE not_before=expires_at`)).rows).toHaveLength(1);
+    await db.query(`UPDATE messages SET text='@owner please read this' WHERE id='edited-prose'`);
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({messageId:'edited-prose'}));
+    await post(db,'edited-retry');
+    await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,next_retry_at)
+      VALUES('edited-retry','proof-device','retryable',now()+interval '5 minutes')`);
+    const before = (await db.query(`SELECT not_before FROM push_outbox WHERE message_id='edited-retry'`)).rows;
+    await db.query(`UPDATE messages SET text='@owner edited retry' WHERE id='edited-retry'`);
+    expect((await db.query(`SELECT not_before FROM push_outbox WHERE message_id='edited-retry'`)).rows).toEqual(before);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).toHaveBeenCalledOnce();
+  } finally { await db.close(); }
+});

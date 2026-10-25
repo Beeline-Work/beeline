@@ -83,7 +83,12 @@ BEGIN
       -- Other kinds need direct attention under every possible push level.
       AND ((m.presentation='message' AND m.card_type IS NULL)
         OR ${pushDirectAttentionSql('collected_turn_ids')})
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT(message_id,device_token) DO UPDATE SET not_before=now()
+      -- Only wake preference-parked work; claims retain provider retry authority.
+      WHERE push_outbox.not_before=push_outbox.expires_at
+        AND NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
+          WHERE claim.message_id=push_outbox.message_id
+            AND claim.device_token=push_outbox.device_token);
 END $$;
 CREATE OR REPLACE FUNCTION message_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

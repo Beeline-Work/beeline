@@ -1,0 +1,13 @@
+{
+  "name": "beeline-web-assets",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-24",
+  "account_id": "6e97e79c389234e4c8aa7837ee3e2a94",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "web.usebeeline.app/_expo/static/js/*",
+      "zone_name": "usebeeline.app"
+    }
+  ]
+}

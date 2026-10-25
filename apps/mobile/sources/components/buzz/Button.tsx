@@ -1,3 +1,4 @@
+import { useFinePointer } from '@/utils/use-fine-pointer';
 import * as React from 'react';
 import * as Native from 'react-native';
 import type { BeelineThemeTokens } from '@/buzz/groknight';
@@ -26,6 +27,8 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   icon?: React.ReactNode;
   /** Fixed 44-point target without label padding. */
   iconOnly?: boolean;
+  /** Compact filters for a mouse; touch keeps the house target. */
+  compact?: boolean;
   iconPosition?: 'start' | 'end';
   /**
    * `primary`: the filled action (one per surface).
@@ -66,6 +69,7 @@ function RecoveryButton({
   emergencyTheme,
   icon,
   iconOnly = false,
+  compact = false,
   iconPosition = 'start',
   variant = 'primary',
   labelTone,
@@ -130,6 +134,7 @@ function ButtonFrame({
   emergencyTheme,
   icon,
   iconOnly = false,
+  compact = false,
   iconPosition = 'start',
   variant = 'primary',
   labelTone,
@@ -143,6 +148,7 @@ function ButtonFrame({
   accessibilityState,
   ...props
 }: ButtonProps) {
+  const finePointer = useFinePointer();
   const isDisabled = Boolean(disabled || loading);
   const primary = variant === 'primary';
   const filled = primary || variant === 'provider';
@@ -171,6 +177,7 @@ function ButtonFrame({
             ]
           : [
               styles.frame,
+              compact && finePointer && styles.compact,
               primary ? styles.primary : styles[variant],
               state.pressed &&
                 !isDisabled &&
@@ -236,6 +243,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'center',
       gap: buzz.space.sm,
     },
+    compact: { minHeight: 32 },
     iconOnly: { width: 44, height: 44, paddingHorizontal: 0 },
     primary: { backgroundColor: buzz.buttonPrimaryFill, borderColor: buzz.buttonPrimaryFill },
     provider: { backgroundColor: buzz.buttonProviderFill, borderColor: buzz.buttonProviderFill },

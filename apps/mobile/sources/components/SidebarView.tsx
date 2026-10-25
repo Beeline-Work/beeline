@@ -1,3 +1,4 @@
+import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
@@ -162,6 +163,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 /** One server-backed desktop pane for Workspace and Room movement. */
 export const SidebarView = React.memo(function SidebarView() {
+  const { showRoomList } = useDesktopLayout();
   const styles = stylesheet;
   const safeArea = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
@@ -483,7 +485,7 @@ export const SidebarView = React.memo(function SidebarView() {
           onAccount={() => router.push('/beeline/settings' as Href)}
         />
       )}
-      <View
+      {(!isDesktop || showRoomList) && <View
         style={[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]}
         testID="desktop-navigation-pane"
       >
@@ -732,7 +734,7 @@ export const SidebarView = React.memo(function SidebarView() {
             }))}
           />
         )}
-      </View>
+      </View>}
     </View>
   );
 });

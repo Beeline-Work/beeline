@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo } from 'react';
-import { Text, View, type TextStyle } from 'react-native';
+import { Text, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { parseMarkdown, type MarkdownSpan } from '@/components/markdown/parseMarkdown';
 import { CodeBlock } from '@/components/buzz/CodeBlock';
@@ -209,7 +209,7 @@ export function tableColumnWeights(rows: string[][]): number[] {
 /** Block kinds whose renderer starts with a `Text` that can host the handle. */
 const INLINE_HOSTS = new Set(['text', 'header', 'list', 'numbered-list']);
 
-function spanStyle(span: MentionSpan, base: TextStyle, tailStyle?: TextStyle) {
+function spanStyle(span: MentionSpan, base: StyleProp<TextStyle>, tailStyle?: TextStyle) {
   return [
     base,
     span.styles.includes('bold') && styles.bold,
@@ -236,7 +236,7 @@ function InlineMarkdown({
   tail,
 }: {
   spans: MarkdownSpan[];
-  base: TextStyle;
+  base: StyleProp<TextStyle>;
   onLink: (url: string) => void;
   liveMentionHandles: ReadonlySet<string>;
   onMention?: (handle: string) => void;
@@ -443,7 +443,8 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
           );
         }
         if (block.type === 'header') {
-          const headingBase = { ...base, ...styles.heading, ...(document ? styles[`documentHeading${block.level}`] : {}) };
+          // Unistyles web properties are non-enumerable; spreading them drops heading type.
+          const headingBase = [base, styles.heading, document && styles[`documentHeading${block.level}`]];
           return (
             <Text key={index} selectable style={[base, styles.heading, document && styles[`documentHeading${block.level}`], blockStyle, document && styles.documentHeadingSpace, document && index === 0 && styles.documentFirstHeading]}>
               {lead}

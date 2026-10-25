@@ -1,0 +1,20 @@
+[
+  {
+    "width": 1280,
+    "transcript": {
+      "viewport": 940,
+      "column": 940
+    },
+    "mouseChipHeight": 30,
+    "panelWidth": 400
+  },
+  {
+    "width": 1920,
+    "transcript": {
+      "viewport": 1504,
+      "column": 1504
+    },
+    "mouseChipHeight": 30,
+    "panelWidth": 400
+  }
+]

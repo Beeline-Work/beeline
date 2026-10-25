@@ -1665,6 +1665,7 @@ function readCornerBrief(value: unknown): NonNullable<RoomView['cornerBrief']> |
   if (!attachments) return null;
   const approval = record(item.approval);
   return {
+    ...field('authorHandle', typeof item.authorHandle === 'string' ? item.authorHandle : undefined),
     revision: item.revision,
     spec: item.spec,
     attachments,

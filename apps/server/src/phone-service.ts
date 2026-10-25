@@ -2190,6 +2190,7 @@ export class PhoneService {
       : initialMessageResult;
     const allowAutoMerge = enrichment?.allow_auto_merge ?? rows.allow_auto_merge;
     const members = allMembers.slice(0, ROOM_VIEW_MEMBER_LIMIT);
+    const briefAuthorHandle = corner?.brief?.author_handle;
     const { messages, toolRows } = messageResult;
     const boundManifest = readCornerAppManifest(boundApp?.manifest);
     const cornerApps: CornerAppView[] = cornerAppRows.flatMap((row) => {
@@ -2272,6 +2273,9 @@ export class PhoneService {
       ...(cornerBrief
         ? {
             cornerBrief: {
+              ...(briefAuthorHandle
+                ? { authorHandle: briefAuthorHandle }
+                : {}),
               revision: cornerBrief.revision,
               spec: cornerBrief.spec,
               ...(cornerBrief.approval
@@ -2982,9 +2986,10 @@ export class PhoneService {
              'facts',(SELECT to_jsonb(f) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
-             'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name)
+             'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
                FROM corner_brief_revisions brief
                LEFT JOIN identities approver ON approver.id=brief.approval_basis->>'approvedBy'
+               LEFT JOIN identities brief_author ON brief_author.id=brief.author_id
                WHERE brief.corner_id=authorized_room.id
                ORDER BY brief.revision DESC LIMIT 1),
              'bound_app',(SELECT jsonb_build_object(

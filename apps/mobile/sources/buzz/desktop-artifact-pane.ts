@@ -1,10 +1,16 @@
 import type { AttachmentReference } from '@beeline/buzz-client';
 
-export interface DesktopArtifactSelection {
+export type DesktopArtifactSelection = {
   attachment: AttachmentReference;
+  markdown?: never;
   authorHandle?: string;
   roomId?: string;
-}
+} | {
+  attachment?: never;
+  markdown: { title: string; text: string; revision: number };
+  authorHandle?: string;
+  roomId?: string;
+};
 
 const listeners = new Set<(selection: DesktopArtifactSelection) => boolean>();
 

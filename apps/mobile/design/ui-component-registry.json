@@ -121,6 +121,7 @@
     "components/buzz/CreatePollSheet.tsx": ["CreatePollSheet"],
     "components/buzz/decorative-glyph.ts": [],
     "components/buzz/decorative-glyph.web.ts": [],
+    "components/buzz/DesktopRoomListToggle.tsx": ["DesktopRoomListToggle"],
     "components/buzz/DesktopArtifactPane.tsx": [
       "DesktopArtifactFrame",
       "DesktopArtifactMarkdown",

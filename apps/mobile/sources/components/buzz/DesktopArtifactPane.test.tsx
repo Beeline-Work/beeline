@@ -345,3 +345,17 @@ describe('the desktop work pane artifact view', () => {
     expect(mocks.onClose).toHaveBeenCalled();
   });
 });
+
+it('renders a brief through the file chrome without a browser link', async () => {
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(React.createElement(DesktopArtifactPane, {
+    markdown: { title: 'Layout brief', text: '# Layout brief', revision: 3 },
+    authorHandle: 'ruby', onClose: mocks.onClose,
+  })); });
+  expect(renderer.root.findByProps({ testID: 'desktop-artifact-title' }).props.children).toBe('Layout brief');
+  expect(renderer.root.findByProps({ testID: 'desktop-artifact-kind-line' }).props.children).toBe('@ruby · brief · revision 3');
+  expect(renderer.root.findAllByProps({ testID: 'desktop-artifact-open-browser' })).toHaveLength(0);
+  await act(async () => renderer.root.findByProps({ testID: 'desktop-artifact-close' }).props.onPress());
+  expect(mocks.onClose).toHaveBeenCalled();
+  await act(async () => renderer.unmount());
+});

@@ -38,7 +38,7 @@ export default function WorkbenchScreen() {
     {header}
     {(!index && error) || (view && !index) ? <NetworkUnavailableState onRetry={() => void refresh()} testID="workbench-network-unavailable" /> : !index ?
       <View style={styles.centered}><SurfaceGlyphLoader testID="workbench-loader" /></View> :
-      <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]} testID="workbench-scroll">
+      <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, desktop && styles.desktopColumn, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]} testID="workbench-scroll">
         <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
           value="" editable={false} variant="search" placeholderTextColor={theme.buzz.textDisabled}
           testID="connectors-search" onPress={() => setSearchOpen(true)} />
@@ -74,7 +74,9 @@ export default function WorkbenchScreen() {
 const styles = StyleSheet.create(theme => ({
   container: { flex: 1, backgroundColor: theme.buzz.appCanvas }, content: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  contentInner: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
+  desktopColumn: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+    contentInner: {
+ paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
   note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet, marginBottom: theme.buzz.space.lg },
   error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
 }));

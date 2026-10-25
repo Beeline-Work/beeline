@@ -702,6 +702,7 @@ export type RoomView = {
   readonly cornerPlan?: RoomViewActivity['plan'];
   /** The latest durable assignment; older revisions remain server-owned. */
   readonly cornerBrief?: {
+    readonly authorHandle?: string;
     readonly revision: number;
     /** Markdown; older typed revisions are folded into it by the server. */
     readonly spec: string;

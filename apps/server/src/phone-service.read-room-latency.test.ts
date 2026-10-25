@@ -266,6 +266,7 @@ describe('PhoneService.readRoom latency', () => {
       expect(view?.parent?.id).toBe(ROOM);
       expect(view?.room.about).toBe('Ship it');
       expect(view?.cornerBrief?.spec).toContain('Ship the corner');
+      expect(view?.cornerBrief?.authorHandle).toBe('agent-0');
       expect(view?.cornerLifecycle?.lifecycle).toBe('working');
       expect(view?.messages.at(-1)?.id).toBe('corner-current-activity');
       expect(view?.messages.map((message) => message.id)).toContain('corner-message-60');

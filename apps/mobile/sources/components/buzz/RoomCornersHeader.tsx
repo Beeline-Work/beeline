@@ -1,3 +1,4 @@
+import { DesktopRoomListToggle } from './DesktopRoomListToggle';
 import React from 'react';
 import { TouchableOpacity } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -21,15 +22,19 @@ export function RoomCornersHeader({
   onBack,
   onAdd,
   busy = false,
+  desktop = false,
 }: {
   title: string;
   onBack: () => void;
   onAdd: () => void;
   busy?: boolean;
+  desktop?: boolean;
 }) {
   return (
     <PageHeader
       action={
+        <>
+        {desktop && <DesktopRoomListToggle />}
         <TouchableOpacity
           accessibilityLabel={busy ? 'Creating a corner' : 'Create a corner'}
           accessibilityRole="button"
@@ -65,6 +70,7 @@ export function RoomCornersHeader({
             </Svg>
           )}
         </TouchableOpacity>
+        </>
       }
       eyebrow={title}
       onBack={onBack}

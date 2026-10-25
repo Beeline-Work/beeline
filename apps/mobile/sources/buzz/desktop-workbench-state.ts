@@ -4,16 +4,16 @@ import type { ComputerSessionView } from '@/components/buzz/ComputerSession';
 
 export const DESKTOP_NAV_MIN_WIDTH = 240;
 export const DESKTOP_NAV_MAX_WIDTH = 420;
-export const DESKTOP_NAV_DEFAULT_WIDTH = 340;
+export const DESKTOP_NAV_DEFAULT_WIDTH = 300;
 export const DESKTOP_WORKSPACE_STRIP_WIDTH = 76;
 export const DESKTOP_INSPECTOR_MIN_WIDTH = 320;
 export const DESKTOP_INSPECTOR_MAX_WIDTH = 480;
 export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400;
-/** Smallest useful middle transcript once the permanent Room list is present. */
+/** Smallest useful transcript beside an open work pane. */
 export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 440;
-/** The honest point at which all three readable regions fit side by side. */
+/** Measured space beside the Room list required to host a work pane. */
 export const DESKTOP_WORK_PANE_THRESHOLD =
-  DESKTOP_NAV_MIN_WIDTH + DESKTOP_TRANSCRIPT_MIN_WIDTH + DESKTOP_INSPECTOR_MIN_WIDTH;
+  DESKTOP_TRANSCRIPT_MIN_WIDTH + DESKTOP_INSPECTOR_MIN_WIDTH;
 export const DESKTOP_WORK_PANE_HYSTERESIS = 24;
 
 const NAV_WIDTH_KEY = 'beeline.desktop.nav-width.v1';
@@ -57,7 +57,7 @@ export function desktopWorkPaneWidthMode(
   previous?: DesktopWorkPaneWidthMode,
 ): DesktopWorkPaneWidthMode {
   if (previous === 'wide')
-    return width < DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS ? 'narrow' : 'wide';
+    return width < DESKTOP_WORK_PANE_THRESHOLD ? 'narrow' : 'wide';
   if (previous === 'narrow')
     return width > DESKTOP_WORK_PANE_THRESHOLD + DESKTOP_WORK_PANE_HYSTERESIS ? 'wide' : 'narrow';
   return width >= DESKTOP_WORK_PANE_THRESHOLD ? 'wide' : 'narrow';
@@ -180,4 +180,11 @@ export function desktopComposerKeyAction(
 ): DesktopComposerKeyAction {
   if (platform !== 'web' || key !== 'Enter') return 'none';
   return shiftKey ? 'newline' : 'send';
+}
+
+/** The pane uses the measured chat row, including when the Room list returns. */
+export function desktopDocumentPaneWidth(availableWidth: number, requested = availableWidth * 0.55): number {
+  if (!Number.isFinite(availableWidth))
+    return Number.isFinite(requested) ? requested : DESKTOP_INSPECTOR_DEFAULT_WIDTH;
+  return Math.max(0, Math.min(requested, availableWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH));
 }

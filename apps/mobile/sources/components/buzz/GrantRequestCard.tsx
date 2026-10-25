@@ -1,6 +1,6 @@
 import React from 'react';
 import { Text, View } from 'react-native';
-import { AGENT_GRANT_VERBS, parseCommandGrantTarget } from '@beeline/api-contract/agent-grants';
+import { AGENT_GRANT_VERBS, grantPresentation } from '@beeline/api-contract/agent-grants';
 import type { AgentPresentation, ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { resolveAgentDisplayIdentity } from '@/buzz/agent-display';
 import { ledgerStamp } from '@/buzz/relative-time';
@@ -51,21 +51,8 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
     <View testID={`grant-request-${anyPending ? 'pending' : 'settled'}`}>
       {request.grants.map((grant) => {
         const script = grant.script?.contents ?? (grant.kind === 'command' ? grant.target : undefined);
-        const purpose = grant.purpose ?? grant.reason;
-        const basename = (value: string) => value.split(/[\\/]/).pop() || value;
-        let runs: string | undefined;
-        let uses: string | undefined;
-        if (grant.kind === 'command') {
-          try { const rule = parseCommandGrantTarget(grant.target); runs = rule.argv.map(basename).join(' '); uses = rule.secrets.join(', ') || undefined; }
-          catch { /* Legacy targets may predate the command grammar. */ }
-        }
+        const { purpose, facts } = grantPresentation(grant);
         const scope = grant.status === 'once' ? 'Once' : grant.status === 'approved' ? 'Always' : undefined;
-        const facts = [
-          ...(runs ? [{ label: 'Runs', value: runs }] : []),
-          ...(uses && !(grant.purpose && grant.touches && grant.capabilities) ? [{ label: 'Uses', value: uses }] : []),
-          ...(grant.touches ? [{ label: 'Touches', value: grant.touches }] : grant.kind !== 'command' ? [{ label: 'Touches', value: grant.appName ?? grant.target }] : []),
-          ...(grant.capabilities ? [{ label: 'Can', value: grant.capabilities }] : !grant.purpose && grant.kind !== 'command' ? [{ label: 'Can', value: `Use ${grant.appName ?? grant.target}` }] : []),
-        ].slice(0, 3);
         const busy = actionId === grant.grantId;
         const pendingGrant = grant.status === 'pending';
         const actions: TranscriptCardAction[] =

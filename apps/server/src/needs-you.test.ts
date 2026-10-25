@@ -510,6 +510,8 @@ describe('PhoneService Needs-you tray', () => {
         subject: 'gh pr checks',
         literal: true,
         detail: 'watch CI',
+        purpose: 'watch CI',
+        facts: [{ label: 'Runs', value: 'gh pr checks' }],
         forName: 'Juniper',
       },
     });

@@ -59,6 +59,7 @@ export type TranscriptCardAction = {
   onPress(): void;
   primary?: boolean;
   secondary?: boolean;
+  dismiss?: boolean;
   labelTone?: 'quiet';
   disabled?: boolean;
   loading?: boolean;
@@ -363,6 +364,8 @@ export function TranscriptCard({
     previousSnapshot.current = currentSnapshot;
   });
 
+  const links = actions.filter((action) => action.accessibilityRole === 'link');
+  const decisions = actions.filter((action) => action.accessibilityRole !== 'link');
   const hasFooter = footerNote !== undefined || actions.length > 0;
   // A card that is only its head closes with the same inset it opens with.
   const headOnly = !body && code === undefined && !rows.length && !choices.length && !hasFooter;
@@ -528,7 +531,11 @@ export function TranscriptCard({
           ) : null}
           {hasFooter ? (
             <InlineRow style={[styles.footer, !footerDivider && styles.footerWithoutDivider, balancedFooterInset && styles.balancedFooterInset]}>
-              {decisionScope ? <Text style={styles.decisionScope}>{`Scope: ${decisionScope}`}</Text> : null}
+              {links.map((action) => (
+                <Button key={action.testID ?? action.label} label={action.label}
+                  accessibilityRole="link" onPress={action.onPress} testID={action.testID}
+                  disabled={action.disabled} loading={action.loading} size="inline" variant="secondary" />
+              ))}
               {footerNote !== undefined ? (
                 <Text
                   testID={footerNoteTestID}
@@ -538,25 +545,26 @@ export function TranscriptCard({
                     footerNoteTone === 'failed' && styles.footerNoteFailed,
                   ]}
                 >
-                  {footerNote}
+                  {decisionScope && typeof footerNote === 'string' ? `${decisionScope} · ${footerNote}` : footerNote}
                 </Text>
-              ) : (
+              ) : decisions.length ? null : (
                 <View style={styles.footerSpacer} />
               )}
-              <ButtonRow
+              {decisions.length ? <ButtonRow
                 style={styles.actions}
-                actions={actions.map((action) => ({
-                  label: action.loading ? '…' : action.label,
+                actions={decisions.map((action) => ({
+                  label: action.label,
+                  loading: action.loading,
                   accessibilityLabel: action.label,
                   accessibilityRole: action.accessibilityRole ?? 'button',
-                  variant: action.primary ? 'primary' : action.secondary ? 'secondary' : 'quiet',
+                  variant: action.primary ? 'primary' : action.dismiss ? 'quiet' : 'secondary',
                   busy: action.loading,
                   labelTone: action.labelTone,
                   disabled: action.disabled,
                   onPress: action.onPress,
                   testID: action.testID,
                 }))}
-              />
+              /> : null}
             </InlineRow>
           ) : null}
         </View>
@@ -875,6 +883,7 @@ const styles = StyleSheet.create((theme) => {
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: card.border,
       flexDirection: 'row',
+      flexWrap: 'wrap',
       alignItems: 'center',
       gap: card.space.sm,
     },
@@ -885,10 +894,8 @@ const styles = StyleSheet.create((theme) => {
       color: card.ledgerQuiet,
       flex: 1,
     },
-    decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textTransform: 'none', textAlign: 'right' },
-    decisionScope: { ...card.type.meta, fontFamily: card.proseRegular, color: card.ledgerQuiet },
+    decisionNote: { ...card.type.meta, fontFamily: card.proseRegular, textTransform: 'none', textAlign: 'right', flexBasis: 'auto', flexShrink: 0, flexGrow: 1 },
     footerNoteFailed: { color: card.diffRemoved },
-    actions: { flexShrink: 1 },
-    action: { ...card.type.body, fontSize: metric.actionSize, color: card.ledgerQuiet },
+    actions: { flexShrink: 1, flexGrow: 1 },
   };
 });

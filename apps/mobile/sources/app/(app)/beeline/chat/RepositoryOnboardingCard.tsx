@@ -79,18 +79,19 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
       label: repository.fullName, consequence: repository.current ? 'Current · open PRs stay open' : 'Use this repository',
       selected: repository.current, ...(canAct && !repository.current ? { onPress: () => void act('link', { repositoryId: repository.id }) } : {}) })) : [];
   const actions: TranscriptCardAction[] = card.kind === 'repository' && card.canLink && card.status === 'open' && card.requesterId === viewerId ? [
-    ...(card.installationId ? [{ label: 'Create new repo', primary: true, loading: busy,
-      disabled: !canAct, onPress: () => void act('create'), testID: 'repo-card-create' }] : [{ label: card.githubLinked === false ? 'Connect GitHub' : 'Install Beeline', primary: true,
-      loading: busy, disabled: !canAct, onPress: () => void act('install'), testID: 'repo-card-install' }]),
     ...(card.githubLinked === false && !card.installationId ? [] : [
       { label: 'Link existing', disabled: !canAct, onPress: () => setPicker(!picker), testID: 'repo-card-link' },
       { label: 'Add Beeline to an org', disabled: !canAct, onPress: () => void act('organization'), testID: 'repo-card-org' },
     ]),
+    ...(card.installationId ? [{ label: 'Create new repo', primary: true, loading: busy,
+      disabled: !canAct, onPress: () => void act('create'), testID: 'repo-card-create' }] : [{ label: card.githubLinked === false ? 'Connect GitHub' : 'Install Beeline', primary: true,
+      loading: busy, disabled: !canAct, onPress: () => void act('install'), testID: 'repo-card-install' }]),
+
   ] : [];
   const linked = card.kind === 'repository' && card.status === 'settled' && Boolean(card.repository);
   const needsConnection = card.kind === 'repository' && card.githubLinked === false && !card.installationId;
   const shownActions: TranscriptCardAction[] = linked ? [] : error ? (canAct ? [
-    { label: 'Dismiss', labelTone: 'quiet', onPress: () => { setError(null); setPicker(false); router.setParams({ githubConnectionError: undefined }); }, testID: 'repo-card-dismiss' },
+    { label: 'Dismiss', dismiss: true, labelTone: 'quiet', onPress: () => { setError(null); setPicker(false); router.setParams({ githubConnectionError: undefined }); }, testID: 'repo-card-dismiss' },
     { label: 'Try again', primary: true, onPress: () => { router.setParams({ githubConnectionError: undefined }); void act(lastAction.current.action, lastAction.current.extra); }, testID: 'repo-card-retry' },
   ] : []) : actions;
   return <TranscriptCard

@@ -147,7 +147,7 @@ it('R-GITHUB-CARD: keeps an operation failure local and retries the failed actio
     <RepositoryOnboardingCard card={card} viewerId={H} />
     <RepositoryOnboardingCard card={{...card,id:'other'}} viewerId={H} />
   </>); });
-  await act(async () => renderer.root.findAllByType('TranscriptCard')[0].props.actions[0].onPress());
+  await act(async () => renderer.root.findAllByType('TranscriptCard')[0].props.actions.find((action: any) => action.testID === 'repo-card-create').onPress());
   const cards = renderer.root.findAllByType('TranscriptCard');
   expect(cards[0].props.inlineError.title).toBe("GitHub didn't connect");
   expect(cards[0].props.compactBody).toBe(true);

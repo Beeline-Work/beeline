@@ -1,5 +1,5 @@
 import React from 'react';
-import { Pressable, Text, View, type ViewProps } from 'react-native';
+import { Pressable, Text, View, type PressableProps, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from './ChevronGlyph';
 
@@ -16,7 +16,7 @@ export function LedgerDisclosure({
   /** Render rich system text beside a chevron aligned to its first line. */
   firstLine?: boolean;
   expanded: boolean;
-  onPress(): void;
+  onPress: NonNullable<PressableProps['onPress']>;
   children: React.ReactNode;
   rowTestID?: string;
   accessibilityLabel: string;

@@ -2674,7 +2674,7 @@ describe('Room message variant components', () => {
     expect(settled.root.findAllByProps({ testID: 'grant-g-1-always' })).toHaveLength(0);
     expect(settled.root.findByProps({ testID: 'grant-request-settled' })).toBeDefined();
     expect(settled.root.findByProps({ testID: 'grant-g-1-outcome' }).props.children).toBe(
-      `Allowed by you · ${ledgerStamp(1_756_900_060)}`,
+      `Once · Allowed by you · ${ledgerStamp(1_756_900_060)}`,
     );
     expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe(`Denied by you · ${ledgerStamp(1_756_900_061)}`);
   });
@@ -3160,7 +3160,7 @@ describe('Room message variant components', () => {
       const door = settled.root.findByProps({ testID: 'connector-offer-offer-1-workbench' });
       expect(door.props.accessibilityRole).toBe('link');
       // The longer "Manage in Workbench ›" overflowed the settled card.
-      expect(JSON.stringify(settled.toJSON())).toContain('Manage ›');
+      expect(door.props.label).toBe('Manage');
       act(() => door.props.onPress());
       expect(onOpenWorkbench).toHaveBeenCalledTimes(1);
     });
@@ -3210,7 +3210,7 @@ describe('Room message variant components', () => {
       expect(card.root.findAllByProps({ testID: 'grant-purpose-once' })).toHaveLength(0);
       expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ textTransform: 'none' })]));
       expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.children).toMatch(
-        status === 'denied' ? /^Denied by you · \d{2}:\d{2}$/ : /^Allowed by you · \d{2}:\d{2}$/);
+        status === 'denied' ? /^Denied by you · \d{2}:\d{2}$/ : status === 'once' ? /^Once · Allowed by you · \d{2}:\d{2}$/ : /^Always · Allowed by you · \d{2}:\d{2}$/);
     }
   });
 

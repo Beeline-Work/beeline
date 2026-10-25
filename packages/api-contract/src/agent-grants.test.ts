@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  grantPresentation,
   GRANT_SCRIPT_MAX_BYTES,
   GRANT_SCRIPT_MAX_LINES,
   commandGrantEscalations,
@@ -276,4 +277,16 @@ describe('an interpreter grant is bound to its script', () => {
     expect(refusal).toContain('will not be truncated');
     expect(refusal).toContain('open_corner');
   });
+});
+
+
+it('R2: derives the same purpose and fact rows for a card and tray grant', () => {
+  expect(grantPresentation({ kind: 'command', target: '/usr/bin/sudo -n /usr/bin/python3 /workspace/scripts/provision-ci-isolation.py',
+    purpose: 'Isolate the CI runner', reason: 'legacy reason', touches: 'CI caches', capabilities: 'Build packages' }))
+    .toEqual({ purpose: 'Isolate the CI runner', facts: [
+      { label: 'Runs', value: 'sudo -n python3 provision-ci-isolation.py' },
+      { label: 'Touches', value: 'CI caches' }, { label: 'Can', value: 'Build packages' },
+    ] });
+  expect(grantPresentation({ kind: 'command', target: 'legacy && command', reason: 'Legacy request' }))
+    .toEqual({ purpose: 'Legacy request', facts: [] });
 });

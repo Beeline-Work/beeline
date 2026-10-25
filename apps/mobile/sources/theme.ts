@@ -111,7 +111,6 @@ function scaleBeelineTypography(theme: BeelineThemeTokens, uiSize: AppUiSize): B
             codePathSize: theme.transcriptCard.codePathSize * scale,
             rowTitleSize: theme.transcriptCard.rowTitleSize * scale,
             rowKindSize: theme.transcriptCard.rowKindSize * scale,
-            actionSize: theme.transcriptCard.actionSize * scale,
         },
         proseSize: theme.proseSize * scale,
         proseLineHeight: theme.proseLineHeight * scale,

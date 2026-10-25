@@ -1,0 +1,54 @@
+[
+  {
+    "width": 360,
+    "density": 480,
+    "theme": "bone",
+    "scriptFoldedInitially": true,
+    "scriptOpened": true,
+    "buttons": {
+      "No": "[285,1769][449,1901]",
+      "Once": "[473,1769][693,1901]",
+      "Always": "[717,1769][981,1901]",
+      "View request": "[99,1688][345,1745]"
+    }
+  },
+  {
+    "width": 360,
+    "density": 480,
+    "theme": "obsidian",
+    "scriptFoldedInitially": true,
+    "scriptOpened": true,
+    "buttons": {
+      "No": "[285,1769][449,1901]",
+      "Once": "[473,1769][693,1901]",
+      "Always": "[717,1769][981,1901]",
+      "View request": "[99,1688][345,1745]"
+    }
+  },
+  {
+    "width": 411,
+    "density": 420,
+    "theme": "bone",
+    "scriptFoldedInitially": true,
+    "scriptOpened": true,
+    "buttons": {
+      "No": "[383,1372][526,1487]",
+      "Once": "[547,1372][740,1487]",
+      "Always": "[762,1372][994,1487]",
+      "View request": "[87,1372][308,1422]"
+    }
+  },
+  {
+    "width": 411,
+    "density": 420,
+    "theme": "obsidian",
+    "scriptFoldedInitially": true,
+    "scriptOpened": true,
+    "buttons": {
+      "No": "[383,1372][526,1487]",
+      "Once": "[547,1372][740,1487]",
+      "Always": "[762,1372][994,1487]",
+      "View request": "[87,1372][308,1422]"
+    }
+  }
+]

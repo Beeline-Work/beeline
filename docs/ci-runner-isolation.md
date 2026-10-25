@@ -1,5 +1,7 @@
 # Isolated server CI runners on squire
 
+The proposed permanent replacement is in [the socket-activated broker draft](../scripts/ci-runner-systemd/README.md). It is not installed; the earlier forked activation path is superseded for future rollout.
+
 This rollout is incomplete. Keep `BEELINE_CI_SHARDS` unset until the host
 proofs below pass and the owner has approved the public-fork policy change.
 Do not execute the superseded persistent installer grant `a97ebc0f`.

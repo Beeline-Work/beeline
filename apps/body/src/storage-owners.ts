@@ -9,13 +9,19 @@ import { workspaceAssetRoot } from './workspace-assets.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { reclaimWholeStorageObject, capturePrivateProcessUse, ordinaryDirectory, storageTree, isSquirePath, reclaimHelperStorage, type StorageRoomState, type WholeStorageOptions } from './helper-storage.js';
 import { canonicalStoragePath } from './storage-filesystem.js';
+import { cornerProofRetentionActive, reclaimCornerProofOutput } from './corner-proof-output.js';
+import { storageObjectInUse } from './helper-storage.js';
 
 const execFileAsync = promisify(execFile);
-export interface StorageOwner { workspaceId: string; roomId: string; kind: 'corners' | 'room-checkouts'; itemId: string; ended?: boolean; landedHeadSha?: string }
+export interface StorageOwner { workspaceId: string; roomId: string; kind: 'corners' | 'room-checkouts'; itemId: string; ended?: boolean; endedAt?: number; landedHeadSha?: string }
 function ownersRoot(supervisorRoot: string): string { return resolve(supervisorRoot, 'beeline', 'storage-owners'); }
 export async function rememberStorageOwner(supervisorRoot: string, owner: StorageOwner): Promise<void> {
   if (!/^[a-zA-Z0-9-]{1,80}$/.test(owner.itemId)) throw new Error('invalid storage owner item');
   const path = resolve(ownersRoot(supervisorRoot), `${owner.kind}-${owner.itemId}.json`);
+  const previous = await readFile(path, 'utf8').then(text => JSON.parse(text) as StorageOwner, () => undefined);
+  if (owner.ended || previous?.ended) {
+    owner = { ...owner, ended: true, endedAt: previous?.endedAt ?? owner.endedAt ?? Date.now(), landedHeadSha: owner.landedHeadSha ?? previous?.landedHeadSha };
+  }
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writePrivateFileAtomically(path, JSON.stringify(owner));
 }
@@ -24,7 +30,16 @@ export async function rememberStorageOwner(supervisorRoot: string, owner: Storag
  * is revoked. Failed reads, local changes and unpublished HEADs all preserve. */
 export async function reclaimOwnedCheckout(supervisorRoot: string, owner: StorageOwner, options: WholeStorageOptions = {}): Promise<string[]> {
   if (!['corners', 'room-checkouts'].includes(owner.kind) || !/^[a-zA-Z0-9-]{1,80}$/.test(owner.itemId)) return [];
+  if (owner.ended && !Number.isFinite(owner.endedAt)) {
+    owner = { ...owner, endedAt: options.now ?? Date.now() };
+    if (!options.dryRun) await rememberStorageOwner(supervisorRoot, owner);
+  }
   const path = resolve(supervisorRoot, 'beeline', owner.kind, owner.itemId);
+  if (owner.kind === 'corners' && owner.ended && await cornerProofRetentionActive(path, owner.roomId, owner.endedAt, options.now)) return [];
+  if (owner.kind === 'corners' && owner.ended && owner.endedAt &&
+      !await storageObjectInUse(path, options)) {
+    await reclaimCornerProofOutput(path, owner.roomId, owner.endedAt, options);
+  }
   const published = async () => {
     try {
       if ((await execFileAsync('git', ['-C', path, 'status', '--porcelain=v1', '--untracked-files=all'], { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } })).stdout.trim()) return false;
@@ -70,6 +85,23 @@ export async function readStorageOwners(supervisorRoot: string): Promise<Storage
     if (owner) owners.push(owner);
   }
   return owners;
+}
+
+/** Read-only explanation for code copies that cannot yet be reclaimed. */
+export async function inspectCheckoutPreservation(path: string, landedHeadSha?: string): Promise<{ path: string; allocatedBytes: number | null; reason: string }> {
+  const allocatedBytes = await storageTree(path).then(tree => {
+    const inodes = new Map<string, number>();
+    for (const item of tree.values()) inodes.set(`${item.dev}:${item.ino}`, item.blocks);
+    return [...inodes.values()].reduce((sum, blocks) => sum + blocks, 0);
+  }, () => null);
+  try {
+    if ((await execFileAsync('git', ['-C', path, 'status', '--porcelain=v1', '--untracked-files=all'], { env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 16 * 1024 * 1024 })).stdout.trim())
+      return { path, allocatedBytes, reason: 'tracked edits or untracked files; preserved' };
+    const head = (await execFileAsync('git', ['-C', path, 'rev-parse', 'HEAD'])).stdout.trim();
+    if (head !== landedHeadSha && !(await execFileAsync('git', ['-C', path, 'for-each-ref', '--format=%(refname)', '--contains=HEAD', 'refs/remotes/origin/'])).stdout.trim())
+      return { path, allocatedBytes, reason: 'HEAD has no local publication evidence; preserved' };
+    return { path, allocatedBytes, reason: 'published and clean; process, mount and lease guards still apply' };
+  } catch { return { path, allocatedBytes, reason: 'git evidence unavailable; preserved' }; }
 }
 
 /** A persisted ended-owner fact retries cleanup if a detached process was
@@ -180,7 +212,7 @@ export async function reclaimArchivedMemberStorage(supervisorRoot: string, state
     if (!state) continue;
     if (!options.dryRun) await rememberStorageOwner(supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
     await SessionScheduler.withIdleHostRoom(owner.roomId, async () => {
-      await reclaimOwnedCheckout(supervisorRoot, owner, { ...options, landedHeadSha: state.landedHeadSha });
+      await reclaimOwnedCheckout(supervisorRoot, { ...owner, ended: true, endedAt: owner.endedAt ?? Date.now() }, { ...options, landedHeadSha: state.landedHeadSha });
     });
   }
   for (const agentId of await readdir(resolve(supervisorRoot, 'beeline/agents')).catch(() => [])) {

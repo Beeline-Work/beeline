@@ -13,6 +13,9 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Dead code and lifecycle proofs
 
+- Write disposable corner evidence under `.beeline-proof/`. Initialize it with `declareCornerProofOutput` from `apps/body/src/corner-proof-output.ts`; the manifest binds it to the corner. Keep source and durable reports outside it. After a confirmed archive the helper retains declared evidence for seven days, then reclaims it if no process, mount or emulator lease uses the checkout. Undeclared legacy proof folders and arbitrary `.local` contents remain protected.
+- After building the body, `node scripts/prove-corner-proof-retention.mjs` demonstrates `CLEANUP-DISK-1` through the built storage report and reclaim path in a throwaway checkout, verifying that proof bytes disappear while unpublished source and tracked edits survive.
+
 - **Dead code is baseline-gated.** After building workspace `dist/`, `npm run dead-code` runs Knip against `knip-baseline.json`; only run `dead-code:baseline` for an intentional API addition. Expo Router entries are declared in `knip.jsonc`.
 - **Hand-testing `beeline start`/`pair` in a worktree can start a REAL production daemon** (runtime pointers live in the shared git common dir; `start-command.ts` converges the machine helper). Lifecycle tests require isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and a separate native manager; use `scripts/helper-proof/run-linux.sh` for real installation/start/update tests. `lifecycle-test-guard.ts` refuses live paths and unmocked managers in tests. Use `--repo` a throwaway repo for `pair`.
 

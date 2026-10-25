@@ -30,6 +30,7 @@ import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
 import { reclaimHelperStorage, capturePrivateProcessUse, removeStoragePath, storageTree, isSquirePath, hasMount, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
 import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
+import { cornerProofRetentionActive } from './corner-proof-output.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
@@ -1964,6 +1965,11 @@ export class RoomRuntimeCoordinator {
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
     if (await this.cleanupWasRefused(worktree.cornerId)) return;
+    const owner = (await readStorageOwners(this.runtime.supervisorRoot)).find(item => item.kind === 'corners' && item.itemId === worktree.cornerId) ??
+      { workspaceId: this.runtime.communityId, roomId: worktree.cornerId, kind: 'corners' as const, itemId: worktree.cornerId };
+    const endedAt = owner.endedAt ?? Date.now();
+    await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, endedAt });
+    if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, endedAt)) return;
     // The exact local ref is the deletion authority. It was created for this
     // corner's worktree and survives a failed remote deletion so reconcile can
     // retry the same exact ref. A missing local ref plus a missing remote ref
@@ -2091,7 +2097,7 @@ export class RoomRuntimeCoordinator {
       await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
       if (this.running.has(owner.roomId) || this.startingRooms.has(owner.roomId)) continue;
       await this.scheduler.withIdleStorage(owner.roomId, async () => {
-        await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, {
+        await reclaimOwnedCheckout(this.runtime.supervisorRoot, { ...owner, ended: true, endedAt: owner.endedAt ?? Date.now() }, {
           landedHeadSha: state.landedHeadSha,
           progress: () => this.yieldReconciliation(),
           log: entry => console.log(`[body] Room ${owner.roomId} checkout deleted ${entry.path}; freed ${entry.freedBytes} bytes`),

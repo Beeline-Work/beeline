@@ -17,8 +17,10 @@ import { VoiceService } from '../apps/server/src/voice-service.js';
 import { AuraSpeech, OpenRouterVoiceBrain, fluxFactory, type VoiceBrain, type VoiceSpeech } from '../apps/server/src/voice-providers.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
 import { VOICE_DATA_TOPIC } from '@beeline/api-contract/phone';
+import { basename, resolve } from 'node:path';
+import { declareCornerProofOutput } from '../apps/body/src/corner-proof-output.js';
 
-const output = '.voice-proof/multiparty';
+const output = '.beeline-proof/multiparty';
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), B = 'c'.repeat(64);
 const W = randomUUID(), R = randomUUID();
 async function until(check: () => boolean | Promise<boolean>, label: string, timeout = 60_000) {
@@ -32,6 +34,7 @@ async function main() {
   const key = process.env.BEELINE_VOICE_OPENROUTER_API_KEY ?? process.env.OPENROUTER_EMBEDDING_API_KEY;
   const cf = process.env.CLOUDFLARE_WORKERS_AI_TOKEN ?? process.env.CLOUDFLARE_API_TOKEN;
   assert.ok(key && cf && process.env.CLOUDFLARE_ACCOUNT_ID, 'Voice provider credentials required');
+  await declareCornerProofOutput(process.cwd(), basename(resolve(process.cwd())));
   await mkdir(output, { recursive: true });
   const db = new PgliteDatabase(), live = new LiveHub();
   const aura = new AuraSpeech(cf, process.env.CLOUDFLARE_ACCOUNT_ID);

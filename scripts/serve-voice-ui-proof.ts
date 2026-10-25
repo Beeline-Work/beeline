@@ -1,3 +1,5 @@
+import { basename as proofBasename, resolve as proofResolve } from 'node:path';
+import { declareCornerProofOutput } from '../apps/body/src/corner-proof-output.js';
 /** Build actual mobile voice controls for chrome-devtools-axi. Local fixtures only. */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -19,7 +21,8 @@ const shims = {
     start:async()=>{},stop:async()=>null,cancel(){},acceptModelDownload(){},declineModelDownload:async()=>{}});`,
 };
 async function main() {
-await build({ entryPoints: [join(mobile, 'scripts/voice-call-proof.tsx')], outfile: '.voice-proof/ui.js', bundle: true,
+  await declareCornerProofOutput(process.cwd(), proofBasename(proofResolve(process.cwd())));
+await build({ entryPoints: [join(mobile, 'scripts/voice-call-proof.tsx')], outfile: '.beeline-proof/ui.js', bundle: true,
   platform: 'browser', jsx: 'automatic', mainFields: ['browser', 'module', 'main'],
   resolveExtensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.json'],
   loader: { '.js': 'jsx', '.png': 'dataurl', '.ttf': 'dataurl' },
@@ -42,8 +45,8 @@ const server = createServer(async (req, res) => {
     const fonts = ['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'SpaceGrotesk-SemiBold', 'IBMPlexMono-Regular'];
     const font = fonts.find(name => req.url === `/fonts/${name}.ttf`);
     if (font) { res.setHeader('content-type', 'font/ttf'); res.end(await readFile(join(mobile, `sources/assets/fonts/${font}.ttf`))); return; }
-    if (req.url === '/ui.js') { res.setHeader('content-type', 'application/javascript'); res.end(await readFile('.voice-proof/ui.js')); return; }
-    const session = JSON.parse(await readFile('.voice-proof/local/session.json', 'utf8'));
+    if (req.url === '/ui.js') { res.setHeader('content-type', 'application/javascript'); res.end(await readFile('.beeline-proof/ui.js')); return; }
+    const session = JSON.parse(await readFile('.beeline-proof/local/session.json', 'utf8'));
     const config = { origin: session.origin, roomId: session.roomId,
       token: req.url?.includes('viewer=alex') ? session.firstToken : session.secondToken };
     if (req.url?.startsWith('/proof-session')) { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(config)); return; }

@@ -8,12 +8,15 @@ import { isDeletedRuntimeName, pruneDeletedRuntimes, pruneRepositoryCaches, prun
 import { pruneEndedOwnerStorage, pruneUnusedCheckoutStorage, pruneOpenCheckoutObjects, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { defaultSupervisorRoot, type AgentRuntimeRecord } from './runtime.js';
+import { inspectCheckoutPreservation } from './storage-owners.js';
+import { cornerProofRetentionActive } from './corner-proof-output.js';
 
 export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot(), input: { orphanOnly?: boolean } = {}) {
   const processUse = input.orphanOnly ? () => true : await capturePrivateProcessUse();
   const entries: Array<StorageReclaimEntry & { rule: string }> = [];
   const orphans: Array<{ path: string; owner: string; reason: string }> = [];
   const unknown: Array<{ path: string; reason: string }> = [];
+  const archivedCheckouts: Awaited<ReturnType<typeof inspectCheckoutPreservation>>[] = [];
   const states = new Map<string, StorageRoomState>();
   const legacyOwners: Awaited<ReturnType<typeof readStorageOwners>> = [];
   const root = resolve(supervisorRoot, 'beeline');
@@ -80,11 +83,15 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
       console.error(`[storage dry-run] inspected agent ${agent.name}; ${entries.length} eligible objects, ${orphans.length} confirmed orphan folders`);
     }
   }
-  const checkoutOwners = [...new Map([...(await readStorageOwners(supervisorRoot)), ...legacyOwners].map(owner => [`${owner.kind}/${owner.itemId}`, owner])).values()];
+  const checkoutOwners = [...new Map([...legacyOwners, ...(await readStorageOwners(supervisorRoot))].map(owner => [`${owner.kind}/${owner.itemId}`, owner])).values()];
   for (const owner of checkoutOwners) {
-    if (states.get(owner.roomId)?.archived) {
+    if (states.get(owner.roomId)?.archived || owner.ended) {
       const path = resolve(root, owner.kind, owner.itemId);
       if (!await lstat(path).catch(() => undefined)) continue;
+      const preservation = await inspectCheckoutPreservation(path, states.get(owner.roomId)?.landedHeadSha ?? owner.landedHeadSha);
+      if (!input.orphanOnly && processUse(path)) preservation.reason = 'live process or unavailable process evidence; preserved';
+      else if (await cornerProofRetentionActive(path, owner.roomId, owner.endedAt)) preservation.reason = 'declared proof within seven days of observed archive; preserved';
+      archivedCheckouts.push(preservation);
       orphans.push({ path, owner: owner.roomId, reason: 'server-confirmed archived checkout owner' });
       if (!input.orphanOnly) await reclaimOwnedCheckout(supervisorRoot, owner, { ...options('archived-checkout'), landedHeadSha: states.get(owner.roomId)?.landedHeadSha });
     }
@@ -116,12 +123,12 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
   }
   return { mode: 'dry-run', capturedAt: new Date().toISOString(), rules,
     reclaimableGB: entries.reduce((sum, entry) => sum + entry.freedBytes, 0) / 1e9,
-    orphans, unknown, entries };
+    orphans, unknown, archivedCheckouts, entries };
 }
 
 export async function runStorageReportCommand(args: string[]): Promise<void> {
   if (args.some(arg => !['--dry-run', '--orphans'].includes(arg)))
     throw new Error('Usage: beeline storage [--dry-run|--orphans] (read-only)');
   const report = await helperStorageReport(defaultSupervisorRoot(), { orphanOnly: args.includes('--orphans') });
-  console.log(JSON.stringify(args.includes('--orphans') ? { mode: report.mode, orphans: report.orphans, unknown: report.unknown } : report, null, 2));
+  console.log(JSON.stringify(args.includes('--orphans') ? { mode: report.mode, orphans: report.orphans, unknown: report.unknown, archivedCheckouts: report.archivedCheckouts } : report, null, 2));
 }

@@ -1,3 +1,5 @@
+import { basename as proofBasename, resolve as proofResolve } from 'node:path';
+import { declareCornerProofOutput } from '../apps/body/src/corner-proof-output.js';
 /** Isolated local Beeline + actual LiveKit RTC + provider speech + command grammar.
  * Flux may be replaced with the documented EndOfTurn seam while its credential is pending.
  * No helper service, production Workspace, or emulator is touched.
@@ -20,9 +22,10 @@ import { type VoiceJoin, VOICE_DATA_TOPIC } from '@beeline/api-contract/phone';
 
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), B = 'c'.repeat(64);
 const W = randomUUID(), R = randomUUID();
-const output = `.voice-proof/${process.env.VOICE_PROOF_LABEL?.replace(/[^a-z0-9-]/gi, '') ?? 'local'}`;
+const output = `.beeline-proof/${process.env.VOICE_PROOF_LABEL?.replace(/[^a-z0-9-]/gi, '') ?? 'local'}`;
 
 async function main() {
+  await declareCornerProofOutput(process.cwd(), proofBasename(proofResolve(process.cwd())));
   const key = process.env.BEELINE_VOICE_OPENROUTER_API_KEY ?? process.env.OPENROUTER_EMBEDDING_API_KEY;
   assert.ok(key, 'BEELINE_VOICE_OPENROUTER_API_KEY required; never write or log it');
   await mkdir(output, { recursive: true });

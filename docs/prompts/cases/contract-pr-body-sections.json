@@ -26,7 +26,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "brief": {
       "fileLines": [
         "apps/server/src/auth.ts"
@@ -39,20 +39,52 @@
   "pass": {
     "all": [
       {
-        "call": "Bash",
-        "args": {
-          "command": {
-            "contains": "## Reproduced"
+        "any": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "contains": "## Reproduced"
+              }
+            }
+          },
+          {
+            "call": "app_tool",
+            "args": {
+              "args": {
+                "contains": "## Reproduced"
+              },
+              "tool": {
+                "matches": "pull.?request",
+                "flags": "i"
+              }
+            }
           }
-        }
+        ]
       },
       {
-        "call": "Bash",
-        "args": {
-          "command": {
-            "contains": "## Demonstrated"
+        "any": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "contains": "## Demonstrated"
+              }
+            }
+          },
+          {
+            "call": "app_tool",
+            "args": {
+              "args": {
+                "contains": "## Demonstrated"
+              },
+              "tool": {
+                "matches": "pull.?request",
+                "flags": "i"
+              }
+            }
           }
-        }
+        ]
       }
     ]
   },
@@ -61,5 +93,33 @@
   ],
   "toolResults": {
     "Bash": "exit=0\nabc1234 Refuse expired tokens"
+  },
+  "scenario": {
+    "history": [
+      "[message id: m1]\ndana [message]: Reproduction expiry-1: GET /me with an expired token returned 200 before the fix and returns 401 after it, run against the local server with curl."
+    ],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
   }
 }

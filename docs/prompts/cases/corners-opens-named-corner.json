@@ -18,7 +18,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
   },
   "pass": {
     "call": "open_corner",
@@ -30,5 +30,28 @@
   },
   "toolResults": {
     "read": "{\"roomAddress\":\"room-1\",\"messages\":[{\"id\":\"m5\",\"author\":\"dana\",\"text\":\"@ruby please fix the flaky login test in apps/server. Go ahead and start the work.\"}],\"procedure\":\"Write a brief with Intent, Acceptance criteria and Non-goals; the dispatching message is the approval.\"}"
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "open_corner",
+        "result": {
+          "address": "c-simulated",
+          "ok": true
+        }
+      }
+    ]
   }
 }

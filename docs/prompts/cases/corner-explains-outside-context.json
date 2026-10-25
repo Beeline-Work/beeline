@@ -5,7 +5,7 @@
   "place": "code-corner",
   "turn": {
     "task": {
-      "body": "Send a blocker update to Dana in room-demo about this corner.",
+      "body": "Report the blocker to your commander Juniper, who will relay it to Dana in room-demo. Dana has not read this corner.",
       "commandReason": "order",
       "fromName": "juniper"
     }
@@ -16,9 +16,8 @@
   "pass": {
     "all": [
       {
-        "call": "post",
+        "call": "report",
         "args": {
-          "address": "room-demo",
           "text": {
             "matches": "spoken|voice|audio",
             "flags": "i"
@@ -26,7 +25,7 @@
         }
       },
       {
-        "call": "post",
+        "call": "report",
         "args": {
           "text": {
             "matches": "microphone",
@@ -35,12 +34,36 @@
         }
       },
       {
-        "call": "post",
+        "call": "report",
         "args": {
           "text": {
             "matches": "desktop|approve|grant",
             "flags": "i"
           }
+        }
+      },
+      {
+        "noCall": "post",
+        "args": {
+          "address": "room-demo"
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "history": [
+      "Task: restore spoken replies. Device playback proof needs microphone access. Decision: approve microphone access or accept desktop playback proof. Dana has not read this corner."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
         }
       }
     ]

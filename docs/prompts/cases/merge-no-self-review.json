@@ -26,7 +26,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "brief": {
       "fileLines": [
         "apps/server/src/auth.ts"
@@ -35,5 +35,31 @@
   },
   "pass": {
     "noCall": "approve_merge"
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
   }
 }

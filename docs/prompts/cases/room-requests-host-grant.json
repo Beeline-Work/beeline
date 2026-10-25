@@ -36,5 +36,23 @@
         "flags": "i"
       }
     }
+  },
+  "scenario": {
+    "history": [
+      "Bash result: sandbox blocks host process inspection."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
   }
 }

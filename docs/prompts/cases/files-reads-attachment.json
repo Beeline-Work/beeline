@@ -14,10 +14,10 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
   },
   "messages": [
-    "[message id: m1]\ndana [message]: here is the crash screen\n📎 crash.png (image/png, 84 KB) id=att-1"
+    "[message id: m1]\ndana [message]: here is the crash screen\n\ud83d\udcce crash.png (image/png, 84 KB) id=att-1"
   ],
   "tools": [
     "Bash"
@@ -36,6 +36,37 @@
           "command": {
             "matches": "curl|wget"
           }
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "history": [
+      "[message id: m1]\ndana [message]: here is the crash screen\n\ud83d\udcce crash.png (image/png, 84 KB) id=att-1"
+    ],
+    "files": {
+      "/replay/files/crash.txt": "Error: session expired. Sign in again."
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "attachment",
+          "attachmentId": "att-1"
+        },
+        "result": {
+          "path": "/replay/files/crash.txt",
+          "mime": "text/plain"
         }
       }
     ]

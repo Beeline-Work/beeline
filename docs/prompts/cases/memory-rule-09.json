@@ -49,5 +49,28 @@
         }
       }
     ]
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "open_corner",
+        "result": {
+          "address": "c-simulated",
+          "ok": true
+        }
+      }
+    ]
   }
 }

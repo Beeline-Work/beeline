@@ -3,7 +3,36 @@
   "section": "tools",
   "summary": "A refused artifact upload loads the file skill before retrying.",
   "place": "room",
-  "turn": { "task": { "body": "@ruby share the generated report as an attachment.", "fromName": "dana", "commandReason": "human_tag" } },
-  "messages": ["Ruby called post_artifact(path:/tmp/demo-report.html): refused: path outside allowed artifact roots."],
-  "pass": { "skill": "beeline-files-and-mocks", "beforeRetry": "post_artifact" }
+  "turn": {
+    "task": {
+      "body": "@ruby share the generated report as an attachment.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    }
+  },
+  "messages": [
+    "Ruby called post_artifact(path:/tmp/demo-report.html): refused: path outside allowed artifact roots."
+  ],
+  "pass": {
+    "skill": "beeline-files-and-mocks",
+    "beforeRetry": "post_artifact"
+  },
+  "scenario": {
+    "history": [
+      "Ruby called post_artifact(path:/tmp/demo-report.html): refused: path outside allowed artifact roots."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
+  }
 }

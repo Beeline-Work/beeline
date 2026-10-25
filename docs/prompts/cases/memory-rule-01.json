@@ -53,5 +53,25 @@
     "Opal [message]: What port?",
     "Clover [message]: 8080.",
     "Opal [message]: Thanks."
-  ]
+  ],
+  "scenario": {
+    "history": [
+      "Opal [message]: What port?",
+      "Clover [message]: 8080.",
+      "Opal [message]: Thanks."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
+  }
 }

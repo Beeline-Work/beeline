@@ -68,5 +68,23 @@
   },
   "messages": [
     "Clover [message]: Existing search fixes: query normalization (PR 61), empty-result handling (PR 66). Both merged before the new crash."
-  ]
+  ],
+  "scenario": {
+    "history": [
+      "Clover [message]: Existing search fixes: query normalization (PR 61), empty-result handling (PR 66). Both merged before the new crash."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
+  }
 }

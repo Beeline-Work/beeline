@@ -42,5 +42,36 @@
         }
       }
     ]
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nExplain repository access in this linked corner. No writes are assigned in this proof."
+    },
+    "connect": {
+      "status": {
+        "readiness": "Apps: none. No personal GitHub connection is reported. The existing repository App credential serves this linked repository."
+      },
+      "discover": {
+        "readiness": "Apps: none. No personal GitHub connection is reported. The existing repository App credential serves this linked repository."
+      },
+      "ensure": {
+        "readiness": "Apps: none. No personal GitHub connection is reported. The existing repository App credential serves this linked repository."
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      }
+    ]
   }
 }

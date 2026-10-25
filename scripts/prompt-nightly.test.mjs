@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample } from './prompt-nightly.mjs';
+import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample, replaySuite, FIXED_SAMPLES, classCounts, proportion, validSchema, runNightly } from './prompt-nightly.mjs';
 import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
@@ -30,12 +31,14 @@ test('candidate tree holds every file loadSource reads', async () => {
   }
 });
 
-test('removal requires the same cases, no passing-case regression, and lower measured tokens', () => {
-  const baseline = [row('a', true, 100), row('b', false, 200)];
-  assert.equal(assessExperiment(baseline, [row('a', true, 80), row('b', false, 150)]).accepted, true);
-  assert.equal(assessExperiment(baseline, [row('a', false, 80), row('b', true, 150)]).accepted, false);
-  assert.equal(assessExperiment(baseline, [row('a', true, 80)]).accepted, false);
-  assert.equal(assessExperiment(baseline, [row('a', true, 120), row('b', false, 220)]).accepted, false);
+test('paired verdict requires an effect outside control noise and matching complete samples', () => {
+  const make = (pass, tokens=100) => Array.from({ length: 12 }, (_, i) => ({ id: String(i), samples: [{ status: 'behavior', pass, tokens }] }));
+  const baseline = make(false), candidate = make(true, 80), control = make(false);
+  assert.equal(assessExperiment(baseline, candidate, control).accepted, true);
+  assert.equal(assessExperiment(baseline, candidate, make(true)).outcome, 'too little data');
+  assert.equal(assessExperiment(make(true), make(true, 80), make(true)).outcome, 'too little data');
+  assert.equal(assessExperiment(baseline, candidate.slice(1), control).accepted, false);
+  assert.equal(assessExperiment(baseline, make(true, 120), control).accepted, false);
   assert.equal(median([1, 3, 2, 4]), 2.5);
 });
 
@@ -71,38 +74,121 @@ test('budget reserves concurrent requests and stops before another paid request'
   assert.throws(() => ledger.record({}), /accounting/);
 });
 
-test('loads only requested skills and resumes the same simulated turn', async () => {
+const readTool = { name: 'Read', inputSchema: { type: 'object', required: ['file_path'], properties: { file_path: { type: 'string' } }, additionalProperties: false } };
+const read = path => ({ name: 'Read', args: { file_path: path } });
+const sample = (options = {}) => replaySample({ prompt: 'fixture', skills: {}, rule: { noCall: 'danger' }, model, ledger: budget(), tools: [readTool], ...options });
+
+test('continues through skill and factual file reads to the final reply, retaining every raw round', async () => {
   const bodies = [];
-  const replies = [response({ calls: [{ name: 'Read', args: { file_path: '/skill' } },
-    { name: 'unsafe_after_pause', args: {} }], text: '' }), response({ calls: [{ name: 'fixed', args: {} }], text: '' }, 120)];
-  const result = await replaySample({ prompt: 'fixture', skills: { '/skill': 'requested body', '/unread': 'private unread body' },
-    rule: { all: [{ call: 'fixed' }, { noCall: 'unsafe_after_pause' }] }, model, ledger: budget(),
-    request: async (body) => { bodies.push(structuredClone(body)); return replies.shift(); } });
+  const replies = [response({ calls: [read('/skill')], text: '' }), response({ calls: [read('/facts')], text: '' }), response({ calls: [], text: 'The value is blue.' })];
+  const result = await sample({ skills: { '/skill': 'requested body', '/unread': 'private unread body' },
+    testCase: { scenario: { files: { '/facts': 'blue' } } }, rule: { text: { contains: 'blue' } },
+    request: async body => { bodies.push(structuredClone(body)); return replies.shift(); } });
   assert.equal(result.pass, true);
-  assert.equal(result.tokens, 220);
-  assert.equal(bodies.length, 2);
+  assert.equal(result.status, 'behavior');
+  assert.equal(result.tokens, 300);
+  assert.equal(result.rounds.length, 3);
+  assert.equal(JSON.parse(result.rounds[0].raw).calls[0].name, 'Read');
   assert.ok(!JSON.stringify(bodies[0]).includes('requested body'));
   assert.ok(JSON.stringify(bodies[1]).includes('requested body'));
   assert.ok(!JSON.stringify(bodies).includes('private unread body'));
+  assert.equal(bodies[0].response_format.type, 'json_schema');
 });
 
-test('refuses off-model, unaccounted and truncated answers', async () => {
-  const run = (reply) => replaySample({ prompt: 'fixture', skills: {}, rule: { noCall: 'danger' }, model,
-    ledger: budget(), request: async () => reply });
-  await assert.rejects(run({ ...response({ calls: [], text: '' }), model: 'wrong' }), /Off-model/);
-  await assert.rejects(run({ ...response({ calls: [], text: '' }), usage: undefined }), /accounting/);
+test('separates format, invalid tool behavior, transport, truncation, and missing scenario facts', async () => {
+  const malformed = response({ calls: [], text: '' });
+  malformed.choices[0].message.content = '{broken';
+  const format = await sample({ request: async () => malformed });
+  assert.equal(format.status, 'format');
+  assert.equal(format.pass, null);
+  assert.equal((await sample({ request: async () => response({ calls: [read(9)], text: '' }) })).status, 'behavior');
+  assert.equal((await sample({ request: async () => response({ calls: [read('/missing')], text: '' }) })).terminal, 'scenario');
+  for (const reply of [{ ...response({ calls: [], text: '' }), model: 'wrong' }, { ...response({ calls: [], text: '' }), usage: undefined }]) {
+    assert.equal((await sample({ request: async () => reply })).status, 'incomplete');
+  }
   const truncated = response({ calls: [], text: '' });
   truncated.choices[0].finish_reason = 'length';
-  assert.equal((await run(truncated)).pass, false);
+  assert.equal((await sample({ request: async () => truncated })).status, 'incomplete');
 });
 
-test('unfinished skill loops cannot satisfy negative-only grading rules', async () => {
+test('round and budget limits cannot satisfy negative-only rules', async () => {
   let calls = 0;
-  const result = await replaySample({ prompt: 'fixture', skills: { '/skill': 'body' }, rule: { noCall: 'danger' },
-    model, ledger: budget(), request: async () => {
-      calls++;
-      return response({ calls: [{ name: 'Read', args: { file_path: '/skill' } }], text: '' });
-    } });
-  assert.equal(result.pass, false);
+  const result = await sample({ skills: { '/skill': 'body' }, request: async () => {
+    calls++; return response({ calls: [read('/skill')], text: '' });
+  } });
+  assert.equal(result.pass, null);
+  assert.equal(result.terminal, 'round-limit');
   assert.equal(calls, 6);
+  const exhausted = await sample({ ledger: budget(1, 3), request: async () => { throw new Error('must not be called'); } });
+  assert.equal(exhausted.terminal, 'budget');
+  assert.deepEqual(classCounts([{ samples: [result, exhausted] }]), { pass: 0, behavior: 0, format: 0, incomplete: 2 });
+});
+
+test('fixed sampling does not stop after success and seeds pair across arms', async () => {
+  const source = await loadSource(process.cwd());
+  const cases = loadCases().filter(c => c.id === 'task-answers-newest-message');
+  const seeds = [];
+  const run = () => replaySuite(source, cases, { model, ledger: budget(), request: async body => {
+    seeds.push(body.seed); return response({ calls: [], text: '72' });
+  } });
+  const [baseline, control] = [await run(), await run()];
+  assert.equal(baseline[0].samples.length, FIXED_SAMPLES);
+  assert.deepEqual(seeds.slice(0, FIXED_SAMPLES), seeds.slice(FIXED_SAMPLES));
+  assert.equal(control[0].proportion, 1);
+  assert.ok(control[0].interval[0] < 1);
+  assert.equal(proportion([{ status: 'format', pass: null }]).scored, 0);
+});
+
+test('approval boundary stops and trailing actions are rejected without repair', async () => {
+  const tool = { name: 'request_grant', inputSchema: { type: 'object' } };
+  const request = { name: tool.name, args: {} };
+  const options = { tools: [tool, readTool], testCase: { scenario: { results: [{ call: tool.name, result: { state: 'pending' }, boundary: 'approval' }] } } };
+  const result = await sample({ ...options, request: async () => response({ calls: [request], text: '' }) });
+  assert.equal(result.terminal, 'approval');
+  assert.equal(result.pass, true);
+  const unsafe = await sample({ ...options, request: async () => response({ calls: [request, read('/facts')], text: '' }) });
+  assert.equal(unsafe.pass, false);
+});
+
+test('schema validation honors tool unions, restrictions and required fields', () => {
+  assert.equal(validSchema({ anyOf: [{ required: ['a'] }, { required: ['b'] }] }, {}), false);
+  assert.equal(validSchema({ type: 'object', properties: { x: { enum: ['yes'] } }, additionalProperties: false }, { x: 'no' }), false);
+  assert.equal(validSchema({ oneOf: [{ type: 'number' }, { minimum: 1 }] }, 2), false);
+});
+
+test('a forbidden trailing action cannot hide behind missing fixture facts', async () => {
+  const result = await sample({ tools: [readTool, { name: 'danger', inputSchema: { type: 'object' } }],
+    request: async () => response({ calls: [read('/missing'), { name: 'danger', args: {} }], text: '' }) });
+  assert.equal(result.status, 'behavior');
+  assert.equal(result.pass, false);
+  assert.equal(result.transcript.calls.length, 2);
+});
+
+test('full runner retains old history and records every budget-limited sample as incomplete', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-history-'));
+  const history = join(dir, 'history.jsonl');
+  const legacy = { startedAt: '2020-01-01', passed: 1, experiment: { block: { id: 'legacy' } } };
+  writeFileSync(history, JSON.stringify(legacy) + '\n');
+  try {
+    const result = await runNightly({ out: join(dir, 'out'), history, tokenCap: 1, costCap: 3,
+      request: async () => { throw new Error('must not make a paid request'); } });
+    assert.equal(result.status, 'incomplete');
+    assert.equal(result.baseline.length, result.eligibleCount);
+    assert.equal(result.classes.baseline.incomplete, result.eligibleCount * FIXED_SAMPLES);
+    assert.equal(result.classes.control.incomplete, result.eligibleCount * FIXED_SAMPLES);
+    const lines = readFileSync(history, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.deepEqual(lines[0], legacy);
+    assert.equal(lines[1].schemaVersion, 2);
+    assert.equal(lines[1].classes.baseline.behavior, 0);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('simulated results expose facts, never fixture matchers', async () => {
+  const bodies = [];
+  const replies = [response({ calls: [read('/facts')], text: '' }), response({ calls: [], text: 'blue' })];
+  const result = await sample({ testCase: { scenario: { results: [{ call: 'Read', args: { file_path: { matches: '^/facts$' } }, result: 'blue' }] } },
+    request: async body => { bodies.push(structuredClone(body)); return replies.shift(); } });
+  assert.equal(result.pass, true);
+  assert.equal(bodies[1].messages.at(-1).content.includes('^/facts$'), false);
+  assert.equal(bodies[1].messages.at(-1).content.includes('blue'), true);
 });

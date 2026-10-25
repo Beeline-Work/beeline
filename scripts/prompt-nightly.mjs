@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import ts from 'typescript';
-import { check, loadCases, loadSource, parseAnswer, replayPrompt } from './prompt-cases.ts';
+import { check, loadCases, loadSource, replayPrompt, toolsFor } from './prompt-cases.ts';
 import { evaluateRule, skillPath } from './prompt-case-rules.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,21 +55,35 @@ export function removalBlocks(text) {
 export function chooseBlock(blocks, baseline, cases, previousId, skipped = []) {
   const protectedSections = new Set([...baseline.filter((row) => !row.pass), ...skipped]
     .map((row) => cases.find((c) => c.id === row.id)?.section));
-  const candidates = blocks.filter((block) => !protectedSections.has(block.section));
+  const candidates = blocks.filter((block) => !protectedSections.has(block.section) && !/authority|safety/i.test(block.section + ' ' + block.text));
   if (!candidates.length) return undefined;
   const previous = candidates.findIndex((block) => block.id === previousId);
   return candidates[(previous + 1) % candidates.length];
 }
 
-export function assessExperiment(baseline, candidate) {
-  const missing = baseline.length !== candidate.length || baseline.some((row) => !candidate.some((c) => c.id === row.id));
-  const regressions = baseline.filter((row) => row.pass && !candidate.find((c) => c.id === row.id)?.pass).map((row) => row.id);
-  const before = median(baseline.flatMap((row) => row.samples.map((s) => s.tokens)));
-  const after = median(candidate.flatMap((row) => row.samples.map((s) => s.tokens)));
-  const tokensDrop = before !== null && after !== null && after < before;
-  return { accepted: !missing && !regressions.length && tokensDrop &&
-    candidate.filter((row) => row.pass).length >= baseline.filter((row) => row.pass).length,
-    regressions, before, after };
+export function assessExperiment(baseline, candidate, control = []) {
+  const pairs = (other) => baseline.flatMap(row => row.samples.map((s, index) => ({ id: row.id, baseline: s,
+    other: other.find(c => c.id === row.id)?.samples[index] })));
+  const changed = pairs(candidate), unchanged = pairs(control);
+  const valid = p => p.baseline.status === 'behavior' && p.other?.status === 'behavior';
+  const complete = changed.length > 0 && changed.every(valid) && unchanged.every(valid) &&
+    candidate.length === baseline.length && control.length === baseline.length &&
+    [candidate, control].every(rows => baseline.every(r => rows.find(c => c.id === r.id)?.samples.length === r.samples.length)) &&
+    [...changed, ...unchanged].every(p => p.other?.seed === p.baseline.seed);
+  const gains = changed.filter(p => valid(p) && !p.baseline.pass && p.other.pass).length;
+  const losses = changed.filter(p => valid(p) && p.baseline.pass && !p.other.pass).length;
+  const flips = unchanged.filter(p => valid(p) && p.baseline.pass !== p.other.pass).length;
+  const before = median(baseline.flatMap(r => r.samples.map(s => s.tokens)));
+  const after = median(candidate.flatMap(r => r.samples.map(s => s.tokens)));
+  const regressions = [...new Set(changed.filter(p => valid(p) && p.baseline.pass && !p.other.pass).map(p => p.id))];
+  const net = gains - losses;
+  // Conservative paired discordance interval; a zero-effect result needs more data.
+  const margin = 1.96 * Math.sqrt(gains + losses);
+  const effectInterval = changed.length ? [(net-margin)/changed.length, (net+margin)/changed.length] : [-1, 1];
+  const enough = complete && net > flips && effectInterval[0] > 0;
+  return { accepted: enough && !losses && after < before, outcome: !enough ? 'too little data' : !losses && after < before ? 'propose removal' : 'rejected',
+    gains, losses, pairedSamples: changed.filter(valid).length, noiseFlips: flips, noisePairs: unchanged.filter(valid).length, noiseRate: unchanged.filter(valid).length ? flips / unchanged.filter(valid).length : null,
+    effectInterval, regressions, before, after };
 }
 
 export function budget(tokenCap = DEFAULT_TOKEN_CAP, costCap = DEFAULT_COST_CAP) {
@@ -94,46 +108,150 @@ export function budget(tokenCap = DEFAULT_TOKEN_CAP, costCap = DEFAULT_COST_CAP)
   };
 }
 
-export async function replaySample({ prompt, skills, rule, model, request, ledger }) {
-  const messages = [{ role: 'user', content: prompt }];
-  const transcript = { calls: [], text: '' };
-  const requests = [];
-  let tokens = 0, cost = 0;
-  for (let round = 0; round < MAX_ROUNDS; round++) {
-    const body = { model, messages, stream: false, max_tokens: MAX_OUTPUT, reasoning: { enabled: false }, usage: { include: true } };
-    const release = ledger.reserve(body);
-    let response;
-    try { response = await request(body); ledger.record(response.usage); }
-    finally { release(); }
-    tokens += response.usage.total_tokens;
-    cost += response.usage.cost;
-    requests.push({ id: response.id, model: response.model, usage: response.usage });
-    if (response.model !== model) throw new Error(`Off-model replay: ${response.model}`);
-    const choice = response.choices?.[0];
-    if (!choice || choice.finish_reason !== 'stop' || typeof choice.message?.content !== 'string')
-      return { pass: false, reason: 'Incomplete model answer', transcript, tokens, cost, requests };
-    let answer;
-    try {
-      answer = parseAnswer(choice.message.content);
-      if (!Array.isArray(answer.calls) || typeof answer.text !== 'string' ||
-          answer.calls.some((call) => !call || typeof call.name !== 'string' || !call.args || typeof call.args !== 'object'))
-        throw new Error('Malformed replay transcript');
-    } catch (error) {
-      return { pass: false, reason: error.message, transcript, tokens, cost, requests };
+/** JSON schema vocabulary used by the mounted tool surface. No coercion or repair. */
+export function validSchema(schema, value) {
+  if (schema.anyOf && !schema.anyOf.some(s => validSchema(s, value))) return false;
+  if (schema.oneOf && schema.oneOf.filter(s => validSchema(s, value)).length !== 1) return false;
+  if (schema.allOf && !schema.allOf.every(s => validSchema(s, value))) return false;
+  if (schema.not && validSchema(schema.not, value)) return false;
+  if (schema.enum && !schema.enum.some(v => JSON.stringify(v) === JSON.stringify(value))) return false;
+  if ('const' in schema && JSON.stringify(schema.const) !== JSON.stringify(value)) return false;
+  const type = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+  if (schema.type && !(Array.isArray(schema.type) ? schema.type : [schema.type]).some(t => t === type || t === 'integer' && Number.isInteger(value))) return false;
+  if (type === 'object') {
+    if (schema.required?.some(k => !Object.hasOwn(value, k))) return false;
+    for (const [k, v] of Object.entries(value)) {
+      const child = schema.properties?.[k];
+      if (child && !validSchema(child, v)) return false;
+      if (!child && schema.additionalProperties === false) return false;
+      if (!child && typeof schema.additionalProperties === 'object' && !validSchema(schema.additionalProperties, v)) return false;
     }
-    // A skill Read is a pause boundary; nothing beyond it has been simulated.
-    const boundary = answer.calls.findIndex((call) => call.name === 'Read' && Object.hasOwn(skills, call.args.file_path));
-    transcript.calls.push(...(boundary < 0 ? answer.calls : answer.calls.slice(0, boundary + 1)));
-    if (answer.text) transcript.text += `${transcript.text ? '\n' : ''}${answer.text}`;
-    if (boundary < 0) return { ...evaluateRule(rule, transcript), transcript, tokens, cost, requests };
-    const call = answer.calls[boundary];
-    messages.push({ role: 'assistant', content: JSON.stringify({ calls: answer.calls.slice(0, boundary + 1), text: answer.text }) });
-    messages.push({ role: 'user', content: `Requested skill result: ${JSON.stringify({ call, content: skills[call.args.file_path] })}\nContinue the same turn. Return only new calls and text as JSON.` });
   }
-  // An unfinished skill continuation cannot pass a negative-only rule.
-  return { pass: false, reason: 'Skill continuation exceeded six rounds', transcript, tokens, cost, requests };
+  if (type === 'array' && (value.length < (schema.minItems ?? 0) || value.length > (schema.maxItems ?? Infinity) || schema.items && value.some(v => !validSchema(schema.items, v)))) return false;
+  if (type === 'string' && schema.format === 'uuid' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return false;
+  if (type === 'string' && (value.length < (schema.minLength ?? 0) || value.length > (schema.maxLength ?? Infinity) || schema.pattern && !new RegExp(schema.pattern).test(value))) return false;
+  if (type === 'number' && (value < (schema.minimum ?? -Infinity) || value > (schema.maximum ?? Infinity))) return false;
+  return true;
 }
 
+export function scenarioResult(testCase, call, skills) {
+  if (call.name === 'Read' && Object.hasOwn(skills, call.args.file_path)) return { result: skills[call.args.file_path] };
+  const state = testCase.scenario ?? {};
+  const explicit = state.results?.find(entry => evaluateRule({ call: entry.call, args: entry.args }, { calls: [call], text: '' }).pass);
+  if (explicit) return { result: explicit.result, ...(explicit.boundary ? { boundary: explicit.boundary } : {}) };
+  if (call.name === 'Read' && Object.hasOwn(state.files ?? {}, call.args.file_path)) return { result: state.files[call.args.file_path] };
+  // Equivalent native file reads use the same recorded fact, without running a shell.
+  if (call.name === 'Bash') {
+    const path = /^cat\s+([/a-zA-Z0-9_.-]+)\s*$/.exec(call.args.command)?.[1];
+    if (path && Object.hasOwn(state.files ?? {}, path)) return { result: { exitCode: 0, stdout: state.files[path] } };
+  }
+  if (call.name === 'read') {
+    const facts = { brief: state.brief ?? testCase.session?.brief, messages: state.history ?? testCase.messages, checks: state.checks, usage: state.usage };
+    if (facts[call.args.facet] !== undefined) return { result: facts[call.args.facet] };
+  }
+  if (call.name === 'connect' && Object.hasOwn(state.connect ?? {}, call.args.mode)) return { result: state.connect[call.args.mode] };
+  const legacy = testCase.toolResults?.[call.name];
+  if (legacy !== undefined) {
+    let result; try { result = JSON.parse(legacy); } catch { result = legacy; }
+    return { result, ...(/pending approval/i.test(legacy) ? { boundary: 'approval' } : {}) };
+  }
+  // Missing facts are a simulator limitation, never invented success or agent failure.
+  return { result: { error: 'No scenario result recorded for this call' }, boundary: 'missing' };
+}
+
+/** Fail closed on already-observed forbidden actions, even if continuation is unavailable. */
+function safetyViolation(rule, transcript) {
+  if ('all' in rule) return rule.all.map(r => safetyViolation(r, transcript)).find(Boolean);
+  if ('noCall' in rule || 'atMostOnce' in rule || 'not' in rule && 'call' in rule.not) {
+    const verdict = evaluateRule(rule, transcript);
+    if (!verdict.pass) return verdict.reason;
+  }
+}
+
+export async function replaySample({ prompt, skills, rule, model, request, ledger, testCase = {}, tools = [], seed = 1, structured = true }) {
+  const messages = [{ role: 'user', content: prompt }];
+  const transcript = { calls: [], text: '' };
+  const requests = [], rounds = [];
+  let tokens = 0, cost = 0;
+  const finish = (status, reason, terminal) => {
+    const unsafe = safetyViolation(rule, transcript);
+    if (unsafe && status === 'incomplete') { status = 'behavior'; reason = unsafe; terminal = 'unsafe-action'; }
+    const verdict = status === 'behavior' ? evaluateRule(rule, transcript) : { pass: null, reason };
+    return { ...verdict, status, terminal, transcript, tokens, cost, requests, rounds, seed,
+      truthfulness: testCase.truthfulness ? evaluateRule(testCase.truthfulness, transcript) : undefined };
+  };
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const answerSchema = { type: 'object', properties: { calls: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, args: { type: 'object' } }, required: ['name', 'args'], additionalProperties: false } }, text: { type: 'string' } }, required: ['calls', 'text'], additionalProperties: false };
+    const body = { model, messages, seed, provider: { require_parameters: true }, stream: false, max_tokens: MAX_OUTPUT, reasoning: { enabled: false }, usage: { include: true },
+      ...(structured ? { response_format: { type: 'json_schema', json_schema: { name: 'replay_turn', strict: true, schema: answerSchema } } } : {}) };
+    let response, release;
+    try {
+      release = ledger.reserve(body);
+      response = await request(body);
+      if (Number.isFinite(response.usage?.total_tokens)) tokens += response.usage.total_tokens;
+      if (Number.isFinite(response.usage?.cost)) cost += response.usage.cost;
+      ledger.record(response.usage);
+    } catch (error) {
+      rounds.push({ round, raw: response?.choices?.[0]?.message?.content, response, error: error.message });
+      return finish('incomplete', error.message, /budget/i.test(error.message) ? 'budget' : 'transport');
+    } finally { release?.(); }
+    requests.push({ id: response.id, model: response.model, usage: response.usage });
+    const choice = response.choices?.[0];
+    const raw = choice?.message?.content;
+    const trace = { round, raw, response, results: [] };
+    rounds.push(trace);
+    if (response.model !== model) return finish('incomplete', `Off-model replay: ${response.model}`, 'transport');
+    if (!choice || choice.finish_reason !== 'stop') return finish('incomplete', 'Incomplete model answer', 'output-limit');
+    let answer;
+    try {
+      answer = JSON.parse(raw);
+      if (!validSchema(answerSchema, answer)) throw new Error('Malformed replay transcript');
+    } catch (error) { return finish('format', error.message, 'json'); }
+    if (answer.text) transcript.text += `${transcript.text ? '\n' : ''}${answer.text}`;
+    if (!answer.calls.length) return finish('behavior', undefined, 'final');
+    transcript.calls.push(...answer.calls);
+    for (const call of answer.calls) {
+      const definition = tools.find(t => t.name === call.name);
+      if (!definition || !validSchema(definition.inputSchema, call.args)) {
+        return { ...finish('behavior', undefined, 'invalid-call'), pass: false, reason: `Invalid simulated tool call: ${call.name}` };
+      }
+    }
+    for (const call of answer.calls) {
+      // These calls end the assigned turn; trailing calls are never silently dropped.
+      if (['order', 'report', 'no_reply_needed'].includes(call.name)) {
+        if (answer.calls.at(-1) !== call) return { ...finish('behavior', undefined, 'invalid-sequence'), pass: false, reason: 'Calls after terminal action' };
+        return finish('behavior', undefined, call.name);
+      }
+      const result = scenarioResult(testCase, call, skills);
+      trace.results.push({ call, ...result });
+      if (result.boundary === 'missing') return finish('incomplete', result.result.error, 'scenario');
+      if (result.boundary) {
+        if (answer.calls.at(-1) !== call) return { ...finish('behavior', undefined, 'invalid-sequence'), pass: false, reason: 'Calls after a tool boundary' };
+        return finish('behavior', undefined, result.boundary);
+      }
+      if (['order', 'report', 'no_reply_needed', 'merge_corner'].includes(call.name)) return finish('behavior', undefined, call.name);
+    }
+    messages.push({ role: 'assistant', content: raw });
+    messages.push({ role: 'user', content: `Simulated tool results: ${JSON.stringify(trace.results)}\nContinue the same turn. Return only new calls and text as JSON. If finished, return calls:[].` });
+  }
+  return finish('incomplete', 'Continuation exceeded six rounds', 'round-limit');
+}
+
+export const FIXED_SAMPLES = 2;
+export function proportion(samples) {
+  const scored = samples.filter(s => s.status === 'behavior');
+  const n = scored.length, k = scored.filter(s => s.pass).length;
+  if (!n) return { passed: k, scored: n, proportion: null, interval: [0, 1] };
+  const p = k / n, z = 1.96, d = 1 + z*z/n;
+  const center = (p + z*z/(2*n))/d;
+  const half = z*Math.sqrt(p*(1-p)/n + z*z/(4*n*n))/d;
+  return { passed: k, scored: n, proportion: p, interval: [center-half, center+half] };
+}
+export function classCounts(rows) {
+  const counts = { pass: 0, behavior: 0, format: 0, incomplete: 0 };
+  for (const row of rows) for (const sample of row.samples) counts[sample.status === 'behavior' && sample.pass ? 'pass' : sample.status]++;
+  return counts;
+}
 
 /** Browser-session cases stay outside both arms of the weekly cohort. */
 export function needsSquire(testCase) {
@@ -144,31 +262,26 @@ export function needsSquire(testCase) {
 
 export async function replaySuite(source, cases, options) {
   const rows = [];
+  // Sample index and seed are identical across all arms. No success-dependent stopping.
   let next = 0;
-  let failed;
   async function worker() {
-   while (next < cases.length && !failed) {
+   while (next < cases.length) {
     const testCase = cases[next++];
-    try {
     const skills = Object.fromEntries(source.skills.beelineManagedSkills('source', { isReviewer: testCase.session?.reviewer === true })
-      .map((skill) => [skillPath(skill.name), skill.content]));
+      .map(skill => [skillPath(skill.name), skill.content]));
     const prompt = replayPrompt(source, testCase);
     const samples = [];
-    const sample = () => replaySample({ prompt, skills, rule: testCase.pass, ...options });
-    samples.push(await sample());
-    if (!samples[0].pass) {
-      samples.push(await sample());
-      samples.push(await sample());
-    }
-    const pass = samples.length === 1 ? samples[0].pass : samples.filter((s) => s.pass).length >= 2;
-    const row = { id: testCase.id, section: testCase.section, pass, medianTokensPerTurn: median(samples.map((s) => s.tokens)), samples };
+    for (let index = 0; index < FIXED_SAMPLES; index++) samples.push(await replaySample({ prompt, skills, rule: testCase.pass,
+      ...options, testCase, tools: toolsFor(source, testCase), seed: 1000 + index }));
+    const stats = proportion(samples);
+    const row = { id: testCase.id, section: testCase.section, pass: stats.scored === FIXED_SAMPLES ? stats.proportion > 0.5 : null,
+      status: samples.some(s => s.status === 'incomplete') ? 'incomplete' : samples.some(s => s.status === 'format') ? 'format' : 'behavior',
+      ...stats, medianTokensPerTurn: median(samples.filter(s => s.tokens > 0).map(s => s.tokens)), samples };
     rows.push(row);
-    if (options.onCase) options.onCase(row);
-    } catch (error) { failed = error; }
+    options.onCase?.(row);
    }
   }
   await Promise.all(Array.from({ length: 4 }, worker));
-  if (failed) throw failed;
   return rows.sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -193,9 +306,10 @@ export function fileTransport(directory) {
   };
 }
 
-export async function runNightly({ out, history, request, tokenCap, costCap, root = ROOT }) {
+export async function runNightly({ out, history, request, tokenCap, costCap, root = ROOT, label = 'weekly replay' }) {
   mkdirSync(out, { recursive: true });
   const startedAt = new Date().toISOString();
+  const workingTreeDiffHash = createHash('sha256').update(execFileSync('git', ['diff', '--no-ext-diff', 'HEAD'], { cwd: root })).digest('hex');
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   // Read the production default, rather than maintain a separate model choice.
   const model = readFileSync(join(root, GUIDE_SOURCE), 'utf8')
@@ -208,11 +322,13 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   const problems = check(source, allCases);
   if (problems.length) throw new Error(problems.join('\n'));
   const ledger = budget(tokenCap, costCap);
-  const result = { startedAt, commit, model, status: 'running', caseCount: allCases.length, eligibleCount: cases.length, skipped, baseline: [], candidate: [], experiment: { outcome: 'not run' } };
+  const result = { startedAt, commit, workingTreeDiffHash, model, schemaVersion: 2, label, status: 'running', caseCount: allCases.length, eligibleCount: cases.length, skipped, baseline: [], control: [], candidate: [], experiment: { outcome: 'not run' } };
   const save = () => writeFileSync(join(out, 'result.json'), `${JSON.stringify({ ...result, tokens: ledger.tokens, cost: ledger.cost }, null, 2)}\n`);
   let temp;
   try {
     result.baseline = await replaySuite(source, cases, { model, request, ledger, onCase(row) { result.baseline.push(row); save(); } });
+    result.control = await replaySuite(source, cases, { model, request, ledger, onCase(row) { result.control.push(row); save(); } });
+    result.noise = assessExperiment(result.baseline, result.baseline, result.control);
     const text = readFileSync(join(root, SOURCE), 'utf8');
     const prior = existsSync(history) ? readFileSync(history, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
     const block = chooseBlock(removalBlocks(text), result.baseline, allCases, prior.at(-1)?.experiment?.block?.id, skipped);
@@ -227,15 +343,15 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
       else {
         result.candidate = await replaySuite(candidateSource, cases, { model, request, ledger,
           onCase(row) { result.candidate.push(row); save(); } });
-        const assessment = assessExperiment(result.baseline, result.candidate);
-        result.experiment = { ...result.experiment, ...assessment, outcome: assessment.accepted ? 'propose removal' : 'rejected' };
+        const assessment = assessExperiment(result.baseline, result.candidate, result.control);
+        result.experiment = { ...result.experiment, ...assessment, outcome: assessment.outcome };
         if (assessment.accepted) {
           writeFileSync(join(out, 'prompt-assembly.ts'), candidateText);
-          writeFileSync(join(out, 'proposal.md'), `Remove one prompt paragraph after weekly replay\n\n## Reproduced\nNot a defect report. Experiment ${block.id} on ${commit}, model ${model}.\n\n## Demonstrated\nReplayed all ${cases.length} cases on baseline and candidate using the existing first-pass/2-of-3 rule. Baseline ${result.baseline.filter((r) => r.pass).length}/${cases.length}; candidate ${result.candidate.filter((r) => r.pass).length}/${cases.length}. Median tokens per simulated turn: ${assessment.before} → ${assessment.after}. No previously passing case regressed. Total weekly replay tokens: ${ledger.tokens}; cost: $${ledger.cost.toFixed(6)}.\n\nNormal independent review and merge authority still apply. Run artifact contains per-case samples and accounting.\n`);
+          writeFileSync(join(out, 'proposal.md'), `Remove one prompt paragraph after weekly replay\n\n## Reproduced\nNot a defect report. Experiment ${block.id} on ${commit}, model ${model}.\n\n## Demonstrated\nReplayed all ${cases.length} cases on baseline and candidate using fixed paired samples and an unchanged control. Baseline ${result.baseline.filter((r) => r.pass).length}/${cases.length}; candidate ${result.candidate.filter((r) => r.pass).length}/${cases.length}. Median tokens per simulated turn: ${assessment.before} → ${assessment.after}. No previously passing case regressed. Total weekly replay tokens: ${ledger.tokens}; cost: $${ledger.cost.toFixed(6)}.\n\nNormal independent review and merge authority still apply. Run artifact contains per-case samples and accounting.\n`);
         }
       }
     } else result.experiment.outcome = 'skipped: all blocks protected by failing cases';
-    result.status = 'complete';
+    result.status = [result.baseline, result.control, result.candidate].some(rows => rows.some(r => r.samples.some(s => s.status === 'incomplete'))) ? 'incomplete' : 'complete';
   } catch (error) {
     result.status = 'incomplete';
     result.error = error.message;
@@ -244,16 +360,18 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     if (temp) rmSync(temp, { recursive: true, force: true });
     save();
   }
+  result.classes = { baseline: classCounts(result.baseline), control: classCounts(result.control), candidate: classCounts(result.candidate) };
+  save();
   const passed = result.baseline.filter((row) => row.pass).length;
-  const total = median(result.baseline.flatMap((row) => row.samples.map((sample) => sample.tokens)));
+  const total = median(result.baseline.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
   const rate = result.status === 'complete'
     ? `${passed}/${cases.length} passed (${(100 * passed / cases.length).toFixed(1)}%)`
-    : `${result.baseline.length}/${cases.length} cases completed, ${passed} passed; overall pass rate unavailable`;
-  const summary = `Prompt weekly ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
+    : `${result.baseline.length}/${cases.length} cases recorded, ${passed} fully passing; overall pass rate unavailable`;
+  const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
-  appendFileSync(history, `${JSON.stringify({ startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,
-    tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, pass, medianTokensPerTurn }) => ({ id, pass, medianTokensPerTurn })), experiment: result.experiment })}\n`);
+  appendFileSync(history, `${JSON.stringify({ schemaVersion: 2, classes: result.classes, startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,
+    tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, pass, medianTokensPerTurn, proportion, interval, scored }) => ({ id, pass, medianTokensPerTurn, proportion, interval, scored })), experiment: result.experiment })}\n`);
   console.log(summary);
   return { ...result, tokens: ledger.tokens, cost: ledger.cost };
 }
@@ -268,7 +386,7 @@ async function main() {
   const tokenCap = Number(option('--token-cap', DEFAULT_TOKEN_CAP));
   const costCap = Number(option('--cost-cap', DEFAULT_COST_CAP));
   if (![tokenCap, costCap].every((value) => Number.isFinite(value) && value > 0)) throw new Error('Budgets must be positive finite numbers');
-  const result = await runNightly({ out, history, request: fileTransport(resolve(exchange)), tokenCap, costCap });
+  const result = await runNightly({ out, history, request: fileTransport(resolve(exchange)), tokenCap, costCap, label: option('--label', 'weekly replay') });
   if (result.status !== 'complete') process.exitCode = 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

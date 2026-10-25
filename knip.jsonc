@@ -199,6 +199,7 @@
         "scripts/composer-desktop-voice-entry-proof.tsx",
         // The browser regression bundles this entry by path through esbuild.
         "scripts/call-feedback-proof.tsx",
+        "scripts/desktop-sheet-width-proof.tsx",
         "scripts/voice-resume-proof.tsx",
         "scripts/composer-waveform-native-proof.tsx",
         // Gradle bundles the pinned composer screenshot fixture via entryFile.

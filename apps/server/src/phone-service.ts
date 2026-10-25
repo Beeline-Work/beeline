@@ -4903,9 +4903,8 @@ export class PhoneService {
       [roomId, viewerId, messageIdValue],
     )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
-    if (result.changed) {
-      this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
-    }
+    // The committed row's PostgreSQL notification reconciles every reader
+    // device, including those on this server. Publishing here duplicates it.
   }
 
   /**
@@ -4964,7 +4963,7 @@ export class PhoneService {
       throw new Error(
         'messageId is invalid: only a row that counts as unread can be marked unread',
       );
-    this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
+    // INSERT/UPDATE/DELETE all notify through PostgreSQL, once per changed row.
   }
 
   async uploadMedia(

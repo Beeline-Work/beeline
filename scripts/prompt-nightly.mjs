@@ -11,6 +11,7 @@ import { evaluateRule, skillPath } from './prompt-case-rules.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = 'apps/body/src/prompt-assembly.ts';
+const GUIDE_SOURCE = 'apps/server/src/free-agents.ts';
 const MAX_OUTPUT = 4096;
 const MAX_ROUNDS = 6;
 export const DEFAULT_TOKEN_CAP = 6_000_000;
@@ -21,6 +22,15 @@ export const median = (values) => {
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
+
+/** Temporary tree with every file loadSource reads, so a candidate prompt can be loaded. */
+export function buildCandidateTree(root) {
+  const temp = mkdtempSync(join(tmpdir(), 'beeline-prompt-nightly-'));
+  cpSync(join(root, 'apps/body/src'), join(temp, 'apps/body/src'), { recursive: true });
+  cpSync(join(root, GUIDE_SOURCE), join(temp, GUIDE_SOURCE));
+  symlinkSync(join(root, 'node_modules'), join(temp, 'node_modules'), 'dir');
+  return temp;
+}
 
 /** Only complete literal paragraphs in render functions can be removed. */
 export function removalBlocks(text) {
@@ -188,7 +198,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   const startedAt = new Date().toISOString();
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
   // Read the production default, rather than maintain a separate model choice.
-  const model = readFileSync(join(root, 'apps/server/src/free-agents.ts'), 'utf8')
+  const model = readFileSync(join(root, GUIDE_SOURCE), 'utf8')
     .match(/model: env\.BEELINE_FREE_AGENT_MODEL \|\| '([^']+)'/)?.[1];
   if (!model) throw new Error('Cannot determine the production free-agent model');
   const allCases = loadCases();
@@ -208,9 +218,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
     const block = chooseBlock(removalBlocks(text), result.baseline, allCases, prior.at(-1)?.experiment?.block?.id, skipped);
     if (block) {
       result.experiment = { outcome: 'running', block };
-      temp = mkdtempSync(join(tmpdir(), 'beeline-prompt-nightly-'));
-      cpSync(join(root, 'apps/body/src'), join(temp, 'apps/body/src'), { recursive: true });
-      symlinkSync(join(root, 'node_modules'), join(temp, 'node_modules'), 'dir');
+      temp = buildCandidateTree(root);
       const candidateText = text.slice(0, block.start) + "''" + text.slice(block.end);
       writeFileSync(join(temp, SOURCE), candidateText);
       const candidateSource = await loadSource(temp);

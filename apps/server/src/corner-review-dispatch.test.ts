@@ -151,7 +151,8 @@ describe('corner message attribution', () => {
       .resolves.toMatchObject({body:'intent'});
     await expect(read('review-private')).rejects.toThrow('message access denied');
     await expect(read('review-approval',A)).rejects.toThrow('message access denied');
-    await expect(daemon.execute('getRoomMessage', {roomId:source,messageId:'review-approval'},B)).rejects.toThrow();
+    await expect(daemon.execute('getRoomMessage', {roomId:source,messageId:'review-approval'},B))
+      .resolves.toMatchObject({body:'Approved scope'});
     expect((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2`, [source,B])).rowCount).toBe(0);
     await daemon.execute('postAgentTurnReceipt', {roomId:C,requestId:review!.turnRequestId,
       generationId:'g1',status:'complete'}, B);
@@ -171,6 +172,84 @@ describe('corner message attribution', () => {
     await expect(read('review-approval')).rejects.toThrow('message access denied');
     await db.query(`DELETE FROM rooms WHERE id=$1`, [source]);
   });
+  it.each([false, true])('REVIEW-SOURCE-2 reads the approval DM transcript during review (different owner: %s)', async differentOwner => {
+    const source = '55555555-5555-4555-8555-555555555555';
+    const sibling = '66666666-6666-4666-8666-666666666666';
+    const otherOwner = 'd'.repeat(64);
+    const briefRevision = differentOwner ? 4 : 1;
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other owner','other-owner')
+      ON CONFLICT DO NOTHING`, [otherOwner]);
+    await db.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1', [B,differentOwner ? otherOwner : H]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants)
+      VALUES($1,$2,'Approval DM','[]')`, [source,W]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id)
+      VALUES($1,$2,'Source child',$3)`, [sibling,W,source]);
+    const approval = '1'.repeat(64), surrounding = '2'.repeat(64), childMessage = '3'.repeat(64);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,presentation,text) VALUES
+      ($1,$4,$6,'message','Approved scope'),
+      ($2,$4,$6,'message','Prior human decision'),
+      ($3,$5,$6,'message','Outside source Room')`, [approval,surrounding,childMessage,source,sibling,H]);
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,
+      source_room_id,source_message_id,approval_basis) VALUES
+      ($1,$5,'Review scope','Review scope',$2,$3,$4,jsonb_build_object('sourceMessageId',$4::text))`,
+      [C,H,source,approval,briefRevision]);
+    await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [R,B]);
+    await greenHead(7, 'a'.repeat(40));
+    const [review] = await commands(B,C);
+    const transcript = (agent = B) => daemon.execute('getRoomConversation', {roomId:source,limit:10},agent);
+    await expect(transcript()).resolves.toMatchObject({items: expect.arrayContaining([
+      expect.objectContaining({id:approval}),
+    ])});
+    await claim(review!);
+    await expect(transcript()).resolves.toMatchObject({items: expect.arrayContaining([
+      expect.objectContaining({id:approval,body:'Approved scope'}),
+      expect.objectContaining({id:surrounding,body:'Prior human decision'}),
+    ])});
+    await expect(daemon.execute('getRoomMessage',{roomId:source,messageId:surrounding},B))
+      .resolves.toMatchObject({body:'Prior human decision'});
+    await expect(transcript(A)).rejects.toThrow();
+    await expect(daemon.execute('getRoomInbox',{roomId:source},B)).rejects.toThrow();
+    await expect(daemon.execute('postRoomMessage',{
+      roomId:source,requestId:review!.turnRequestId,generationId:'g1',text:'Outside assignment',
+    },B)).rejects.toThrow();
+    await expect(daemon.execute('listRoomMembers',{roomId:source},B)).rejects.toThrow();
+    await expect(daemon.execute('getRoomConversation',{roomId:sibling},B)).rejects.toThrow();
+    await expect(daemon.execute('getRoomMessage',{roomId:source,messageId:childMessage},B)).rejects.toThrow();
+    expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2',[source,B])).rowCount).toBe(0);
+    for (const state of ['complete','cancelled']) {
+      await db.query('UPDATE agent_commands SET state=$2 WHERE id=$1',[review!.id,state]);
+      await expect(transcript()).rejects.toThrow();
+    }
+    await db.query("UPDATE agent_commands SET state='claimed' WHERE id=$1",[review!.id]);
+    for (const purpose of ['repair','verdict']) {
+      await db.query(`UPDATE agent_commands SET review_context=review_context || jsonb_build_object('purpose',$2::text) WHERE id=$1`,[review!.id,purpose]);
+      await expect(transcript()).rejects.toThrow();
+    }
+    await db.query("UPDATE agent_commands SET review_context=review_context-'purpose' WHERE id=$1",[review!.id]);
+    await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',[R,B]);
+    await expect(transcript()).rejects.toThrow();
+    await db.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2',[R,B]);
+    const otherWorkspace = '77777777-7777-4777-8777-777777777777';
+    await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Other workspace')",[otherWorkspace]);
+    await db.query('UPDATE rooms SET workspace_id=$2 WHERE id=$1',[source,otherWorkspace]);
+    await expect(transcript()).rejects.toThrow();
+    await db.query('UPDATE rooms SET workspace_id=$2 WHERE id=$1',[source,W]);
+    await db.query('DELETE FROM workspaces WHERE id=$1',[otherWorkspace]);
+    await db.query('UPDATE messages SET deleted_at=now() WHERE id=$1',[approval]);
+    await expect(transcript()).rejects.toThrow();
+    await db.query('UPDATE messages SET deleted_at=NULL WHERE id=$1',[approval]);
+    await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1',[C]);
+    await expect(transcript()).rejects.toThrow();
+    await db.query('UPDATE rooms SET archived_at=NULL WHERE id=$1',[C]);
+    await db.query('UPDATE corner_brief_revisions SET revision=revision+1 WHERE corner_id=$1',[C]);
+    await expect(transcript()).rejects.toThrow();
+    await db.query('UPDATE corner_brief_revisions SET revision=revision-1 WHERE corner_id=$1',[C]);
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"') WHERE corner_id=$1`,[C]);
+    await expect(transcript()).rejects.toThrow();
+    await db.query('DELETE FROM rooms WHERE id=$1',[source]);
+    await db.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[B,H]);
+  });
+
   it.each([
     {reason:'ACP error -32000: Authentication required',free:false},
     {reason:'model selection unavailable',free:false},

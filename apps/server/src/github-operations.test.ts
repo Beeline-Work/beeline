@@ -700,8 +700,9 @@ describe('GitHub phone operations', () => {
     expect(self).not.toHaveProperty('reviewerIsAuthor');
     await database.query(`UPDATE corner_facts SET owner_agent_id=NULL,lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });
-    // The live verdict leads; the wake reports only what was dispatched.
-    expect(result).toMatchObject({ stage: 'waiting_for_yes', checks: 'passed', reviewerWake: { status: 'waiting' } });
+    // Repairing the unknown snapshot commits the green transition; the wake
+    // reports the resulting dispatch, without a self-review special case.
+    expect(result).toMatchObject({ stage: 'waiting_for_yes', checks: 'passed', reviewerWake: { status: 'dispatched' } });
     expect(result).not.toHaveProperty('recordedChecks');
   });
 

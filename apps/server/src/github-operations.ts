@@ -2578,15 +2578,16 @@ export class GitHubOperations {
           await lockCornerLifecycle(database, target.corner_id);
           // Webhooks signal a refresh. Revalidate its head and age only after
           // the provider has replied, under the run lock then the fact row lock.
-          const current = (
+          const currentRow = (
             await database.query<{ lifecycle: CornerLifecycleView & {
               checksSummary?: { fetchStartedAt?: number };
-            } }>(
-              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            }; updated_at: string; merge_attempt_head: string | null }>(
+              `SELECT lifecycle,updated_at::text,merge_attempt_head FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
               [target.corner_id],
             )
-          ).rows[0]?.lifecycle;
-          if (!current) return;
+          ).rows[0];
+          if (!currentRow) return;
+          const current = currentRow.lifecycle;
           if (livePr && current.pr?.number !== livePr.number) return;
           // GitHub may deliver a completed run for the previous branch head after a push.
           if (current.pr?.headSha && checkHeadSha !== current.pr.headSha) return;
@@ -2743,6 +2744,13 @@ export class GitHubOperations {
           );
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
+          // A live checks read may repair the header while an earlier merge
+          // awaits confirmation. Its writes must not restart that claim's
+          // recovery grace period, which is anchored to updated_at.
+          if (options?.snapshot && currentRow.merge_attempt_head)
+            await database.query(`UPDATE corner_facts SET updated_at=$2::timestamptz
+              WHERE corner_id=$1 AND merge_attempt_head=$3`,
+            [target.corner_id, currentRow.updated_at, currentRow.merge_attempt_head]);
         });
     } catch (error) {
       if (transientGitHubError(error)) {
@@ -2759,7 +2767,9 @@ export class GitHubOperations {
       }
       throw error;
     }
-    await this.refreshStaleMergeability(target.corner_id, confirmedPr);
+    // A checks read repairs only its check snapshot; mergeability refreshes
+    // retain their event path and must not reset a pending merge claim's age.
+    if (!options?.snapshot) await this.refreshStaleMergeability(target.corner_id, confirmedPr);
   }
 
   private async lifecycle(

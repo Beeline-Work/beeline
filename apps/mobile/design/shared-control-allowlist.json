@@ -136,11 +136,11 @@
   },
   {
     "file": "components/buzz/Button.tsx",
-    "line": 157,
+    "line": 161,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "81bf16a34f89804db706",
-    "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true, }} disabled={isDisabled} onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(event); }} style={(state) => appearance ? [ typeof appearance.control === 'function' ? appearance.con",
+    "id": "053b4a505a16af0f08f8",
+    "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true, }} disabled={isDisabled} hitSlop={ inline ? (props.hitSlop ?? { top: 13, bottom: 13, left: 22, right: 22 }) : props.hitSlop } onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(",
     "reason": "Shared Button implementation, including provider-free recovery path."
   },
   {
@@ -181,29 +181,29 @@
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 372,
+    "line": 373,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "615a34c86f1b702f42b0",
+    "id": "13a0ae7969b48be4fb27",
     "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 379,
+    "line": 380,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "306ea6443df9d5741803",
+    "id": "2ef4fb0303298020e0df",
     "control": "<View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numberOfLines={1} style={styles.replyLabel}> <Text style={styles.replyGlyph}>↩</Text> Replying to{' '} <Text style={styles.replyHandle}>@{reply.handle}</Text> </Text> <Text numberOfLines={1} ellipsizeMode=\"tail\" sty",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 405,
+    "line": 406,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "f2bbacc5a94950d5972f",
-    "control": "<View key={`${attachment.uri}:${index}`} style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]} testID={`pending-chat-attachment-${index}`} > <View style={styles.attachmentCopy}> <Text numberOfLines={1} ellipsizeMode=\"tail\" style={styles.attachmentName}> {attachment.name} </Text> <Text numberOfLines={1} style={styles.attachmentMeta} testID={`pending-chat-attachment-meta-${index",
+    "id": "509b9367cf62dd582c11",
+    "control": "<View key={`${attachment.uri}:${index}`} style={[styles.attachment, (reply || index > 0) && styles.adjunctDivider]} testID={`pending-chat-attachment-${index}`} > <View style={styles.attachmentCopy}> <Text numberOfLines={1} ellipsizeMode=\"tail\" style={styles.attachmentName}> {attachment.name} </Text> <InlineRow style={styles.attachmentInfo}> <Text numberOfLines={1} style={styles.attachmentMeta} tes",
     "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
   },
   {
@@ -280,21 +280,21 @@
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",
-    "line": 35,
+    "line": 45,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "b4fe50cf3613b74646c9",
-    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={styles.banner} testID={testID}> <Text style={styles.title} testID={titleTestID}>{title}</Text> {description ? <Text style={styles.description}>{description}</Text> : null} {onRetry || secondaryAction ? ( <View style={secondaryAction ? styles.actions : styles.retry}> {onRetry ? ( <Button label={retryLabel} loading={retrying} on",
-    "reason": "Shared ErrorBanner implementation owns the bordered failure notice."
+    "id": "9b0fc0cba60ae354e701",
+    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={inline ? styles.inline : styles.banner} testID={testID} > <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}> {inline && description ? `${title} ${description}` : title} </Text> {!inline && description ? ( <Text style={inline ? styles.inlineText : styles.description}>{description}</Text> ) : null} {on",
+    "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
   },
   {
     "file": "components/buzz/ErrorBanner.tsx",
-    "line": 39,
+    "line": 58,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "12e9483a966a15804db1",
-    "control": "<View style={secondaryAction ? styles.actions : styles.retry}> {onRetry ? ( <Button label={retryLabel} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button label={secondaryAction.label} icon={secondaryAction.icon} iconOnly={secondaryAction.iconOnly} accessibilityLabel={secondaryAction.",
-    "reason": "Shared ErrorBanner implementation owns the bordered failure notice."
+    "id": "94192bb35ffad4b2881c",
+    "control": "<View style={inline ? styles.inlineActions : secondaryAction ? styles.actions : styles.retry} > {onRetry ? ( <Button size={inline ? 'inline' : 'default'} label={retryLabel} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button size={inline ? 'inline' : 'default'} label={secondaryAction.",
+    "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
   },
   {
     "file": "components/buzz/HullActionSheet.tsx",

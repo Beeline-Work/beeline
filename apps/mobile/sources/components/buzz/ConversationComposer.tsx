@@ -840,7 +840,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.buzz.transcriptCard.rowTitleSize,
     color: theme.buzz.textPrimary,
   },
-  attachmentInfo: { flexDirection: 'row', alignItems: 'center', gap: groknight.space.sm },
+  attachmentInfo: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   attachmentMeta: {
     flexShrink: 1,
     ...theme.buzz.type.machine,

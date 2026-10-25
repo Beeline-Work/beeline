@@ -35,6 +35,7 @@
     "prove:operator-system-dm": "npm run build && node --import tsx scripts/prove-operator-system-dm.mjs",
     "prove:no-self-review": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-no-self-review.mjs",
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
+    "prove:failed-review-handoff": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-failed-review-handoff.mjs",
     "prove:onboarding": "node scripts/onboarding-walkthrough.mjs",
     "prove:repository-card": "npm run build && node --import tsx scripts/prove-repository-card.mjs",
     "prove:free-agent": "node scripts/prove-free-agent.mjs",

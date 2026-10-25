@@ -893,8 +893,16 @@ async function ensureReviewDispatch(
       `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
        WHERE command.id=$1`, [ended],
     )).rows[0]?.text;
+    const reason = `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`;
+    // A consumed handback already delivered these findings. In particular,
+    // an implementer's explicit wait must not turn that delivery into a wake
+    // failure, whose report can send the same target back to the reviewer
+    // that ordered the repair.
+    const handbackId = createHash('sha256').update(`review-needed:${cornerId}:${pr.headSha}:${ended}:${reason}`).digest('hex');
+    if ((await db.query('SELECT 1 FROM agent_commands WHERE id=$1', [handbackId])).rowCount ||
+        await cornerReportWaiting(db, cornerId)) return OK;
     return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
-      `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`);
+      reason, false);
   }
   const sourceId = transition.lastCardId ?? (
     await db.query<{ id: string }>(

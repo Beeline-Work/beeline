@@ -14,8 +14,8 @@ export class VoiceEagerReply {
   private commit!: (context: VoiceSearchContext) => void;
   private readonly result: ReturnType<VoiceBrain['answer']>;
   constructor(brain: VoiceBrain, agent: VoiceAgent, history: History,
-    agents: VoiceSearchContext['agents']) {
-    this.key = JSON.stringify([agent, history, agents]);
+    agents: VoiceSearchContext['agents'], externalContacts?: VoiceSearchContext['externalContacts']) {
+    this.key = JSON.stringify([agent, history, agents, externalContacts]);
     const gate = new Promise<VoiceSearchContext>((resolve, reject) => {
       this.commit = resolve;
       this.controller.signal.addEventListener('abort', () => reject(this.controller.signal.reason), { once: true });
@@ -25,15 +25,15 @@ export class VoiceEagerReply {
       if (this.controller.signal.aborted) return;
       if (this.onText) this.onText(text); else this.deltas.push(text);
     }, this.controller.signal, {
-      agents,
+      agents, externalContacts,
       diagnostic: timing => { if (this.diagnostic) this.diagnostic(timing); else this.diagnostics.push(timing); },
       announce: async text => (await gate).announce(text),
       search: async (request, signal) => (await gate).search(request, signal),
     });
     void this.result.catch(() => {});
   }
-  matches(agent: VoiceAgent, history: History, agents: VoiceSearchContext['agents']) {
-    return !this.controller.signal.aborted && this.key === JSON.stringify([agent, history, agents]);
+  matches(agent: VoiceAgent, history: History, agents: VoiceSearchContext['agents'], externalContacts?: VoiceSearchContext['externalContacts']) {
+    return !this.controller.signal.aborted && this.key === JSON.stringify([agent, history, agents, externalContacts]);
   }
   async consume(onText: (text: string) => void, context: VoiceSearchContext, signal: AbortSignal) {
     const stop = () => this.cancel();

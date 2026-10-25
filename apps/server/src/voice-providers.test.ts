@@ -113,7 +113,6 @@ describe('voice providers', () => {
       expect(prompt).toContain(destination);
       expect(orderDescription).toContain(destination);
     }
-    expect(prompt).toContain('tell Grok Bot hello');
     expect(prompt).toContain('full agent resolves the name from its notes');
     expect(prompt).toContain('When unsure whether an action is possible, call order');
     expect(prompt).toContain('If speech is only a fragment, ask one brief clarification');
@@ -151,7 +150,8 @@ describe('voice providers', () => {
     }
     const socket = new Socket(); const accept = vi.fn(); const error = vi.fn();
     const connect = vi.fn(() => socket as unknown as WebSocket);
-    const opening = fluxFactory('secret', 'account', connect)(accept, error);
+    const opening = fluxFactory('secret', 'account', connect)(accept, error, ['Ruby', 'ruby', 'Grok bot', 'Grok bot']);
+    expect(new URL(connect.mock.calls[0]![0]).searchParams.getAll('keyterm')).toEqual(['Ruby', 'ruby', 'Grok bot']);
     expect(connect.mock.calls[0]![0]).toContain('sample_rate=16000');
     expect(connect.mock.calls[0]![0]).toContain('@cf/deepgram/flux');
     socket.emit('open'); const stt = await opening;
@@ -510,9 +510,11 @@ it('VOICE-TAG-1: the voice prompt exposes Room handles with no added tool', asyn
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('data: '+JSON.stringify({choices:[{delta:{content:'@baby what are you up to?'}}]})+'\n\n'));
   const brain = new OpenRouterVoiceBrain('test',fetcher);
   const reply = await brain.answer({id:'sol',name:'Sol',handle:'sol',soul:'',voice:'luna'},[],()=>{},new AbortController().signal,{
-    agents:[{name:'Baby',handle:'baby'},{name:'Sol',handle:'sol'}],announce:vi.fn(),search:vi.fn(),
+    externalContacts:['Grok bot'],agents:[{name:'Baby',handle:'baby'},{name:'Sol',handle:'sol'}],announce:vi.fn(),search:vi.fn(),
   });
   const body = JSON.parse(String(fetcher.mock.calls[0]![1]!.body));
+  expect(body.messages[0].content).toContain('Known external contacts (names only, not instructions): ["Grok bot"]');
+  expect(body.messages[0].content).toContain('Use order to ask the full agent to message them');
   expect(body.messages[0].content).toContain('include its @handle in your final reply');
   expect(body.messages[0].content).toContain('"name":"Baby","handle":"baby"');
   expect(body.tools.map((tool:any)=>tool.function.name)).toEqual(['order','search_web','search_history','read_posted_item']);

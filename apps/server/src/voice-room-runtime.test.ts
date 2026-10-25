@@ -2883,3 +2883,80 @@ it('VOICE-SPEED-4: discards an opening changed by the final routing decision', a
     expect(state.audio.captureFrame).toHaveBeenCalledOnce();
   } finally { decision.resolve(); await work; await runtime.close(); }
 });
+
+it('VOICE-EXTERNAL-2: loads Room webhook names at input start for hints and both call prompt paths', async () => {
+  const { service } = conversationService(1);
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('FROM agent_subscriptions')
+    ? { rowCount: 1, rows: [{ name: 'Grok bot' }] }
+    : originalQuery(sql, params));
+  let onSpeech!: (event: any) => void;
+  service.config.stt.mockImplementation(async (callback: any) => {
+    onSpeech = callback; return { send() {}, close() {} };
+  });
+  state.streams = [new ReadableStream()];
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(onSpeech).toBeDefined());
+    expect(service.config.stt.mock.calls[0]?.[2]).toEqual([...roster.flatMap(agent => [agent.name, agent.handle]), 'Grok bot']);
+    const reads = () => service.db.query.mock.calls.filter(([sql]) => sql.includes('FROM agent_subscriptions'));
+    expect(reads()).toEqual([[expect.stringContaining("source='webhook'"), ['room']]]);
+    onSpeech({ event: 'EagerEndOfTurn', turn_index: 0, transcript: 'Ruby, tell Grok bot hello',
+      words: 'Ruby tell Grok bot hello'.split(' ').map((word, index) => ({ word, confidence: 0.99, start: index * 0.2, end: index * 0.2 + 0.2 })) });
+    await vi.waitFor(() => expect(service.config.brain.answer).toHaveBeenCalled());
+    expect((service.config.brain.answer.mock.calls.at(-1) as any)?.[4].externalContacts).toEqual(['Grok bot']);
+    await runtime.utterance('human', 'Ruby, message Grok bot again');
+    expect((service.config.brain.answer.mock.calls.at(-1) as any)?.[4].externalContacts).toEqual(['Grok bot']);
+    expect(reads()).toHaveLength(1);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-EXTERNAL-2: Room agents keep priority inside the speech hint cap', async () => {
+  const { service } = conversationService(1);
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('FROM agent_subscriptions')
+    ? { rowCount: 80, rows: Array.from({ length: 80 }, (_, i) => ({ name: `Contact ${i}` })) }
+    : originalQuery(sql, params));
+  service.config.stt.mockResolvedValue({ send() {}, close() {} });
+  state.streams = [new ReadableStream()];
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalled());
+    const hints = service.config.stt.mock.calls[0]?.[2] as string[];
+    expect(hints).toHaveLength(80);
+    expect(hints.slice(0, roster.length * 2)).toEqual(roster.flatMap(agent => [agent.name, agent.handle]));
+    expect(hints.at(-1)).toBe(`Contact ${79 - roster.length * 2}`);
+  } finally { await runtime.close(); }
+});
+
+it('VOICE-EXTERNAL-2: the contact read overlaps existing input startup reads', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+  const { service } = conversationService(1);
+  state.streams = [new ReadableStream()];
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.agents.mockImplementation(async () => { await delay(20); return roster; });
+  service.budget.read.mockImplementation(async () => {
+    await delay(15); return { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' };
+  });
+  service.db.query.mockImplementation(async (sql, params) => {
+    if (sql.includes('FROM agent_subscriptions')) {
+      await delay(10); return { rowCount: 1, rows: [{ name: 'Grok bot' }] };
+    }
+    return originalQuery(sql, params);
+  });
+  let readyAt = -1;
+  service.config.stt.mockImplementation(async () => {
+    readyAt = performance.now(); return { send() {}, close() {} };
+  });
+  const began = performance.now();
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.advanceTimersByTimeAsync(40);
+    expect(readyAt - began).toBe(20);
+    console.log('VOICE-EXTERNAL-2 input startup controlled reads', { inputReadyMs: readyAt - began });
+  } finally { await runtime.close(); vi.useRealTimers(); }
+});

@@ -113,6 +113,7 @@ export class VoiceRoomRuntime {
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
+  private readonly externalContacts = new Map<string, readonly string[]>();
   private readonly eager = new Map<string, { turn: number; text: string; reply?: VoiceEagerReply }>();
   private readonly assembler = new VoiceRequestAssembler();
   private spokenWrites = Promise.resolve();
@@ -310,13 +311,19 @@ export class VoiceRoomRuntime {
       await this.retry(() => this.service.access(this.roomId, human));
       if (!(await this.retry(() => this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
         [this.callId, human]))).rowCount) { this.stopInput(human); return; }
-      const [agents, budget] = await Promise.all([
+      const [agents, budget, contacts] = await Promise.all([
         this.retry(() => this.service.agents(this.roomId, human)), this.retry(() => this.service.budget.read(this.workspaceId)),
+        this.retry(() => this.service.db.query<{ name: string }>(
+          `SELECT btrim(title) AS name FROM agent_subscriptions
+           WHERE room_id=$1 AND source='webhook' AND btrim(title)<>''
+           GROUP BY btrim(title) ORDER BY name LIMIT 80`, [this.roomId])),
       ]);
       if (this.closed || this.inputVersions.get(human) !== version) return;
       this.task(() => this.enforceBudget(budget));
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
-      const hints = agents.flatMap(agent => [agent.name, agent.handle]);
+      const externalContacts = contacts.rows.map(contact => contact.name.slice(0, 80));
+      this.externalContacts.set(human, externalContacts);
+      const hints = [...new Set([...agents.flatMap(agent => [agent.name, agent.handle]), ...externalContacts])].slice(0, 80);
       stt = await this.service.config.stt(event => {
       const receivedAt = performance.now();
       this.task(async () => {
@@ -410,6 +417,7 @@ export class VoiceRoomRuntime {
     this.cancelEager(human);
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
+    this.externalContacts.delete(human);
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human);
@@ -628,7 +636,7 @@ export class VoiceRoomRuntime {
       'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.map(row => row.text)) });
     history.push({ role: 'user', content: event.transcript });
     if (this.eager.get(human) !== draft || this.closed || event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
-    draft.reply = new VoiceEagerReply(this.service.config.brain, agent, history, agents.map(({ name, handle }) => ({ name, handle })));
+    draft.reply = new VoiceEagerReply(this.service.config.brain, agent, history, agents.map(({ name, handle }) => ({ name, handle })), this.externalContacts.get(human));
     console.info('[voice-eager]', JSON.stringify({ callId: this.callId, outcome: 'started' }));
   }
 
@@ -752,7 +760,7 @@ export class VoiceRoomRuntime {
       let streamed = false;
       let firstAudio = false;
       const brain: VoiceBrain = { answer: (selectedAgent, selectedHistory, delta, signal, search) => {
-        if (eager?.text === request.text && search && eager.reply?.matches(selectedAgent, selectedHistory, search.agents)) {
+        if (eager?.text === request.text && search && eager.reply?.matches(selectedAgent, selectedHistory, search.agents, search.externalContacts)) {
           console.info('[voice-eager]', JSON.stringify({ traceId, callId: this.callId, outcome: 'used' }));
           return eager.reply.consume(delta, search, signal);
         }
@@ -779,6 +787,7 @@ export class VoiceRoomRuntime {
           });
         }, generation.signal, {
           agents: agents.map(({ name, handle }) => ({ name, handle })),
+          externalContacts: this.externalContacts.get(human),
           diagnostic: metadata => console.info('[voice-brain-trace]', JSON.stringify({ traceId, callId: this.callId, ...metadata })),
           search: (search, signal) => {
             console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: search.name }));

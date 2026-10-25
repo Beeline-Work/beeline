@@ -43,8 +43,14 @@ try {
   assert.equal(automatic.transport, 'squire-api');
   const search = await phone.execute('searchWorkbenchApps', { query: 'fly' }, owner);
   assert.equal(search.filter(row => row.companyId === 'fly').length, 1);
-  const view = await phone.execute('readWorkbench', { workspaceId: workspace }, owner);
-  const offered = view.companies.rows.find(row => row.id === 'fly').mcp;
+  let offered;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const view = await phone.execute('readWorkbench', { workspaceId: workspace }, owner);
+    offered = view.companies.rows.find(row => row.id === 'fly').mcp;
+    if (offered) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.ok(offered);
   assert.equal(offered.registryServerName, 'io.fly/company-mcp');
   const connection = phone.execute('connectWorkbenchApp', { app: 'Fly.io', helperAgentId: helper,
     registryServerName: offered.registryServerName, registryVersion: offered.registryVersion }, owner);
@@ -73,8 +79,14 @@ try {
   const after = await phone.execute('readWorkbench', { workspaceId: workspace }, owner);
   assert.deepEqual(after.connections.map(key => key.reference).sort(), keys.map(key => key.reference).sort());
   assert.equal(after.companies.rows.find(company => company.id === 'fly').subtitle, '1 app · 6 keys');
-  const notion = await phone.execute('searchWorkbenchApps', { query: 'notion' }, owner);
+  let notion;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    notion = await phone.execute('searchWorkbenchApps', { query: 'notion' }, owner);
+    if (notion.some(row => row.registryServerName === 'com.notion/mcp')) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   assert.ok(notion.some(row => row.registryServerName === 'com.notion/mcp'));
+  assert.ok(!notion.some(row => row.name === 'insightfulpipe.com'));
   console.log('MCP-DISCOVERY-1 PASS: one Fly search row, explicit MCP selection, live Fly OAuth link, six keys retained, official Notion Registry result. Account authorization was not performed.');
 } finally {
   await database.close();

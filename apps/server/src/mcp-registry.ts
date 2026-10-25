@@ -153,7 +153,7 @@ export class McpRegistryClient {
       version: 'latest',
       limit: String(limit),
     }).toString();
-    const response = await this.transport(url, { signal: AbortSignal.timeout(1500) });
+    const response = await this.transport(url, { signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw new Error('MCP Registry search is unavailable');
     const body = await boundedJson(response);
     const rows = Array.isArray(body)

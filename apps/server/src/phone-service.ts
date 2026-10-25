@@ -1,3 +1,4 @@
+import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
 import { waitForConnection } from './connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from './company-mcp-discovery.js';
@@ -1047,10 +1048,13 @@ export class PhoneService {
     private readonly composio?: ComposioApps,
     private readonly linkWallet?: LinkAgentWallet,
   ) {
+    this.connectorDiscovery = new ConnectorDiscoveryCache(database, mcpRegistry);
     this.database = new CornerAccessDatabase(database);
     this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
     if (live) this.outlineCache = new HistoryOutlineCache(live);
   }
+
+  private readonly connectorDiscovery: ConnectorDiscoveryCache;
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
     let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -9000,13 +9004,25 @@ export class PhoneService {
       const view = await this.readWorkbench({ workspaceId: '' }, viewerId);
       return view.companies!.suggestions.map(item => ({ appKey: item.appKey, name: item.name, domain: item.domain, description: item.purpose, company: item, mark: item.logo, logo: item.logo.kind === 'image' ? item.logo.uri : undefined }));
     }
-    const [view, hosted, listed, rows] = await Promise.all([
+    const company = companyForMcp(query);
+    const companyKey = company ? `company:${company.id}` : undefined;
+    const searchKey = `search:${query.toLowerCase()}`;
+    const [view, cached, rows] = await Promise.all([
       this.readWorkbench({ workspaceId: '' }, viewerId),
-      this.mcpRegistry.companies.discover(query),
-      this.mcpRegistry.search(query.toLowerCase()).catch(() => []),
+      this.connectorDiscovery.read([searchKey, ...(companyKey ? [companyKey] : [])]),
       this.composio ? this.composio.searchToolkits(query) : [],
     ]);
-    const registryResults = [...(hosted ? [hosted] : []), ...listed].flatMap(manifest => {
+    this.connectorDiscovery.warm(searchKey, viewerId, cached.get(searchKey));
+    if (companyKey) this.connectorDiscovery.warm(companyKey, viewerId, cached.get(companyKey));
+    const hosted = companyKey ? cached.get(companyKey)?.manifests ?? [] : [];
+    const listed = cached.get(searchKey)?.manifests ?? [];
+    const manifests = [...hosted, ...listed];
+    const official = company && manifests.some(manifest =>
+      registryServerAppKey(manifest.name) === appIdentity(company.domain!)?.key
+      && company.hosts.includes(registryServerDomain(manifest.name) ?? '')
+      && manifest.remotes.some(remote => remote.type === 'streamable-http') && !manifest.secretInputNames.length);
+    const registryResults = manifests.flatMap(manifest => {
+      if (official && registryServerAppKey(manifest.name) !== appIdentity(company.domain!)?.key) return [];
       const appKey = registryServerAppKey(manifest.name);
       const domain = registryServerDomain(manifest.name);
       if (!appKey || !domain || manifest.secretInputNames.length ||
@@ -9014,8 +9030,8 @@ export class PhoneService {
       // Namespace ownership, never title/website text, identifies the publisher.
       const known = COMPANY_REGISTRY.find(company => appIdentity(company.domain ?? '')?.key === appKey);
       if (known && !known.hosts.includes(domain)) return [];
-      const company = companyForMcp(domain);
-      return [{ appKey, name: company?.name ?? domain, domain,
+      const publisher = companyForMcp(domain);
+      return [{ appKey, name: publisher?.name ?? domain, domain,
         description: manifest.description, registryServerName: manifest.name, registryVersion: manifest.version }];
     });
     const composioResults = rows.flatMap((row) => {
@@ -9032,7 +9048,16 @@ export class PhoneService {
         },
       ];
     });
-    return companySearchResults(view, [...registryResults, ...composioResults], query, this.publicOrigin);
+    const baseline = companySearchResults(view, composioResults, query, this.publicOrigin);
+    const enriched = companySearchResults(view, [...registryResults, ...composioResults], query, this.publicOrigin);
+    const rowKey = (row: typeof enriched[number]) => row.companyId ?? row.company?.providerId ?? row.appKey;
+    const base = new Map(baseline.map((row, index) => [rowKey(row), { row, index }]));
+    // Keep existing positions and visible copy; only the hidden connection choice changes.
+    return enriched.map(row => {
+      const original = base.get(rowKey(row))?.row;
+      return original ? { ...row, name: original.name, description: original.description, mark: original.mark } : row;
+    }).sort((a, b) => (base.get(rowKey(a))?.index ?? baseline.length + (a.registryServerName ? 0 : 1))
+      - (base.get(rowKey(b))?.index ?? baseline.length + (b.registryServerName ? 0 : 1)));
   }
 
   /** Project the end cause without changing the stored System card or its wording. */
@@ -9441,15 +9466,27 @@ export class PhoneService {
       })),
     };
     const companies = projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database));
-    const rows = await Promise.all(companies.rows.map(async company => {
+    const keys = companies.rows.flatMap(company => {
+      const known = companyForMcp(company.domain ?? company.id);
+      return known ? [`company:${known.id}`, `search:${known.id}`] : [];
+    });
+    const cached = await this.connectorDiscovery.read(keys);
+    const rows = companies.rows.map(company => {
       if (company.kind !== 'company' || company.items.some(item => item.kind === 'connection')) return company;
-      const manifest = await this.mcpRegistry.companies.discover(company.domain ?? company.id);
+      const known = companyForMcp(company.domain ?? company.id);
+      if (!known) return company;
+      const cacheKey = `company:${known.id}`;
+      this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
+      const manifest = [...cached.get(cacheKey)?.manifests ?? [], ...cached.get(`search:${known.id}`)?.manifests ?? []]
+        .find(manifest => registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key
+          && known.hosts.includes(registryServerDomain(manifest.name) ?? '') && !manifest.secretInputNames.length
+          && manifest.remotes.some(remote => remote.type === 'streamable-http'));
       if (!manifest) return company;
       return { ...company, mcp: { appKey: registryServerAppKey(manifest.name)!, appName: company.name,
         name: company.name, purpose: manifest.description ?? '', providerId: company.id, providerName: company.name,
         domain: company.domain, logo: company.logo, registryServerName: manifest.name,
         registryVersion: manifest.version, flow: 'app' as const } };
-    }));
+    });
     return { ...view, companies: { ...companies, rows } };
   }
 

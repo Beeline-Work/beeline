@@ -1,6 +1,6 @@
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -28,16 +28,20 @@ function SearchContent({ scope, view, initialQuery = '', onNavigate }: {
   const [error, setError] = useState<string | null>(null);
   const actions = useConnectCompanyApp(scope);
   const input = query.trim();
+  const previousInput = useRef('');
   useEffect(() => {
     if (!input) return;
+    const changedQuery = previousInput.current !== input;
+    previousInput.current = input;
     let live = true;
     const timer = setTimeout(() => {
       void getWorkbenchSource().searchApps({ query: input }).then(rows => {
         if (live) { setResponse({ query: input, rows }); setError(null); }
       }, () => { if (live) { setResponse({ query: input, rows: [] }); setError('App search is unavailable right now'); } });
-    }, 200);
+    }, changedQuery ? 200 : 0);
     return () => { live = false; clearTimeout(timer); };
-  }, [input]);
+    // Workbench invalidation refreshes in place and cancels any older answer.
+  }, [input, view]);
   const results: WorkbenchAppSearchResult = input ? response.query === input ? response.rows : []
     : (view?.companies?.suggestions ?? []).map(company => ({ appKey: company.appKey, name: company.name,
       domain: company.domain, description: company.purpose, company, mark: company.logo }));

@@ -315,7 +315,7 @@ it('Reproduction MCP-DISCOVERY-1: the service-page MCP row starts the existing c
   setWorkbenchSource(source); params.service = 'fly';
   const renderer = await render();
   const entry = renderer.root.findByProps({ testID: 'company-mcp-connect' });
-  expect(entry.props.title).toBe('Fly.io'); expect(entry.props.description).toBe('via Fly MCP');
+  expect(entry.props.title).toBe('Fly.io'); expect(entry.props.description).toBe('Sign in with Fly MCP');
   expect(renderer.root.findByProps({ testID: 'company-item-fly-key' }).props.onPress).toBeUndefined();
   await act(async () => entry.props.onPress());
   await vi.waitFor(() => expect(connect).toHaveBeenCalledWith(expect.objectContaining({

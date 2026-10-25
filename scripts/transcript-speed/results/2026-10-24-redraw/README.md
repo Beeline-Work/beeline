@@ -21,7 +21,7 @@ The fresh-data same-device before run measured 204 ms Room-switch JS p95, versus
 
 ## Regression repeat investigation
 
-[All repeat results, median and spread](repeats/REPEATS.md) retain the alternating before/after trials, full-suite repeats and separate scroll profiles. The original table above is historical; it is not a no-regression acceptance verdict.
+[All repeat results, median and spread](repeats/REPEATS.md) retain the alternating before/after trials, full-suite repeats and separate scroll profiles. The original table above is historical; it is not a no-regression acceptance verdict. Ruby subsequently approved transition-based Room-switch acceptance; the [same-instance real-tap proof](room-switch/README.md) passes, with settled time, JS CPU busy time and worst gap all improving.
 
 ## Runtime and provenance
 

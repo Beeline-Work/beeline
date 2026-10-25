@@ -213,3 +213,27 @@ Forward the corner's emulator lease variables when launching `beeline emulator`
 through the host route; select its returned serial and ADB server port for every
 capture command. Do not select another corner's emulator. Wait for build success
 before installing the APK and capturing; never measure while compiling.
+
+### Room-switch transition proof
+
+`capture-room-transitions.mjs <output>` uses real Room-list taps and the existing
+native fixture paint probe on the supplied APK. Set the same owned device,
+fixture database, control port and `TRANSCRIPT_APK` as the matching suite. The
+app must already be signed into the local review fixture. The driver selects
+that fixture Workspace, warms both Rooms and captures six alternating taps.
+It adds the same deterministic marker traffic in both arms so native frame
+commit proves the target transcript is visible. Reset traffic between arms.
+
+The transition ends only after the native transcript paint followed by 500 ms
+without a JS frame interval above 50 ms. `transition-metrics.mjs` retains timing
+bounds for the old sampler's missing first-rAF timestamp. JS busy CPU time uses
+the executor thread's scheduler runtime counter inside that window, with raw
+counter samples and boundary bounds retained. Scheduler wait is not busy CPU.
+Do not substitute the whole-window frame p95 for transition settling time.
+
+`TRANSCRIPT_PROFILE_SWITCH=1` profiles one separate after switch only after all
+acceptance trials. `symbolicate-room-profile.mjs <output>` verifies the locally
+built bytecode against the supplied after APK, then uses its composed map to
+attribute sampled stacks in the 30–160 ms frame windows. Keep profiling disabled
+for acceptance. The approved metric definition and latest measurements are in
+[the Room-switch proof](results/2026-10-24-redraw/room-switch/README.md).

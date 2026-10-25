@@ -1,5 +1,7 @@
 # Repeated Android regression checks
 
+The pending Room-switch decision below is historical. Ruby approved transition-based acceptance, and the subsequent [same-instance real-tap proof](../room-switch/README.md) passes it. The unfavorable p95 results remain retained here.
+
 Reproduction `TRANSCRIPT-REDRAW-2`. These retained captures were collected on the original leased Android 15 emulator (`emulator-5566`), with the same deterministic fixture, release APKs, reset sequence and private control port (19896). Each arm reinstalls the selected APK and resets generated fixture traffic. The exact driver is [paired-regressions.sh](paired-regressions.sh). Arm order: before, after, after, before, before, after. No trial is dropped.
 
 ## Alternating scroll and incoming captures

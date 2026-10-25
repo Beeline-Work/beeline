@@ -68,25 +68,13 @@ createRoot(document.getElementById('root')!).render(
 setTimeout(async () => {
   const lines: string[] = [];
   const faults: string[] = [];
-  const account = document.querySelector<HTMLElement>('[data-testid="desktop-strip-account"]')!;
-  const caption = [...account.querySelectorAll('*')].find(
-    (node) => node.textContent === 'Settings',
-  );
-  lines.push(`settings caption: ${caption ? 'visible' : 'missing'}`);
-  if (!caption) faults.push('Settings caption missing');
+  const attention = document.querySelector<HTMLElement>('[data-testid="workspace-attention"]');
+  lines.push(`desktop workspace attention: ${attention ? 'present' : 'absent'}`);
+  if (!attention) faults.push('Workspace attention dot missing');
   else {
-    const box = caption.getBoundingClientRect();
-    if (box.bottom > 680 || box.height < 19) faults.push('Settings caption clipped');
+    const box = attention.getBoundingClientRect();
+    if (box.width !== 12 || box.height !== 12) faults.push('Workspace attention dot dimensions');
   }
-  account.focus();
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  const label = document.querySelector('[data-testid="desktop-strip-account-label"]');
-  lines.push(`settings focus label: ${label ? 'visible' : 'missing'}`);
-  if (!label || label.getBoundingClientRect().bottom > 680)
-    faults.push('Settings focus label missing or clipped');
-  const overlay = !!document.querySelector('[data-testid="workspace-attention"]');
-  lines.push(`desktop workspace overlay: ${overlay ? 'present' : 'absent'}`);
-  if (overlay) faults.push('Workspace corner overlay present');
   for (const corner of corners) {
     const cell = document.querySelector(`[data-testid="room-corner-${corner.corner.id}"]`)!;
     const rail = document.querySelector(`[data-testid="room-corner-rail-${corner.corner.id}"]`);

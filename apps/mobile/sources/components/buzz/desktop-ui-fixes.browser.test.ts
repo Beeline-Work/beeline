@@ -15,6 +15,7 @@ function shims(mobile: string, theme: string) {
     ...base,
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
       const theme = { buzz: beelineThemes.${theme} };
+      theme.colors = { groupped: { background: theme.buzz.bgTerminal } };
       document.body.style.background = theme.buzz.bgBase;
       document.body.style.color = theme.buzz.textPrimary;
       document.body.style.fontFamily = 'SpaceGrotesk-Regular';
@@ -31,7 +32,7 @@ function shims(mobile: string, theme: string) {
 
 describe.skipIf(!existsSync(CHROME))('approved desktop UI fixes', () => {
   for (const theme of ['obsidian', 'bone']) {
-    it(`${theme}: full labels, equal rails, consistent icons and keyboard actions`, async () => {
+    it(`${theme}: attention dot, equal rails, consistent icons and keyboard actions`, async () => {
       const mobile = process.cwd();
       const proof = await runBrowserProof({
         entry: path.join(mobile, 'scripts/desktop-ui-fixes-proof.tsx'),

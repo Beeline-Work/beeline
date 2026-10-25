@@ -1,0 +1,739 @@
+{
+  "bytecodeSha256": "9aa28d2671d53597e041f88ecefe5ad6ae0f6020818b66e028c4d853ba33685c",
+  "sourceMapSha256": "8110871cf3f6c6507e2b21a1b29ba09ce7f3c359bde89afcb5378a427bd772f4",
+  "nav": {
+    "phase": "nav-dispatch",
+    "t": 2159437.968852,
+    "detail": "de3a06a1-a89c-40eb-8fe7-2ce8fd98acb6"
+  },
+  "firstFrameAlignmentUncertaintyMs": 33.27101599983871,
+  "windows": [
+    {
+      "startMs": 2159616.810889,
+      "endMs": 2159707.7783250003,
+      "durationMs": 90.9674360002391
+    },
+    {
+      "startMs": 2159707.7783250003,
+      "endMs": 2159809.580564,
+      "durationMs": 101.80223899986595
+    },
+    {
+      "startMs": 2159809.580564,
+      "endMs": 2159859.682035,
+      "durationMs": 50.10147099988535
+    },
+    {
+      "startMs": 2159873.022607,
+      "endMs": 2159943.853676,
+      "durationMs": 70.83106900006533
+    }
+  ],
+  "selectedSamples": 27,
+  "rootOnly": 0,
+  "inclusiveStacks": [
+    {
+      "frame": "[root]",
+      "samples": 27
+    },
+    {
+      "frame": "performUnitOfWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:9497)",
+      "samples": 20
+    },
+    {
+      "frame": "workLoopSync (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:9378)",
+      "samples": 20
+    },
+    {
+      "frame": "renderRootSync (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:9359)",
+      "samples": 20
+    },
+    {
+      "frame": "performWorkOnRoot (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8968)",
+      "samples": 20
+    },
+    {
+      "frame": "beginWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:6501)",
+      "samples": 12
+    },
+    {
+      "frame": "renderWithHooks (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:3636)",
+      "samples": 11
+    },
+    {
+      "frame": "updateFunctionComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5606)",
+      "samples": 11
+    },
+    {
+      "frame": "performSyncWorkOnRoot (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:2240)",
+      "samples": 10
+    },
+    {
+      "frame": "flushSyncWorkAcrossRoots_impl (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:2116)",
+      "samples": 10
+    },
+    {
+      "frame": "processRootScheduleInMicrotask (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:2144)",
+      "samples": 10
+    },
+    {
+      "frame": "scheduleMicrotask$argument_0 (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:2250)",
+      "samples": 10
+    },
+    {
+      "frame": "performWorkOnRootViaSchedulerTask (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:2232)",
+      "samples": 10
+    },
+    {
+      "frame": "_objectWithoutProperties (/node_modules/@babel/runtime/helpers/objectWithoutProperties.js:6)",
+      "samples": 4
+    },
+    {
+      "frame": "beginWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:6515)",
+      "samples": 4
+    },
+    {
+      "frame": "[Native] arrayPrototypeMap",
+      "samples": 3
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7812)",
+      "samples": 3
+    },
+    {
+      "frame": "recursivelyTraverseLayoutEffects (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8204)",
+      "samples": 3
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7758)",
+      "samples": 3
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7754)",
+      "samples": 3
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7870)",
+      "samples": 3
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7861)",
+      "samples": 3
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7834)",
+      "samples": 3
+    },
+    {
+      "frame": "commitHookEffectListMount (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7527)",
+      "samples": 3
+    },
+    {
+      "frame": "[GC Young Gen]",
+      "samples": 3
+    },
+    {
+      "frame": "G (/node_modules/react-native-svg/src/elements/G.tsx:20)",
+      "samples": 3
+    },
+    {
+      "frame": "constructClassInstance (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5016)",
+      "samples": 3
+    },
+    {
+      "frame": "updateClassComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5659)",
+      "samples": 3
+    },
+    {
+      "frame": "<anonymous> (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:3157)",
+      "samples": 3
+    },
+    {
+      "frame": "[Native] arrayPrototypeIndexOf",
+      "samples": 2
+    },
+    {
+      "frame": "_objectWithoutPropertiesLoose (/node_modules/@babel/runtime/helpers/objectWithoutPropertiesLoose.js:5)",
+      "samples": 2
+    },
+    {
+      "frame": "TextImplLegacy (/node_modules/react-native/Libraries/Text/Text.js:350)",
+      "samples": 2
+    },
+    {
+      "frame": "_objectWithoutPropertiesLoose (/node_modules/@babel/runtime/helpers/objectWithoutPropertiesLoose.js:1)",
+      "samples": 2
+    },
+    {
+      "frame": "propagateParentContextChanges (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:1930)",
+      "samples": 2
+    },
+    {
+      "frame": "bailoutOnAlreadyFinishedWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:6292)",
+      "samples": 2
+    },
+    {
+      "frame": "updateSimpleMemoComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5440)",
+      "samples": 2
+    },
+    {
+      "frame": "beginWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:6669)",
+      "samples": 2
+    },
+    {
+      "frame": "commitPassiveMountOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8418)",
+      "samples": 2
+    },
+    {
+      "frame": "recursivelyTraversePassiveMountEffects (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8393)",
+      "samples": 2
+    },
+    {
+      "frame": "commitPassiveMountOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8544)",
+      "samples": 2
+    },
+    {
+      "frame": "commitPassiveMountOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8412)",
+      "samples": 2
+    },
+    {
+      "frame": "commitPassiveMountOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8517)",
+      "samples": 2
+    },
+    {
+      "frame": "commitPassiveMountOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8484)",
+      "samples": 2
+    },
+    {
+      "frame": "commitPassiveMountOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8421)",
+      "samples": 2
+    },
+    {
+      "frame": "[Native] reflectConstruct",
+      "samples": 2
+    },
+    {
+      "frame": "_callSuper (/node_modules/@babel/runtime/helpers/callSuper.js:5)",
+      "samples": 2
+    },
+    {
+      "frame": "FiberNode (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:10005)",
+      "samples": 2
+    },
+    {
+      "frame": "createFiberImplClass (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:10030)",
+      "samples": 2
+    },
+    {
+      "frame": "reconcileChildren (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5326)",
+      "samples": 2
+    },
+    {
+      "frame": "updateFunctionComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5620)",
+      "samples": 2
+    },
+    {
+      "frame": "[HostFunction] link",
+      "samples": 2
+    },
+    {
+      "frame": "HybridShadowRegistry.add (/node_modules/react-native-unistyles/src/specs/ShadowRegistry/index.ts:62)",
+      "samples": 2
+    },
+    {
+      "frame": "passForwardedRef (/node_modules/react-native-unistyles/src/core/passForwardRef.ts:22)",
+      "samples": 2
+    },
+    {
+      "frame": "safelyAttachRef (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7619)",
+      "samples": 2
+    },
+    {
+      "frame": "commitLayoutEffectOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:7825)",
+      "samples": 2
+    },
+    {
+      "frame": "View (/node_modules/react-native/Libraries/Components/View/View.js:49)",
+      "samples": 1
+    },
+    {
+      "frame": "updateWorkInProgressHook (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:3742)",
+      "samples": 1
+    },
+    {
+      "frame": "updateRef (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:4304)",
+      "samples": 1
+    },
+    {
+      "frame": "exports.useRef (/node_modules/react/cjs/react.production.js:523)",
+      "samples": 1
+    },
+    {
+      "frame": "UnistylesComponent (/node_modules/react-native-unistyles/src/core/createUnistylesElement.native.tsx:12)",
+      "samples": 1
+    },
+    {
+      "frame": "TextImplLegacy (/node_modules/react-native/Libraries/Text/Text.js:314)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] arrayIsArray",
+      "samples": 1
+    },
+    {
+      "frame": "reconcilePresentationValue (/sources/components/buzz/HullDialog.tsx:195)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcilePresentationValue (/sources/components/buzz/HullDialog.tsx:226)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcilePresentationValue (/sources/components/buzz/HullDialog.tsx:184)",
+      "samples": 1
+    },
+    {
+      "frame": "next.map$argument_0 (/sources/components/buzz/HullDialog.tsx:198)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcilePresentationValue (/sources/components/buzz/HullDialog.tsx:197)",
+      "samples": 1
+    },
+    {
+      "frame": "useStableFloatingPresentation (/sources/components/buzz/HullDialog.tsx:244)",
+      "samples": 1
+    },
+    {
+      "frame": "HullModal (/sources/components/buzz/HullDialog.tsx:328)",
+      "samples": 1
+    },
+    {
+      "frame": "recursivelyTraverseLayoutEffects (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8201)",
+      "samples": 1
+    },
+    {
+      "frame": "readHeader (/packages/api-contract/dist/phone-guards.js:114)",
+      "samples": 1
+    },
+    {
+      "frame": "readChat (/packages/api-contract/dist/phone-guards.js:1112)",
+      "samples": 1
+    },
+    {
+      "frame": "readList (/packages/api-contract/dist/phone-guards.js:77)",
+      "samples": 1
+    },
+    {
+      "frame": "requireList (/packages/api-contract/dist/phone-guards.js:87)",
+      "samples": 1
+    },
+    {
+      "frame": "readChatListView (/packages/api-contract/dist/phone-guards.js:1657)",
+      "samples": 1
+    },
+    {
+      "frame": "isChatListView (/packages/api-contract/dist/phone-guards.js:1672)",
+      "samples": 1
+    },
+    {
+      "frame": "SurfaceRegistry#peek (/sources/buzz/surface-registry.ts:36)",
+      "samples": 1
+    },
+    {
+      "frame": "ChatListStore#current (/sources/buzz/chat-list-store.ts:105)",
+      "samples": 1
+    },
+    {
+      "frame": "current (/sources/buzz/chat-list-store.ts:241)",
+      "samples": 1
+    },
+    {
+      "frame": "paint (/sources/buzz/chat-list-store.ts:285)",
+      "samples": 1
+    },
+    {
+      "frame": "useEffect$argument_0 (/sources/buzz/chat-list-store.ts:291)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] functionPrototypeBind",
+      "samples": 1
+    },
+    {
+      "frame": "default (/node_modules/react-native-svg/src/lib/SvgTouchableMixin.ts:128)",
+      "samples": 1
+    },
+    {
+      "frame": "constructor (/node_modules/react-native-svg/src/elements/Shape.tsx:252)",
+      "samples": 1
+    },
+    {
+      "frame": "createFiberFromText (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:10193)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcileChildFibersImpl (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:3148)",
+      "samples": 1
+    },
+    {
+      "frame": "beginWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:6570)",
+      "samples": 1
+    },
+    {
+      "frame": "metroRequire (/node_modules/@expo/cli/build/metro-require/require.js:53)",
+      "samples": 1
+    },
+    {
+      "frame": "TextImplLegacy (/node_modules/react-native/Libraries/Text/Text.js:494)",
+      "samples": 1
+    },
+    {
+      "frame": "deleteRemainingChildren (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:2509)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcileChildFibersImpl (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:3022)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcileChildren (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5327)",
+      "samples": 1
+    },
+    {
+      "frame": "passForwardedRef$argument_2 (/node_modules/react-native-unistyles/src/components/native/Pressable.native.tsx:58)",
+      "samples": 1
+    },
+    {
+      "frame": "NativePressableReactNative.props.ref (/node_modules/react-native-unistyles/src/components/native/Pressable.native.tsx:53)",
+      "samples": 1
+    },
+    {
+      "frame": "refs.map$argument_0 (/node_modules/react-native/Libraries/Utilities/useMergeRefs.js:35)",
+      "samples": 1
+    },
+    {
+      "frame": "refEffect (/node_modules/react-native/Libraries/Utilities/useMergeRefs.js:29)",
+      "samples": 1
+    },
+    {
+      "frame": "<anonymous> (/node_modules/react-native/Libraries/Utilities/useRefEffect.js:40)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] objectAssign",
+      "samples": 1
+    },
+    {
+      "frame": "loadAppConfig (/sources/sync/appConfig.ts:30)",
+      "samples": 1
+    },
+    {
+      "frame": "getBuzzRuntimeConfig (/sources/buzz/runtime-config.ts:20)",
+      "samples": 1
+    },
+    {
+      "frame": "getEffectiveRelayUrl (/sources/auth/buzz-identity-storage.ts:100)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] generatorPrototypeNext",
+      "samples": 1
+    },
+    {
+      "frame": "asyncGeneratorStep (/node_modules/@babel/runtime/helpers/asyncToGenerator.js:3)",
+      "samples": 1
+    },
+    {
+      "frame": "_next (/node_modules/@babel/runtime/helpers/asyncToGenerator.js:17)",
+      "samples": 1
+    },
+    {
+      "frame": "Promise$argument_0 (/node_modules/@babel/runtime/helpers/asyncToGenerator.js:22)",
+      "samples": 1
+    },
+    {
+      "frame": "tryCallTwo",
+      "samples": 1
+    },
+    {
+      "frame": "doResolve",
+      "samples": 1
+    },
+    {
+      "frame": "Promise",
+      "samples": 1
+    },
+    {
+      "frame": "<anonymous> (/node_modules/@babel/runtime/helpers/asyncToGenerator.js:14)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] functionPrototypeApply",
+      "samples": 1
+    },
+    {
+      "frame": "getEffectiveRelayUrl (/sources/auth/buzz-identity-storage.ts:99)",
+      "samples": 1
+    },
+    {
+      "frame": "<anonymous> (/sources/app/(app)/beeline/chat/useRoomSurfaceSession.ts:1140)",
+      "samples": 1
+    },
+    {
+      "frame": "tryCallOne",
+      "samples": 1
+    },
+    {
+      "frame": "",
+      "samples": 1
+    },
+    {
+      "frame": "areCompositeKeysEqual (/node_modules/react-native/src/private/animated/createAnimatedPropsMemoHook.js:235)",
+      "samples": 1
+    },
+    {
+      "frame": "useAnimatedPropsMemo (/node_modules/react-native/src/private/animated/createAnimatedPropsMemoHook.js:79)",
+      "samples": 1
+    },
+    {
+      "frame": "useAnimatedProps (/node_modules/react-native/src/private/animated/createAnimatedPropsHook.js:63)",
+      "samples": 1
+    },
+    {
+      "frame": "AnimatedComponent (/node_modules/react-native/Libraries/Animated/createAnimatedComponent.js:125)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] numberConstructor",
+      "samples": 1
+    },
+    {
+      "frame": "extractViewBox (/node_modules/react-native-svg/src/lib/extract/extractViewBox.ts:43)",
+      "samples": 1
+    },
+    {
+      "frame": "render (/node_modules/react-native-svg/src/elements/Svg.tsx:195)",
+      "samples": 1
+    },
+    {
+      "frame": "finishClassComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5858)",
+      "samples": 1
+    },
+    {
+      "frame": "updateClassComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5833)",
+      "samples": 1
+    },
+    {
+      "frame": "nativeOperations.methodName (/node_modules/react-native/src/private/animated/NativeAnimatedHelper.js:108)",
+      "samples": 1
+    },
+    {
+      "frame": "API.createAnimatedNode (/node_modules/react-native/src/private/animated/NativeAnimatedHelper.js:247)",
+      "samples": 1
+    },
+    {
+      "frame": "__getNativeTag (/node_modules/react-native/Libraries/Animated/nodes/AnimatedNode.js:152)",
+      "samples": 1
+    },
+    {
+      "frame": "__addChild (/node_modules/react-native/Libraries/Animated/nodes/AnimatedWithChildren.js:49)",
+      "samples": 1
+    },
+    {
+      "frame": "__attach (/node_modules/react-native/Libraries/Animated/nodes/AnimatedInterpolation.js:378)",
+      "samples": 1
+    },
+    {
+      "frame": "__addChild (/node_modules/react-native/Libraries/Animated/nodes/AnimatedWithChildren.js:43)",
+      "samples": 1
+    },
+    {
+      "frame": "__attach (/node_modules/react-native/Libraries/Animated/nodes/AnimatedTransform.js:118)",
+      "samples": 1
+    },
+    {
+      "frame": "__attach (/node_modules/react-native/Libraries/Animated/nodes/AnimatedStyle.js:205)",
+      "samples": 1
+    },
+    {
+      "frame": "__attach (/node_modules/react-native/Libraries/Animated/nodes/AnimatedProps.js:210)",
+      "samples": 1
+    },
+    {
+      "frame": "useInsertionEffect$argument_0 (/node_modules/react-native/src/private/animated/createAnimatedPropsHook.js:275)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8059)",
+      "samples": 1
+    },
+    {
+      "frame": "recursivelyTraverseMutationEffects (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8044)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8082)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8055)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8063)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8192)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8153)",
+      "samples": 1
+    },
+    {
+      "frame": "commitMutationEffectsOnFiber (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:8132)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] arrayPrototypeReverse",
+      "samples": 1
+    },
+    {
+      "frame": "Stream#constructor (/node_modules/expo/src/winter/TextDecoder.ts:69)",
+      "samples": 1
+    },
+    {
+      "frame": "decode (/node_modules/expo/src/winter/TextDecoder.ts:381)",
+      "samples": 1
+    },
+    {
+      "frame": "utf8Decode (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:56)",
+      "samples": 1
+    },
+    {
+      "frame": "parseHost (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:441)",
+      "samples": 1
+    },
+    {
+      "frame": "parseHostname (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:898)",
+      "samples": 1
+    },
+    {
+      "frame": "next (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:663)",
+      "samples": 1
+    },
+    {
+      "frame": "parseURLRaw (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:611)",
+      "samples": 1
+    },
+    {
+      "frame": "parseURL (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:621)",
+      "samples": 1
+    },
+    {
+      "frame": "URL#constructor (/node_modules/whatwg-url-minimum/dist/whatwg-url-minimum.mjs:1238)",
+      "samples": 1
+    },
+    {
+      "frame": "surfaceCacheKey (/packages/buzz-client/dist/surface-cache.js:3)",
+      "samples": 1
+    },
+    {
+      "frame": "SurfaceRegistry#fetch (/sources/buzz/surface-registry.ts:173)",
+      "samples": 1
+    },
+    {
+      "frame": "useEffect$argument_0 (/sources/app/(app)/beeline/chat/_chat-surface.tsx:1965)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] hermesBuiltinCopyDataProperties",
+      "samples": 1
+    },
+    {
+      "frame": "UnistylesComponent (/node_modules/react-native-unistyles/src/core/createUnistylesElement.native.tsx:15)",
+      "samples": 1
+    },
+    {
+      "frame": "createFiberFromTypeAndProps (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:10181)",
+      "samples": 1
+    },
+    {
+      "frame": "reconcileChildFibersImpl (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:3046)",
+      "samples": 1
+    },
+    {
+      "frame": "[Native] arrayPrototypeFilter",
+      "samples": 1
+    },
+    {
+      "frame": "useMemo$argument_0 (/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx:1332)",
+      "samples": 1
+    },
+    {
+      "frame": "HooksDispatcherOnMount.useMemo (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:4695)",
+      "samples": 1
+    },
+    {
+      "frame": "exports.useMemo (/node_modules/react/cjs/react.production.js:514)",
+      "samples": 1
+    },
+    {
+      "frame": "OrdinaryLedgerMessage (/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx:1330)",
+      "samples": 1
+    },
+    {
+      "frame": "updateSimpleMemoComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5443)",
+      "samples": 1
+    },
+    {
+      "frame": "updateMemoComponent (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:5384)",
+      "samples": 1
+    },
+    {
+      "frame": "beginWork (/node_modules/react-native/Libraries/Renderer/implementations/ReactFabric-prod.js:6661)",
+      "samples": 1
+    },
+    {
+      "frame": "View (/node_modules/react-native/Libraries/Components/View/View.js:27)",
+      "samples": 1
+    },
+    {
+      "frame": "constructor (/node_modules/react-native-svg/src/elements/Shape.tsx:250)",
+      "samples": 1
+    },
+    {
+      "frame": "passForwardedRef$argument_2 (/node_modules/react-native-unistyles/src/core/createUnistylesElement.native.tsx:41)",
+      "samples": 1
+    },
+    {
+      "frame": "Component.props.ref (/node_modules/react-native-unistyles/src/core/createUnistylesElement.native.tsx:36)",
+      "samples": 1
+    }
+  ],
+  "nearestProductStacks": [
+    {
+      "frame": "reconcilePresentationValue (/sources/components/buzz/HullDialog.tsx:195)",
+      "samples": 1
+    },
+    {
+      "frame": "SurfaceRegistry#peek (/sources/buzz/surface-registry.ts:36)",
+      "samples": 1
+    },
+    {
+      "frame": "loadAppConfig (/sources/sync/appConfig.ts:30)",
+      "samples": 1
+    },
+    {
+      "frame": "SurfaceRegistry#fetch (/sources/buzz/surface-registry.ts:173)",
+      "samples": 1
+    },
+    {
+      "frame": "useMemo$argument_0 (/sources/app/(app)/beeline/chat/RoomMessageVariants.tsx:1332)",
+      "samples": 1
+    }
+  ],
+  "note": "Separate profiled switch only; sampled stacks in 30–160ms rAF gaps, not invocation counts or additive CPU time. Map bytecode is verified equal to the installed after APK. rAF and Hermes monotonic timestamp ranges are retained."
+}

@@ -45,7 +45,7 @@ function blockFrom(text: string, marker: string, label: string): string {
 }
 
 describe('channel reference links — workspace-scoped exact resolution', () => {
-  const indexBlock = blockFrom(chatSource, 'const channelReferenceIndex', 'channelReferenceIndex');
+  const indexBlock = blockFrom(chatSource, 'const rawChannelReferenceIndex', 'channelReferenceIndex');
 
   it('builds its index from the viewer’s verified Workspace chats, not a Room-open corner list', () => {
     expect(indexBlock).toContain('workspaceChats');

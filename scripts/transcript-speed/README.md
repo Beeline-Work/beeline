@@ -148,6 +148,54 @@ leak.
 
 Android stream visibility uses `tesseract` on retained emulator screenshots outside the timing window; accessibility dumps cannot reliably obtain idle state during streaming. The OCR check requires both stream labels (allowing O for zero), and the images remain available for inspection.
 
+### Isolated redraw comparisons
+
+Only one app may poll a capture channel. An older instrumented emulator can
+otherwise consume commands intended for the measured device. `TRANSCRIPT_CONTROL_PORT`
+selects a private loopback listener for the driver. For an already-built fixture
+APK using port 19886, the leased userdebug emulator can route that endpoint to
+its own ADB reverse (run these only against the explicitly owned emulator):
+
+```sh
+adb -s <owned-serial> root
+# Root can reconnect this emulator under its loopback TCP serial. Select that
+# exact owned serial; capture-android also verifies ro.kernel.qemu=1.
+adb -s <owned-serial> reverse tcp:19886 tcp:19896
+adb -s <owned-serial> shell iptables -t nat -A OUTPUT -p tcp -d 10.0.2.2 \
+  --dport 19886 -j DNAT --to-destination 127.0.0.1:19886
+TRANSCRIPT_CONTROL_PORT=19896 TRANSCRIPT_SKIP_HISTORY=1 \
+  node scripts/transcript-speed/capture-android.mjs <output>
+```
+
+Reset fixture traffic, clear only the leased fixture app's data and sign in
+again before **each** build's capture. This prevents deleted scenario traffic
+in a retained phone cache from changing the next build's starting workload.
+`TRANSCRIPT_SKIP_HISTORY=1` omits the separate long history-prepend experiment;
+it retains typing, scroll/fling, incoming, Room switches, concurrent streams and
+send trials. Both arms must use the same option, recorded in capture metadata.
+The Android driver rejects incoming/stream/send samples with no row commits:
+visibility after sampling alone cannot establish that the action was measured.
+
+For alternating-order regression checks, `TRANSCRIPT_REPEAT_COUNT=1`
+(default: 3; accepted range: 1–3) and `TRANSCRIPT_REGRESSION_ONLY=1`
+retain the exact idle, typing, scroll/fling, Room-return and incoming sequence,
+then omit the later Room-switch, streaming and send scenarios. Clear the owned
+fixture app and reset traffic before each arm. Record the arm order and keep
+all captures; compare the median and min/max of per-trial p95 values. These
+short arms supplement, rather than replace, the full before/after suite.
+
+After the timing run, `capture-row-updates.mjs <output>` exercises visible
+edits, server reactions and a real reaction toggle, verifies zero transcript
+commits while typing, checks the keyboard dock, and checks that an incoming
+message preserves an older visible reading anchor. It uses the same fixture,
+device, APK and control-port environment variables and retains screenshots.
+
+For diagnosis only, build with `BEELINE_TRANSCRIPT_PROP_TRACE=1` alongside the
+measurement flag. Row commits then record which props changed, and surface
+commits record changes to the renderer dependencies and transcript partitions.
+The embedded `propTrace` flag identifies these builds. Rebuild with prop tracing
+off for before/after timing; diagnostic captures are not acceptance timings.
+
 ## Persistent host execution on squire
 
 Use `systemd-run --user --wait --pipe --quiet bash -c '<host command>'` from
@@ -165,3 +213,29 @@ Forward the corner's emulator lease variables when launching `beeline emulator`
 through the host route; select its returned serial and ADB server port for every
 capture command. Do not select another corner's emulator. Wait for build success
 before installing the APK and capturing; never measure while compiling.
+
+### Room-switch transition proof
+
+`capture-room-transitions.mjs <output>` uses real Room-list taps and the existing
+native fixture paint probe on the supplied APK. Set the same owned device,
+fixture database, control port and `TRANSCRIPT_APK` as the matching suite. The
+app must already be signed into the local review fixture. The driver selects
+that fixture Workspace, warms both Rooms and captures six alternating taps.
+It adds the same deterministic marker traffic in both arms so native frame
+commit proves the target transcript is visible. Reset traffic between arms.
+
+The transition ends only after the native transcript paint followed by 500 ms
+without a JS frame interval above 50 ms. `transition-metrics.mjs` retains timing
+bounds for the old sampler's missing first-rAF timestamp. JS busy CPU time uses
+the executor thread's scheduler runtime counter inside that window, with raw
+counter samples and boundary bounds retained. Scheduler wait is not busy CPU.
+Do not substitute the whole-window frame p95 for transition settling time.
+
+`TRANSCRIPT_PROFILE_SWITCH=1` profiles one separate after switch only after all
+acceptance trials. `symbolicate-room-profile.mjs <output>` verifies the locally
+built bytecode against the supplied after APK, then uses its composed map to
+attribute sampled stacks in the 30–160 ms frame windows. Keep profiling disabled
+for acceptance. The approved metric definition and latest measurements are in
+[the Room-switch proof](results/2026-10-24-redraw/room-switch/README.md).
+
+Every scenario in the generated summary includes its worst JS interval and total missed JS frame opportunities alongside p50/p95. A small number of long gaps can dominate wall time while staying above the p95 cutoff; use all these measures when assessing Room switching.

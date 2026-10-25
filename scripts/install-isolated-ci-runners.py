@@ -11,15 +11,15 @@ if os.geteuid() != 0:
 payloads = {'prepare-ephemeral-ci-runner.py': 'b3373576fb59016b050ab60c8ca7a1d7bf24deee379a880e7416223bcb02e835', 'isolated-ci-entry.py': '6cb2a45dfc12d9f62e0184d320b4e9cac58450089a1f14910b34fb5f3f431c73'}
 for name, digest in payloads.items():
     if hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() != digest:
-        raise SystemExit("Payload differs from reviewed bytes")
+        raise SystemExit("Payload mismatch")
 units = Path('/etc/systemd/system')
 users = [pwd.getpwnam(f'beeline-ci-shard-{i}') for i in range(1, 5)]
 for user in users:
     unit = (units / (user.pw_name + '-docker.service')).read_text()
     if unit.count('Environment=_DOCKERD_ROOTLESS_CHILD=1') != 1:
-        raise SystemExit('Missing or duplicate rootless marker')
+        raise SystemExit('Rootless marker count')
     if (units / (user.pw_name + '.service')).exists():
-        raise SystemExit('Runner already exists')
+        raise SystemExit('Runner exists')
 archive = Path('/var/lib/beeline-ci-runner.tar.gz')
 url = 'https://github.com/actions/runner/releases/download/v2.338.1/actions-runner-linux-x64-2.338.1.tar.gz'
 with urllib.request.urlopen(url, timeout=120) as response:

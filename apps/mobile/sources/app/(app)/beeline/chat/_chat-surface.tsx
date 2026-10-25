@@ -383,6 +383,7 @@ import {
   sameStringSet,
   shallowEqualRecord,
   useStable,
+  useScopedCallbacks,
 } from '@/buzz/use-stable';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { Typography } from '@/constants/Typography';
@@ -5630,6 +5631,15 @@ export function BuzzChatSurface({
     const textId = storeTempText(text);
     router.push({ pathname: '/text-selection', params: { textId } } as Href);
   }, []);
+  const rowActions = useScopedCallbacks({
+    handleWritePermission,
+    beginForward,
+    handleForwardToNewCorner,
+    handleConfirmTargetBranch,
+    retryOutboxMessage,
+    handleOpenChannelReference,
+    handleOpenMention
+  }, `${decodedId}\0${cacheViewerPubkey}`);
   const renderMessage = useCallback(
     (
       item: ChatDisplayMessage,
@@ -5670,7 +5680,7 @@ export function BuzzChatSurface({
             viewerCanManage={canManageWorkspace}
             actionId={permissionActionId}
             targetBranch={roomRepository?.targetBranch}
-            onDecision={handleWritePermission}
+            onDecision={rowActions.handleWritePermission}
             onOpenCorner={openCorner}
           />
         );
@@ -5845,7 +5855,7 @@ export function BuzzChatSurface({
             viewerIsAgent={viewerIsAgent}
             actionId={targetBranchActionId}
             notice={notice}
-            onConfirm={handleConfirmTargetBranch}
+            onConfirm={rowActions.handleConfirmTargetBranch}
             viewerPubkey={cacheViewerPubkey}
             onDeny={async () => {
               if (targetBranchActionId) return;
@@ -5947,22 +5957,22 @@ export function BuzzChatSurface({
           channelIndex={channelReferenceIndex}
           untaggedHint={untaggedHint}
           deliveryFailed={deliveryFailed}
-          onChannelReference={handleOpenChannelReference}
+          onChannelReference={rowActions.handleOpenChannelReference}
           codeRoomId={decodedId}
           onOpenCode={handleOpenCode}
           onOpenSource={handleOpenMessageSource}
-          onMention={handleOpenMention}
+          onMention={rowActions.handleOpenMention}
           onOpenProfile={handleOpenProfile}
           onTapOutsideComposer={dismissComposerKeyboard}
           onReply={beginReply}
           onCopy={handleCopyLedgerMessage}
           onMessageActions={openMessageActions}
           onReact={handleReactToMessage}
-          onForward={beginForward}
+          onForward={rowActions.beginForward}
           onBookmark={handleBookmarkMessage}
           onReportIssue={handleReportMessage}
           {...(!isDirectMessage && !isArchived && !viewerIsAgent && !desktopExperience
-            ? { onForwardToNewCorner: handleForwardToNewCorner }
+            ? { onForwardToNewCorner: rowActions.handleForwardToNewCorner }
             : {})}
           {...(!isCorner &&
           !isArchived &&
@@ -5973,7 +5983,7 @@ export function BuzzChatSurface({
             : {})}
           cornerProposalAnswer={cornerProposalAnswer}
           cornerProposalAction={rowCornerProposalAction}
-          onRetry={retryOutboxMessage}
+          onRetry={rowActions.retryOutboxMessage}
           onDismiss={dismissOutboxMessage}
         />
       );
@@ -5987,12 +5997,12 @@ export function BuzzChatSurface({
       );
     },
     [
+      rowActions,
       openCorner,
       isDirectMessage,
       agentByPubkey,
       agentProfileModelByPubkey,
       isDesktop,
-      handleWritePermission,
       handleGrantDecision,
       handleChoiceAnswer,
       handleChoiceSkip,
@@ -6004,8 +6014,6 @@ export function BuzzChatSurface({
       handleBookmarkMessage,
       handleReportMessage,
       handleCornerProposalDecision,
-      beginForward,
-      handleForwardToNewCorner,
       grantActionId,
       connectorOfferActionId,
       appSignInActionId,
@@ -6017,7 +6025,6 @@ export function BuzzChatSurface({
       openCornerApp,
       openWorkbench,
       choiceActionId,
-      handleConfirmTargetBranch,
       openCorner,
       participantsHydrated,
       permissionActionId,
@@ -6033,11 +6040,8 @@ export function BuzzChatSurface({
       beginReply,
       dismissOutboxMessage,
       replyTargetForMessage,
-      retryOutboxMessage,
       channelReferenceIndex,
       dismissComposerKeyboard,
-      handleOpenChannelReference,
-      handleOpenMention,
       handleOpenProfile,
       handleOpenGitHubEvent,
       handleCopyLedgerMessage,

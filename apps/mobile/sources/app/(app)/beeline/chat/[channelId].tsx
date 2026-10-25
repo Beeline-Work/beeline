@@ -35,16 +35,30 @@ export default function BuzzChat() {
     const end = navigation.addListener('transitionEnd', () => { finish?.(); finish = undefined; });
     return () => { start(); end(); finish?.(); };
   }, [navigation]);
+  useLayoutEffect(() => {
+    markRoomOpen('route-mount', decodedId);
+  }, [decodedId]);
+
+
+  return (
+    <>
+      <RoomSession key={decodedId} decodedId={decodedId} isFocused={isFocused} notificationResponseId={notificationResponseId} />
+      <RoomOpenTraceOverlay />
+    </>
+  );
+}
+
+function RoomSession({ decodedId, isFocused, notificationResponseId }: {
+  decodedId: string;
+  isFocused: boolean;
+  notificationResponseId?: string;
+}) {
   const bindingsRef = useRef<RoomSurfaceSessionBindings>({
     resetTranscript: () => undefined,
     restoreOutboxMessages: () => undefined,
     dismissOptimisticMessage: () => undefined,
     observeRoomSurface: () => undefined,
   });
-
-  useLayoutEffect(() => {
-    markRoomOpen('route-mount', decodedId);
-  }, [decodedId]);
 
   const session = useRoomSurfaceSession({
     channelId: decodedId,
@@ -53,10 +67,5 @@ export default function BuzzChat() {
     bindingsRef,
   });
 
-  return (
-    <>
-      <RoomSurface session={session} bindingsRef={bindingsRef} />
-      <RoomOpenTraceOverlay />
-    </>
-  );
+  return <RoomSurface session={session} bindingsRef={bindingsRef} />;
 }

@@ -701,17 +701,23 @@ export function foldTranscriptRows(
   return { rows, hostIds };
 }
 
-/** Reuse unchanged folded card rows; retain only the current Room's projection. */
+/** Reuse unchanged folded card rows; retain a bounded recent projection for live/history handoffs. */
 export function createTranscriptRowFolder() {
   let previous: ChatDisplayMessage[] = [];
-  let byId = new Map<string, ChatDisplayMessage>();
+  const byId = new Map<string, ChatDisplayMessage>();
   return (messages: readonly ChatDisplayMessage[], firstNewMessageId: string | null | undefined) => {
     const folded = foldTranscriptRows(messages, firstNewMessageId);
     const rows = folded.rows.map(row => {
       const held = byId.get(row.id);
       return held && equal(held, row) ? held : row;
     });
-    byId = new Map(rows.map(row => [row.id, row]));
+    for (const row of rows) {
+      byId.delete(row.id);
+      byId.set(row.id, row);
+    }
+    while (byId.size > Math.max(rows.length * 2, 1)) {
+      byId.delete(byId.keys().next().value!);
+    }
     if (rows.length !== previous.length || rows.some((row, index) => row !== previous[index]))
       previous = rows;
     return { rows: previous, hostIds: folded.hostIds };

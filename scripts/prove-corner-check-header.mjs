@@ -1,5 +1,5 @@
 // CHECK-HEADER-1: isolated built HTTP service, with GitHub responses supplied locally.
-// Run: npm run build -w @beeline/server && node --import tsx scripts/prove-corner-check-header.mjs
+// Run: npm run prove:corner-check-header
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';

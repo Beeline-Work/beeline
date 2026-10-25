@@ -594,7 +594,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
       messages[0] = `@ronnie ${text}`;
     }), recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async (sql: string, parameters?: any[]) => ({ rowCount: 1,
-      rows: sql.includes('identity_id=ANY') ? (parameters?.[1] ?? []).map((identity_id: string) => ({identity_id})) : [] as any[] })) },
+      rows: sql.includes('speaking_speed') ? [{speaking_speed: 1.5}] : sql.includes('identity_id=ANY') ? (parameters?.[1] ?? []).map((identity_id: string) => ({identity_id})) : [] as any[] })) },
     runtimeClosed: vi.fn(),
     leave: vi.fn(async () => {}),
   };
@@ -2765,7 +2765,7 @@ it('VOICE-TAG-1: order acknowledgements leave agent mentions to the heavy final 
   } finally { await runtime.close(); }
 });
 
-it.each([1, 5].flatMap(silentFrames => [0, 1, -1, 150, -150].map(padding => ({ silentFrames, padding }))))('VOICE-SPEED-ONSET: preserves first voiced publication ($silentFrames frames, padding $padding)', async ({ silentFrames, padding }) => {
+it.each([1.15, 1.3, 1.5].flatMap(speed => [1, 5].flatMap(silentFrames => [0, 1, -1, 150, -150].map(padding => ({ speed, silentFrames, padding })))))('VOICE-SPEED-ONSET: preserves first voiced publication ($speed x, $silentFrames frames, padding $padding)', async ({ speed, silentFrames, padding }) => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
   const { service, speech } = conversationService(1);
   service.config.brain.answer.mockImplementation(async () => ({ text: 'Hello there.', order: false }));
@@ -2786,10 +2786,11 @@ it.each([1, 5].flatMap(silentFrames => [0, 1, -1, 150, -150].map(padding => ({ s
     if (firstVoiced < 0 && frame.data.some(value => Math.abs(value) > 150)) firstVoiced = performance.now() - start;
   });
   try {
+    (runtime as any).speakingSpeeds.set('human', speed);
     const work = runtime.utterance('human', 'Ruby say hello');
     await vi.advanceTimersByTimeAsync(500); await work;
     expect(firstVoiced).toBe((silentFrames + 1) * 20);
-    console.log('VOICE-SPEED-ONSET', { silentFrames, padding, firstVoicedMs: firstVoiced });
+    console.log('VOICE-SPEED-ONSET', { speed, silentFrames, padding, firstVoicedMs: firstVoiced });
   } finally { await runtime.close(); vi.useRealTimers(); }
 });
 
@@ -2907,6 +2908,49 @@ it('VOICE-SPEED-4: discards an opening changed by the final routing decision', a
     expect(service.dispatch).not.toHaveBeenCalled();
     expect(state.audio.captureFrame).toHaveBeenCalledOnce();
   } finally { decision.resolve(); await work; await runtime.close(); }
+});
+
+it.each([1.15, 1.3, 1.5])('SPEAKING-SPEED-1: input loads %sx once; next reply uses refreshed preference', async speed => {
+  const { service, speech } = conversationService(1);
+  let preference = speed;
+  let reads = 0;
+  const originalQuery = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, parameters) => {
+    if (sql.includes('speaking_speed')) { reads++; return {rowCount:1,rows:[{speaking_speed:preference}]}; }
+    return originalQuery(sql, parameters);
+  });
+  service.config.stt.mockResolvedValue({send() {}, close() {}});
+  service.config.brain.answer.mockResolvedValue({text:'Hello there.',order:false});
+  speech.synthesize.mockImplementation(async function* () {
+    const pcm = Buffer.alloc(24000 * 2);
+    for (let i = 0; i < 24000; i++) pcm.writeInt16LE(Math.round(12000 * Math.sin(2*Math.PI*220*i/24000)),i*2);
+    yield pcm;
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track',{kind:1},{},{identity:'human'});
+    await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalledOnce());
+    expect(reads).toBe(1);
+    const play = async (expected: number) => {
+      state.audio.captureFrame.mockClear();
+      await runtime.utterance('human','Ruby say hello');
+      const samples = state.audio.captureFrame.mock.calls.reduce((n: number, [frame]: any[]) => n + frame.data.length, 0);
+      expect(samples).toBe(Math.round(24000/expected));
+    };
+    await play(speed); await play(speed);
+    expect(reads).toBe(1);
+    preference = speed === 1.5 ? 1.15 : 1.5;
+    await runtime.refreshSpeakingSpeed('human');
+    await play(preference);
+    expect(reads).toBe(2);
+    service.db.query.mockImplementation(async (sql, parameters) => {
+      if (sql.includes('speaking_speed')) throw new Error('Preference unavailable');
+      return originalQuery(sql, parameters);
+    });
+    await runtime.refreshSpeakingSpeed('human');
+    await play(1.15);
+  } finally { await runtime.close(); }
 });
 
 it('SPEEDY-SEARCH-1: resuming during search acknowledgement revises the original request', async () => {

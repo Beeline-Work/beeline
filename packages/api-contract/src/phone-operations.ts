@@ -190,6 +190,7 @@ export type PhoneOperationMap = {
   removeAgent: { input: WorkspaceAgentInput; output: void };
   updatePersonProfile: { input: UpdatePersonProfileInput; output: PersonProfileResult };
   updateIdentityFace: { input: UpdateIdentityFaceInput; output: void };
+  updateIdentitySpeakingSpeed: { input: { readonly speakingSpeed: 1.15 | 1.3 | 1.5 }; output: ManagedIdentityResult };
   updateIdentityPushLevel: { input: UpdateIdentityPushLevelInput; output: ManagedIdentityResult };
   setRoomRepository: { input: SetRoomRepositoryInput; output: RoomRepositoryResult };
   setRoomTargetBranch: { input: SetRoomTargetBranchInput; output: RoomRepositoryResult };
@@ -750,6 +751,7 @@ export type ManagedIdentityResult = {
   readonly avatar?: string;
   readonly face?: string;
   readonly pushLevel: PushLevel;
+  readonly speakingSpeed?: 1.15 | 1.3 | 1.5;
 };
 export type ClaimManagedHandleInput = { readonly handle: string };
 export type RefreshInput = { readonly refresh?: boolean };

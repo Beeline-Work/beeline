@@ -123,6 +123,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   updateAgentYolo: true,
   updateIdentityFace: true,
   updateRoomPushState: true,
+  updateIdentitySpeakingSpeed: true,
   updateIdentityPushLevel: true,
   updatePersonProfile: true,
   updateRoom: true,

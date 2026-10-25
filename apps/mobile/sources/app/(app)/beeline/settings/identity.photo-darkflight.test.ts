@@ -186,6 +186,10 @@ vi.mock('@/components/buzz/UiSizeSetting', async () => {
   const ReactModule = await import('react');
   return { UiSizeSetting: (props: unknown) => ReactModule.createElement('UiSizeSetting', props) };
 });
+vi.mock('@/components/buzz/SpeakingSpeedSetting', async () => {
+  const ReactModule = await import('react');
+  return { SpeakingSpeedSetting: (props: unknown) => ReactModule.createElement('SpeakingSpeedSetting', props) };
+});
 vi.mock('@/components/buzz/SettingsRow', async () => {
   const ReactModule = await import('react');
   return {

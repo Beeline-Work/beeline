@@ -3,10 +3,11 @@ export const VOICE_PCM_THRESHOLD = 150;
 
 /** Streaming WSOLA for 24 kHz mono PCM. Leading quiet padding and the first voiced
  * 20 ms frame pass immediately; padding is not included in the speed change.
- * Later windows advance 1.15 hops, aligned by waveform correlation, rather
+ * Later windows advance the selected number of hops, aligned by waveform correlation, rather
  * than changing the sample rate (and therefore pitch). */
-export async function* voiceTempo(input: AsyncIterable<Uint8Array>): AsyncIterable<Uint8Array> {
-  const hop = 480, search = 120, speed = 1.15;
+export async function* voiceTempo(input: AsyncIterable<Uint8Array>, requestedSpeed: unknown = 1.15): AsyncIterable<Uint8Array> {
+  const hop = 480, search = 120;
+  const speed = requestedSpeed === 1.3 || requestedSpeed === 1.5 ? requestedSpeed : 1.15;
   let bytes = Buffer.alloc(0), samples: number[] = [], base = 0, total = 0;
   let emitted = 0, step = 0, previous = 0;
   const sample = (index: number) => samples[index - base] ?? 0;

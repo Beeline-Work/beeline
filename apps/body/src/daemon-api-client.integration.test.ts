@@ -510,7 +510,8 @@ describe('daemon API client against the local monolith', () => {
     await connectionPresence.stop();
     await mountedAuth.close();
     await database.close();
-    await rm(supervisorRoot, { recursive: true, force: true });
+    // The detached daemon can finish a final state write after SIGTERM.
+    await rm(supervisorRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }, 30_000);
 
   it('takes an app grant through finish, durable daemon auth, and a visible first heartbeat', async () => {

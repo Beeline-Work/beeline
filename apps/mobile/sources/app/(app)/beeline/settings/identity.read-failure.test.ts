@@ -202,6 +202,16 @@ vi.mock('@/components/buzz/UiSizeSetting', async () => {
       }),
   };
 });
+vi.mock('@/components/buzz/SpeakingSpeedSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    SpeakingSpeedSetting: (props: unknown) =>
+      ReactModule.createElement('SpeakingSpeedSetting', {
+        ...(props as object),
+        testID: 'speaking-speed-setting',
+      }),
+  };
+});
 vi.mock('@/components/buzz/SettingsRow', async () => {
   const ReactModule = await import('react');
   return {

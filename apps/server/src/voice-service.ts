@@ -42,6 +42,10 @@ export class VoiceService {
     this.profiles = new AgentVoiceService(db, () => this.speech());
     this.rooms = new RoomServiceClient(config.url.replace(/^ws/, 'http'), config.apiKey, config.apiSecret);
     this.unsubscribe = live.subscribeAll(event => {
+      if (event.type === 'invalidate' && event.personId) {
+        const human = event.personId;
+        for (const runtime of this.runtimes.values()) void runtime.then(r => r?.refreshSpeakingSpeed(human)).catch(() => {});
+      }
       if (event.type === 'invalidate') {
         for (const runtime of this.runtimes.values()) void runtime.then(r => {
           if (r?.roomId === event.roomId) return Promise.all([r.countHumans(), r.refresh()]);

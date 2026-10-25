@@ -1,4 +1,5 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
+// Protect user-facing System messages; proven agent-only delivery stays outside the lock.
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve, relative } from 'node:path';
@@ -738,10 +739,43 @@ function scan(files: Map<string, string>): Entry[] {
           : (writes.get(node)?.parts ?? []);
     forward(node, parts);
   }
+  // commander.ts skips human recipients with agentOnly and suppresses transcript
+  // records with automatic. Both are required: agentOnly alone can still render
+  // a report record. Unknown values and spreads keep the call locked.
+  const privateReport = (call: ts.CallExpression): boolean => {
+    if (
+      !named(call, 'reportToCommander') ||
+      !callableDeclarations(call.expression).some(
+        (declaration) =>
+          ts.isFunctionDeclaration(declaration) &&
+          declaration.name?.text === 'reportToCommander' &&
+          declaration.getSourceFile().fileName === resolve(server, 'src/commander.ts'),
+      )
+    )
+      return false;
+    const options = invocationArguments(call)[6];
+    if (!options || !ts.isObjectLiteralExpression(options)) return false;
+    if (
+      options.properties.some(
+        (property) =>
+          !ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name),
+      )
+    )
+      return false;
+    return ['automatic', 'agentOnly'].every((name) => {
+      const properties = options.properties.filter((property) => property.name?.getText() === name);
+      return (
+        properties.length === 1 &&
+        ts.isPropertyAssignment(properties[0]!) &&
+        properties[0]!.initializer.kind === ts.SyntaxKind.TrueKeyword
+      );
+    });
+  };
   let changed = true;
   while (changed) {
     changed = false;
     for (const call of calls) {
+      if (privateReport(call)) continue;
       const indices = new Set(
         callableDeclarations(call.expression).flatMap((declaration) => [
           ...(wrappers.get(functions.get(declaration) ?? declaration) ?? []),
@@ -966,18 +1000,60 @@ it.each([
   expect(compare(scan(changed), scan(baseline)).violations.length).toBeGreaterThan(0);
 });
 
-it('keeps ordinary agent reports outside the System lock', () => {
-  const changed = fixture(
-    "export function added(db: any, options: any) { reportToCommander(db, room, SYSTEM_IDENTITY_ID, 'new public report', undefined, 'id', {agentOnly: true, ...options}); }",
-  );
-  expect(compare(scan(changed), scan(fixture())).violations).toEqual([]);
+// Use the real transport implementation: a missing import must not make the
+// fixture pass by hiding the human report/card sinks from the scanner.
+function reportFixture(statement: string) {
+  return new Map([
+    [
+      resolve(server, 'src/commander.ts'),
+      readFileSync(resolve(server, 'src/commander.ts'), 'utf8'),
+    ],
+    [
+      resolve(server, 'src/system-line.ts'),
+      'export function systemLine(db: unknown, input: unknown) {}',
+    ],
+    [
+      resolve(server, 'src/report-fixture.ts'),
+      `import { reportToCommander as report } from './commander.js';
+      import { systemLine } from './system-line.js';
+      ${statement}`,
+    ],
+  ]);
+}
+
+it('allows changed agent-only wake/handoff wrapper wording', () => {
+  const source = `function handoff(db: any, text: string) {
+    return report(db, room, author, text, undefined, 'id', {automatic: true, agentOnly: true});
+  } handoff(db, 'hello');`;
+  const base = reportFixture(source);
+  expect(() =>
+    enforce(scan(reportFixture(source.replace('hello', 'goodbye'))), scan(base)),
+  ).not.toThrow();
 });
 
-it('keeps a statically private report outside the visible-message lock', () => {
-  const changed = fixture(
-    "export function privateWake(db: any) { reportToCommander(db, room, SYSTEM_IDENTITY_ID, 'private wake', undefined, 'id', {agentOnly: true}); }",
-  );
-  expect(compare(scan(changed), scan(fixture())).violations).toEqual([]);
+it.each([
+  '{}',
+  '{agentOnly: true}',
+  '{automatic: true}',
+  '{automatic: true, agentOnly: flag}',
+  '{automatic: true, agentOnly: true, ...options}',
+  '{automatic: true, agentOnly: true, [key]: false}',
+  '{automatic: true, agentOnly: true, agentOnly: false}',
+])('locks reports with a possible human delivery path: %s', (options) => {
+  const source = `report(db, room, author, 'hello', undefined, 'id', ${options});`;
+  expect(() =>
+    enforce(scan(reportFixture(source.replace('hello', 'goodbye'))), scan(reportFixture(source))),
+  ).toThrow(failure);
+});
+
+it('locks a wrapper feeding both a private handoff and a visible System line', () => {
+  const source = `function handoff(db: any, text: string) {
+    report(db, room, author, text, undefined, 'id', {automatic: true, agentOnly: true});
+    systemLine(db, {verb: text});
+  } handoff(db, 'hello');`;
+  expect(() =>
+    enforce(scan(reportFixture(source.replace('hello', 'goodbye'))), scan(reportFixture(source))),
+  ).toThrow(failure);
 });
 
 it('rejects a changed phrase read from an object property', () => {

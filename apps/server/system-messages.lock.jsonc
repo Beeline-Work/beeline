@@ -115,24 +115,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-command.ts:noteCornerAgentUnreachable:wrapper:9906e49646c56b82",
-    "file": "apps/server/src/agent-command.ts",
-    "kind": "wrapper",
-    "template": "reportToCommander(db, cornerId, agentId, `blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`, command, reportId, { automatic: true, agentOnly: true })",
-    "literals": [
-      "''",
-      "'2 minutes'",
-      "'hex'",
-      "'never-run'",
-      "'sha256'",
-      "`${cause}; source ${sourceMessageId}`",
-      "`blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`",
-      "`command ${command.id} (${command.reason}) remained unclaimed for ${CORNER_CHECKS_BLOCKED_AFTER}`",
-      "`unreachable:${cornerId}:${agentId}:${failure.last_run ?? 'never-run'}:${failure.generation ?? ''}`"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/agent-command.ts:reconcileConfiguredCornerReviewers:systemLine:7eddac56b6442a8c",
     "file": "apps/server/src/agent-command.ts",
     "kind": "systemLine",
@@ -1271,25 +1253,6 @@
       "'tailscale'",
       "'trusty-squire'",
       "'wallet'"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/corner-attention.ts:refreshCornerAttention:wrapper:ebeb8c06865d311a",
-    "file": "apps/server/src/corner-attention.ts",
-    "kind": "wrapper",
-    "template": "reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID, text, undefined, id, { automatic: true, agentOnly: true })",
-    "literals": [
-      "'hex'",
-      "'idle'",
-      "'merge-hold'",
-      "'report'",
-      "'sha256'",
-      "'working'",
-      "`agent-command-card:${row.waiting_item_id}`",
-      "`blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`",
-      "`corner-hold:${row.waiting_item_id}`",
-      "`corner-idle:${cornerId}:${episode}`"
     ],
     "occurrences": 1
   },

@@ -313,6 +313,92 @@ Server-only delivery precedes the frontend change in `Beeline-Work/beeline-dashb
 The frontend must render these labels and stages with its existing bar style once
 repository App access is granted; that change and its screenshot are separate work.
 
+## X advertising attribution
+
+This is a feature, not a defect report. `xAds` is additive and uses the existing
+private dashboard authentication. It is independent of `signinFunnel`, its
+anonymous tables, and the selected platform filter. Its scope is **web signups
+only**. Store installs drop the click context; no mobile install attribution is
+claimed.
+
+The landing page and web app capture `twclid` and numeric or opaque entity IDs in
+`utm_campaign` (campaign), `utm_content` (promoted-tweet/ad ID), and `utm_term`
+(line-item/ad-group ID). Use actual X entity IDs in the ad destination URLs;
+free-text campaign names do not join API entities. `utm_source=x` also marks an
+X visit, but without `twclid` there is no server conversion to X. The cookie is
+first-party, shared across usebeeline.app and web.usebeeline.app, and expires
+after 30 days. No other UTM fields or arbitrary query data are retained.
+
+On a new Google/GitHub identity INSERT, the account transaction saves one
+`x_ad_signups` row. Existing-account sign-ins and linked identities never acquire
+new attribution. Account deletion cascades the row. The browser receives only
+the event ID and opaque conversion ID; X receives the click ID, signup time,
+event ID and conversion ID, never Beeline identity IDs, names, email, phone or
+Room content. Ordinary visits load no X script; credential-bearing OAuth/review
+URLs cannot load the pixel. The anonymous sign-in funnel is unchanged.
+
+The server outbox leases up to 20 rows, retries after five minutes (at most ten
+attempts within two days), and requires `conversions_processed: 1` before marking
+delivery. A crash after provider acceptance can repeat the HTTP request; every
+retry and the browser pixel use the same `conversion_id` for X deduplication.
+This guarantees one account record and one logical conversion, not exactly one
+HTTP request under a network failure. Blocked pixels do not prevent server
+delivery. Missing credentials leave pending rows, not successful deliveries.
+
+The confirmed pixel is `rhefr`; its code-triggered Sign Up event is
+`tw-rhefr-rhym5` (Beeline web signup). The token was obtained in X Events Manager,
+stored directly in Squire under `x-conversions` / `Beeline signup`, and verified
+with an empty request: HTTP 200, `conversions_processed: 0`, no conversion sent.
+The active X account is Beeline (`usebeelineapp`), ads account `18ce55ws4zb`.
+This does not establish ownership of the earlier account display name.
+
+Release configuration, after privacy approval, uses the existing secret
+provisioning route; do not expose the vault value in chat or source:
+
+- `BEELINE_X_PIXEL_TOKEN`: vaulted X-Pixel-Token value, server only.
+- `BEELINE_X_SIGNUP_EVENT_ID`: optional override of the confirmed event above.
+- `BEELINE_X_AD_ACCOUNT_ID`: the ads account ID.
+- `BEELINE_X_CONSUMER_KEY`, `BEELINE_X_CONSUMER_SECRET`,
+  `BEELINE_X_ACCESS_TOKEN`, `BEELINE_X_ACCESS_SECRET`: OAuth 1.0 user-context
+  credentials for an Ads API approved app. These are separate from the pixel token.
+
+The leader starts bounded external jobs without awaiting their network requests
+in the push/schedule loop. The daily reporting job paginates inventory and queries
+campaigns, line items and promoted tweets in batches of 20 for each placement.
+Hourly metrics roll into UTC days, avoiding account timezone/DST ambiguity. It
+refreshes the last seven complete days; later billing corrections outside that
+window are not reconstructed. Spend remains provisional. A failed fetch leaves
+the previous complete snapshot and a stale/unavailable state; it never fills
+unobserved API data with zero. Provider null metric arrays mean measured zero.
+
+`xAds.rows` contains daily `campaign`, `ad_group` and `ad` rows, with currency,
+spend (major units), impressions, link clicks, local account signups, cost per
+click and cost per signup (null for a zero denominator). Do not sum across levels.
+Signup dates are creation dates, not X click dates, so X Ads Manager's reporting
+windows can differ. `coverage` reports new eligible people over the last 90 days,
+people with captured X context, and `unattributedShare` (null with no people).
+`signups` also preserves aggregate attributed rows that lack matching API entity
+IDs, so those signups remain visible. No click IDs or account IDs leave this API.
+
+Live analytics and the frontend remain pending: the corner's GitHub App cannot
+resolve `Beeline-Work/beeline-dashboard`. The X developer onboarding succeeded
+and exposed company app `33573631`, but the Ads API access form requires verified
+contact name/title, city/state, email and phone before it can be submitted. The
+existing discovery bearer is not an Ads API OAuth1 credential. No reporting
+credential was obtained and no live daily X reporting is claimed.
+
+Proof: `npm run prove:x-attribution` exercises the **built** loopback signup HTTP
+service and authenticated dashboard with isolated PGlite and X provider fixtures,
+writing `.scratch/x-ads/service-proof.json`. `x-ads.test.ts` covers signup retries,
+both providers, returning accounts and dashboard joins; the shared browser tests
+cover cross-origin cookie reuse and pixel deduplication. `npm run build:x-attribution`
+regenerates the committed landing script. Privacy changes retain the October 18
+archive and require the owner's approval before merge.
+
+Provider contracts: [X web conversions](https://docs.x.com/x-ads-api/measurement/web-conversions),
+[X analytics](https://docs.x.com/x-ads-api/analytics). The current Events Manager
+installation instructions additionally specify `X-Pixel-Token` authentication.
+
 ## Period-scoped people dashboard
 
 The additive `periods` object has `24h`, `7d`, `28d`, and `all` entries, independent

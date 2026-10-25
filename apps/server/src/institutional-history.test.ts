@@ -1,4 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Check } from 'typebox/value';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { agentToolsFor, callAgentTool } from '../../body/src/read-only-mcp.js';
 import { migrate } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import { claimAgentCommand, createAgentCommand } from './agent-command.js';
@@ -97,10 +103,88 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await database.close();
 });
 
 describe('authorized institutional history search', () => {
+  it('Reproduction HSA-1: advertised search arguments reach the history query unchanged', async () => {
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, REQUESTER]);
+    const active = await createAgentCommand(database, {
+      roomId: OUTPUT, agentId: AGENT, sourceMessageId: ROOT,
+      reason: 'human_tag', turnRequestId: 'hsa-1',
+    });
+    await claimAgentCommand(database, OUTPUT, AGENT, active!.id, 'hsa-generation');
+    const daemon = new DaemonService(database, new LiveHub(), undefined, undefined, false,
+      undefined, false, undefined, undefined, undefined, { enabled: true, live: true });
+    const contextDirectory = await mkdtemp(join(tmpdir(), 'history-search-'));
+    const contextPath = join(contextDirectory, 'context.json');
+    await writeFile(contextPath, JSON.stringify({
+      roomId: OUTPUT, requestId: 'hsa-1', generationId: 'hsa-generation',
+    }));
+    const server = createServer(async (request, response) => {
+      try {
+        expect(request.url).toBe('/v1/daemon/operations/searchInstitutionalHistory');
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const input = JSON.parse(Buffer.concat(chunks).toString());
+        const result = await daemon.execute('searchInstitutionalHistory', input, AGENT);
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify(result));
+      } catch (error) {
+        response.writeHead(400, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: (error as Error).message }));
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    for (const [key, value] of Object.entries({
+      BEELINE_DAEMON_ROOM_ID: OUTPUT, BEELINE_DAEMON_AGENT_ID: AGENT,
+      BEELINE_DAEMON_BASE_URL: `http://127.0.0.1:${port}`, BEELINE_DAEMON_TOKEN: 'test',
+      BEELINE_TURN_CONTEXT_FILE: contextPath,
+    })) vi.stubEnv(key, value);
+    try {
+      const schema = agentToolsFor(true, false).find(tool => tool.name === 'search')!.inputSchema;
+      for (const query of ['"release marker"', 'é'.repeat(500), '🙂'.repeat(500)]) {
+        const args = { scope: 'history', query, limit: 10 };
+        expect(Check(schema, args)).toBe(true);
+        const result = JSON.parse(await callAgentTool('search', args, 'hsa-1'));
+        expect(result.results).toBeInstanceOf(Array);
+        expect(result.windowDays).toBe(180);
+        if (query === '"release marker"')
+          expect(result.results.map((row: { messageId: string }) => row.messageId)).toContain('shared-result');
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      await rm(contextDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps advertised history query and limit bounds aligned with the server validator', async () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'search')!.inputSchema;
+    const cases = [
+      { query: 'release marker' }, { query: 'release marker', limit: 1 },
+      { query: 'release marker', limit: 10 }, { query: 'release marker', limit: 12 },
+      { query: 'release marker', limit: 0 }, { query: 'release marker', limit: 1.5 },
+      { query: 'release marker', limit: null }, { query: 'release marker', limit: '5' },
+      { query: '' }, { query: ' \n\t' }, { query: 'release\0marker' },
+      { query: 'x'.repeat(500) }, { query: 'x'.repeat(501) },
+      { query: 'é'.repeat(500) }, { query: 'é'.repeat(501) },
+      { query: '🙂'.repeat(500) }, { query: '🙂'.repeat(501) },
+      { query: ' \n"release marker"\t' }, { query: 42 },
+    ];
+    for (const args of cases) {
+      const advertised = Check(schema, { scope: 'history', ...args });
+      const search = searchInstitutionalHistory(database, command, {
+        agentId: AGENT, roomId: OUTPUT, ...args,
+      } as Parameters<typeof searchInstitutionalHistory>[2]);
+      if (advertised) expect((await search).results).toBeInstanceOf(Array);
+      else await expect(search).rejects.toThrow(/query is invalid|limit is invalid/);
+    }
+    await expect(callAgentTool('search', { scope: 'history', query: 'release', limit: 12 }, 'invalid'))
+      .rejects.toThrow(/limit/);
+  });
+
   it('Reproduction RHS-1: finds the agreed workflow design with a natural-language query', async () => {
     await database.query(`UPDATE rooms SET name='Workflow Page Redesign' WHERE id=$1`, [SHARED]);
     await database.query(

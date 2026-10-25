@@ -69,6 +69,8 @@
         ".verification/**/*.ts",
         "web/**/*.{js,mjs}",
         "!web/join/invite.js",
+        // Generated browser bundle; source is web/x-attribution-source.ts.
+        "!web/x-attribution.js",
       ],
     },
     "apps/*": {

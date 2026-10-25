@@ -1,6 +1,7 @@
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
+import { agentPostText } from './agent-post-text.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
@@ -478,6 +479,17 @@ export class DaemonService {
     if (scopedRoom && name !== 'ensureAgentMembership' && !this.commandTransaction)
       ({ cornerReviewer, isCorner, privateCommand, voiceAgentName } = await this.access(scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId).catch(
         (error: unknown) => {
+          if (error instanceof AccessDeniedError &&
+              (name === 'getRoomConversation' || name === 'getRoomMessage'))
+            return this.reviewSourceAccess(scopedRoom, authenticatedAgentId).then(() => ({
+              cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
+            })).catch((sourceError: unknown) => {
+              if (sourceError instanceof AccessDeniedError && name === 'getRoomConversation')
+                return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
+                  cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
+                }));
+              throw sourceError;
+            });
           // Reachable corner operations also admit a parent Room member.
           if (error instanceof AccessDeniedError && CORNER_REACH_OPERATIONS.has(name))
             return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
@@ -499,6 +511,8 @@ export class DaemonService {
              AND review_context IS NOT NULL AND state IN ('pending','claimed')`,
           [scopedRoom, authenticatedAgentId]);
         for (const origin of origins.rows) await this.github.refreshCornerReviewHead?.(origin.corner_id);
+      } else if (isCorner && !cornerReviewer && name === 'report' && candidate.status === 'done') {
+        await this.github.resolveUnregisteredCornerPullRequest(scopedRoom, authenticatedAgentId);
       } else if (isCorner && (['getCornerRestoreState', 'order', 'report', 'postCornerMessage'].includes(name) ||
         name === 'postRoomMessage' && candidate.relay === undefined)) {
         await this.github.refreshCornerReviewHead?.(scopedRoom);
@@ -3042,7 +3056,10 @@ export class DaemonService {
         : input.roomId;
     await this.access(roomId, agentId).catch((error: unknown) => {
       if (error instanceof AccessDeniedError && name === 'getRoomConversation')
-        return this.reach(roomId, agentId);
+        return this.reviewSourceAccess(roomId, agentId).catch((sourceError: unknown) => {
+          if (sourceError instanceof AccessDeniedError) return this.reach(roomId, agentId);
+          throw sourceError;
+        });
       throw error;
     });
     const closeRequested =
@@ -3238,7 +3255,12 @@ export class DaemonService {
   }
 
   private async roomMessage(input: Input<'getRoomMessage'>, agentId: string): Promise<{ messageId: string; body: string; attachments: DaemonAttachment[]; nextOffset?: number }> {
-    await this.access(input.roomId, agentId);
+    let borrowedSource = false;
+    await this.access(input.roomId, agentId).catch(async (error: unknown) => {
+      if (!(error instanceof AccessDeniedError)) throw error;
+      await this.reviewSourceAccess(input.roomId, agentId);
+      borrowedSource = true;
+    });
     if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
     const offset = input.offset ?? 0;
     if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000_000)
@@ -3262,7 +3284,7 @@ export class DaemonService {
        WHERE command.id=$1 AND command.private_payload IS NOT NULL`,
       [input.messageId, agentId, offset],
     )).rows[0];
-    if (handoff && (!handoff.accessible ||
+    if (handoff && (borrowedSource || !handoff.accessible ||
         (handoff.agent_id !== agentId && handoff.author_id !== agentId)))
       throw new Error('message access denied: private hand-off');
     let row = handoff ?? (
@@ -3275,10 +3297,12 @@ export class DaemonService {
          JOIN rooms output ON output.id=$1
          WHERE message.id=$2 AND message.deleted_at IS NULL
            AND COALESCE(source.parent_id,source.id)=COALESCE(output.parent_id,output.id)
+           AND (NOT $4::boolean OR message.room_id=output.id)
            AND (presentation IN ('message','activity') OR card_type='agent-command')`,
-        [input.roomId, input.messageId, offset],
+        [input.roomId, input.messageId, offset, borrowedSource],
       )
     ).rows[0];
+    if (borrowedSource && !row) throw new AccessDeniedError();
     if (!row) {
       // A dispatched review lends access to current brief citations only.
       // Keep this separate from Room access and requester-derived authority.
@@ -8590,6 +8614,33 @@ export class DaemonService {
       });
     });
   }
+  /** A review assignment lends transcript reads only in its current approval source. */
+  private async reviewSourceAccess(roomId: string, agentId: string): Promise<void> {
+    const result = await this.database.query(
+      `SELECT 1
+       FROM rooms source
+       JOIN rooms corner ON corner.workspace_id=source.workspace_id AND corner.archived_at IS NULL
+       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN LATERAL (SELECT * FROM corner_brief_revisions
+         WHERE corner_id=corner.id ORDER BY revision DESC LIMIT 1) brief
+         ON brief.source_room_id=source.id
+       JOIN agent_commands command ON command.room_id=corner.id AND command.agent_id=$2
+         AND command.state IN ('pending','claimed') AND command.review_context IS NOT NULL
+         AND command.review_context->>'purpose' IS NULL
+         AND command.review_context->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+         AND command.review_context->'pullRequest'=fact.lifecycle->'pr'->'number'
+         AND command.review_context->>'briefRevision'=brief.revision::text
+       JOIN effective_memberships member ON member.room_id=corner.id
+         AND member.identity_id=$2 AND member.removed_at IS NULL
+       WHERE source.id=$1 AND EXISTS(SELECT 1 FROM messages approval
+         WHERE approval.id=brief.source_message_id AND approval.room_id=source.id
+           AND approval.deleted_at IS NULL)
+       LIMIT 1`,
+      [roomId, agentId],
+    );
+    if (!result.rowCount) throw new AccessDeniedError();
+  }
+
   /**
    * Membership, plus the one thing the caller would otherwise need a second
    * round trip to learn: whether this agent is the configured reviewer of the
@@ -8653,8 +8704,10 @@ export class DaemonService {
 
   /** A public message; tags use the same conversation wake rule as final replies. */
   private async postCornerMessage(input: Input<'postCornerMessage'>, agentId: string) {
-    const text = typeof input.text === 'string' ? input.text.trim() : '';
-    if (!text || text.length > 16000) throw new Error('message text must be 1 to 16000 characters');
+    const rawText = typeof input.text === 'string' ? input.text.trim() : '';
+    if (!rawText || rawText.length > 16000) throw new Error('message text must be 1 to 16000 characters');
+    const text = agentPostText(rawText);
+    if (!text) throw new CommandRefusalError('post refused: reasoning block contains no public reply', 400);
     await this.postAddressAccess(input.cornerId, agentId);
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,

@@ -1383,7 +1383,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         await mkdir(join(updateRoot, 'lib'), { recursive: true });
         await symlink('beeline-releases/old', layout.libDir);
         let restarted = false;
-        const update = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => core.activeTurnCount() === 0, interrupt: () => undefined,
+        const update = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => core.activeTurnCount() === 0, drain: () => core.quiesceForUpdate(), interrupt: () => undefined,
           handoff: async () => { core.quiesceForUpdate(); await activateRelease(layout, 'new'); restarted = true; }, changed: () => undefined, failed: (error) => { throw error; } });
         await writeUpdateState(layout, { stagedReleaseId: 'new' });
         await update.prepared('new');

@@ -1,3 +1,4 @@
+import { recordXSignup } from './x-ads.js';
 import { externalFetch } from '@beeline/auth/external-fetch';
 import {
   createDecipheriv,
@@ -93,6 +94,7 @@ export interface PhoneTokens {
   refreshToken: string;
   refreshExpiresAt: number;
   identityId: string;
+  xSignup?: { eventId: string; conversionId: string };
 }
 
 export class GoogleSignInError extends Error {}
@@ -107,7 +109,7 @@ export class TokenAuth {
     private readonly verifyGoogleOidc?: VerifyGoogleOidc,
   ) {}
 
-  async exchangeGoogleOidc(ticket: string): Promise<PhoneTokens> {
+  async exchangeGoogleOidc(ticket: string, xAttribution?: unknown): Promise<PhoneTokens> {
     if (!this.verifyGoogleOidc) throw new GoogleSignInError('Google sign-in is unavailable');
     let google: GoogleIdentityProof;
     try {
@@ -118,6 +120,7 @@ export class TokenAuth {
     }
     if (!google.subject || !google.name || !google.audience)
       throw new Error('invalid Google identity');
+    let xSignup: PhoneTokens['xSignup'];
     const id = await this.database.transaction(async (database) => {
       await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         'workspace-handle-allocation',
@@ -132,11 +135,12 @@ export class TokenAuth {
         identity,
         google.email?.split('@')[0] || 'person',
       );
-      await database.query(
+      const created = await database.query(
         `INSERT INTO identities(id,kind,name,handle,avatar,updated_at)
-         VALUES($1,'human',$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING`,
+         VALUES($1,'human',$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING RETURNING id`,
         [identity, google.name, handle, google.avatar ?? null, this.now()],
       );
+      if (created.rowCount) xSignup = await recordXSignup(database, identity, xAttribution, this.now());
       await database.query(
         `INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
          VALUES('google',$1,$2,'https://accounts.google.com',$3,$4)
@@ -145,7 +149,7 @@ export class TokenAuth {
       );
       return identity;
     });
-    return this.issuePhoneTokens(id, randomUUID());
+    return { ...await this.issuePhoneTokens(id, randomUUID()), ...(xSignup ? { xSignup } : {}) };
   }
 
   async linkGoogleOidc(viewerId: string, ticket: string): Promise<void> {
@@ -166,10 +170,11 @@ export class TokenAuth {
     });
   }
 
-  async exchangeGitHubOidc(oidcToken: string): Promise<PhoneTokens> {
+  async exchangeGitHubOidc(oidcToken: string, xAttribution?: unknown): Promise<PhoneTokens> {
     const github = await this.verifyGitHubOidc(oidcToken);
     if (!github.subject || !github.login || !github.name)
       throw new Error('invalid GitHub identity');
+    let xSignup: PhoneTokens['xSignup'];
     const id = await this.database.transaction(async (database) => {
       await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         'workspace-handle-allocation',
@@ -180,11 +185,12 @@ export class TokenAuth {
     );
     const id = linked.rows[0]?.identity_id ?? identityId(github.subject);
       const handle = await this.allocateHandle(database, id, github.login);
-      await database.query(
+      const created = await database.query(
         `INSERT INTO identities(id,kind,name,handle,avatar,github_subject,updated_at)
-         VALUES($1,'human',$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`,
+         VALUES($1,'human',$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING RETURNING id`,
         [id, github.name, handle, github.avatar ?? null, github.subject, this.now()],
       );
+      if (created.rowCount) xSignup = await recordXSignup(database, id, xAttribution, this.now());
       await database.query(`UPDATE identities SET github_subject=$2 WHERE id=$1`,
         [id, github.subject,
       ]);
@@ -201,7 +207,7 @@ export class TokenAuth {
       await this.persistGitHubCredential(database, github);
       return id;
     });
-    return this.issuePhoneTokens(id, randomUUID());
+    return { ...await this.issuePhoneTokens(id, randomUUID()), ...(xSignup ? { xSignup } : {}) };
   }
 
   private async allocateHandle(database: SqlDatabase, id: string, input: string): Promise<string> {

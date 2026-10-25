@@ -16,12 +16,12 @@ alone cannot satisfy that result. A refused agent makes the command fail with
 its identity and reason while its siblings keep serving.
 
 The release transaction keeps intake open during preparation and while waiting
-for a quiet gap. Its drain allowance is five minutes, never renewed by a newer
-target or failed handoff. Before interruption, active command journals are
-flushed and atomically published. The successor reports them before opening
-intake; server receipts reclaim the same commands without spending retry
-budget. A server minimum uses this transaction with immediate interruption.
-Checksum, import, engine and embedded identity checks precede activation.
+for a quiet gap. After five minutes, admission pauses without cancelling active
+turns; the helper restarts after they finish. A newer target or failed handoff
+does not renew that deadline. Routine updates can wait longer for active work.
+Server minimums still interrupt immediately: command journals are flushed before
+shutdown and replayed without spending retry budget. Checksum, import, engine
+and embedded identity checks precede activation.
 
 ## The first update on an old machine
 
@@ -32,7 +32,7 @@ helper jobs with the sole native helper. Retirement uses native process groups
 and a common 90-second shutdown ceiling. A legacy per-agent entry queues its
 own native successor before retiring its calling job. That first topology
 replacement cannot rely on the old process's absent control protocol; subsequent
-updates use the bounded quiet handoff.
+updates pause admission and wait for active work before handoff.
 
 The already-running CLI of an old release still contains its old behavior. A
 dead or damaged old install should use `npx usebeeline@latest update`. After
@@ -56,6 +56,9 @@ the installed service and reports that freshness failure; it never claims the
 machine is current. Dependency convergence failures also remain visible.
 
 ## Recorded validation (2026-10-12)
+
+This historical run predates the WAKE-UPDATE-1 change from deadline interruption
+to admission drain; current behavior and proof are in the CLI bundle runbook.
 
 The final isolated Linux run passed all 18 native phases on the built fixture
 archive (SHA-256 `f8f0c13a1b3db53b76d3c2fcb1bf03ee63feabbff7af821b53381f8ee11da379`).

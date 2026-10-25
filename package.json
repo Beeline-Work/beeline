@@ -42,6 +42,7 @@
     "prove:free-agent-instructions": "node --import tsx scripts/prove-free-agent-instructions.ts",
     "prove:free-agent:docker-machines": "node scripts/free-agent-docker-machines.mjs",
     "prove:agent-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-agent-sign-in.ts",
+    "prove:done-report-before-pr": "npm run build -w @beeline/server && node --import tsx scripts/prove-done-report-before-pr.mjs",
     "prove:closed-corner": "npm run build -w @beeline/server && node --import tsx scripts/prove-closed-corner.mjs",
     "prove:corner-check-header": "npm run build -w @beeline/server && node --import tsx scripts/prove-corner-check-header.mjs",
     "prove:feedback-overflow": "npm run build -w @beeline/server && node --import tsx scripts/prove-feedback-overflow.mjs",
@@ -91,7 +92,9 @@
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile",
     "prompt:discovery": "node --import tsx scripts/discovery-live.mjs",
-    "test:prompt-discovery": "node --import tsx --test scripts/discovery-score.test.mjs scripts/discovery-service.test.mjs scripts/discovery-launch.test.mjs"
+    "test:prompt-discovery": "node --import tsx --test scripts/discovery-score.test.mjs scripts/discovery-service.test.mjs scripts/discovery-launch.test.mjs",
+    "build:x-attribution": "esbuild web/x-attribution-source.ts --bundle --format=iife --minify --platform=browser --target=es2022 --outfile=web/x-attribution.js",
+    "prove:x-attribution": "npm run build -w @beeline/server && node --import tsx scripts/prove-x-attribution.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

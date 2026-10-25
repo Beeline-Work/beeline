@@ -148,11 +148,13 @@ policy, homes and sessions. Revoked or unrecognized identities show `needs
 reconnect`; other agents continue serving.
 
 One release transaction prepares in a private worker while intake stays open.
-It hands over at a quiet gap or after at most five minutes. Before interruption
-it flushes each active command's journal; the successor reclaims that command
-without spending retries. Newer releases supersede prepared work without
-renewing the drain deadline. Forced server minimums use the same transaction
-with immediate interruption and a minimum-version check.
+It hands over at a quiet gap. After at most five minutes it pauses admission
+of new turns, then lets active turns and their child processes finish before
+restarting. Pending wakes stay on the server for the successor to claim.
+Newer releases replace the prepared target without renewing the admission
+deadline. A long active turn can therefore delay routine update activation.
+Forced server minimums still interrupt immediately, journal active commands
+for replay without spending retries, and enforce a minimum-version check.
 
 A stable `<prefix>/lib/beeline-bootstrap.mjs` and recorded Node path select the
 body before importing it. Verified local startup never waits for publication or
@@ -188,7 +190,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 - **`<prefix>/lib/beeline` is the active bundle anchor**, a symlink into `lib/beeline-releases/<id>` swung by rename(2) (`self-update.ts`). Never suggest `npx beeline` (an unrelated package); recovery is `npx usebeeline update`.
 - **Update restarts are silent.** `runMachineHelper` closes the machine link before agent teardown with `HELPER_UPDATE_CLOSE_CODE`/`HELPER_UPDATE_CLOSE_REASON`; `DaemonAgentSession` releases presence without an offline notice only for that signal. Unexpected loss still notices the owner (`machine-offline.test.ts`, `daemon-live.test.ts`, `machine-helper.test.ts`). Release delivery pushes helpers only (`release-notify.ts`).
 - **Linux handovers use a fixed one-second native restart delay.** `native-helper.ts` renders no escalating restart steps. The running helper refreshes the installed unit with `daemon-reload`, without restarting the service. `recovery.startup.test.ts` proves verified staged/active boot makes no publication request; `systemd.test.ts` covers unit convergence.
-- **Routine updates wait at most five minutes for a quiet gap.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after the first registration on each socket, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the deadline, then hand over; the successor activates the selected release. Deadline interruptions use `force-update-journal.ts`; the successor replays `update-interrupted` receipts and reclaims the same commands without spending retries. `machine-helper.test.ts` proves push, reconnect, and both handoffs over isolated HTTP/WebSocket. Installation is checksum verification plus atomic activation; no post-install probe or rollback. Server minimums (426 / `force-update`) interrupt immediately (`managed-update.ts`).
+- **Routine release notices preserve active turns.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after first registration, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the five-minute admission deadline. At the deadline new turns pause while active turns finish; only an idle helper hands over. Pending wakes reach the successor. `machine-helper.test.ts` proves push, reconnect, child survival during drain and queued delivery over isolated HTTP/WebSocket (WAKE-UPDATE-1). Installation remains checksum verification plus atomic activation. Server minimums (426 / `force-update`) still interrupt immediately, using `force-update-journal.ts` to replay interrupted commands.
 - `.github/actions/daemon-leg/` builds linux-x64 and darwin bundles; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.
 
 ### Installed bundle retention

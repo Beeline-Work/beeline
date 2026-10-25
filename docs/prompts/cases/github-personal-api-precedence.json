@@ -50,5 +50,164 @@
         }
       }
     ]
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nPush the prepared commit to the authorized feature branch. Do not open or merge a PR."
+    },
+    "connect": {
+      "status": {
+        "status": "ready",
+        "appId": "11111111-1111-4111-8111-111111111111",
+        "appKey": "github",
+        "transport": "composio",
+        "readiness": "Personal GitHub is connected without contents write. The repository App checkout is configured in this corner."
+      },
+      "discover": {
+        "status": "ready",
+        "appId": "11111111-1111-4111-8111-111111111111",
+        "appKey": "github",
+        "transport": "composio",
+        "readiness": "Personal GitHub is connected without contents write. The repository App checkout is configured in this corner."
+      },
+      "ensure": {
+        "status": "ready",
+        "appId": "11111111-1111-4111-8111-111111111111",
+        "appKey": "github",
+        "transport": "composio",
+        "readiness": "Personal GitHub is connected without contents write. The repository App checkout is configured in this corner."
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+              "name": "github-personal-api-precedence",
+              "kind": "code-corner"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": ""
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "name": "github-personal-api-precedence",
+          "members": "",
+          "repository": {
+            "linked": true
+          },
+          "worktree": {
+            "featureBranch": "feature/corner-proof",
+            "targetBranch": "main"
+          },
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "run_granted_command",
+        "args": {
+          "argv": {
+            "equals": [
+              "git",
+              "ls-remote",
+              "--exit-code",
+              "origin",
+              "feature/corner-proof"
+            ]
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "1111111111111111111111111111111111111111\trefs/heads/feature/corner-proof\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "git status --short && git log --oneline -1 && git rev-parse HEAD && git ls-remote --exit-code origin feature/corner-proof"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "1111111 Prepared fix\n1111111111111111111111111111111111111111\n1111111111111111111111111111111111111111\trefs/heads/feature/corner-proof\n"
+        }
+      }
+    ]
   }
 }

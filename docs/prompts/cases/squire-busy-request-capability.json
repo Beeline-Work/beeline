@@ -3,18 +3,170 @@
   "section": "tools",
   "summary": "A browser ownership refusal leads to a capability request, skill load, or specific blocked report.",
   "place": "room",
-  "session": { "squireAvailable": true },
-  "turn": { "task": { "body": "@ruby finish provisioning the demo account.", "fromName": "dana", "commandReason": "human_tag" } },
+  "session": {
+    "squireAvailable": true
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby finish provisioning the demo account.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    }
+  },
   "messages": [
     "Ruby called operate_start: refused: browser held by session cedar-47 in another conversation.",
     "Ruby called operate_finish(session_id:cedar-47): refused: this conversation does not own that session.",
     "Ruby called Bash to stop the stuck browser: refused: shell is sandboxed; host process access is unavailable."
   ],
-  "tools": ["Bash", "operate_drive"],
-  "pass": { "any": [
-    { "call": "request_grant" },
-    { "skill": "beeline-connecting-services" },
-    { "call": "report", "args": { "status": "blocked", "text": { "matches": "^blocked:.*(host|browser|process|unsandboxed|shell|grant|access)", "flags": "is" } } },
-    { "text": { "matches": "^blocked:.*(host|browser|process|unsandboxed|shell|grant|access)", "flags": "is" } }
-  ] }
+  "tools": [
+    "Bash",
+    "operate_drive"
+  ],
+  "pass": {
+    "any": [
+      {
+        "call": "request_grant"
+      },
+      {
+        "skill": "beeline-connecting-services"
+      },
+      {
+        "call": "report",
+        "args": {
+          "status": "blocked",
+          "text": {
+            "matches": "^blocked:.*(host|browser|process|unsandboxed|shell|grant|access)",
+            "flags": "is"
+          }
+        }
+      },
+      {
+        "text": {
+          "matches": "^blocked:.*(host|browser|process|unsandboxed|shell|grant|access)",
+          "flags": "is"
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "history": [
+      "Ruby called operate_start: refused: browser held by session cedar-47 in another conversation.",
+      "Ruby called operate_finish(session_id:cedar-47): refused: this conversation does not own that session.",
+      "Ruby called Bash to stop the stuck browser: refused: shell is sandboxed; host process access is unavailable."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "squire-busy-request-capability",
+              "kind": "room"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": ""
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "squire-busy-request-capability",
+          "members": "",
+          "repository": null,
+          "worktree": null,
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
+  }
 }

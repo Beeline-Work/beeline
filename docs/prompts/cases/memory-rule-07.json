@@ -9,14 +9,14 @@
   "turn": {
     "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Before opening a fix corner, check open and merged pull requests for overlap.",
     "task": {
-      "body": "Fix the empty search crash in example/search. Reproduction case-search: searching for an empty string crashes the results page. Approval m-search authorizes this fix. Check whether it overlaps existing work before opening a corner in room-case.",
+      "body": "Fix the empty search crash in example/search. Reproduction case-search: searching for an empty string crashes the results page. Approval m-search authorizes this fix. Check whether it overlaps existing work before opening a corner in a0ba88e9-7197-58b3-844d-eb013c5b4ef9.",
       "commandReason": "human_tag"
     },
     "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
     "corners": [
       {
-        "cornerId": "c-audit",
-        "parentRoomId": "room-case",
+        "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+        "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
         "name": "token-audit",
         "createdBy": "opal-id",
         "archived": false
@@ -115,5 +115,168 @@
   },
   "toolResults": {
     "Bash": "{\"open\":[],\"merged\":[],\"reproduction\":\"case-search: empty query crashes\"}"
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "open_corner",
+        "result": {
+          "address": "1636608f-61e5-51ce-91a5-ab2359703fee",
+          "ok": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "memory-rule-07",
+              "kind": "room"
+            },
+            {
+              "address": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "name": "token-audit",
+              "kind": "corner",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": [
+            {
+              "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "token-audit",
+              "createdBy": "opal-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+          "name": "memory-rule-07",
+          "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+          "repository": null,
+          "worktree": null,
+          "corners": [
+            {
+              "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "token-audit",
+              "createdBy": "opal-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "pr"
+        },
+        "result": {
+          "open": [],
+          "merged": []
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    },
+    "checks": {
+      "checks": "unknown",
+      "reason": "No PR is recorded for the token-audit corner.",
+      "approved": false,
+      "held": false,
+      "mergeAllowed": false
+    }
   }
 }

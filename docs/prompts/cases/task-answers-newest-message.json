@@ -9,7 +9,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
   },
   "messages": [
     "[message id: m1]\ndana [message]: @ruby what is 6 times 7?",
@@ -30,5 +30,125 @@
         }
       }
     ]
+  },
+  "scenario": {
+    "history": [
+      "[message id: m1]\ndana [message]: @ruby what is 6 times 7?",
+      "[message id: m2]\nRuby [message]: 42."
+    ],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "task-answers-newest-message",
+              "kind": "room"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "task-answers-newest-message",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": null,
+          "worktree": null,
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

@@ -27,7 +27,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "brief": {
       "fileLines": [
         "apps/server/src/auth.ts"
@@ -46,6 +46,177 @@
       "command": {
         "matches": "git (commit|push)"
       }
+    }
+  },
+  "scenario": {
+    "history": [
+      "[message id: m1]\njuniper [message]: PR 88 is up at head 5d6e7f8."
+    ],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+              "name": "review-findings-not-commits",
+              "kind": "code-corner"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "name": "review-findings-not-commits",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": {
+            "linked": true
+          },
+          "worktree": {
+            "featureBranch": "feature/corner-case",
+            "targetBranch": "main"
+          },
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "pr"
+        },
+        "result": {
+          "number": 88,
+          "headSha": "5d6e7f8000000000000000000000000000000000",
+          "author": "juniper",
+          "diff": "- if (expiresAt < now) return 401;\n+ if (expiresAt <= now) return 401;",
+          "body": "Token expiry fix."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "message",
+          "messageId": "m1"
+        },
+        "result": {
+          "id": "m1",
+          "author": "juniper",
+          "text": "PR 88 is up at head 5d6e7f8."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "message",
+          "messageId": {
+            "not": {
+              "matches": ".+"
+            }
+          }
+        },
+        "result": {
+          "error": "messageId is required for facet message"
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    },
+    "checks": {
+      "checks": "green",
+      "approved": false,
+      "held": false,
+      "mergeAllowed": false,
+      "headSha": "5d6e7f8000000000000000000000000000000000"
     }
   }
 }

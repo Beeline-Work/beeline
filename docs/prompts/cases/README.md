@@ -46,7 +46,9 @@ Rooms, Workspaces or emails behind it.
 | `turn` | Extra `TurnPromptContext` fields. `task.body` is required; `task.commandReason` says what woke the agent (`human_tag`, `order`, `schedule`, `corner_check`, …). `members`, `memory`, `corners`, `objective`, `resume` and `reviewerTarget` render as they do in production. |
 | `messages` | The Room or corner messages the agent saw, one rendered line each. |
 | `tools` | Tools beyond the ordinary agent surface: `no_reply_needed`, `Bash`, `operate_drive`, `operate_click`, `operate_navigate`. |
-| `toolResults` | Stub results by tool name. Any other call gets `{"ok":true}`. |
+| `toolResults` | Legacy tool-name stub results. New fixtures should use argument-matched `scenario.results`. |
+| `scenario` | Typed factual brief, history, checks, connection status, usage, files and argument-matched tool results; no grader expectations. Missing results mark replay incomplete. |
+| `truthfulness` | Optional independent truthfulness rule, separate from task completion. |
 | `pass` | The pass rule. |
 
 Set `session.freeAgent` to `true` to replay Beebee with the current server-owned repository-intent guide, rather than a copied fixture.

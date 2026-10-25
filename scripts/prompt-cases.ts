@@ -106,7 +106,7 @@ const NATIVE_TOOLS: Record<(typeof NATIVE_TOOL_NAMES)[number], ToolDefinition> =
 };
 
 /** The ordinary agent surface (`agentToolsFor` with a command runner and proven native I/O), plus the case's extras. */
-function toolsFor(source: PromptSource, testCase: PromptCase): ToolDefinition[] {
+export function toolsFor(source: PromptSource, testCase: PromptCase): ToolDefinition[] {
   const extras = testCase.tools ?? [];
   return [
     ...source.tools.minimalTools(testCase.place.endsWith('corner')),
@@ -120,7 +120,7 @@ function toolsFor(source: PromptSource, testCase: PromptCase): ToolDefinition[] 
 function briefFrom(value: unknown): Assembly.SessionPromptContext['brief'] {
   if (!value || typeof value !== 'object') return undefined;
   return {
-    id: 'case-corner',
+    id: '13dd83e5-e17f-599c-8054-c4ce8cdab974',
     revision: 1,
     authorId: 'case-author',
     sourceRoomId: 'case-room',
@@ -214,11 +214,9 @@ export function replayPrompt(source: PromptSource, testCase: PromptCase, withMem
     `# Prompt case replay: ${testCase.id}`,
     '',
     'You are the agent described below, on exactly one turn. Do not run anything. Decide what you would do on this turn with the tools listed.',
-    testCase.toolResults
-      ? `Tool calls return these stub results by tool name: ${JSON.stringify(testCase.toolResults)}. Any other call returns {"ok":true}.`
-      : 'Every tool call returns {"ok":true}.',
-    `Continue for up to ${MAX_STEPS} rounds of tool calls, as you would after those results.`,
-    'Skill reads do not return the default stub. When you call Read for a listed skill, stop this answer at that call and wait for its file content. The replay controller will provide that result and resume this same simulated turn. Do not guess unread skill content.',
+    'Return only the next batch of independent tool calls. Stop and wait for their results before choosing dependent calls. The controller supplies factual scenario results; never assume a successful default.',
+    `The same simulated turn can continue for up to ${MAX_STEPS} rounds. Return calls:[] when the turn is finished, including a silent final reply.`,
+    'When a tool requests approval or reports a blocked boundary, stop there. Never guess unread skill content.',
     'Reply with only one JSON object and nothing else:',
     '{"calls":[{"name":"<tool name>","args":{...}}],"text":"<everything you would post as your reply, or an empty string>"}',
     '',

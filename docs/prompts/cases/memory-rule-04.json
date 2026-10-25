@@ -15,8 +15,8 @@
     "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
     "corners": [
       {
-        "cornerId": "c-audit",
-        "parentRoomId": "room-case",
+        "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+        "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
         "name": "token-audit",
         "createdBy": "opal-id",
         "archived": false
@@ -49,5 +49,181 @@
         ]
       }
     ]
+  },
+  "scenario": {
+    "history": [],
+    "files": {
+      "/replay/files/audit.txt": "Audit complete. The expired-token checks have been reviewed; no additional outcome was recorded."
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "memory-rule-04",
+              "kind": "room"
+            },
+            {
+              "address": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "name": "token-audit",
+              "kind": "corner",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": [
+            {
+              "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "token-audit",
+              "createdBy": "opal-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+          "name": "memory-rule-04",
+          "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+          "repository": null,
+          "worktree": null,
+          "corners": [
+            {
+              "cornerId": "3161ef0f-0cd0-5c4e-a789-67058508b8ae",
+              "parentRoomId": "a0ba88e9-7197-58b3-844d-eb013c5b4ef9",
+              "name": "token-audit",
+              "createdBy": "opal-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "message",
+          "messageId": "artifact-case-4"
+        },
+        "result": {
+          "id": "artifact-case-4",
+          "text": "The requested audit is complete.",
+          "attachments": [
+            {
+              "id": "artifact-case-4",
+              "name": "audit.txt"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "attachment",
+          "attachmentId": "artifact-case-4"
+        },
+        "result": {
+          "path": "/replay/files/audit.txt",
+          "mime": "text/plain"
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    },
+    "checks": {
+      "checks": "unknown",
+      "reason": "No PR is recorded for this audit corner.",
+      "approved": false,
+      "held": false,
+      "mergeAllowed": false
+    }
   }
 }

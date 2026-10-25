@@ -30,7 +30,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "brief": {
       "fileLines": [
         "apps/server/src/auth.ts"
@@ -59,5 +59,352 @@
         }
       }
     ]
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+              "name": "android-uses-leased-emulator",
+              "kind": "code-corner"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "name": "android-uses-leased-emulator",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": {
+            "linked": true
+          },
+          "worktree": {
+            "featureBranch": "feature/corner-case",
+            "targetBranch": "main"
+          },
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "echo \"ANDROID_HOME=$ANDROID_HOME\"; echo \"ANDROID_AVD_HOME=$ANDROID_AVD_HOME\"; ls \"$ANDROID_AVD_HOME\" 2>&1; adb devices"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "ANDROID_HOME=/opt/android\nANDROID_AVD_HOME=/replay/avd\nPixel_8.avd\nList of devices attached\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:ls|echo|adb devices|(?:\\$ANDROID_HOME/)?emulator -list-avds)[^;&|\\n]*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "Pixel_8\nList of devices attached\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^beeline emulator -avd Pixel_8(?: -no-window)?(?: -gpu swiftshader_indirect)?$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "Leased emulator-5560 booted. Pixel_8 is ready."
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^adb -s emulator-5560 (?:shell getprop sys.boot_completed|shell pm list packages|shell monkey -p [\\w.]+(?: -c android.intent.category.LAUNCHER)? 1|devices)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "1\npackage:com.example.app\nEvents injected: 1"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "echo \"$ANDROID_HOME\"; echo \"$ANDROID_AVD_HOME\"; ls \"$ANDROID_AVD_HOME\" 2>/dev/null"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "ANDROID_HOME=/opt/android\nANDROID_AVD_HOME=/replay/avd\nPixel_8.avd\n/opt/android/platform-tools/adb\n/opt/android/emulator/emulator\nList of devices attached\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": "echo \"ANDROID_HOME=$ANDROID_HOME\"; echo \"ANDROID_AVD_HOME=$ANDROID_AVD_HOME\"; ls \"$ANDROID_AVD_HOME\" 2>&1; which adb emulator 2>&1; adb devices 2>&1"
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "ANDROID_HOME=/opt/android\nANDROID_AVD_HOME=/replay/avd\nPixel_8.avd\n/opt/android/platform-tools/adb\n/opt/android/emulator/emulator\nList of devices attached\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^(?:(?:echo (?:\"\\$(?:ANDROID_HOME|ANDROID_AVD_HOME)\"|\"ANDROID_HOME=\\$ANDROID_HOME\"|\"ANDROID_AVD_HOME=\\$ANDROID_AVD_HOME\"|\\$\\{ANDROID_HOME:-unset\\})|ls (?:\"\\$ANDROID_AVD_HOME\"|\\$ANDROID_AVD_HOME)|which adb emulator|adb devices)(?: 2>(?:/dev/null|&1))?(?:\\s*(?:&&|;)\\s*|$))+$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "ANDROID_HOME=/opt/android\nANDROID_AVD_HOME=/replay/avd\nPixel_8.avd\nList of devices attached\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd (?:\"\\$\\((?:pwd|git rev-parse --show-toplevel)\\)\"|/replay)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^cd apps/mobile$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "",
+          "cwd": "apps/mobile"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^pwd$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/replay\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git(?: -C \\.)? status(?: --short| --branch| -sb)*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "## feature/corner-case\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git branch --show-current$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "feature/corner-case\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git(?: -C \\.)? log(?: --oneline| -[0-9]+)*$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "cccc333 Token expiry boundary\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^git ls-remote --exit-code origin feature/corner-case$"
+          }
+        },
+        "result": {
+          "exitCode": 2,
+          "stdout": ""
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^echo \\$ANDROID_HOME \\$ANDROID_AVD_HOME$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/opt/android /replay/avd\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^which adb$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/opt/android/platform-tools/adb\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls(?: -[a-z]+)* (?:(?:\"?\\$ANDROID_AVD_HOME\"?)|/replay/avd)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "Pixel_8.avd\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^ls(?: -[a-z]+)* (?:(?:\"?\\$ANDROID_HOME\"?)|/opt/android)$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "emulator\nplatform-tools\n"
+        }
+      },
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "^which(?: beeline| adb| emulator)+$"
+          }
+        },
+        "result": {
+          "exitCode": 0,
+          "stdout": "/usr/local/bin/beeline\n/opt/android/platform-tools/adb\n/opt/android/emulator/emulator\n"
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

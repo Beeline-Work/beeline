@@ -25,5 +25,140 @@
       "app": "beeline:onboarding",
       "tool": "repository"
     }
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "open_corner",
+        "result": {
+          "address": "1636608f-61e5-51ce-91a5-ab2359703fee",
+          "ok": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "free-agent-login-bug-repository",
+              "kind": "room"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @dana \u2014 Dana (person)\nYou are @beebee, the only agent in this Room."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "free-agent-login-bug-repository",
+          "members": "Members (exact tag spellings):\n- @dana \u2014 Dana (person)\nYou are @beebee, the only agent in this Room.",
+          "repository": null,
+          "worktree": null,
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      },
+      {
+        "call": "app_tool",
+        "args": {
+          "app": "beeline:onboarding",
+          "tool": "repository"
+        },
+        "result": {
+          "state": "pending_repository_selection"
+        },
+        "boundary": "approval"
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

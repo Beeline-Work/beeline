@@ -26,7 +26,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "brief": {
       "fileLines": [
         "apps/server/src/auth.ts"
@@ -39,20 +39,52 @@
   "pass": {
     "all": [
       {
-        "call": "Bash",
-        "args": {
-          "command": {
-            "contains": "## Reproduced"
+        "any": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "contains": "## Reproduced"
+              }
+            }
+          },
+          {
+            "call": "app_tool",
+            "args": {
+              "args": {
+                "contains": "## Reproduced"
+              },
+              "tool": {
+                "matches": "pull.?request",
+                "flags": "i"
+              }
+            }
           }
-        }
+        ]
       },
       {
-        "call": "Bash",
-        "args": {
-          "command": {
-            "contains": "## Demonstrated"
+        "any": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "contains": "## Demonstrated"
+              }
+            }
+          },
+          {
+            "call": "app_tool",
+            "args": {
+              "args": {
+                "contains": "## Demonstrated"
+              },
+              "tool": {
+                "matches": "pull.?request",
+                "flags": "i"
+              }
+            }
           }
-        }
+        ]
       }
     ]
   },
@@ -61,5 +93,140 @@
   ],
   "toolResults": {
     "Bash": "exit=0\nabc1234 Refuse expired tokens"
+  },
+  "scenario": {
+    "history": [
+      "[message id: m1]\ndana [message]: Reproduction expiry-1: GET /me with an expired token returned 200 before the fix and returns 401 after it, run against the local server with curl."
+    ],
+    "files": {},
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+              "name": "contract-pr-body-sections",
+              "kind": "code-corner"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "13dd83e5-e17f-599c-8054-c4ce8cdab974",
+          "name": "contract-pr-body-sections",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": {
+            "linked": true
+          },
+          "worktree": {
+            "featureBranch": "feature/corner-case",
+            "targetBranch": "main"
+          },
+          "corners": []
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "pr"
+        },
+        "result": {
+          "pullRequest": null,
+          "reason": "No pull request has been opened."
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

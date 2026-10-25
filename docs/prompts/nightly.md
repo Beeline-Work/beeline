@@ -14,7 +14,7 @@ returned `schedules: []`; there is no remaining corner copy.
 
 The schedule uses the owner's OpenRouter key through vault `use_credential`;
 no Actions secret or exported key is needed. The GitHub replay workflow was removed.
-Keep the existing schedule prompt and every per-run rule unchanged.
+Keep the schedule, model and budget caps unchanged. The controller owns the measurement rules below.
 
 ## Run
 
@@ -55,18 +55,50 @@ browser calls or session-ownership transcript fixtures; tests pin this cohort.
 New real browser-dependent cases must extend this coverage, never silently vanish.
 
 Each eligible case gets a fresh simulated turn with the real assembler, tool
-schemas and managed skill descriptions. Requested skill bodies are returned only
-after their Read; the same turn resumes for at most six rounds. The model has a
-4,096 output-token ceiling with optional reasoning disabled on both arms.
-Malformed or truncated answers fail. Provider/transport failures, off-model
-responses and missing usage accounting mark the run incomplete and suppress
-proposals.
+schemas and managed skill descriptions. A typed `scenario` on each saved case
+contains only environment facts: brief, history, checks, connection status, usage,
+files, and argument-matched tool results. A skill body is returned only after its
+Read. The controller validates calls against their advertised schemas, supplies
+results, and resumes until a final reply (including silence), an approval or
+blocked/error boundary, or the existing six-round limit. It never executes a
+simulated call. Missing scenario facts are `incomplete`, never invented success.
+Legacy `toolResults` remain readable while fixtures migrate to argument matching.
+Compound shell observations compose only case-recorded command results and file
+contents. Quoted separators stay literal; pipes support only `head`. No shell is
+invoked. Unknown commands, paths, redirects or substitutions remain explicit
+missing facts rather than receiving a successful default.
+Native argv commands and Bash commands share argument matching and recorded
+facts, including the same forbidden-command assertions. Raw calls keep their
+original names and arguments in the result.
 
-Use the existing sampling rule: one passing first sample passes; a failing first
-sample gets two more and needs two passes out of three. Tokens per turn include
-all billed input/output/reasoning across skill continuations. Record each case's
-median and the median across sampled turns, plus total tokens and dollar cost.
-Keep the baseline and candidate cohorts identical.
+Each case receives exactly three independent samples in baseline, unchanged control,
+and candidate, with sample-index seeds paired across arms. There is no stopping
+after a success. Seeds aid pairing; they do not promise provider determinism.
+Each row reports behavior pass proportion and a Wilson 95% interval. With three
+samples these intervals are intentionally wide.
+
+Three samples increase the paired cohort to 219 samples per arm for the current
+73 eligible cases. The previous two-sample run cost $0.18 but used 3.69 million
+tokens; the unchanged six-million-token cap, rather than the dollar cap, limits
+sampling growth. Every run still stops within its existing reservations and
+lists all budget-limited samples explicitly.
+
+Output uses a JSON schema response constraint and requires providers to support
+the requested parameters. Raw output is parsed strictly, without extracting or
+repairing JSON. `format` samples have no behavior verdict. Invalid callable tool
+names or arguments return validation errors to the same simulated turn and allow
+retry within the six-round limit. Invalid attempts are counted separately and
+retained verbatim; only valid calls satisfy positive behavior rules. A turn that
+finishes or exhausts its rounds without any valid call after validation errors
+fails behavior. Forbidden attempts still fail safety rules even if rejected by
+validation. Fixture addresses are UUIDs, including references in tasks and rules.
+Truncation, transport failures, absent
+usage, missing scenario facts, round limits and exhausted budgets are
+`incomplete`, with an explicit terminal reason. A format/incomplete sample never
+passes a negative-only rule. The restart fixture also records a separate
+truthfulness verdict; truthful inability is distinct from successful completion.
+Tokens include every continuation, and every round retains raw output, upstream
+response, usage and simulated results. The output ceiling remains 4,096 tokens.
 
 Four concurrent requests share a six-million-token/$3 cap. Before each request,
 reserve UTF-8 input bytes plus maximum output as a conservative token bound and
@@ -83,14 +115,29 @@ the next eligible paragraph using cumulative history. Structural validation must
 still pass for the entire library, including skipped cases. Replay every eligible
 case against the candidate. Retain rejected outcomes without changing prompts.
 
-A proposal requires no passing case to regress, no overall pass-rate decrease,
-and a lower median tokens/turn. The controller writes `proposal.md` and the
-candidate `prompt-assembly.ts` only when those conditions hold. Open a normal
-repository corner/PR for the measured removal under current work authority;
-regenerate snapshots and run structural/body tests. Use the normal independent
-review and merge gate; never merge automatically. This corner's immediate
-experiment may be included in PR 2709 if accepted. Rejected experiments need no
-prompt change.
+The unchanged control estimates baseline/control sample flips. The removal
+comparison pairs case and sample index, reporting gains, losses and an effect
+interval. It is **too little data** when cohorts are missing or unscored, the
+candidate does not beat both baseline and unchanged control in one-sided exact
+paired sign tests (each p < 0.025). Unsigned control flips describe variability,
+not an expected positive gain; increasing samples cannot make a net-gain-greater-
+than-all-flips rule sensitive to smaller effects. Control gains, losses and signed
+drift are reported alongside the flip rate and the paired effect interval.
+
+The smallest resolvable improvement with no losses is six discordant gains
+(6/219, about 2.74 percentage points). That is a significance threshold, not a
+power guarantee. At the prior control flip rate (12/102), a planning approximation
+for 80% power at two-sided 5% is `2.8 * sqrt(2 * flipRate / pairedSamples)`:
+about 9.2 percentage points with 219 complete pairs. The run reports this
+noise-dependent estimate as `detectableEffect`, floored at the six-gain threshold;
+it assumes independent paired samples and comparable discordance across arms.
+Actual detectability depends on discordance and how gains distribute between
+cases; three samples cannot resolve tiny per-case effects.
+A proposal additionally requires no passing sample to regress and lower median
+tokens per turn. Safety/authority paragraphs are always protected. The controller
+writes `proposal.md` and candidate source only after these conditions hold.
+Open a normal repository corner/PR for a proposed removal under current work
+authority; normal independent review and merge gates still apply.
 
 ## Publish and retain
 
@@ -118,3 +165,37 @@ drop. Browser cases stay explicitly skipped until a separately authorized replay
 can exercise them. Structural validation alone does not prove model behavior.
 
 `npm run test:prompt-nightly` tests controls without spending model tokens.
+
+## Result and history compatibility
+
+`result.json` schema version 2 retains `baseline`, adds `control` and `candidate`,
+and records per-arm sample class counts (`pass`, `behavior`, `format`,
+`incomplete`). `pass: null` means behavior was not scored. Per-case rows retain
+`pass` (now null when samples are unscored) and add `status`, alongside `passed`, `scored`, `proportion`, `interval`
+and fixed `samples`. Each sample includes its seed and raw `rounds`.
+It also includes valid `transcript.calls`, all `attemptedCalls`, and rejected
+`invalidCalls` with validation results. Per-arm `diagnostics` separately counts
+invalid calls and scenario incompletes, and lists every incomplete case/seed and
+reason. The summary lists the same incomplete reasons; JSONL history retains
+these diagnostics without requiring old lines to contain them.
+`experiment` includes paired gains/losses, `noiseFlips`, `noiseRate`, `noisePairs`,
+`effectInterval` and verdict; `noise` also retains the baseline/control comparison
+when there is no eligible removal. Summary and JSONL history retain the old
+fields and add schema version, class counts and per-case intervals. Old JSONL
+lines need no migration: paragraph rotation still reads the last block ID.
+
+Run-level `scoring` records baseline `passed`, `scoredCases`, `unscoredCases`,
+`formatInvalidCases`, `passRate`, and `overallPassRate`; history stores these fields at the top level.
+Only cases with every fixed sample behavior-scored enter `scoredCases`.
+`passed` and `passRate` are null when that denominator is zero, and the summary
+says `no behavior verdicts` with the separate format-invalid case count. A subset rate names its denominator
+and unscored case count; `overallPassRate` remains null unless all eligible cases
+are scored. The legacy `cases` history field remains the eligible cohort size,
+not the behavioral denominator. `complete` describes finished simulation, not
+successful behavior or valid format; class counts retain that distinction.
+
+
+For a measurement repair proof, pass `--label "measurement-repair run"`, post
+result and summary in its implementation corner, and do not publish that run as
+a weekly score on the results issue. A partial run remains useful evidence when
+its missing data and cost are explicit; it cannot propose a removal.

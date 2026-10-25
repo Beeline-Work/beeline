@@ -14,11 +14,11 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "corners": [
       {
-        "cornerId": "c-rel1",
-        "parentRoomId": "room-1",
+        "cornerId": "8ef6c544-1cd8-572e-acbc-c884fd6e851d",
+        "parentRoomId": "09c40034-77e4-5fe3-8c40-cc637d013185",
         "name": "release-check",
         "createdBy": "dana-id",
         "archived": false
@@ -50,5 +50,155 @@
         "noCall": "wake"
       }
     ]
+  },
+  "scenario": {
+    "history": [],
+    "files": {},
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "Machine: forge. Shell and connected services are described by the session tool surface. No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "addresses"
+        },
+        "result": {
+          "places": [
+            {
+              "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "finish-orders-then-ends",
+              "kind": "room"
+            },
+            {
+              "address": "8ef6c544-1cd8-572e-acbc-c884fd6e851d",
+              "name": "release-check",
+              "kind": "corner",
+              "parentRoomId": "09c40034-77e4-5fe3-8c40-cc637d013185"
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "corners"
+        },
+        "result": {
+          "corners": [
+            {
+              "cornerId": "8ef6c544-1cd8-572e-acbc-c884fd6e851d",
+              "parentRoomId": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "release-check",
+              "createdBy": "dana-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "members"
+        },
+        "result": {
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "status"
+        },
+        "result": {
+          "address": "09c40034-77e4-5fe3-8c40-cc637d013185",
+          "name": "finish-orders-then-ends",
+          "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+          "repository": null,
+          "worktree": null,
+          "corners": [
+            {
+              "cornerId": "8ef6c544-1cd8-572e-acbc-c884fd6e851d",
+              "parentRoomId": "09c40034-77e4-5fe3-8c40-cc637d013185",
+              "name": "release-check",
+              "createdBy": "dana-id",
+              "archived": false
+            }
+          ]
+        }
+      },
+      {
+        "call": "search",
+        "args": {
+          "scope": {
+            "matches": "^(memory|history)$"
+          }
+        },
+        "result": {
+          "matches": [],
+          "next": null
+        }
+      },
+      {
+        "call": "request_grant",
+        "args": {
+          "action": "list"
+        },
+        "result": {
+          "grants": []
+        }
+      },
+      {
+        "call": "report_feedback",
+        "args": {},
+        "result": {
+          "itemId": "simulated-feedback"
+        }
+      },
+      {
+        "call": "post",
+        "args": {},
+        "result": {
+          "id": "simulated-message",
+          "committed": true
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief"
+        },
+        "result": {
+          "revisions": []
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "brief",
+          "address": "8ef6c544-1cd8-572e-acbc-c884fd6e851d"
+        },
+        "result": {
+          "repositoryWork": false,
+          "spec": "Run the release checklist and report its outcome."
+        }
+      }
+    ],
+    "connect": {
+      "status": {
+        "apps": [],
+        "readiness": "No additional connected services recorded for this case."
+      },
+      "discover": {
+        "apps": []
+      }
+    }
   }
 }

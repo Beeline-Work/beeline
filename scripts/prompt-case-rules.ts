@@ -41,6 +41,17 @@ export type Rule =
   | { readonly any: readonly Rule[] }
   | { readonly not: Rule };
 
+/** Facts returned by the simulator, never instructions or grader expectations. */
+export interface ScenarioState {
+  readonly brief?: Readonly<Record<string, unknown>>;
+  readonly history?: readonly string[];
+  readonly checks?: Readonly<Record<string, unknown>>;
+  readonly connect?: Readonly<Record<string, unknown>>;
+  readonly usage?: { readonly remainingTokens?: number; readonly resetsAt?: string; readonly [key: string]: unknown };
+  readonly files?: Readonly<Record<string, string>>;
+  readonly results?: readonly { readonly call: string; readonly args?: Readonly<Record<string, Matcher>>; readonly result: unknown; readonly boundary?: 'approval' | 'blocked' | 'error' }[];
+}
+
 export interface PromptCase {
   /** Equals the file name without `.json`. */
   readonly id: string;
@@ -59,6 +70,8 @@ export interface PromptCase {
   readonly tools?: readonly string[];
   /** Stub results by tool name, returned when the model calls that tool. */
   readonly toolResults?: Readonly<Record<string, string>>;
+  readonly scenario?: ScenarioState;
+  readonly truthfulness?: Rule;
   readonly pass: Rule;
 }
 
@@ -158,7 +171,7 @@ function checkRule(rule: unknown, where: string): void {
 export function parsePromptCase(raw: unknown, fileId: string, knownTools: readonly string[]): PromptCase {
   const where = `case ${fileId}`;
   if (!isObject(raw)) throw new Error(`${where}: must be a JSON object`);
-  const allowed = ['id', 'section', 'summary', 'place', 'session', 'turn', 'messages', 'tools', 'toolResults', 'pass'];
+  const allowed = ['id', 'section', 'summary', 'place', 'session', 'turn', 'messages', 'tools', 'toolResults', 'scenario', 'truthfulness', 'pass'];
   const extra = Object.keys(raw).filter((key) => !allowed.includes(key));
   if (extra.length) throw new Error(`${where}: unknown keys ${extra.join(', ')}`);
   if (raw.id !== fileId) throw new Error(`${where}: id must equal the file name`);
@@ -189,6 +202,22 @@ export function parsePromptCase(raw: unknown, fileId: string, knownTools: readon
       throw new Error(`${where}: toolResults must map tool names to strings`);
     }
   }
+  if (raw.scenario !== undefined) {
+    if (!isObject(raw.scenario)) throw new Error(`${where}: scenario must be an object`);
+    for (const key of Object.keys(raw.scenario)) if (!['brief', 'history', 'checks', 'connect', 'usage', 'files', 'results'].includes(key)) throw new Error(`${where}: unknown scenario field ${key}`);
+    if (raw.scenario.history !== undefined && (!Array.isArray(raw.scenario.history) || raw.scenario.history.some(v => typeof v !== 'string'))) throw new Error(`${where}: scenario.history must be strings`);
+    for (const key of ['files', 'connect', 'brief', 'checks', 'usage']) if (raw.scenario[key] !== undefined && !isObject(raw.scenario[key])) throw new Error(`${where}: scenario.${key} must be an object`);
+    if (isObject(raw.scenario.files) && Object.values(raw.scenario.files).some(v => typeof v !== 'string')) throw new Error(`${where}: scenario.files must contain text`);
+    if (raw.scenario.results !== undefined) {
+      if (!Array.isArray(raw.scenario.results)) throw new Error(`${where}: scenario.results must be an array`);
+      for (const entry of raw.scenario.results) {
+        if (!isObject(entry) || !('result' in entry)) throw new Error(`${where}: scenario result required`);
+        checkRule({ call: entry.call, ...(entry.args === undefined ? {} : { args: entry.args }) }, `${where}.scenario.results`);
+        if (entry.boundary !== undefined && !['approval', 'blocked', 'error'].includes(String(entry.boundary))) throw new Error(`${where}: invalid boundary`);
+      }
+    }
+  }
+  if (raw.truthfulness !== undefined) checkRule(raw.truthfulness, `${where}.truthfulness`);
   checkRule(raw.pass, `${where}.pass`);
   return raw as unknown as PromptCase;
 }
@@ -213,7 +242,20 @@ function matches(matcher: Matcher, value: unknown): boolean {
   return new RegExp(matcher.matches, matcher.flags).test(text);
 }
 
+/** Equivalent command routes share grading and recorded shell facts, never execution. */
+export function shellCommand(call: ToolCall): string | undefined {
+  if (call.name === 'Bash' && typeof call.args.command === 'string') return call.args.command;
+  const argv = call.args.argv;
+  if (call.name !== 'run_granted_command' || !Array.isArray(argv) || !argv.length || argv.some(v => typeof v !== 'string')) return;
+  if (/^(?:\/bin\/)?(?:ba)?sh$/.test(argv[0]) && ['-c', '-lc'].includes(argv[1]) && argv.length === 3) return argv[2];
+  return argv.map((arg: string) => /^[a-zA-Z0-9_@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'"'"'`)}'`).join(' ');
+}
+
 function callMatches(call: ToolCall, name: string, args?: Readonly<Record<string, Matcher>>): boolean {
+  if (name === 'Bash' && call.name === 'run_granted_command') {
+    const command = shellCommand(call);
+    if (command !== undefined) call = { name: 'Bash', args: { command } };
+  }
   if (call.name !== name) return false;
   return Object.entries(args ?? {}).every(([path, matcher]) => matches(matcher, valueAt(call.args, path)));
 }

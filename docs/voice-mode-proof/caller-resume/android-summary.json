@@ -1,0 +1,59 @@
+{
+  "reproduction": "VOICE-CUTIN-1",
+  "device": "Android API 36 emulator, built debug APK with production useVoiceCall and native RTC",
+  "markers": [
+    {
+      "kind": "voice-cutin-proof",
+      "event": "eager",
+      "at": 157679.871908,
+      "wall": 1792898220696
+    },
+    {
+      "kind": "voice-cutin-proof",
+      "event": "final",
+      "at": 158281.958622,
+      "wall": 1792898221298
+    },
+    {
+      "kind": "voice-cutin-proof",
+      "event": "resume",
+      "at": 159090.943171,
+      "wall": 1792898222107
+    },
+    {
+      "kind": "voice-cutin-proof",
+      "event": "continued-final",
+      "at": 162593.015939,
+      "wall": 1792898225609
+    }
+  ],
+  "resume": [
+    {
+      "kind": "voice-playback-resume",
+      "callId": "4a4c7794-beb1-4c75-b1ed-ea4e3f9d5061",
+      "traceId": "2c7566e1-d3c6-45cd-afb0-271290c6ce4c",
+      "callerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "event": "TurnResumed",
+      "turnIndex": 0,
+      "sinceFirstVoicedMs": 646.1933880000142
+    }
+  ],
+  "stopped": [
+    {
+      "kind": "voice-playback-stopped",
+      "callId": "4a4c7794-beb1-4c75-b1ed-ea4e3f9d5061",
+      "traceId": "2c7566e1-d3c6-45cd-afb0-271290c6ce4c",
+      "callerId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "publicationTailMs": 12.391284000012092,
+      "queueClearMs": 0.6785500000114553,
+      "cleanupMs": 20.118581999995513
+    }
+  ],
+  "humanTranscript": [
+    "@ruby Ruby, I don't know how to explain this, but you have a way of sending a message to Croc Bot"
+  ],
+  "nativeAudioSamples": 2405,
+  "maxDecodedAudioEnergy": 0.013884846142858209,
+  "acousticOutputOnset": null,
+  "limitation": "No host playback stream; decoded energy is not output onset. BrowserStack audio session rejected: App Automate testing time has expired."
+}

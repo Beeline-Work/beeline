@@ -8,10 +8,10 @@ export interface VoiceRequest {
   agent?: VoiceAgent;
   source: Promise<string>;
   classification: AbortController;
-  state: 'assembling' | 'classifying' | 'delivering' | 'retryable' | 'replying' | 'finished';
+  state: 'assembling' | 'classifying' | 'delivering' | 'retryable' | 'replying' | 'playing' | 'finished';
 }
 
-/** One request per human remains editable until its first voiced reply is ready to publish. */
+/** A detected resume can reopen a conversational request while its reply plays. */
 export class VoiceRequestAssembler {
   private readonly requests = new Map<string, VoiceRequest>();
   private readonly failed = new Map<string, Map<string, VoiceRequest>>();
@@ -45,7 +45,7 @@ export class VoiceRequestAssembler {
   }
   pause(human: string) {
     const request = this.requests.get(human);
-    if (request && ['assembling', 'classifying', 'replying'].includes(request.state)) {
+    if (request && ['assembling', 'classifying', 'replying', 'playing'].includes(request.state)) {
       request.state = 'assembling';
       request.classification.abort('user resumed speaking');
     }

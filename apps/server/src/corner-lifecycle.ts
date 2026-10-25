@@ -1429,6 +1429,7 @@ export async function cornerMergeGate(
                   )
               ) approved,
               COALESCE((SELECT jsonb_agg(jsonb_build_object('id',hold.id::text,'actorId',hold.actor_id,
+                'holderId',hold.actor_id,'holderName',(SELECT name FROM identities WHERE id=hold.actor_id),
                 'standing',hold.standing,'setAt',hold.set_at::text) ORDER BY hold.set_at,hold.id)
                 FROM corner_merge_holds hold WHERE hold.corner_id=fact.corner_id AND hold.released_at IS NULL),
                 '[]'::jsonb) holds

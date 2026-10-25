@@ -51,6 +51,7 @@ async function daemonDoor(
       attachments: [],
     },
   ],
+  hasPr = true,
 ): Promise<{ origin: string; calls: Record<string, unknown>[]; helperVersions: string[] }> {
   const calls: Record<string, unknown>[] = [];
   const helperVersions: string[] = [];
@@ -71,16 +72,18 @@ async function daemonDoor(
               ? {
                   cornerId: CORNER,
                   objective: 'Ship the endpoint',
+                  held: true,
+                  holds: [{ id: 'hold-1', holderId: 'person-1', holderName: 'Owner', setAt: '2026-10-10T00:00:00Z' }],
                   lifecycle: {
                     lifecycle: 'in-review',
                     checks: 'pending',
-                    pr: {
+                    ...(hasPr ? { pr: {
                       number: 42,
                       url: 'https://github.com/owner/widgets/pull/42',
                       title: 'Ship endpoint',
                       headSha: 'b'.repeat(40),
                       mergeability: 'clean',
-                    },
+                    } } : {}),
                   },
                   activity: 'running',
                   state: 'review',
@@ -97,7 +100,8 @@ async function daemonDoor(
                     checks: 'pending',
                     headSha: 'b'.repeat(40),
                     approved: false,
-                    held: false,
+                    held: true,
+                    holds: [{ id: 'hold-1', holderId: 'person-1', holderName: 'Owner', setAt: '2026-10-10T00:00:00Z' }],
                     mergeAllowed: false,
                     reviewer: '@reviewer',
                     reviewerExists: true,
@@ -552,7 +556,8 @@ describe('private command tools', () => {
       verdict: {
         stage: 'checking',
         approved: false,
-        held: false,
+        held: true,
+        holds: [{ id: 'hold-1', holderId: 'person-1', holderName: 'Owner', setAt: '2026-10-10T00:00:00Z' }],
         mergeAllowed: false,
         reviewer: '@reviewer',
         reviewerExists: true,
@@ -564,6 +569,14 @@ describe('private command tools', () => {
       'getCornerRestoreState',
       'getPrChecksStatus',
     ]);
+  });
+  it('shows holds on status before a PR exists', async () => {
+    const door = await daemonDoor(undefined, undefined, false);
+    const response = await callTool(door.origin, { facet: 'status', address: CORNER }, { name: 'read' });
+    expect(JSON.parse(response.result!.content[0]!.text).verdict).toMatchObject({
+      held: true,
+      holds: [{ id: 'hold-1', holderId: 'person-1', holderName: 'Owner', setAt: '2026-10-10T00:00:00Z' }],
+    });
   });
   it('passes a transcript cursor straight to the target corner read', async () => {
     const door = await daemonDoor();

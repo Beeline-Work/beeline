@@ -77,6 +77,8 @@ export type CornerHoldInput = { readonly cornerId: string; readonly releaseHoldI
 export type CornerMergeHold = {
   id: string;
   actorId: string;
+  holderId: string;
+  holderName: string;
   standing: 'owner' | 'admin' | 'member';
   setAt: string;
 };

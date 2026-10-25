@@ -91,6 +91,9 @@
         // The approved GitHub card proof uses temporary native/web entry and resolver overrides.
         "scripts/github-card-proof.tsx",
         "scripts/github-card-proof-metro.cjs",
+        // The desktop proportions evidence runbook invokes these standalone proof tools by path.
+        "scripts/desktop-proportions-browser-proof.cjs",
+        "scripts/desktop-proportions-native-fixture.cjs",
         "app.config.js",
         "sources/app/**/*.{ts,tsx}",
         "sources/**/*.{ios,android,windows,web,native,default}.{js,jsx,ts,tsx}",

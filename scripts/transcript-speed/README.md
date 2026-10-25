@@ -237,3 +237,5 @@ built bytecode against the supplied after APK, then uses its composed map to
 attribute sampled stacks in the 30–160 ms frame windows. Keep profiling disabled
 for acceptance. The approved metric definition and latest measurements are in
 [the Room-switch proof](results/2026-10-24-redraw/room-switch/README.md).
+
+Every scenario in the generated summary includes its worst JS interval and total missed JS frame opportunities alongside p50/p95. A small number of long gaps can dominate wall time while staying above the p95 cutoff; use all these measures when assessing Room switching.

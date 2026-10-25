@@ -19,3 +19,5 @@ The first PR head's mobile suite passed 612 files and 5,399 tests, but the corne
 `FRAME-BUDGET` and `STATE-UPGRADE` failed only because they derive their verdicts from the mobile suite; their logs contain no separate failing test. The gate definitions are unchanged. The harness measurement tests also pass (4 tests).
 
 Transition acceptance follow-up: `node --test scripts/transcript-speed/transition-metrics.test.mjs scripts/transcript-speed/measurement.test.mjs` passes all seven tests. The same release APKs completed six real Room-list taps per arm, with native paint, frame-quiet and CPU-runtime proof, plus one separate after Hermes profile. No product source changed in this follow-up.
+
+Summary follow-up: all seven measurement/transition tests pass, including a sparse multi-second stall that p95 hides. Re-rendered the retained complete Android suite with `report.mjs`; every scenario prints the independently checked worst JS interval and missed JS frame opportunities. No new measurements or product changes.

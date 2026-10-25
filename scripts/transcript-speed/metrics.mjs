@@ -11,6 +11,7 @@ export function summarize(sample, refreshHz) {
     durationMs: sample.endMs - sample.startMs,
     jsFrameIntervalP50Ms: percentile(values, .5),
     jsFrameIntervalP95Ms: percentile(values, .95),
+    jsFrameIntervalMaxMs: percentile(values, 1),
     // rAF gaps estimate missed JS opportunities, not compositor dropped frames.
     missedJsFrameOpportunities: values.reduce((sum, value) => sum + Math.max(0, Math.round(value * refreshHz / 1000) - 1), 0),
     transcriptCommits: sample.commits.filter(commit => commit.kind === 'transcript').length,

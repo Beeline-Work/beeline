@@ -1,8 +1,26 @@
 # Room-switch transition acceptance
 
-Reproduction `TRANSCRIPT-REDRAW-2`. Ruby approved transition metrics for Room switching: no worse median time to settled, no worse median total JS busy time, and better worst JS gap. Frame-interval p95 remains the gate for the other paths; Ruby accepted their latest repeated suite. This replaces the pending Room-switch decision in the earlier repeats report. The acceptance rule was supplied by the commander, not changed by the implementer.
+Reproduction `TRANSCRIPT-REDRAW-2`. The latest commander-approved Room-switch gate and the retained additional transition proof are below. The acceptance rule was supplied by the commander, not changed by the implementer.
 
-## Result: Room-switch PASS
+## Latest approved Room-switch rule
+
+Ruby approved this supplemented rule after reviewing the p95 reversal: Room switching passes only if the worst JS stall is lower, missed JS frame opportunities are lower, Android UI p95 is no worse, and transcript row commits are lower. JS interval p95 stays reported but does not gate Room switching. Frame p95 remains the gate for incoming, typing, send, concurrent replies and fast scroll. No further p95 captures were taken for this decision.
+
+The same complete before/after suite retained in `repeats/recheck-full-*.json.gz` passes all four conditions. Each cell below is median per-trial value followed by the full min–max spread. These are the existing three repeats per arm on the same Android instance and APKs.
+
+| Room-switch measure | Before | After |
+| --- | ---: | ---: |
+| Worst JS stall per trial, ms | 2638.11 (2517.91–3095.84) | 664.81 (491.73–997.18) |
+| Missed JS frame opportunities per trial | 1265.00 (1231.00–1303.00) | 964.00 (823.00–1041.00) |
+| Android UI p95 per trial, ms | 150.00 (133.00–150.00) | 133.00 (133.00–150.00) |
+| Transcript row commits per trial | 1620.00 (1592.00–1712.00) | 1142.00 (1141.00–1142.00) |
+| JS interval p95, reported only, ms | 19.55 (19.27–19.78) | 110.46 (29.15–158.83) |
+
+P95 reverses because a multi-second gap contributes only one interval. Baseline has too few long intervals to reach the five-percent cutoff, so its p95 looks good while most wall time is spent stalled. Worst stall and missed opportunities expose that cost. The first matched suite also improved Room-switch JS p95 (204 → 79 ms); both results remain retained.
+
+**Worst Room-switch stalls of about 0.5–1.0 seconds remain after this fix. Step 5 (Room open) owns reducing those stalls.** This PR reduces redraw propagation and does not claim Room opening is fully solved. The real-tap settling proof below remains additional evidence; it is not a replacement for this latest approved gate.
+
+## Additional real-tap transition proof: PASS
 
 Six warm Room-list taps per arm, alternating Transcript A/B. Each tap has a native transcript frame-commit marker and the required 500 ms period without a JS frame over 50 ms. Each table cell is the median followed by complete min–max spread in milliseconds.
 

@@ -5,6 +5,35 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
+test('isolated runners require activation and only accept main pushes or same-repository PRs', () => {
+  const critical = ['changes', 'shared-package-tests', 'server-suite-shard', 'server-claim-latency', 'server-suite'];
+  const repository = 'Beeline-Work/beeline';
+  const pullRequest = (head = repository, base = repository) => ({
+    event_name: 'pull_request', repository,
+    event: { pull_request: { head: { repo: { full_name: head } }, base: { repo: { full_name: base } } } },
+  });
+  for (const name of critical) {
+    const expression = jobs[name]['runs-on'];
+    assert.ok(expression.startsWith('${{ ') && expression.endsWith(' }}'));
+    // This routing expression uses only operators shared by GitHub and JS.
+    const evaluate = new Function('github', 'vars', 'fromJSON', `return (${expression.slice(4, -3)});`);
+    const route = (github, enabled = 'enabled') => evaluate(github, { BEELINE_CI_SHARDS: enabled }, JSON.parse);
+    assert.deepEqual(route(pullRequest()), ['self-hosted', 'Linux', 'X64', 'beeline-ci-shard']);
+    assert.equal(route(pullRequest(), ''), 'ubuntu-latest');
+    assert.equal(route(pullRequest(), 'disabled'), 'ubuntu-latest');
+    assert.equal(route(pullRequest('outsider/fork')), 'ubuntu-latest');
+    assert.equal(route(pullRequest(repository, 'another/base')), 'ubuntu-latest');
+    assert.deepEqual(route({ event_name: 'push', ref: 'refs/heads/main' }), ['self-hosted', 'Linux', 'X64', 'beeline-ci-shard']);
+    assert.equal(route({ event_name: 'push', ref: 'refs/heads/topic' }), 'ubuntu-latest');
+    for (const event_name of ['merge_group', 'workflow_dispatch', 'pull_request_target', 'schedule']) {
+      assert.equal(route({ event_name }), 'ubuntu-latest');
+    }
+  }
+  for (const [name, job] of Object.entries(jobs)) {
+    if (!critical.includes(name)) assert.ok(!JSON.stringify(job['runs-on']).includes('beeline-ci-shard'), name);
+  }
+});
+
 test('required contexts survive server runner consolidation', () => {
   const names = Object.values(jobs).map((job) => job.name);
   for (const name of ['TYPECHECK', 'SHARED PACKAGE TESTS', 'BODY SUITE', 'SERVER SUITE',

@@ -9,9 +9,40 @@ import tarfile
 from types import SimpleNamespace
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 
 class CleanupTest(unittest.TestCase):
+    def entry_functions(self, scope):
+        source = Path(__file__).with_name('isolated-ci-entry.py')
+        functions = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef)]
+        exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), scope)
+        return scope
+
+    def test_listener_drops_caps_before_executing_runner(self):
+        command = self.entry_functions({})['listener_command'](123)
+        self.assertEqual(command[command.index('--') + 1], '/usr/bin/setpriv')
+        for option in ['--bounding-set=-all', '--inh-caps=-all', '--ambient-caps=-all',
+                       '--no-new-privs', '--securebits=+noroot,+noroot_locked,+no_setuid_fixup,+no_setuid_fixup_locked']:
+            self.assertIn(option, command)
+            self.assertLess(command.index(option), command.index('/ci/runner/bin/Runner.Listener'))
+
+    def test_waits_for_verified_child_and_rejects_wrong_executable(self):
+        clock = SimpleNamespace(monotonic=Mock(side_effect=[0, 0, 0]), sleep=Mock())
+        path = Mock()
+        path.return_value.read_text.side_effect = [FileNotFoundError(), '123']
+        samefile = Mock(side_effect=[True, False, False])
+        scope = self.entry_functions({'time': clock, 'Path': path, 'os': SimpleNamespace(path=SimpleNamespace(samefile=samefile))})
+        self.assertEqual(scope['wait_for_child'](), 123)
+        clock.sleep.assert_called_once_with(0.1)
+        clock.monotonic.side_effect = [0, 0, 31]
+        path.return_value.read_text.side_effect = None
+        path.return_value.read_text.return_value = '123'
+        samefile.side_effect = None
+        samefile.return_value = False
+        with self.assertRaises(SystemExit):
+            scope['wait_for_child']()
+
     def test_extracted_runner_is_enterable_executable_and_writable(self):
         source = Path(__file__).with_name('prepare-ephemeral-ci-runner.py')
         function = next(node for node in ast.parse(source.read_text()).body

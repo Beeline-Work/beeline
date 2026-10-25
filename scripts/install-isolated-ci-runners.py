@@ -8,7 +8,7 @@ import urllib.request
 
 if os.geteuid() != 0:
     raise SystemExit('Root required')
-payloads = {'prepare-ephemeral-ci-runner.py': 'b3373576fb59016b050ab60c8ca7a1d7bf24deee379a880e7416223bcb02e835', 'isolated-ci-entry.py': '6cb2a45dfc12d9f62e0184d320b4e9cac58450089a1f14910b34fb5f3f431c73'}
+payloads = {'prepare-ephemeral-ci-runner.py': 'b3373576fb59016b050ab60c8ca7a1d7bf24deee379a880e7416223bcb02e835', 'isolated-ci-entry.py': 'd2b073efeb5e629c8c9869745a24aa07107b345d98bfa1ea0d4afc0c9e4fbff1'}
 for name, digest in payloads.items():
     if hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() != digest:
         raise SystemExit("Payload mismatch")

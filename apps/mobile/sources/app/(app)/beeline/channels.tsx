@@ -1,3 +1,4 @@
+import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
@@ -515,7 +516,8 @@ export default function BuzzChannels() {
           cachedWorkspaces?.watchFilters ?? [
             { kinds: [9000, 9001, 9007], '#p': [nextIdentity.publicKey] },
           ],
-          () => {
+          (event) => {
+            if (!invalidatesWorkspaceList(event)) return;
             if (deckVisible()) workspaceRefresh?.signal();
             else deckMissedRef.current.workspaces = true;
           },

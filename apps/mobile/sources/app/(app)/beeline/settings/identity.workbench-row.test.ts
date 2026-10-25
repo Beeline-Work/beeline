@@ -358,7 +358,7 @@ beforeEach(() => {
 });
 
 describe('Settings Workbench row shares the held Workbench projection', () => {
-  it('shows the updated server summary when the owner changes and does not re-read on focus', async () => {
+  it('shows the updated server summary and reconciles once on focus', async () => {
     workbench.readWorkbench
       .mockResolvedValueOnce(view('0 connections', ''))
       .mockResolvedValue(view('2 connections'));
@@ -372,7 +372,7 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
     await refocus();
 
     await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connections'));
-    expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
+    expect(workbench.readWorkbench).toHaveBeenCalledTimes(2);
   });
 
   it('states one total of the Your connections rows, not keys apart', async () => {
@@ -394,7 +394,7 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
     });
   });
 
-  it('keeps the last value and shows no error on refocus', async () => {
+  it('keeps the last value when the refocus reconciliation fails', async () => {
     workbench.readWorkbench
       .mockResolvedValueOnce(view('2 connections'))
       .mockRejectedValue(new Error('offline'));
@@ -403,7 +403,7 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
 
     await refocus();
 
-    expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
+    expect(workbench.readWorkbench).toHaveBeenCalledTimes(2);
     expect(workbenchRow(renderer).props.value).toBe('2 connections');
     expect(workbenchRow(renderer).props.description).toBe('1 company needs attention');
     expect(headings(renderer).some((text) => text.startsWith('Could not load'))).toBe(false);

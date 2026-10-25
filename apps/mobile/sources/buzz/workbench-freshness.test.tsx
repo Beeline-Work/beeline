@@ -4,13 +4,21 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({
   live: new Set<(event: any) => void>(), focus: new Set<() => void>(),
+  blur: new Set<() => void>(),
   wallet: { address: 'owner-wallet', coins: [], totalUsd: '$100' },
   history: { entries: [] as any[] },
   detail: { connection: { ref: 'key', name: 'Old key' }, grants: [] as any[] },
   reads: { workbench: vi.fn(), wallet: vi.fn(), history: vi.fn(), detail: vi.fn() },
 }));
-vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => {
-  React.useEffect(() => { state.focus.add(effect); effect(); return () => { state.focus.delete(effect); }; }, [effect]);
+vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void | (() => void)) => {
+  React.useEffect(() => {
+    let cleanup = effect();
+    const blur = () => { cleanup?.(); cleanup = undefined; };
+    const focus = () => { blur(); cleanup = effect(); };
+    state.focus.add(focus);
+    state.blur.add(blur);
+    return () => { blur(); state.focus.delete(focus); state.blur.delete(blur); };
+  }, [effect]);
 } }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: async () => 'https://relay.test',
@@ -26,13 +34,14 @@ vi.mock('./wallet-source', () => ({ getWalletSource: () => ({
   readWallet: state.reads.wallet, readHistory: state.reads.history,
 }) }));
 vi.mock('./workbench-source', () => ({ getWorkbenchSource: () => ({ readConnectionDetail: state.reads.detail, readWorkbench: state.reads.workbench }) }));
+import { resetClientState } from '@/sync/client-reset';
 import { mobileSurfaceCache } from './surface-storage';
 import { useSharedWallet, useSharedWalletHistory } from './wallet-surface';
 import { useSharedConnectionDetail, useSharedWorkbench } from './workbench-surface';
 
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-  mobileSurfaceCache.clear(); state.live.clear(); state.focus.clear();
+  resetClientState(); mobileSurfaceCache.clear(); state.live.clear(); state.focus.clear(); state.blur.clear();
   state.wallet = { address: 'owner-wallet', coins: [], totalUsd: '$100' };
   state.history = { entries: [] };
   state.detail = { connection: { ref: 'key', name: 'Old key' }, grants: [] };
@@ -109,4 +118,47 @@ it('Reproduction squire-spinner: reopening Connectors with a hung read reaches a
     await act(async () => { renderer.unmount(); releases.forEach(resolve => resolve({ workspaceId: 'ws-spin', catalog: [], connectors: [], connections: [], apps: [], helpers: [] })); });
     vi.useRealTimers();
   }
+});
+
+it('Reproduction NET-WASTE-1: two visible Workbench consumers release independently and reconcile on reopen', async () => {
+  function Screen() {
+    const { value } = useSharedWorkbench({ workspaceId: 'ws-spin', viewerId: 'owner' });
+    return React.createElement('Text', {}, value?.helpers.length);
+  }
+  let first!: ReactTestRenderer, second!: ReactTestRenderer;
+  await act(async () => { first = create(React.createElement(Screen)); second = create(React.createElement(Screen)); });
+  const emit = async () => act(async () => {
+    for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'workbench' } });
+  });
+  await act(async () => first.unmount());
+  const before = state.reads.workbench.mock.calls.length;
+  await emit();
+  expect(state.reads.workbench.mock.calls.length).toBe(before + 1);
+  await act(async () => second.unmount());
+  const hidden = state.reads.workbench.mock.calls.length;
+  await emit(); await emit(); await emit();
+  expect(state.reads.workbench.mock.calls.length).toBe(hidden);
+  await act(async () => { first = create(React.createElement(Screen)); });
+  expect(state.reads.workbench.mock.calls.length).toBe(hidden + 1);
+  await act(async () => first.unmount());
+});
+
+it('Reproduction NET-WASTE-1: mounted Settings releases Workbench on blur and reconciles once on focus', async () => {
+  function Screen() {
+    const { value } = useSharedWorkbench({ workspaceId: 'ws-spin', viewerId: 'owner' });
+    return React.createElement('Text', {}, value?.helpers.length);
+  }
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(React.createElement(Screen)); });
+  await act(async () => { for (const blur of state.blur) blur(); });
+  const before = state.reads.workbench.mock.calls.length;
+  await act(async () => {
+    for (const resource of ['workbench', 'install', 'agent'])
+      for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource } });
+    for (const listener of state.live) listener({ monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' } });
+  });
+  expect(state.reads.workbench.mock.calls.length).toBe(before);
+  await act(async () => { for (const focus of state.focus) focus(); });
+  expect(state.reads.workbench.mock.calls.length).toBe(before + 1);
+  await act(async () => renderer.unmount());
 });

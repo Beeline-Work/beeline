@@ -88,7 +88,7 @@ export function useFreshWorkbenchSurface<T>(
   useFocusEffect(useCallback(() => {
     if (address) void refresh();
   }, [address, refresh]));
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     if (!address) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
@@ -101,6 +101,6 @@ export function useFreshWorkbenchSurface<T>(
         void refresh();
     }).then((unregister) => { if (cancelled) unregister(); else stop = unregister; }, () => undefined);
     return () => { cancelled = true; stop?.(); };
-  }, [address, refresh]);
+  }, [address, refresh]));
   return resource;
 }

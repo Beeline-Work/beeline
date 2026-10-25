@@ -1,3 +1,4 @@
+import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -1129,25 +1130,8 @@ export function BuzzChatSurface({
   const surfaceParentId = roomSurface ? roomViewParentId(roomSurface) : undefined;
   const parentChannelId = surfaceParentId ?? routeParentChannelId;
   const desktopWorkRoomId = parentChannelId ?? decodedId;
-  const [desktopParentRoom, setDesktopParentRoom] = useState<typeof roomSurface>(null);
-  useEffect(() => {
-    let cancelled = false;
-    if (!desktopExperience || !parentChannelId || !roomClient) {
-      setDesktopParentRoom(null);
-      return;
-    }
-    void roomClient
-      .room(parentChannelId)
-      .then((parentRoom) => {
-        if (!cancelled) setDesktopParentRoom(parentRoom);
-      })
-      .catch(() => {
-        if (!cancelled) setDesktopParentRoom(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopExperience, parentChannelId, roomClient]);
+  const needsDesktopParentRoom = desktopExperience && !isDirectMessage && Boolean(desktopWorkPaneContent);
+  const desktopParentRoom = useDesktopParentRoom(needsDesktopParentRoom, parentChannelId, roomClient);
   const desktopWorkRoom = parentChannelId ? desktopParentRoom : roomSurface;
   const currentComputerSession = desktopWorkPaneContent?.kind === 'computer'
     ? (roomSurface?.messages.find((message) => message.computerSession?.id === desktopWorkPaneContent.session.id)?.computerSession

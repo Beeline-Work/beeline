@@ -32,6 +32,7 @@ const searchParams = vi.hoisted(() => ({
 
 vi.mock('expo-router', () => ({
   router: navigation,
+  useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
   useLocalSearchParams: () => searchParams.params,
 }));
 

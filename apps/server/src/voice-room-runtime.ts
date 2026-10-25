@@ -34,7 +34,7 @@ export function confirmedVoiceSpeech(event: FluxEvent): boolean {
     words[words.length - 1]!.end - words[0]!.start >= 0.12;
 }
 
-// Deliberately short: other one-word answers (such as "definitely") are ignored.
+// Partial speech keeps the existing conservative interruption vocabulary.
 const SINGLE_WORD_REPLIES = new Set(['yes', 'no', 'yeah', 'yep', 'yup', 'nope', 'sure',
   'okay', 'ok', 'stop', 'wait', 'cancel', 'pause', 'continue', 'thanks']);
 
@@ -107,6 +107,7 @@ export class VoiceRoomRuntime {
   private workspaceId = '';
   private budgetDisplay = '';
   private budgetEnding = false;
+  private readonly awaitingAnswer = new Set<string>();
   private readonly recentSpeech: { text: string; until: number }[] = [];
   private readonly speedRefreshes = new Map<string, symbol>();
   private readonly speakingSpeeds = new Map<string, number>();
@@ -266,6 +267,7 @@ export class VoiceRoomRuntime {
           this.targets.set(participant.identity, data.agentId);
           if (data.tap) {
             this.assembler.address(participant.identity, data.agentId);
+            this.awaitingAnswer.delete(participant.identity);
             this.explicitTargets.set(participant.identity, data.agentId);
           }
         }
@@ -391,13 +393,25 @@ export class VoiceRoomRuntime {
       // ends. Missing confidence must not make a short playback noise valid.
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
       const words = speechWords(event.transcript);
-      const strayWord = words.length === 1 && !SINGLE_WORD_REPLIES.has(words[0]!) &&
+      const final = event.event === 'EndOfTurn';
+      const named = voiceNameOnly(event.transcript, agents) ||
+        voiceContactNameOnly(event.transcript, this.externalContacts.get(human));
+      const filler = (words.length === 1 && BACKCHANNEL.test(words[0]!)) ||
+        /^(mm hmm|uh huh|yeah okay)$/.test(words.join(' '));
+      const answering = this.awaitingAnswer.has(human);
+      // Only a completed spoken question licenses a standalone backchannel.
+      // Keep meaningful final words; partials retain their interruption policy.
+      const continuing = !!this.assembler.current(human) &&
+        (words.length > 1 || SINGLE_WORD_REPLIES.has(words[0]!));
+      const ignoredFinal = final && !named && (filler ? !answering && !continuing :
+        words.length === 1 && /^(hey|i|so|and)$/.test(words[0]!));
+      const strayWord = !final && words.length === 1 && !SINGLE_WORD_REPLIES.has(words[0]!) &&
         !voiceContactNameOnly(event.transcript, this.externalContacts.get(human)) &&
         !agents.some(agent => [agent.name, agent.handle].some(alias =>
           speechWords(alias).join(' ') === words[0]));
       // Filter partials too: a confident stray word must never pause or barge in.
       // Final rejection consumes the turn before it can enter request assembly.
-      if (strayWord) {
+      if (strayWord || ignoredFinal) {
         if (event.event === 'EndOfTurn') { this.cancelEager(human); this.turnIndices.set(human, event.turn_index); }
         return;
       }
@@ -405,8 +419,8 @@ export class VoiceRoomRuntime {
         console.info('[voice-speech-shadow]', JSON.stringify({ callId: this.callId, turnIndex: event.turn_index,
           transcript: event.transcript, words: event.words ?? [] }));
       const recognized = event.event === 'EndOfTurn' ? words.length > 0 : confirmedVoiceSpeech(event);
-      if (!recognized || voicePlaybackEcho(event.transcript, context) ||
-          (context && acknowledgment && !event.words?.length)) {
+      if (!recognized || (!(final && filler && answering) && voicePlaybackEcho(event.transcript, context)) ||
+          (!(final && filler && answering) && context && acknowledgment && !event.words?.length)) {
         if (event.event === 'EndOfTurn') { this.cancelEager(human); this.turnIndices.set(human, event.turn_index); }
         return;
       }
@@ -464,6 +478,7 @@ export class VoiceRoomRuntime {
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
       if (stop) {
+        this.awaitingAnswer.delete(human);
         this.cancelEager(human);
         this.assembler.cancel(human);
         this.speaking?.abort(); this.clearAudioQueue();
@@ -491,6 +506,7 @@ export class VoiceRoomRuntime {
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
     this.externalContacts.delete(human);
+    this.awaitingAnswer.delete(human);
     this.speakingSpeeds.delete(human);
     this.speedRefreshes.delete(human);
     const input = this.inputs.get(human);
@@ -718,6 +734,7 @@ export class VoiceRoomRuntime {
   }
 
   async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true, confirmedSpeech = true) {
+    this.awaitingAnswer.delete(human);
     const speakingSpeed = this.speakingSpeeds.get(human);
     const eager = this.eager.get(human);
     this.eager.delete(human);
@@ -966,6 +983,7 @@ export class VoiceRoomRuntime {
       }
       // Empty or failed synthesis must not drop an accepted work request.
       if (reply.order && !committed) await commitReply();
+      if (!controller.signal.aborted && /[?？]["'”’)*_\s]*$/.test(answer)) this.awaitingAnswer.add(human);
       // Keep a conversational request editable while its audio is playing.
       if (!reply.order && !generation.signal.aborted) this.assembler.finish(human, request);
     } catch (error) {
@@ -1055,12 +1073,15 @@ export class VoiceRoomRuntime {
             let finishSpeech!: () => void;
             this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
             try {
+              this.awaitingAnswer.delete(report.human_id);
               await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(spokenReport(cleanVoiceReply(report.text, agent.name)), agent, controller.signal, () => {
                 this.voicedReply = { human: report.human_id, traceId: report.id, kind: 'report', signal: controller.signal,
                   firstAt: performance.now(), lastAt: performance.now() };
                 const request = this.assembler.current(report.human_id);
                 if (request?.id === report.source_message_id) this.assembler.finish(report.human_id, request);
               }, undefined, undefined, members, undefined, this.speakingSpeeds.get(report.human_id));
+              if (!controller.signal.aborted && /[?？]["'”’)*_\s]*$/.test(spokenReport(cleanVoiceReply(report.text, agent.name))))
+                this.awaitingAnswer.add(report.human_id);
             } finally { controller.abort(); finishSpeech(); if (this.speaking === controller) { this.clearAudioQueue(); this.speaking = undefined; await this.safeSignal({ type: 'speaker', agentId: null }); } this.finishVoicedReply(controller.signal); }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });

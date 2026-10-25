@@ -37,6 +37,7 @@ uids = ', '.join(str(user.pw_uid) for user in users)
 rules = f'''table inet beeline_ci {{
  chain output {{
   type filter hook output priority 0; policy accept;
+  meta skuid {{ {uids} }} oifname "tailscale0" counter drop
   meta skuid {{ {uids} }} ip daddr {{ 100.64.0.0/10, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }} counter drop
   meta skuid {{ {uids} }} ip6 daddr {{ fd7a:115c:a1e0::/48, fc00::/7, fe80::/10 }} counter drop
  }}

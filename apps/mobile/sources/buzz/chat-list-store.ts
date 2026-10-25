@@ -201,7 +201,7 @@ class ChatListStore {
       if (needsRead) this.requestRead();
       return;
     }
-    if (isDraftFrame(event) || (live?.type === 'invalidate' && live.deliveryId)) return;
+    if (live?.type === 'presence' || isDraftFrame(event) || (live?.type === 'invalidate' && live.deliveryId)) return;
     if (live?.type === 'subscribed' && (!this.confirmedRead || (live.resumed && this.covered.has(live.roomId)))) return;
     this.requestRead();
   }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
@@ -10,6 +11,21 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
+import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+
+/** Real database notifications through the same listener used by each server. */
+class ListenClient extends EventEmitter implements LivePgClient {
+  private release?: () => Promise<void>;
+  constructor(private readonly database: PgliteDatabase) { super(); }
+  async connect(): Promise<void> {}
+  async query(sql: string): Promise<void> {
+    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
+    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => {
+      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload });
+    });
+  }
+  async end(): Promise<void> { await this.release?.(); this.release = undefined; }
+}
 
 /**
  * The read cursor over the real HTTP and WebSocket surface: the boundary a
@@ -38,6 +54,9 @@ describe('the read cursor over the live phone surface', () => {
   let ownerToken: string;
   let otherToken: string;
   let phone: PhoneService;
+  let peerOrigin: string;
+  let peerServer: ReturnType<typeof createBeelineServer>;
+  let listeners: PostgresLiveListener[];
 
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -86,13 +105,30 @@ describe('the read cursor over the live phone surface', () => {
       live,
       mediaMaximumBytes: 1024 * 1024,
     });
+    const peerLive = new LiveHub();
+    peerServer = createBeelineServer({
+      database, auth,
+      phone: new PhoneService(database, 'http://placeholder', undefined, undefined, peerLive),
+      daemon: new DaemonService(database, peerLive), live: peerLive, mediaMaximumBytes: 1024 * 1024,
+    });
+    listeners = [live, peerLive].map((hub) =>
+      new PostgresLiveListener(database, hub, () => new ListenClient(database), 1));
+    for (const listener of listeners) void listener.run();
+    for (let attempt = 0; !listeners.every((listener) => listener.projectionHealth().connected); attempt++) {
+      if (attempt > 100) throw new Error('listener did not connect');
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await new Promise<void>((resolve) => peerServer.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    peerOrigin = `http://127.0.0.1:${(peerServer.address() as AddressInfo).port}`;
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
     otherToken = (await auth.exchangeGitHubOidc('recipient-proof')).accessToken;
   });
 
   afterEach(async () => {
+    await Promise.all(listeners?.map((listener) => listener.stop()) ?? []);
+    if (peerServer) await new Promise<void>((resolve) => peerServer.close(() => resolve()));
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     await database.close?.();
   });
@@ -223,12 +259,13 @@ describe('the read cursor over the live phone surface', () => {
     expect((await cursor(otherToken))?.unreadCount).toBe(4);
   });
 
-  it('propagates read changes to this reader’s devices only', async () => {
+  it('NET-READS-2: publishes each committed read change once to reader devices across server hubs', async () => {
     // Two sockets for the reader plus another member. Every reader device
     // receives a reconcile hint; the other member receives none.
     const sockets = await Promise.all(
-      [ownerToken, ownerToken, otherToken].map(async (token) => {
-        const socket = new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [
+      [ownerToken, ownerToken, otherToken].map(async (token, index) => {
+        const socketOrigin = index === 0 ? origin : peerOrigin;
+        const socket = new WebSocket(`${socketOrigin.replace('http', 'ws')}/v1/phone/live`, [
           `bearer.${token}`,
         ]);
         await new Promise<void>((resolve, reject) => {
@@ -257,13 +294,36 @@ describe('the read cursor over the live phone surface', () => {
       await settle();
       for (const entry of sockets) entry.frames.length = 0;
 
-      await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id });
-      await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: MESSAGES[0]!.id });
+      for (const [operation, messageId, unreadCount] of [
+        ['read', MESSAGES[1]!.id, 2],
+        ['read', MESSAGES[3]!.id, 0],
+        ['unread', MESSAGES[2]!.id, 2],
+        ['unread', MESSAGES[0]!.id, 4],
+      ] as const) {
+        for (const entry of sockets) entry.frames.length = 0;
+        expect((await request(`/v1/phone/rooms/${ROOM}/${operation}`, 'POST', { messageId })).status).toBe(204);
+        await settle();
+        for (const entry of sockets.slice(0, 2)) {
+          expect(entry.frames).toEqual([expect.objectContaining({
+            type: 'invalidate', reason: 'postgres:room_read_marks',
+          })]);
+        }
+        expect(sockets[2]!.frames).toEqual([]);
+        for (const base of [origin, peerOrigin]) {
+          const response = await fetch(`${base}/v1/phone/rooms/${ROOM}`, {
+            headers: { authorization: `Bearer ${ownerToken}` },
+          });
+          expect((await response.json()).viewer.readCursor.unreadCount).toBe(unreadCount);
+        }
+        expect((await deckRow()).unread).toBe(unreadCount > 0);
+      }
+      // A repeated forward mark writes no row and must publish nothing.
+      await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
       await settle();
-
-      expect(sockets[0]!.frames.some((frame: any) => frame.type === 'invalidate')).toBe(true);
-      expect(sockets[1]!.frames.some((frame: any) => frame.type === 'invalidate')).toBe(true);
-      expect(sockets[2]!.frames).toEqual([]);
+      for (const entry of sockets) entry.frames.length = 0;
+      await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
+      await settle();
+      expect(sockets.map((entry) => entry.frames)).toEqual([[], [], []]);
     } finally {
       for (const entry of sockets) entry.socket.close();
     }

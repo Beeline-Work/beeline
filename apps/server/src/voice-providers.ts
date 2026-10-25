@@ -139,6 +139,8 @@ export function fluxFactory(token: string, accountId: string,
 export type VoiceSearch = { name: 'search_web' | 'search_history' | 'read_posted_item'; query: string; currentTime?: number };
 export type VoiceProviderTiming = { requestId: string; generationId?: string; provider?: string; model: string; historyMessages: number; historyCharacters: number; searched: boolean; firstDeltaMs?: number; elapsedMs: number };
 export type VoiceSearchContext = {
+  /** Speculative tool work waits for the final before starting its budget. */
+  ready?: () => Promise<void>;
   diagnostic?: (timing: VoiceProviderTiming) => void;
   agents?: readonly { name: string; handle: string }[];
   announce: (text: string) => Promise<void>;
@@ -205,6 +207,8 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
     const first = await this.complete(agent, history, onText, signal, currentTime, false, context?.agents, context?.diagnostic);
     if (!first.search) return { text: first.text, order: first.order };
     // The router supplies the spoken acknowledgement; search starts without waiting for TTS.
+    if (context?.ready) await context.ready();
+    signal.throwIfAborted();
     const deadline = new VoiceDeadline(signal, 2500, 2500);
     let result: string;
     const announcement = context?.announce(first.text);

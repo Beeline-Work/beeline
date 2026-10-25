@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
@@ -116,7 +117,7 @@ export default function ConnectionDetailScreen() {
 
   return (
     <View
-      style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+      style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
       testID="connection-detail-screen"
     >
       <PageHeader

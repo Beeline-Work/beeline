@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { ContentTarget } from '@/components/buzz/IndexRow';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
@@ -893,7 +894,7 @@ const styles = StyleSheet.create((theme) => ({
   body: { flex: 1, flexDirection: 'row' },
   list: { flex: 1 },
   desktopList: {
-    maxWidth: 720, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.buzz.border,
+    maxWidth: desktopColumnWidths.list, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.buzz.border,
   },
   sectionHead: {
     minHeight: 44, marginTop: theme.buzz.space.lg, paddingHorizontal: 16,

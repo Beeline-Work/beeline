@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { IndexRow, InlineRow } from '@/components/buzz/IndexRow';
 import { EmptyState } from '@/components/buzz/EmptyState';
@@ -156,7 +157,7 @@ export default function CommunityInviteJoin() {
       style={styles.container}
       testID="invite-join"
     >
-      <View style={[styles.column, desktopPageLayout && { maxWidth: 640 }]}>
+      <View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>
         {loading ? (
           <View style={styles.loadingBlock}>
             <SurfaceGlyphLoader compact testID="invite-loader" />

@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -81,7 +82,7 @@ export default function WorkflowRun() {
   const last = detail?.history[detail.history.length - 1];
   const starter = detail ? workflowStarterLine(detail.run) || detail.history[0]?.actor?.name : undefined;
   return (
-    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 720, alignSelf: 'center' }, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back"
         eyebrow={run?.roomName ?? 'Workflow'}

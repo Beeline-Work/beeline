@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useState } from 'react';
@@ -100,7 +101,7 @@ export default function RoomWorkflows() {
   );
 
   return (
-    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 720, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <PageHeader
         backAccessibilityLabel="Back to Room"
         eyebrow={roomTitle(roomName) ?? 'Room'}

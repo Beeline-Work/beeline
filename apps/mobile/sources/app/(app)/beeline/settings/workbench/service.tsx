@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
@@ -112,7 +113,7 @@ export default function ConnectorServiceScreen() {
       setMachine(null); setLinkOpen(false); await refresh();
     } catch { setError('Could not disconnect. Try again.'); }
   };
-  return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="connector-service-screen">
+  return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="connector-service-screen">
     <PageHeader eyebrow="Connectors" prominent title={row?.name ?? 'Connectors'} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
     {loadError && !row ? <NetworkUnavailableState onRetry={() => void refresh()} /> : !view ? <SurfaceGlyphLoader /> : !row ?
       <Text style={styles.note}>This company is no longer connected.</Text> :

@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
@@ -101,7 +102,7 @@ export default function CreateWorkspace() {
         ]}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={[styles.column, desktopPageLayout && { maxWidth: 640 }]}>
+        <View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>
           <Button label="" variant="quiet"
             accessibilityLabel="Back"
             onPress={back}

@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -177,7 +178,7 @@ export default function WalletScreen() {
     return (
       <View style={screenStyle}>
         {header}
-        <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, styles.centered]} testID="wallet-loading">
+        <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, styles.centered]} testID="wallet-loading">
           <SurfaceGlyphLoader testID="wallet-loader" />
         </View>
       </View>

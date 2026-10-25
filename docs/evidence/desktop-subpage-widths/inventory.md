@@ -6,7 +6,7 @@ Baseline: `6c2a6c1bec0fabc25862e510718ccf7882db30b1`. Source inventory with sepa
 
 All widths below are CSS pixels at default UI scale. Source-derived values are explicitly labelled; they are not browser measurements. The desktop shell defaults to a 340 px Room list and adds a 76 px Workspace strip at 1360 px. Thus an uncapped app route has a 940 px / 1024 px / 1504 px pane at 1280 / 1440 / 1920 px. Resizing, zen mode and persisted navigation width change this; browser proof must reset them. Padding and inner columns may further reduce content width.
 
-PR #2915 remains OPEN (checked 2026-10-24). Ruby subsequently ordered page-local fixes now, using temporary local width caps, without changing the shared tokens or layout files in that PR. Ruby will order the rebase and shared-width integration after it lands. This supersedes the earlier wait interpretation.
+PR #2915 merged at 3f3f4a905. Ruby ordered integration: this branch is rebased on that main head and all page-local 640/720 caps now reference desktopColumnWidths.detail/list from its shared token module. The shared token and chat layout files are unchanged by this PR.
 
 ## Routes
 
@@ -121,7 +121,7 @@ The shared `HullActionSheetModal` already uses center on desktop (460 px source 
 
 Revision 2 accepts the production-before set below and built-component after proof. Reviewer-bypass authentication is superseded by the existing owner GitHub session. DESKTOP-SHEET-1 is the recorded reproduction. Other routes retain explicitly source-derived widths; they are not claimed as individually browser-measured.
 
-Ruby will order the rebase and shared-width wiring after #2915 merges. Until then these page-local changes remain independent of its shared layout files.
+The commanded rebase and shared-width wiring are complete. Page-local desktop-only guards preserve phone styles and consume the shared widths.
 
 ## Page-local implementation and measured sheet reproduction
 
@@ -138,9 +138,9 @@ The 500 px viewport is the phone layout class; headless Chrome clamps ordinary w
 
 Machine output intentionally retains its existing wider content cap (`ToolOutputSheet`), because code lines need room; the window height remains bounded. Existing confirm and prompt dialogs retain their 460 px cap. Tray keeps its list/detail split with a 720 px maximum for the list and flexible space for the detail pane, rather than constraining both panes to one list column. Channels keeps the desktop Room workbench; its chat/list proportions belong to PR #2915.
 
-Page-local detail caps are implemented for human profiles, workflow definitions, schedules, subscriptions, connector details and wallet forms, onboarding and GitHub return status. Community, create-workspace and join columns expand to 640 px only on desktop. Schedule/workflow lists and workflow-run ledgers cap at 720 px. Members, agent profiles and settings/identity remain owned by PR #2915. Temporary local numeric caps will be replaced with its shared widths after the commanded rebase.
+Page-local detail caps are implemented for human profiles, workflow definitions, schedules, subscriptions, connector details and wallet forms, onboarding and GitHub return status. Community, create-workspace and join columns expand to 640 px only on desktop. Schedule/workflow lists and workflow-run ledgers cap at 720 px. Members, agent profiles and settings/identity remain owned by PR #2915. Temporary local numeric caps have been replaced with its shared detail/list tokens.
 
-Production-before proof required by revision 2 is recorded below. Shared-width integration remains deferred until Ruby orders the rebase.
+Production-before proof required by revision 2 is recorded below. Shared-width integration is complete after the commanded rebase.
 
 ## Built page measurements
 
@@ -164,3 +164,5 @@ Images and JSON are in `production-before/`. Appearance and Interface size heigh
 For wide emulation, set document zoom to 0.6667, override window innerWidth/innerHeight and documentElement clientWidth/clientHeight to 1920/1404, and set body/root dimensions to those CSS pixels. Also override visualViewport width/height and dispatch resize on visualViewport as well as window: the app needs that event to recalculate its desktop breakpoint. Run through a javascript navigation URL; Squire reports ERR_ABORTED although the script executes. Reapply after hard navigation, confirm the workspace strip, then measure. Native proof resets these values to 1279/936 and zoom 1. Hard navigation restored the browser afterward.
 
 Unrelated conversation previews were hidden with visibility:hidden before captures, preserving layout. Tray bookmark author/excerpt text was also hidden. No screenshot is evidence that this branch is deployed. Production after is a post-release check; built real components remain the PR's after proof.
+
+The confirmation was recaptured after Ruby’s screenshot-before-click instruction. Screenshots verified Edit, then the Remove from Workspace opener, then Cancel on the open confirmation. The destructive action was never pressed. Its widths remain 460 / 460, with height 172 / 173.

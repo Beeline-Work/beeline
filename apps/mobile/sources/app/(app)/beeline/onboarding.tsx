@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
@@ -604,7 +605,7 @@ export default function BuzzOnboarding() {
   }
 
   return (
-    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={[styles.brandSurface, desktopAuthSurface && styles.desktopBrandSurface]}>
         <BeelineMark size={desktopAuthSurface ? 156 : 112} shimmer />
         <Text

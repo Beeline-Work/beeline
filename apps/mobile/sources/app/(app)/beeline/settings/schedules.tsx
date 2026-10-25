@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
@@ -120,7 +121,7 @@ export default function ScheduledWork() {
   );
 
   return (
-    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 720, alignSelf: 'center' }, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel={work?.isDirectMessage ? 'Back to DM' : 'Back to Room'}
         eyebrow={work?.isDirectMessage ? 'DM' : roomTitle(work?.roomName) ?? 'Room'}

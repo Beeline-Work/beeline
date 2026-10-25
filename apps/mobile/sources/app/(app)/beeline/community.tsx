@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -157,7 +158,7 @@ export default function WorkspaceChoice() {
         style={styles.container}
         testID="workspace-choice"
       >
-        <View style={[styles.column, desktopPageLayout && { maxWidth: 640 }]}>
+        <View style={[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]}>
           <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={2} accessibilityRole="header" testID="choice-title" style={styles.title}>{welcomeText}</Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}

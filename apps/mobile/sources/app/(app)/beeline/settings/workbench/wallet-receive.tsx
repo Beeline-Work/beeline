@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
@@ -31,7 +32,7 @@ export default function WalletReceiveScreen() {
   const solanaAddress = wallet?.solanaAddress ?? null;
 
   return (
-    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="wallet-receive-screen">
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="wallet-receive-screen">
       <PageHeader
         backAccessibilityLabel="Back to Wallet"
         eyebrow="Wallet"

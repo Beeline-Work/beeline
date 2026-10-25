@@ -477,12 +477,16 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   }
   result.classes = { baseline: classCounts(result.baseline), control: classCounts(result.control), candidate: classCounts(result.candidate) };
   result.diagnostics = Object.fromEntries(['baseline', 'control', 'candidate'].map(arm => [arm, diagnostics(result[arm])]));
+  const scoredCases = result.baseline.filter(row => row.scored === FIXED_SAMPLES && typeof row.pass === 'boolean').length;
+  const passed = scoredCases ? result.baseline.filter(row => row.pass === true).length : null;
+  result.scoring = { passed, scoredCases, unscoredCases: cases.length - scoredCases,
+    passRate: scoredCases ? passed / scoredCases : null,
+    overallPassRate: scoredCases === cases.length ? passed / scoredCases : null };
   save();
-  const passed = result.baseline.filter((row) => row.pass).length;
   const total = median(result.baseline.flatMap((row) => row.samples.filter(sample => sample.tokens > 0).map((sample) => sample.tokens)));
-  const rate = result.baseline.length === cases.length && result.baseline.every(row => row.scored === FIXED_SAMPLES)
-    ? `${passed}/${cases.length} passed (${(100 * passed / cases.length).toFixed(1)}%)`
-    : `${result.baseline.length}/${cases.length} cases recorded, ${passed} majority passing with all samples scored; overall pass rate unavailable`;
+  const rate = scoredCases
+    ? `${passed}/${scoredCases} behavior-scored cases passed (${(100 * result.scoring.passRate).toFixed(1)}%); ${result.scoring.unscoredCases} unscored cases${result.scoring.overallPassRate === null ? '; overall pass rate unavailable' : ''}`
+    : `behavior pass rate unavailable; ${result.scoring.unscoredCases} unscored cases; overall pass rate unavailable`;
   const diagnosticCounts = Object.fromEntries(Object.entries(result.diagnostics).map(([arm, d]) => [arm, { invalidCalls: d.invalidCalls, scenarioIncomplete: d.scenarioIncomplete }]));
   const reasons = Object.entries(result.diagnostics).flatMap(([arm, d]) => {
     const groups = new Map();
@@ -496,7 +500,7 @@ export async function runNightly({ out, history, request, tokenCap, costCap, roo
   const summary = `Prompt ${label} ${startedAt.slice(0, 10)}: ${result.status}; ${rate}; ${skipped.length} skipped:squire; sample classes ${JSON.stringify(result.classes)}; diagnostics ${JSON.stringify(diagnosticCounts)}; control noise flips ${result.noise?.noiseFlips ?? 'unavailable'}/${result.noise?.noisePairs ?? 'unavailable'}; detectable effect (80% power approximation) ${result.noise?.detectableEffect ?? 'unavailable'}; median ${total ?? 'unknown'} tokens/turn; ${ledger.tokens} total tokens, $${ledger.cost.toFixed(6)}; experiment ${result.experiment.block?.id ?? 'none'}: ${result.experiment.outcome}${result.error ? `; ${result.error}` : ''}.\n${reasons.join('\n')}`;
   writeFileSync(join(out, 'summary.txt'), `${summary}\n`);
   mkdirSync(dirname(history), { recursive: true });
-  appendFileSync(history, `${JSON.stringify({ schemaVersion: 2, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model, status: result.status, passed, cases: cases.length, skipped, medianTokensPerTurn: total,
+  appendFileSync(history, `${JSON.stringify({ schemaVersion: 2, classes: result.classes, diagnostics: result.diagnostics, noise: result.noise, startedAt, commit, model, status: result.status, ...result.scoring, cases: cases.length, skipped, medianTokensPerTurn: total,
     tokens: ledger.tokens, cost: ledger.cost, perCase: result.baseline.map(({ id, pass, medianTokensPerTurn, proportion, interval, scored }) => ({ id, pass, medianTokensPerTurn, proportion, interval, scored })), experiment: result.experiment })}\n`);
   console.log(summary);
   return { ...result, tokens: ledger.tokens, cost: ledger.cost };

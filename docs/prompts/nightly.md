@@ -184,6 +184,17 @@ when there is no eligible removal. Summary and JSONL history retain the old
 fields and add schema version, class counts and per-case intervals. Old JSONL
 lines need no migration: paragraph rotation still reads the last block ID.
 
+Run-level `scoring` records baseline `passed`, `scoredCases`, `unscoredCases`,
+`passRate`, and `overallPassRate`; history stores these fields at the top level.
+Only cases with every fixed sample behavior-scored enter `scoredCases`.
+`passed` and `passRate` are null when that denominator is zero, and the summary
+says the behavior pass rate is unavailable. A subset rate names its denominator
+and unscored case count; `overallPassRate` remains null unless all eligible cases
+are scored. The legacy `cases` history field remains the eligible cohort size,
+not the behavioral denominator. `complete` describes finished simulation, not
+successful behavior or valid format; class counts retain that distinction.
+
+
 For a measurement repair proof, pass `--label "measurement-repair run"`, post
 result and summary in its implementation corner, and do not publish that run as
 a weekly score on the results issue. A partial run remains useful evidence when

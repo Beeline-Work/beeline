@@ -298,3 +298,56 @@ test('an addressed brief returns that corner facts before a default current-plac
   assert.equal(result.result.repositoryWork, false);
   assert.match(result.result.spec, /release checklist/);
 });
+
+
+test('full runner excludes format-only and partially scored cases from summary and history rates', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-format-'));
+  try {
+    for (const mixed of [false, true]) {
+      const out = join(dir, String(mixed));
+      const history = join(out, 'history.jsonl');
+      const result = await runNightly({ out, history, request: async body => {
+        const reply = response({ calls: [], text: '72' });
+        reply.model = body.model;
+        if (!mixed || body.seed !== 1000) reply.choices[0].message.content = '{broken';
+        return reply;
+      } });
+      const summary = readFileSync(join(out, 'summary.txt'), 'utf8');
+      const saved = JSON.parse(readFileSync(history, 'utf8'));
+      const artifact = JSON.parse(readFileSync(join(out, 'result.json'), 'utf8'));
+      assert.equal(result.status, 'complete');
+      assert.equal(result.classes.baseline.format, result.eligibleCount * (mixed ? FIXED_SAMPLES - 1 : FIXED_SAMPLES));
+      assert.equal(result.classes.baseline.pass + result.classes.baseline.behavior, mixed ? result.eligibleCount : 0);
+      assert.match(summary, /behavior pass rate unavailable/);
+      assert.doesNotMatch(summary, /0\/73 passed|\(0\.0%\)/);
+      assert.equal(saved.passed, null);
+      assert.equal(saved.scoredCases, 0);
+      assert.equal(saved.unscoredCases, result.eligibleCount);
+      assert.equal(saved.passRate, null);
+      assert.equal(saved.overallPassRate, null);
+      assert.deepEqual(artifact.scoring, result.scoring);
+      assert.equal(result.scoring.scoredCases, 0);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('full runner reports a behavioral rate only for fully scored cases in a mixed cohort', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'beeline-replay-mixed-'));
+  try {
+    const history = join(dir, 'history.jsonl');
+    const result = await runNightly({ out: dir, history, request: async body => {
+      const reply = response({ calls: [], text: '72' });
+      reply.model = body.model;
+      if (!JSON.stringify(body.messages).includes('and what is 9 times 8?')) reply.choices[0].message.content = '{broken';
+      return reply;
+    } });
+    const saved = JSON.parse(readFileSync(history, 'utf8'));
+    assert.equal(saved.scoredCases, 1);
+    assert.equal(saved.passed, 1);
+    assert.equal(saved.unscoredCases, result.eligibleCount - 1);
+    assert.equal(saved.passRate, 1);
+    assert.equal(saved.overallPassRate, null);
+    assert.match(readFileSync(join(dir, 'summary.txt'), 'utf8'), /1\/1 behavior-scored cases passed \(100\.0%\); .*overall pass rate unavailable/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

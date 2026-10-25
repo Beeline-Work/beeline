@@ -27,7 +27,6 @@ import { transcriptBylineOpeners } from '@/buzz/message-dates';
 import {
   View,
   Text,
-  FlatList,
   Keyboard,
   Pressable,
   ScrollView,
@@ -41,6 +40,8 @@ import {
   type ViewToken,
 } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { PhoneTranscriptList } from '@/components/buzz/PhoneTranscriptList';
+import type { PhoneTranscriptListRef } from '@/components/buzz/PhoneTranscriptList.types';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -616,13 +617,14 @@ export function BuzzChatSurface({
       ? { marginBottom: insets.bottom }
       : { paddingBottom: Math.max(insets.bottom, 8) };
   const navigation = useNavigation();
-  const flatListRef = useRef<FlatList<ChatDisplayMessage>>(null);
+  const flatListRef = useRef<PhoneTranscriptListRef>(null);
   // The phone list's row keys, and the keys of the rows it has laid out. Each
   // window's rows get their own keys (`transcriptWindowId`, set below): the
   // list caches a row's position by key, and a row kept from the rows a new
   // window replaced would keep its old position.
   const transcriptWindowIdRef = useRef(0);
-  const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;
+  const phoneRowKey = useCallback((rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`, []);
+  const phoneMessageKey = useCallback((item: ChatDisplayMessage) => phoneRowKey(item.id), [phoneRowKey]);
   const [measuredPhoneRowKeys] = useState(() => new Set<string>());
   const [phoneScrollList] = useState(() =>
     phoneTranscriptList(
@@ -6433,12 +6435,12 @@ export function BuzzChatSurface({
                   </View>
                 </View>
               ) : (
-                <FlatList
+                <PhoneTranscriptList
                   testID="chat-messages"
                   ref={flatListRef}
                   inverted={transcriptMessages.length > 0}
                   data={transcriptMessages}
-                  keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}
+                  keyExtractor={phoneMessageKey}
                   CellRendererComponent={PhoneTranscriptCell}
                   style={styles.messageList}
                   contentContainerStyle={[

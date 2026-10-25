@@ -43,7 +43,7 @@ describe('Buzz keyboard avoidance', () => {
     // idle Room unavailable. A mention nobody picks up is still inscribed in
     // the transcript by the server.
     const between = chatSource.slice(
-      chatSource.indexOf('<FlatList'),
+      chatSource.indexOf('<PhoneTranscriptList'),
       chatSource.indexOf('<Animated.View style={[styles.inputBar'),
     );
     expect(between).not.toContain('AgentOfflineHint');

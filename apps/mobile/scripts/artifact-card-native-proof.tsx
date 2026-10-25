@@ -1,6 +1,7 @@
 // Native proof entry for the artifact card footer restore. Renders the real
-// ArtifactCard for a video/mp4 external file card and an image card so the
-// shared ArtifactCardShell footer can be compared across revisions.
+// ArtifactCard for non-previewable file cards (video/mp4, application/zip) and
+// for previewable artifacts that share ArtifactCardShell (image, PDF, HTML) so
+// the scoped footer can be compared across revisions and themes.
 import React from 'react';
 import { registerRootComponent } from 'expo';
 import { useFonts } from 'expo-font';
@@ -16,6 +17,9 @@ import {
   obsidianLargeTheme,
 } from '../sources/theme';
 
+// Switch this to 'obsidian' for the dark-theme capture.
+const PROOF_THEME = 'bone' as const;
+
 StyleSheet.configure({
   themes: {
     bone: boneTheme,
@@ -25,7 +29,7 @@ StyleSheet.configure({
     obsidianSmall: obsidianSmallTheme,
     obsidianLarge: obsidianLargeTheme,
   },
-  settings: { initialTheme: 'bone' },
+  settings: { initialTheme: PROOF_THEME },
 });
 
 import { ArtifactCard } from '../sources/components/buzz/ArtifactCard';
@@ -62,6 +66,34 @@ const imageFile = {
   author: 'ruby',
 } as unknown as AttachmentReference;
 
+const pdfFile = {
+  url: 'https://usebeeline.app/v1/media/9f0f6a50-1111-4222-8333-444455556669',
+  name: 'brief.pdf',
+  title: 'Brief',
+  mimeType: 'application/pdf',
+  size: 340_000,
+  kind: 'artifact',
+  author: 'ruby',
+} as unknown as AttachmentReference;
+
+const htmlFile = {
+  url: 'https://usebeeline.app/v1/media/9f0f6a50-1111-4222-8333-444455556670',
+  name: 'mock.html',
+  title: 'Mock',
+  mimeType: 'text/html',
+  size: 42_000,
+  kind: 'artifact',
+  author: 'ruby',
+} as unknown as AttachmentReference;
+
+const sourceFiles: { label: string; attachment: AttachmentReference }[] = [
+  { label: 'External file card · video/mp4', attachment: videoFile },
+  { label: 'External file card · application/zip', attachment: zipFile },
+  { label: 'Preview artifact · image/png (shared shell)', attachment: imageFile },
+  { label: 'Preview artifact · application/pdf (shared shell)', attachment: pdfFile },
+  { label: 'Preview artifact · text/html (shared shell)', attachment: htmlFile },
+];
+
 function Proof() {
   const [loaded] = useFonts({
     'SpaceGrotesk-Regular': require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),
@@ -87,18 +119,14 @@ function Proof() {
             />
           ))}
         </View>
-        <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.textPrimary }}>
-          External file card · video/mp4
-        </Text>
-        <ArtifactCard attachment={videoFile} />
-        <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.textPrimary }}>
-          External file card · application/zip
-        </Text>
-        <ArtifactCard attachment={zipFile} />
-        <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.textPrimary }}>
-          Image card · shares ArtifactCardShell
-        </Text>
-        <ArtifactCard attachment={imageFile} />
+        {sourceFiles.map(({ label, attachment }) => (
+          <React.Fragment key={label}>
+            <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.textPrimary }}>
+              {label}
+            </Text>
+            <ArtifactCard attachment={attachment} />
+          </React.Fragment>
+        ))}
       </ScrollView>
     </GestureHandlerRootView>
   );

@@ -100,6 +100,7 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
     title={linked ? 'Repository linked' : card.kind === 'starters' ? 'Pick a starting task' : card.repository ? 'Switch repository' : !card.canLink ? 'No repository yet' : 'Choose a repository'}
     subline={linked ? card.repository : undefined}
     compactBody primaryBody footerDivider={false}
+    balancedFooterInset={Platform.OS !== 'web' && needsConnection && !error && card.status === 'open' && shownActions.length > 0}
     inlineError={!linked && error ? { title: "GitHub didn't connect", description: error } : undefined}
     body={linked || error ? undefined : card.kind === 'repository' ? card.canLink ? needsConnection
       ? 'Connect GitHub to link one you own or create a new private repo. You approve once on github.com, then come back here.'

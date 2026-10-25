@@ -254,7 +254,8 @@ async function laterCornerApproval(
   if (
     stored?.sourceMessageId === sourceMessageId && stored.kind &&
     typeof stored.snapshot === 'string' && typeof stored.approvedBy === 'string' &&
-    (stored.kind === 'commander-order' || await humanRoomMember(db, revision.cornerId, current!.source_room_id, stored.approvedBy))
+    stored.kind !== 'commander-order' &&
+    await humanRoomMember(db, revision.cornerId, current!.source_room_id, stored.approvedBy)
   )
     return { stored: stored as StoredCornerBriefApproval, sourceRoomId: current!.source_room_id };
   const direct = (
@@ -271,18 +272,19 @@ async function laterCornerApproval(
     )
   ).rows[0];
   if (direct) return { message: direct, commanderOrder: false };
-  // Private orders retain the existing local commander authority.
-  const orderAuthority = (await db.query<{ ids: string[] }>(
-    `SELECT ARRAY_REMOVE(ARRAY[room.created_by,fact.commissioned_by,commander.owner_id],NULL) ids
-     FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-     LEFT JOIN agents commander ON commander.agent_id=room.created_by WHERE room.id=$1`,
-    [revision.cornerId],
-  )).rows[0]?.ids ?? [];
+  // Resolve transcript cards through their server-derived command identity, never their text.
   const order = (
     await db.query<CommandRow>(
-      `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2
-         AND private_payload->>'kind'='order' AND private_payload->>'authorId'=ANY($3::text[])`,
-      [sourceMessageId, revision.cornerId, orderAuthority],
+      `SELECT command.* FROM agent_commands command JOIN rooms corner ON corner.id=command.room_id
+       WHERE command.room_id=$2 AND command.agent_id=$3 AND command.state IN ('pending','claimed')
+         AND command.private_payload->>'kind'='order'
+         AND command.private_payload->>'authorId'=corner.created_by
+         AND (command.id=$1 OR EXISTS (
+           SELECT 1 FROM messages card WHERE card.id=$1 AND card.room_id=command.room_id
+             AND card.card_type='agent-command' AND card.card->>'kind'='order'
+             AND card.id=encode(sha256(convert_to('agent-command-card:' || command.id,'UTF8')),'hex')
+         ))`,
+      [sourceMessageId, revision.cornerId, revision.agentId],
     )
   ).rows[0];
   if (!order?.private_payload) return undefined;
@@ -344,7 +346,7 @@ export async function resolveCornerBriefApproval(
     )
   ).rows[0];
   let commanderOrder = false;
-  if (!message && initiating) {
+  if (!message && initiating && !revision) {
     const active = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [sourceMessageId])).rows[0];
     const order = active ? await commandOrder(db, active) : undefined;
     if (order?.private_payload?.kind === 'order' && sourceRoomIds.includes(order.room_id)) {

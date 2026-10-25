@@ -89,7 +89,7 @@ export type CornerLifecycleView = {
 
 /** The server-owned corner state vocabulary. Clients render this field; they
  * never derive a second state from lifecycle, PR, check, or turn facts. */
-export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'archived';
+export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'scheduled' | 'archived';
 export type CornerBlocker = {
   readonly kind: 'message' | 'merge-hold' | 'report' | 'ci';
   readonly url?: string;
@@ -805,6 +805,7 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
+  readonly nextRunAt?: number;
   readonly reason?: CornerStateReason;
   readonly blocker?: CornerBlocker;
   readonly itemId?: string;
@@ -1153,6 +1154,7 @@ export type CornerListItem = {
   readonly corner: RoomViewHeader;
   readonly lifecycle: CornerLifecycleView;
   readonly state: CornerState;
+  readonly nextRunAt?: number;
   /** Timestamp of the fact that produced `state`. A working state uses the
    * latest child turn receipt rather than the corner metadata timestamp. */
   readonly stateAt?: number;

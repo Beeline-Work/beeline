@@ -191,7 +191,7 @@ export function RoomCornersList({
               : styles.stateQuiet,
         ]}
       >
-        {display.word}
+        {display.word}{display.status === 'scheduled' && display.detail ? ` · ${display.detail}` : ''}
       </Text>
     </CornerWaitingPulse>
   );

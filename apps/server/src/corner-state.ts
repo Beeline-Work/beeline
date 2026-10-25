@@ -5,6 +5,7 @@ import type { SqlDatabase } from './database.js';
  * exact same function without a package cycle. */
 export {
   deriveCornerState,
+  deriveCornerStall,
   type CornerStateFacts,
   type DerivedCornerState,
 } from '@beeline/api-contract/phone';

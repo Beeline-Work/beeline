@@ -30,6 +30,7 @@ describe('server-owned corner display state', () => {
     ['working', 'quiet', '◌'],
     ['waiting', 'brass', 'Ⅱ'],
     ['review', 'quiet', '●'],
+    ['scheduled', 'quiet', '○'],
     ['archived', 'ghost', '○'],
   ] as const)('renders %s without deriving a replacement state', (state, tone, glyph) => {
     expect(cornerDisplayState(item(state))).toMatchObject({
@@ -182,3 +183,10 @@ describe('roomViewParentId', () => {
 });
 
 it('draws four distinct active corner states',()=>{ expect(new Set(['working','review','waiting','idle'].map(state=>cornerDisplayState(item(state as CornerState)).visual)).size).toBe(4); });
+
+it('shows a scheduled next run without changing the server state', () => {
+  const nextRunAt = 1800000000;
+  const display = cornerDisplayState({ ...item('scheduled'), nextRunAt });
+  expect(display.detail).toBe(`Next run ${new Date(nextRunAt * 1000).toLocaleString()}`);
+  expect(display.needsYou).toBe(false);
+});

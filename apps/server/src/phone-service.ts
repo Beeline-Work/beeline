@@ -3291,6 +3291,7 @@ export class PhoneService {
         corner: about ? { ...header, about } : header,
         lifecycle,
         ...derived,
+        ...(derived.state === 'scheduled' && corner.next_run_at ? { nextRunAt: Math.floor(new Date(corner.next_run_at).getTime() / 1000) } : {}),
         stateAt:
           hasLiveWorkingTurn && corner.latest_turn_created_at
             ? unix(corner.latest_turn_created_at)

@@ -1,3 +1,4 @@
+// Stall wording updated under approved False idle corners brief revision 2; only corner-attention wrapper.
 // Current review and repair handoff target line and transitive wrappers approved by lunchboxfortwo, message 70add57a7141d4a4a811a3d9e81d02788a973d2377287c39d6bdaff758dade77; these five wrapper literal snapshots only.
 // Red-check repair wakes and cause-named idle alerts approved by lunchboxfortwo in brief revision 1 (message 7547104df3860284d19c5bec939a9a5e1647e3b56a3d5dd7493b30353a9b56f1); corner-attention idle wrapper and GitHub check-rollup wrapper only.
 // Immutable call-site Opened rows approved by lunchboxfortwo, messages d331599d and 6d2140eb, brief revision 3 (mock approved in 2b6b6f66); remove only the two merge/close opening-card UPDATE producers.
@@ -1279,17 +1280,18 @@
     "kind": "wrapper",
     "template": "reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID, text, undefined, id, { automatic: true, agentOnly: true })",
     "literals": [
-      "'failing'",
       "'hex'",
       "'idle'",
       "'merge-hold'",
+      "'repair-expired'",
       "'report'",
+      "'review-blocked'",
       "'sha256'",
       "'working'",
       "`agent-command-card:${row.waiting_item_id}`",
-      "`blocked: Corner ${row.name} is idle. Checks are failing and nothing has been pushed for 30 minutes.`",
+      "`blocked: Corner ${row.name} has stalled. Checks are failing and nothing has been pushed for 30 minutes.`",
+      "`blocked: Corner ${row.name} has stalled. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`",
       "`blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`",
-      "`blocked: Corner ${row.name} is idle. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`",
       "`corner-hold:${row.waiting_item_id}`",
       "`corner-idle:${cornerId}:${episode}`"
     ],

@@ -211,9 +211,9 @@ it.each(['pending', 'passing'])(
   },
 );
 it.each([
-  ['agent', 'pending', 'idle'],
+  ['agent', 'pending', 'review'],
   ['human', 'pending', 'waiting'],
-  ['agent', 'unreported', 'idle'],
+  ['agent', 'unreported', 'review'],
   ['human', 'unreported', 'waiting'],
 ] as const)(
   'Reproduction R1: a %s commander blocked report during %s checks is %s',
@@ -338,7 +338,7 @@ it('pending CI past 30 minutes schedules no expiry, including after a new head',
   expect(await state()).toBe('review');
 });
 it.each([WORKER, REVIEWER])(
-  'Reproduction IDLE-1: a standing schedule suppresses alerts without changing Idle (%s)',
+  'Reproduction IDLE-1: a standing schedule shows Scheduled and suppresses alerts (%s)',
   async (agent) => {
     await db.query(
       `INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
@@ -351,7 +351,7 @@ it.each([WORKER, REVIEWER])(
       [WS, C, agent],
     );
     await runCornerAttention(db);
-    expect(await state()).toBe('idle');
+    expect(await state()).toBe('scheduled');
     expect(await commanderFlags()).toHaveLength(0);
   },
 );
@@ -657,7 +657,7 @@ it('Reproduction RED-STALL-1: four pushes, a blocked stop, and red checks wake t
   expect(await state()).toBe('idle');
 });
 
-it('Reproduction IDLE-1: a live repair turn suppresses alerts beyond the red-check deadline', async () => {
+it('Reproduction FIC-1: a live repair stays Working and alerts once beyond the red-check deadline', async () => {
   await ci('failing');
   await wake(WORKER, 'repair-still-running');
   expect(await state()).toBe('working');
@@ -666,11 +666,11 @@ it('Reproduction IDLE-1: a live repair turn suppresses alerts beyond the red-che
     [C],
   );
   await runCornerAttention(db);
-  expect(await state()).toBe('idle');
+  expect(await state()).toBe('working');
   const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'));
-  expect(stalls).toHaveLength(0);
+  expect(stalls).toHaveLength(1);
   await runCornerAttention(db);
-  expect((await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'))).toHaveLength(0);
+  expect((await commanderFlags()).filter((command) => command.source.body.includes('Checks are failing'))).toHaveLength(1);
   const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
   expect(reviewer.filter((command) =>
     command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
@@ -750,19 +750,50 @@ it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer whi
   expect(stalls[0]!.source.body).toContain('30 minutes');
 });
 
-it('Reproduction IDLE-1: a worker blocked on a gated reviewer stays quiet while checks are pending', async () => {
+it('Reproduction FIC-1: a worker blocked on a gated reviewer stays Review and alerts once', async () => {
   await ci('pending');
   await runCornerAttention(db);
   expect(await state()).toBe('review');
   expect((await commanderFlags()).filter((command) => command.source.body.includes('is idle'))).toHaveLength(0);
   const { reportToCommander } = await import('./commander.js');
   await reportToCommander(db, C, WORKER, 'blocked: Waiting on the reviewer until checks are green.');
-  expect(await state()).toBe('idle');
+  expect(await state()).toBe('review');
   await runCornerAttention(db);
   await runCornerAttention(db);
-  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('is idle'));
-  expect(stalls).toHaveLength(0);
+  const stalls = (await commanderFlags()).filter((command) => command.source.body.includes('has stalled'));
+  expect(stalls).toHaveLength(1);
   const reviewer = (await readAgentCommands(db, C, REVIEWER)).commands;
   expect(reviewer.filter((command) =>
     command.reason === 'corner_review_dispatch' || command.reason === 'subscribed_event')).toHaveLength(0);
+});
+
+it('FIC-1: seeded Room projects live red repair and scheduled corners on every surface', async () => {
+  await ci('failing');
+  await wake(WORKER, 'fic-live');
+  await db.query("UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1", [C]);
+  await db.query("UPDATE rooms SET name='live-repair' WHERE id=$1", [C]);
+  const scheduled = '44444444-4444-4444-8444-444444444444';
+  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
+    VALUES($1,$2,$3,'scheduled-release',$4)`, [scheduled, WS, ROOM, COMMANDER]);
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective)
+    VALUES($1,$2,$2,'Run the scheduled release')`, [scheduled, WORKER]);
+  await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,message,cadence,next_run_at)
+    VALUES(gen_random_uuid(),$1,$2,$3,$3,'Continue','{"kind":"interval","everySeconds":86400}',now()+interval '1 day')`,
+    [WS, scheduled, WORKER]);
+  const view = (await phone.readCorners(ROOM, HUMAN))!;
+  expect(view.corners.find(item => item.corner.id === C)?.state).toBe('working');
+  expect(view.corners.find(item => item.corner.id === scheduled)).toMatchObject({ state: 'scheduled', nextRunAt: expect.any(Number) });
+  const { readCornerListView } = await import('@beeline/api-contract/phone');
+  expect(readCornerListView(view)?.corners.find(item => item.corner.id === scheduled)?.state).toBe('scheduled');
+  const deck = await phone.liveChatCornerStatus(ROOM, HUMAN);
+  expect(deck!.openCorners.find(item => item.id === C)?.state).toBe('working');
+  expect(deck!.openCorners.find(item => item.id === scheduled)).toMatchObject({ state: 'scheduled', nextRunAt: expect.any(Number) });
+  expect(await state()).toBe('working');
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await commanderFlags()).filter(command => command.source.body.includes('Checks are failing'))).toHaveLength(1);
+  if (process.env.FIC_PROOF_OUTPUT) {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(process.env.FIC_PROOF_OUTPUT, JSON.stringify(view, null, 2));
+  }
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveCornerState } from './corner-state.js';
+import { deriveCornerState, deriveCornerStall } from './corner-state.js';
 import type { CornerStateFacts } from '@beeline/api-contract/phone';
 
 const facts: CornerStateFacts = {
@@ -93,13 +93,13 @@ it('failing checks past the repair window are idle', () => {
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
   })).toEqual({ state: 'idle' });
 });
-it('a repair turn still running past 30 minutes without a push is idle', () => {
+it('FIC-1: a live repair turn stays working past 30 minutes', () => {
   expect(deriveCornerState({
     ...facts,
     turnRunning: true,
     ciStartedAt: 1000 - 1801,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  })).toEqual({ state: 'idle' });
+  })).toEqual({ state: 'working' });
   expect(deriveCornerState({
     ...facts,
     turnRunning: true,
@@ -121,7 +121,7 @@ it('a fresh failing repair window is working', () => {
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
   }).state).toBe('working');
 });
-it('a blocked report while checks are pending or unreported is idle', () => {
+it('a blocked report while checks are pending or unreported is review', () => {
   const unreported = {
     lifecycle: 'in-review' as const,
     checks: 'unknown' as const,
@@ -134,14 +134,14 @@ it('a blocked report while checks are pending or unreported is idle', () => {
     owed: true,
     agentCommanderReport: true,
     lifecycle: { lifecycle: 'in-review', checks: 'pending' },
-  }).state).toBe('idle');
+  }).state).toBe('review');
   expect(deriveCornerState({
     ...facts,
     stallReport: true,
     owed: true,
     agentCommanderReport: true,
     lifecycle: unreported,
-  }).state).toBe('idle');
+  }).state).toBe('review');
 });
 it('a blocked report during a fresh failing repair window stays working', () => {
   expect(deriveCornerState({
@@ -152,13 +152,13 @@ it('a blocked report during a fresh failing repair window stays working', () => 
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
   }).state).toBe('working');
 });
-it('a running reviewer does not keep a red head in review', () => {
+it('a running reviewer stays in review on a red head', () => {
   expect(deriveCornerState({
     ...facts,
     reviewerActive: true,
     ciStartedAt: undefined,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  }).state).toBe('idle');
+  }).state).toBe('review');
 });
 it.each([
   ['pending', 'review'],
@@ -204,4 +204,17 @@ it('Reproduction R1: an agent-commander report stays review while checks run, an
     ...facts, owed: true, agentCommanderReport: true, ciStartedAt: 1000 - 1801,
     lifecycle: pending, blocker: agentReport,
   })).toEqual({ state: 'review' });
+});
+
+it('FIC-1: stall signals are independent of visible live work and pending checks', () => {
+  const red = { ...facts, ciStartedAt: 1000 - 31 * 60,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' } } as const;
+  expect(deriveCornerStall({ ...red, turnRunning: true })).toBe('repair-expired');
+  expect(deriveCornerStall(red)).toBe('repair-expired');
+  expect(deriveCornerStall({ ...red, owed: true })).toBeUndefined();
+  const pending = { ...facts, lifecycle: { lifecycle: 'in-review', checks: 'pending' } } as const;
+  expect(deriveCornerStall(pending)).toBeUndefined();
+  expect(deriveCornerStall({ ...pending, stallReport: true })).toBe('review-blocked');
+  expect(deriveCornerState({ ...facts, scheduled: true }).state).toBe('scheduled');
+  expect(deriveCornerStall({ ...facts, scheduled: true })).toBeUndefined();
 });

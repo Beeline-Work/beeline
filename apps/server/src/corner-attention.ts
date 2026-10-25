@@ -7,6 +7,7 @@ import {
   cornerBlockerSql,
   blockedReportSql,
   cornerRowState,
+  cornerRowStall,
   type CornerStateRow,
 } from './chat-corner-counts.js';
 import { reportToCommander } from './commander.js';
@@ -165,32 +166,20 @@ export async function refreshCornerAttention(
     const row = (await tx.query<Row>(attentionSql(), [cornerId])).rows[0];
     if (!row) return;
     const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
-    // Pending CI and standing scheduled waits are not idle-alert episodes.
-    // Ending a wait can open a real episode.
-    const summary = row.lifecycle?.checksSummary;
-    const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' ||
-      (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
-    const suppressed = row.scheduled_wait || pendingHead || row.worker_active || row.reviewer_active;
-    if (suppressed) {
-      await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
-      return { parentId: row.parent_id, deadlines: [] };
-    }
     const state = cornerRowState(row).state;
-    const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
+    const stall = cornerRowStall(row);
+    const signal = stall ?? state;
+    const episode = BigInt(row.episode) + ((stall !== undefined || state === 'idle') && row.last_state !== signal ? 1n : 0n);
     await tx.query(
       `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
-      [cornerId, state, episode.toString()],
+      [cornerId, signal, episode.toString()],
     );
-    if (state === 'idle' && row.last_state !== 'idle') {
+    if ((stall !== undefined || state === 'idle') && row.last_state !== signal) {
       const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
-      const stalledReport = row.waiting_kind === 'report' && row.blocked_report === true;
-      const repairExpired = Boolean(
-        row.ci_started_at && Date.now() - new Date(row.ci_started_at).getTime() >= 30 * 60_000,
-      );
-      const text = checks === 'failing' && repairExpired
-        ? `blocked: Corner ${row.name} is idle. Checks are failing and nothing has been pushed for 30 minutes.`
-        : stalledReport && checks !== 'failing'
-          ? `blocked: Corner ${row.name} is idle. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`
+      const text = stall === 'repair-expired'
+        ? `blocked: Corner ${row.name} has stalled. Checks are failing and nothing has been pushed for 30 minutes.`
+        : stall === 'review-blocked'
+          ? `blocked: Corner ${row.name} has stalled. The worker is waiting on the reviewer and checks are not green, so that review cannot start.`
           : `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
       await reportToCommander(
         tx,

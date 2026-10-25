@@ -1,6 +1,6 @@
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { createHash } from 'node:crypto';
-import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
+import { deriveCornerState, deriveCornerStall, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
@@ -24,6 +24,8 @@ export type CornerStateRow = {
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
   worker_active?: boolean;
+  scheduled_wait?: boolean;
+  next_run_at?: Date | null;
   last_turn_ended_at?: Date | null;
   ci_started_at?: Date | null;
   reviewer_active?: boolean;
@@ -54,14 +56,13 @@ export function blockedReportSql(corner = 'c'): string {
       AND command.private_payload->>'text' LIKE 'blocked:%')`;
 }
 
-export function cornerRowState(row: CornerStateRow): DerivedCornerState {
+function cornerRowFacts(row: CornerStateRow) {
   const agentCommander = row.agent_commander === true && row.human_blocker !== true;
-  // Any open blocked report. deriveCornerState idles that stall only while
-  // checks are pending or not yet reported, and keeps the repair window
-  // while they are failing. A needs-decision report leaves this unset.
+  // Only blocked reports to the agent commander establish a reviewer stall.
   const stallReport = agentCommander && row.blocked_report === true;
-  return deriveCornerState({
+  return {
     archived: Boolean(row.archived_at),
+    scheduled: row.scheduled_wait,
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
     reviewerActive: row.reviewer_active,
     lastTurnEndedAt: row.last_turn_ended_at
@@ -103,7 +104,21 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
           },
         }
       : {}),
-  });
+  };
+}
+
+export function cornerRowState(row: CornerStateRow): DerivedCornerState {
+  return deriveCornerState(cornerRowFacts(row));
+}
+
+export function cornerRowStall(row: CornerStateRow) {
+  return deriveCornerStall(cornerRowFacts(row));
+}
+
+export function cornerScheduleSql(corner = 'c'): string {
+  return `EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=${corner}.id
+    AND schedule.next_run_at>now()
+    AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))`;
 }
 
 /** Mine is followed or owed to this viewer. */
@@ -123,6 +138,10 @@ export function cornerFactsSql(viewerExpr: string): {
     columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
       activity.worker_active,activity.reviewer_active,
       span.last_turn_ended_at,span.ci_started_at,
+      ${cornerScheduleSql()} scheduled_wait,
+      (SELECT min(schedule.next_run_at) FROM agent_schedules schedule WHERE schedule.room_id=c.id
+        AND schedule.next_run_at>now()
+        AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)) next_run_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,
@@ -291,6 +310,7 @@ export function chatCornerCounts(
       id: row.id,
       name: row.name,
       state,
+      ...(state === 'scheduled' && row.next_run_at ? { nextRunAt: Math.floor(new Date(row.next_run_at).getTime() / 1000) } : {}),
       ...(reason ? { reason } : {}),
       ...(blocker ? { blocker } : {}),
       ...(itemId ? { itemId } : {}),

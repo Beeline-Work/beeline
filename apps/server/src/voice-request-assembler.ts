@@ -14,9 +14,22 @@ export interface VoiceRequest {
 /** A detected resume can reopen a conversational request while its reply plays. */
 export class VoiceRequestAssembler {
   private readonly requests = new Map<string, VoiceRequest>();
+  private readonly contactTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly failed = new Map<string, Map<string, VoiceRequest>>();
   private readonly addresses = new Map<string, { agentId: string; until: number; timer: ReturnType<typeof setTimeout> }>();
 
+  private clearContactTimer(human: string) {
+    clearTimeout(this.contactTimers.get(human));
+    this.contactTimers.delete(human);
+  }
+  waitForContact(human: string, request: VoiceRequest) {
+    this.clearContactTimer(human);
+    const timer = setTimeout(() => {
+      if (this.requests.get(human) === request) this.cancel(human, 'contact draft expired');
+    }, 10_000);
+    timer.unref();
+    this.contactTimers.set(human, timer);
+  }
   private expire(human: string) {
     const address = this.addresses.get(human);
     if (address && address.until <= performance.now()) {
@@ -31,6 +44,8 @@ export class VoiceRequestAssembler {
     this.addresses.set(human, { agentId, until: performance.now() + 3000, timer });
   }
   speaking(human: string) {
+    const request = this.requests.get(human);
+    if (request && this.contactTimers.has(human)) this.waitForContact(human, request);
     this.expire(human);
     const address = this.addresses.get(human);
     if (address) this.address(human, address.agentId);
@@ -64,6 +79,7 @@ export class VoiceRequestAssembler {
   }
   current(human: string) { return this.requests.get(human); }
   begin(human: string, text: string): { request: VoiceRequest; previous?: VoiceRequest } {
+    this.clearContactTimer(human);
     const previous = this.requests.get(human);
     const continuation = previous && ['assembling', 'classifying', 'replying'].includes(previous.state) ? previous : undefined;
     continuation?.classification.abort('superseded');
@@ -78,6 +94,7 @@ export class VoiceRequestAssembler {
     return { request, previous: continuation };
   }
   finish(human: string, request: VoiceRequest) {
+    if (this.requests.get(human) === request) this.clearContactTimer(human);
     request.state = 'finished';
     this.failed.get(human)?.delete(request.id);
     if (!this.failed.get(human)?.size) this.failed.delete(human);
@@ -87,6 +104,7 @@ export class VoiceRequestAssembler {
     }
   }
   cancel(human: string, reason = 'superseded') {
+    this.clearContactTimer(human);
     const request = this.requests.get(human);
     if (request) {
       request.classification.abort(reason); this.requests.delete(human);

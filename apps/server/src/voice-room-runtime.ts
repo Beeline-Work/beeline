@@ -438,6 +438,15 @@ export class VoiceRoomRuntime {
       const stop = /^(stop|cancel|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
       if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
         this.turnIndices.set(human, event.turn_index);
+        const draft = this.assembler.current(human);
+        const contacts = this.externalContacts.get(human) ?? [];
+        if (draft && voiceContactNameOnly(draft.text, contacts)) {
+          const contact = contacts.find(name => voiceContactNameOnly(event.transcript, [name]));
+          const named = openingVoiceName(event.transcript, agents);
+          if (voiceNameOnly(event.transcript, agents) || (named && named.id !== draft.agent?.id) ||
+              (contact && !voiceContactNameOnly(draft.text, [contact]))) this.assembler.cancel(human, 'contact recipient changed');
+          else if (contact) return;
+        }
         const resumed = this.resumedFinals.get(human);
         this.resumedFinals.delete(human);
         const fragment = resumed?.turn === event.turn_index && event.transcript.startsWith(resumed.text)
@@ -814,6 +823,7 @@ export class VoiceRoomRuntime {
       }
       if (voiceContactNameOnly(fragment, this.externalContacts.get(human)) && !previous && !retry) {
         // Retain the recorded contact draft so the next phrase includes its recipient.
+        this.assembler.waitForContact(human, request);
         this.assembler.address(human, agent.id);
         return;
       }

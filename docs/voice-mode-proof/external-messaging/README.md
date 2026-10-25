@@ -103,3 +103,20 @@ Caller-resume and committed search-budget handling are unchanged.
 Raw before/after output, live generation IDs and payloads are attached in the
 corner. The real service/database proof verifies one revised human source and
 one actual agent command with its recipient in the source text.
+
+## Silent contact draft lifecycle
+
+SPEEDY-CONTACT-3/4 on `528417cf9` fail (4 cases; 2 pass): a new agent/contact
+or repeated contact joins the stale draft, and the draft never expires.
+The same cases now pass (6/6). Stop cancels the draft; a different agent or
+contact replaces it; repeating its name stays silent without duplication.
+The assembler cancels an idle contact draft after ten seconds, refreshing the
+limit while the caller speaks and clearing its timer on continuation or cancel.
+Bare agent handling is unchanged. Existing request assembly still supplies one
+complete recipient-bearing model input and command source (SPEEDY-CONTACT-2,
+4/4). No prompt text changed.
+
+Final validation: all voice suites pass (452 tests, 14 files); focused contact,
+resume, search, eager and startup checks pass (36 tests). Root typecheck and
+server build pass. Built provider payload bytes are unchanged; latency was not
+rerun. Raw before/after output accompanies this proof.

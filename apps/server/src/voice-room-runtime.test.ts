@@ -3175,3 +3175,69 @@ it.each([0, 1, 2, 3])('SPEEDY-CONTACT-2: silent contact then tell it hello retai
     expect(state.audio.captureFrame).toHaveBeenCalledOnce();
   } finally { await voice.close(); await db.close(); }
 }, 30_000);
+
+it.each([
+  ['stop', 'tell it hello', 'ruby'],
+  ['Goosey', 'tell it hello', 'goose'],
+  ['Claude bot', 'Claude bot tell it hello', 'ruby'],
+  ['Grok bot', 'Grok bot tell it hello', 'ruby'],
+])('SPEEDY-CONTACT-3: %s resets or refreshes a silent contact before the next task', async (next, expected, target) => {
+  const { service, speech } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, args) => sql.includes("source='webhook'")
+    ? { rowCount: 2, rows: [{ name: 'Grok bot' }, { name: 'Claude bot' }] } : original(sql, args));
+  let receive!: (event: any) => void;
+  service.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
+  service.config.brain.answer.mockResolvedValue({ text: 'On it.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  const emit = (transcript: string, turn: number) => receive({ event: 'EndOfTurn', transcript, turn_index: turn,
+    words: transcript.split(' ').map(word => ({ word, confidence: .99, start: 0, end: .4 })) });
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    emit('Grok bot', 0);
+    await vi.waitFor(() => expect(service.recordHuman).toHaveBeenCalledOnce());
+    emit(next!, 1);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(service.recordAnswer).not.toHaveBeenCalled();
+    emit('tell it hello', 2);
+    await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
+    const call = service.config.brain.answer.mock.calls[0]!;
+    expect(call[0].id).toBe(target);
+    expect(call[1].at(-1)?.content).toBe(expected);
+    const recorded = service.reviseHuman.mock.calls.at(-1)?.[5] ?? service.recordHuman.mock.calls.at(-1)?.[4];
+    expect(recorded).toBe(expected);
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+
+it.each([9999, 10000])('SPEEDY-CONTACT-4: silent contact draft has a ten-second idle limit (%s ms)', async delay => {
+  const { service, speech } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, args) => sql.includes("source='webhook'")
+    ? { rowCount: 1, rows: [{ name: 'Grok bot' }] } : original(sql, args));
+  service.config.stt.mockResolvedValue({ send() {}, close() {} });
+  service.config.brain.answer.mockResolvedValue({ text: 'On it.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    await runtime.utterance('human', 'Grok bot');
+    await vi.advanceTimersByTimeAsync(delay);
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(state.audio.captureFrame).not.toHaveBeenCalled();
+    await runtime.utterance('human', 'tell it hello');
+    const expected = delay < 10000 ? 'Grok bot tell it hello' : 'tell it hello';
+    expect(service.config.brain.answer.mock.calls[0]?.[1].at(-1)?.content).toBe(expected);
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordHuman).toHaveBeenCalledTimes(delay < 10000 ? 1 : 2);
+  } finally { await runtime.close(); vi.useRealTimers(); }
+});

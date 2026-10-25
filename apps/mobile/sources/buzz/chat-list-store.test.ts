@@ -163,6 +163,24 @@ afterEach(() => {
 });
 
 describe('app-level Room list store', () => {
+  it('NET-HOL-1 updates the sidebar without caching a preview as a complete Room message', async () => {
+    const chats = vi.fn(async () => listOf([row('room-a', 10)]));
+    const sidebar = join(chats, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    const roomKey = '/room/room-a:';
+    const completeRoom = { room: { id: 'room-a' }, messages: [{ id: 'old', text: 'complete' }] };
+    disk.hot.set(roomKey, completeRoom);
+    emit({ monolithLive: { type: 'sidebar-preview', roomId: 'room-a', preview: {
+      id: 'new', text: 'short preview', createdAt: 20, author: agent, presentation: 'message',
+      mentionsViewer: true,
+    } } });
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(sidebar.current()?.chats[0]?.latestMessage).toMatchObject({ id: 'new', text: 'short preview', mentionsViewer: true });
+    expect(disk.hot.get(roomKey)).toBe(completeRoom);
+    expect(chats).toHaveBeenCalledTimes(1);
+    sidebar.release();
+  });
+
   it('keeps one live copy for every screen, with or without the deck', async () => {
     const server = listOf([row('room-a', 10), row('room-b', 5)]);
     const chats = vi.fn(async () => server);

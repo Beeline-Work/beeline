@@ -34,3 +34,5 @@ export * from './agent-usage.js';
 export * from './repository-onboarding.js';
 
 export { squireApprovalAction, type SquireApprovalDetails } from './approval-copy.js';
+
+export * from './sidebar-preview.js';

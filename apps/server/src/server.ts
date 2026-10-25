@@ -50,6 +50,8 @@ import { CommandRefusalError } from './commander.js';
 import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import {
+  projectSidebarPreview,
+  readSidebarPreview,
   MESSAGE_SEARCH_QUERY_MAX_BYTES,
   PHONE_READ_OPERATIONS,
   messageSearchTerms,
@@ -903,6 +905,8 @@ export function createBeelineServer(options: ServerOptions): Server {
       options.live.humanConnected(principal.identityId);
       // Rooms this socket views hold pushes until it says otherwise or closes.
       const viewingSession = randomUUID();
+      const viewedRooms = new Set<string>();
+      const previewRooms = new Set<string>();
       const releases = new Map<string, () => void>();
       let phoneViewClosed = false;
       // Workspace membership notifications survive the deletion cascade and
@@ -1201,6 +1205,7 @@ export function createBeelineServer(options: ServerOptions): Server {
             );
             for (const roomId of requestedRoomIds) {
               if (!readableRooms.has(roomId) || releases.has(roomId)) continue;
+              if (item.sidebarPreviews === true) previewRooms.add(roomId);
               // Agents whose draft this socket has already been handed live.
               // The snapshot below is read asynchronously, so a delta can land
               // first; replacing it with the older row would show the reader the
@@ -1345,7 +1350,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                         createHash('sha256').update(JSON.stringify(publicDelta)).digest('hex')))
                         return;
                       rememberPaintTrace(wireTrace, target.type);
-                      sendFrame({ ...publicDelta,
+                      const sidebarOnly = previewRooms.has(roomId) && !viewedRooms.has(roomId);
+                      // Voice cards change a separate list mark; retain its covering read.
+                      let wireDelta: object = publicDelta;
+                      if (sidebarOnly && publicDelta.type === 'message-delta') {
+                        const preview = publicDelta.message.voiceCall ? null
+                          : projectSidebarPreview(publicDelta, principal.identityId);
+                        wireDelta = preview && readSidebarPreview(preview) ? preview : wireEvent;
+                      }
+                      sendFrame({ ...wireDelta,
                         ...(wireTrace ? { trace: wireTrace } : {}) });
                       if (result.delta.type === 'message-delta') {
                         const message = result.delta.message;
@@ -1402,6 +1415,8 @@ export function createBeelineServer(options: ServerOptions): Server {
             ROOM_ID_PATTERN.test(item.roomId) &&
             typeof item.viewing === 'boolean'
           ) {
+            if (item.viewing) viewedRooms.add(item.roomId);
+            else viewedRooms.delete(item.roomId);
             if (!phoneViewClosed)
               await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
             return;
@@ -1409,6 +1424,7 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
+            previewRooms.delete(item.roomId);
             sentRows.delete(`${item.roomId}:corner-status`);
             for (const key of draftWire.keys())
               if (key.startsWith(`${item.roomId}:`)) draftWire.delete(key);

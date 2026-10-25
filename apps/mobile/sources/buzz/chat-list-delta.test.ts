@@ -45,6 +45,19 @@ function message(id: string, createdAt: number, extra: Partial<RoomViewMessage> 
 }
 
 describe('chat list deltas', () => {
+  it('keeps sidebar previews separate while preserving mentions, unread and turn state', () => {
+    const view = deck(item('a', 10, { agentState: 'working' }));
+    const delta = { type: 'sidebar-preview' as const, roomId: 'a',
+      preview: { ...message('new', 20), text: 'bounded text', mentionsViewer: true as const } };
+    const next = applyChatListDelta(view, delta);
+    expect(next.chats[0]?.latestMessage).toMatchObject({ text: 'bounded text', mentionsViewer: true });
+    expect(next.chats[0]?.unread).toBe(true);
+    expect(next.chats[0]?.agentState).toBe('working');
+    expect(chatListDeltaNeedsRead(view, delta)).toBe(false);
+    const own = applyChatListDelta(view, { ...delta, preview: { ...delta.preview, author: viewer } });
+    expect(own.chats[0]?.unread).toBe(false);
+  });
+
   it('updates the live voice mark when an older call card ends, preserving the latest spoken preview', () => {
     const call = { id: 'call', roomId: 'a', startedAt: 5, startedAtMs: 5000, participants: [] };
     const view = deck(item('a', 20, { voiceCall: call }));

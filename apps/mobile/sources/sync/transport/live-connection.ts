@@ -1,3 +1,4 @@
+import { readSidebarPreview } from '@beeline/api-contract/phone';
 import { AppState } from 'react-native';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -445,8 +446,8 @@ export class LiveConnection {
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
         this.schedulePing();
-        this.sendSubscribe([...this.refcount.keys()]);
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
+        this.sendSubscribe([...this.refcount.keys()]);
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
       };
@@ -471,6 +472,7 @@ export class LiveConnection {
           return;
         }
         noteLiveFrame();
+        if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) { this.reconnect(); return; }
         this.dispatch(live, next);
       };
       next.onclose = () => {
@@ -550,7 +552,7 @@ export class LiveConnection {
         return cursor ? [[roomId, { epoch: cursor.epoch, base: cursor.base,
           seen: [...cursor.seen].sort((a, b) => a - b) }]] : [];
       }));
-      this.socket.send(JSON.stringify({ type: 'subscribe', roomIds: batch,
+      this.socket.send(JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomIds: batch,
         ...(Object.keys(cursors).length ? { cursors } : {}) }));
     }
   }
@@ -571,6 +573,7 @@ export class LiveConnection {
   private dispatch(live: LiveWireEvent | { type: 'pong' }, generation: WebSocket): void {
     if (live.type === 'pong') return;
     if (live.type === 'message-delta') this.hear(live.message.id);
+    else if (live.type === 'sidebar-preview') this.hear(live.preview.id);
     else if (live.type === 'invalidate') this.hear(live.messageId);
     if (live.type === 'trace-painted') {
       const owner = this.traceOwners.get(live.id);

@@ -191,7 +191,7 @@ class ChatListStore {
         }).catch(() => undefined);
       }
     }
-    if (live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
+    if (live?.type === 'sidebar-preview' || live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
       if (this.reading) this.deltasDuringRead.push(live);
       const held = this.current();
       if (!held) { this.requestRead(); return; }

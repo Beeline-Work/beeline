@@ -1,0 +1,75 @@
+{
+  "reproduction": "NET-HOL-1",
+  "results": [
+    {
+      "platform": "web",
+      "profile": "normal",
+      "trial": 0,
+      "offscreenBytes": 673,
+      "activeBytes": 735,
+      "arrivalMs": 167,
+      "paintMs": 263,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 1
+    },
+    {
+      "platform": "web",
+      "profile": "normal",
+      "trial": 1,
+      "offscreenBytes": 674,
+      "activeBytes": 735,
+      "arrivalMs": 273,
+      "paintMs": 447,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 1
+    },
+    {
+      "platform": "web",
+      "profile": "normal",
+      "trial": 2,
+      "offscreenBytes": 674,
+      "activeBytes": 735,
+      "arrivalMs": 289,
+      "paintMs": 465,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 2
+    },
+    {
+      "platform": "web",
+      "profile": "throttled",
+      "trial": 0,
+      "offscreenBytes": 674,
+      "activeBytes": 735,
+      "arrivalMs": 421,
+      "paintMs": 933,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 79
+    },
+    {
+      "platform": "web",
+      "profile": "throttled",
+      "trial": 1,
+      "offscreenBytes": 674,
+      "activeBytes": 735,
+      "arrivalMs": 418,
+      "paintMs": 556,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 78
+    },
+    {
+      "platform": "web",
+      "profile": "throttled",
+      "trial": 2,
+      "offscreenBytes": 674,
+      "activeBytes": 735,
+      "arrivalMs": 378,
+      "paintMs": 988,
+      "offscreenType": "sidebar-preview",
+      "proxyDeliveryMs": 78
+    },
+    {
+      "openOffscreenFetchesFullText": true,
+      "tail": "TAIL-b119a79818"
+    }
+  ]
+}

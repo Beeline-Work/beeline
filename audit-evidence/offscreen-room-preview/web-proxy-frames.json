@@ -1,0 +1,62 @@
+[
+  {
+    "type": "ws",
+    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "granularity": "message",
+    "direction": "down",
+    "startMs": 1792905768596,
+    "endMs": 1792905768597,
+    "bytes": 735,
+    "connectionStartMs": 1792905765514
+  },
+  {
+    "type": "ws",
+    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "granularity": "message",
+    "direction": "down",
+    "startMs": 1792905769181,
+    "endMs": 1792905769182,
+    "bytes": 735,
+    "connectionStartMs": 1792905765514
+  },
+  {
+    "type": "ws",
+    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "granularity": "message",
+    "direction": "down",
+    "startMs": 1792905769978,
+    "endMs": 1792905769980,
+    "bytes": 735,
+    "connectionStartMs": 1792905765514
+  },
+  {
+    "type": "ws",
+    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "granularity": "message",
+    "direction": "down",
+    "startMs": 1792905770796,
+    "endMs": 1792905770875,
+    "bytes": 735,
+    "connectionStartMs": 1792905765514
+  },
+  {
+    "type": "ws",
+    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "granularity": "message",
+    "direction": "down",
+    "startMs": 1792905771988,
+    "endMs": 1792905772066,
+    "bytes": 735,
+    "connectionStartMs": 1792905765514
+  },
+  {
+    "type": "ws",
+    "traceId": "5aba76cb-f794-4758-ab97-5b2f66314c27",
+    "granularity": "message",
+    "direction": "down",
+    "startMs": 1792905772829,
+    "endMs": 1792905772907,
+    "bytes": 735,
+    "connectionStartMs": 1792905765514
+  }
+]

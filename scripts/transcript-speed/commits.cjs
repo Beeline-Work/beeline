@@ -32,7 +32,11 @@ module.exports = function ({ types: t }) {
         if (traceProps) {
           const values = new Map();
           const names = target === 'RoomMessageCell'
-            ? ['item', 'render', 'continued', 'immediatelyPrecedingMessage', 'referencedMessage', 'startsNewMessages', 'cardArriving', 'cardMotionStore', 'arrivalFlashing', 'sourceLandingFlashing', 'firstBylineOfDay', 'untaggedHint', 'deliveryFailed', 'speakerWorking', 'cornerProposalAnswer', 'cornerProposalAction']
+            ? fn.node.params[0].properties.flatMap(property => {
+                const value = property.value;
+                const binding = t.isAssignmentPattern(value) ? value.left : value;
+                return t.isIdentifier(binding) ? [binding.name] : [];
+              })
             : ['renderMessage', 'tailRows', 'historyRows', 'cachedMessages', 'liveMessages', 'combinedMessages', 'foldedMessages', 'visibleMessages', 'roomParticipants'];
           for (const name of names) values.set(name, t.identifier(name));
           if (target === 'BuzzChatSurface') fn.traverse({ VariableDeclarator(declaration) {

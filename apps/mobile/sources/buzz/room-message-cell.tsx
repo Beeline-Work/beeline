@@ -64,24 +64,28 @@ export function useRoomMessageRenderItem({
   sourceLandingFlashMessageId?: string | null;
   presentationForMessage?: (item: ChatDisplayMessage) => RoomMessagePresentation;
 }) {
-  const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
+  const [fallbackMotionStore] = React.useState(createTranscriptCardMotionStore);
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
   return React.useCallback(
     ({ item }: { item: ChatDisplayMessage }) => (
-      <RoomMessageCell
-        {...presentationForMessage?.(item)}
-        item={item}
-        render={render}
-        startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
-        continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
-        immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
-        referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
-        cardArriving={arrivingCardIds.has(item.id)}
-        cardMotionStore={resolvedCardMotionStore}
-        arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
-        sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
+      <TranscriptCardMotionBoundary
+        arriving={arrivingCardIds.has(item.id)}
+        cardId={item.id}
+        store={resolvedCardMotionStore}
+      >
+        <RoomMessageCell
+          {...presentationForMessage?.(item)}
+          item={item}
+          render={render}
+          startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
+          continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
+          immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
+          referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
+          arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
+          sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
 
-      />
+        />
+      </TranscriptCardMotionBoundary>
     ),
     [
       arrivalFlashMessageId,
@@ -106,8 +110,6 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   immediatelyPrecedingMessage,
   referencedMessage,
   startsNewMessages = false,
-  cardArriving = false,
-  cardMotionStore,
   arrivalFlashing = false,
   sourceLandingFlashing = false,
   firstBylineOfDay,
@@ -123,33 +125,22 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   immediatelyPrecedingMessage?: ChatDisplayMessage;
   referencedMessage?: ChatDisplayMessage;
   startsNewMessages?: boolean;
-  cardArriving?: boolean;
-  cardMotionStore?: TranscriptCardMotionStore;
   arrivalFlashing?: boolean;
   sourceLandingFlashing?: boolean;
 }) {
-  const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
-  return (
-    <TranscriptCardMotionBoundary
-      arriving={cardArriving}
-      cardId={item.id}
-      store={cardMotionStore ?? fallbackMotionStore}
+  return withLedgerDayCaption(
+    <ArrivalFlashGround
+      flashing={arrivalFlashing || sourceLandingFlashing}
+      tint={sourceLandingFlashing ? 'brass' : 'pointer'}
     >
-      {withLedgerDayCaption(
-        <ArrivalFlashGround
-          flashing={arrivalFlashing || sourceLandingFlashing}
-          tint={sourceLandingFlashing ? 'brass' : 'pointer'}
-        >
-          {startsNewMessages && <NewMessagesDivider />}
-          {render(item, {
-            continued, immediatelyPrecedingMessage, referencedMessage,
-            firstBylineOfDay, untaggedHint, deliveryFailed, speakerWorking,
-            cornerProposalAnswer, cornerProposalAction,
-          })}
-        </ArrivalFlashGround>,
-        ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
-      )}
-    </TranscriptCardMotionBoundary>
+      {startsNewMessages && <NewMessagesDivider />}
+      {render(item, {
+        continued, immediatelyPrecedingMessage, referencedMessage,
+        firstBylineOfDay, untaggedHint, deliveryFailed, speakerWorking,
+        cornerProposalAnswer, cornerProposalAction,
+      })}
+    </ArrivalFlashGround>,
+    ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
   );
 });
 

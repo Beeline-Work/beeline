@@ -308,6 +308,7 @@ import { useRoomMessageRenderItem } from '@/buzz/room-message-cell';
 import type { RoomMessagePresentation, RoomMessageRenderContext } from '@/buzz/room-message-cell';
 import { arrivalFlashTiming, landingFlashesArrival } from '@/buzz/room-arrival-flash';
 import {
+  createTranscriptRowFolder,
   foldTranscriptRows,
   hostRowIndex,
   useRoomMessageStore,
@@ -1598,9 +1599,10 @@ export function BuzzChatSurface({
     enabled: !isCorner,
   });
   const { dividerMessageId: firstNewMessageId } = unreadLine;
+  const foldRoomRows = useMemo(createTranscriptRowFolder, [decodedId, messageRecordScope]);
   const foldedTranscript = useMemo(
-    () => foldTranscriptRows(combinedMessages, firstNewMessageId),
-    [combinedMessages, firstNewMessageId],
+    () => foldRoomRows(combinedMessages, firstNewMessageId),
+    [combinedMessages, firstNewMessageId, foldRoomRows],
   );
   const foldedMessages = foldedTranscript.rows;
   // Every message id, folded ones included, to the id of the row that shows it.

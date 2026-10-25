@@ -8,6 +8,7 @@ import {
   useRoomMessageRenderItem,
 } from './room-message-cell';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import { useTranscriptCardMotion } from '@/components/buzz/transcript-card-motion-context';
 
 vi.mock('react-native', () => ({
   Text: (props: Record<string, unknown>) => React.createElement('Text', props),
@@ -22,6 +23,33 @@ vi.mock('@/components/buzz/Ledger', () => ({
 }));
 
 describe('RoomMessageCell', () => {
+  it('updates card arrival context without rerendering unchanged message bodies', () => {
+    const first: ChatDisplayMessage = { id: 'first', text: 'First', isUser: false, timestamp: 1 };
+    const incoming: ChatDisplayMessage = { id: 'incoming', text: 'Incoming', isUser: false, timestamp: 2 };
+    function CardMotionProbe() {
+      const motion = useTranscriptCardMotion();
+      return React.createElement('card-motion', { cardId: motion.cardId, arriving: motion.arriving });
+    }
+    const render = vi.fn<RoomMessageRenderer>(() => React.createElement(CardMotionProbe));
+    function Harness({ rows, arriving }: { rows: ChatDisplayMessage[]; arriving: Set<string> }) {
+      const renderItem = useRoomMessageRenderItem({
+        render, arrivingCardIds: arriving, continuedIds: new Set(),
+        precedingMessageById: new Map(), messageById: new Map(),
+      });
+      return React.createElement(React.Fragment, null,
+        ...rows.map(item => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(React.createElement(Harness, { rows: [first], arriving: new Set(['first']) })); });
+    render.mockClear();
+    act(() => { renderer.update(React.createElement(Harness, { rows: [first, incoming], arriving: new Set(['incoming']) })); });
+    expect(render.mock.calls.map(([item]) => item.id)).toEqual(['incoming']);
+    expect(renderer.root.findAllByType('card-motion').map((node: { props: Record<string, unknown> }) => node.props))
+      .toEqual([{ cardId: 'first', arriving: false }, { cardId: 'incoming', arriving: true }]);
+    act(() => renderer.unmount());
+  });
+
   it('isolates typing, arrivals, streaming, edits, reactions and per-row presentation', () => {
     const first: ChatDisplayMessage = { id: 'first', text: 'First', isUser: false, timestamp: 1 };
     const second: ChatDisplayMessage = { id: 'second', text: 'Second', isUser: false, timestamp: 2 };

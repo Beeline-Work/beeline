@@ -38,8 +38,9 @@ export function TranscriptCardMotionBoundary({
   store: TranscriptCardMotionStore;
   children: ReactNode;
 }) {
+  const value = React.useMemo(() => ({ arriving, cardId, store }), [arriving, cardId, store]);
   return (
-    <TranscriptCardMotionContext.Provider value={{ arriving, cardId, store }}>
+    <TranscriptCardMotionContext.Provider value={value}>
       {children}
     </TranscriptCardMotionContext.Provider>
   );

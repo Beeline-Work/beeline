@@ -84,10 +84,10 @@ export async function recordSigninFunnelEvent(
       [event.installId, internal],
     );
     await tx.query(
-      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,occurred_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now()) ON CONFLICT(install_id,attempt_id,event,provider,screen)
+      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) ON CONFLICT(install_id,attempt_id,event,provider,screen)
       DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source,
-        last_seen_at=CASE WHEN EXCLUDED.event='screen_shown' THEN now() ELSE signin_funnel_events.last_seen_at END,
+        last_seen_at=GREATEST(signin_funnel_events.last_seen_at,EXCLUDED.last_seen_at),
         visits=signin_funnel_events.visits+CASE WHEN EXCLUDED.event='screen_shown' THEN 1 ELSE 0 END
       WHERE (EXCLUDED.source='server' AND signin_funnel_events.source='client') OR EXCLUDED.event='screen_shown'`,
       [
@@ -101,6 +101,8 @@ export async function recordSigninFunnelEvent(
         event.errorCode ?? null,
         source,
         event.screen ?? '',
+        // Screen order comes from the device's time, not arrival order.
+        event.event === 'screen_shown' ? event.timestamp : null,
       ],
     );
     if (event.event === 'signed_in' && identityId && !internal) {
@@ -416,7 +418,7 @@ async function dashboardFirstSessionScreens(
       AND s.occurred_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC')
   ), shown AS (
     SELECT c.day,c.install_id,c.attempt_id,e.screen,row_number() OVER (
-      PARTITION BY c.install_id,c.attempt_id ORDER BY COALESCE(e.last_seen_at,e.occurred_at) DESC,e.recorded_at DESC) AS recency,
+      PARTITION BY c.install_id,c.attempt_id ORDER BY e.last_seen_at DESC,e.recorded_at DESC) AS recency,
       sum(e.visits) OVER (PARTITION BY c.install_id,c.attempt_id) >= $5::int AS capped
     FROM cohort c JOIN signin_funnel_events e ON e.install_id=c.install_id AND e.attempt_id=c.attempt_id
       AND e.event='screen_shown' AND e.occurred_at < c.signed_at+$4::int*interval '1 millisecond'

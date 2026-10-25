@@ -219,7 +219,7 @@ describe('private operator dashboard', () => {
     ).toMatchObject({ count: 0, denominator: 1, dropOffCount: 1, dropOffRate: 1 });
     expect(value.usage.people.find((s: any) => s.stage === 'signup').count).toBe(1);
   });
-  it('R-first-session-screens: the app client sends tray → chat → tray over HTTP and the dashboard ends it on tray, counts only', async () => {
+  it('R-first-session-screens: the app client sends tray → chat → tray over HTTP, chat arriving last, and the dashboard ends it on tray, counts only', async () => {
     const person = '9'.repeat(64);
     const app = createBeelineServer({
       database: db,
@@ -239,6 +239,9 @@ describe('private operator dashboard', () => {
         body: JSON.stringify(data),
       });
       const statuses: Promise<number>[] = [];
+      // Hold the chat request until the final tray visit has been stored.
+      let releaseChat = () => {};
+      const chatHeld = new Promise<void>(resolve => { releaseChat = resolve; });
       const items = new Map<string, string>();
       const client = createSigninFunnelClient({
         storage: { getItem: async (k) => items.get(k) ?? null, setItem: async (k, v) => { items.set(k, v); } },
@@ -247,7 +250,8 @@ describe('private operator dashboard', () => {
         version: '0.2.22',
         environment: 'production',
         send: async (event, authorization) => {
-          statuses.push(post(event, authorization).then(r => r.status));
+          const delay = event.screen === 'beeline/chat/[channelId]' ? chatHeld : Promise.resolve();
+          statuses.push(delay.then(() => post(event, authorization)).then(r => r.status));
         },
       });
       const sent = async () => Promise.all(statuses.splice(0));
@@ -257,10 +261,14 @@ describe('private operator dashboard', () => {
       await client.signedIn('phone-key-for-dashboard-test');
       expect(await sent()).toEqual([204]);
       const auth = async () => 'phone-key-for-dashboard-test';
-      for (const screen of ['beeline/tray', 'beeline/chat/[channelId]', 'beeline/tray'] as const) {
-        await client.screenShown(screen, auth);
-        expect(await sent()).toEqual([204]);
-      }
+      await client.screenShown('beeline/tray', auth);
+      expect(await sent()).toEqual([204]);
+      await client.screenShown('beeline/chat/[channelId]', auth);
+      const chat = statuses.splice(0);
+      await client.screenShown('beeline/tray', auth);
+      expect(await sent()).toEqual([204]);
+      releaseChat();
+      expect(await Promise.all(chat)).toEqual([204]);
       // The HTTP boundary still refuses an unsigned event, a route value and any extra field.
       const screen = { ...attempt, provider: undefined, event: 'screen_shown', timestamp: new Date().toISOString() };
       expect((await post({ ...screen, screen: 'beeline/tray' })).status).toBe(401);

@@ -210,3 +210,14 @@ it('sends no screen event without a session', async () => {
   await client.screenShown('beeline/tray', async () => 'session');
   expect(send).toHaveBeenCalledTimes(1);
 });
+it('stamps screen changes with strictly increasing device times, even within one millisecond', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  await client.signedIn('session');
+  send.mockClear();
+  for (const screen of ['beeline/tray', 'beeline/chat/[channelId]', 'beeline/tray'] as const)
+    await client.screenShown(screen, async () => 'session');
+  const times = send.mock.calls.map(([event]) => Date.parse(event.timestamp));
+  expect(times).toHaveLength(3);
+  expect(times[0]! < times[1]! && times[1]! < times[2]!).toBe(true);
+});

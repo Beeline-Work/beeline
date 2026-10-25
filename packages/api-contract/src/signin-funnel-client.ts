@@ -95,6 +95,7 @@ export function createSigninFunnelClient(input: {
         ...(Number.isFinite(value.signedInAt) ? { signedInAt: value.signedInAt as number } : {}),
         ...(typeof value.lastScreen === 'string' ? { lastScreen: value.lastScreen as string } : {}),
         screenSends: Number.isInteger(value.screenSends) ? (value.screenSends as number) : 0,
+        ...(Number.isFinite(value.lastScreenAt) ? { lastScreenAt: value.lastScreenAt as number } : {}),
         // Seven funnel steps plus at most one entry per first-session screen.
         sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 64),
       };
@@ -190,7 +191,11 @@ export function createSigninFunnelClient(input: {
         if (pending.lastScreen === screen || pending.screenSends >= FUNNEL_SCREEN_SEND_CAP) return;
         const token = await authorization().catch(() => undefined);
         if (!token) return;
+        // Strictly increasing device times carry the screen order, since
+        // requests can arrive at the server out of order.
+        const at = Math.max(now(), (pending.lastScreenAt ?? 0) + 1);
         pending.lastScreen = screen;
+        pending.lastScreenAt = at;
         pending.screenSends += 1;
         await input.storage.setItem(ATTEMPT_KEY, JSON.stringify(pending));
         send(
@@ -198,7 +203,7 @@ export function createSigninFunnelClient(input: {
             ...pending.context,
             event: 'screen_shown',
             screen,
-            timestamp: new Date(now()).toISOString(),
+            timestamp: new Date(at).toISOString(),
           },
           token,
         );

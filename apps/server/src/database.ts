@@ -2392,7 +2392,7 @@ CREATE TABLE IF NOT EXISTS signin_funnel_events (
 );
 CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS screen text NOT NULL DEFAULT '';
--- Latest revisit of a screen_shown row within the first session; NULL otherwise.
+-- Device time of the latest visit for a screen_shown row; NULL otherwise.
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS last_seen_at timestamptz;
 -- Screen events stored on a screen_shown row (first visit plus revisits); 1 otherwise.
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS visits integer NOT NULL DEFAULT 1;

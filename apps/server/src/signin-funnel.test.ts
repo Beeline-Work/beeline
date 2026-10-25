@@ -302,6 +302,8 @@ it('keeps first-session screens only for a new signup within 10 minutes, and rea
   await db.query(`UPDATE signin_funnel_events SET occurred_at=occurred_at-interval '10 minutes 1 second' WHERE install_id=$1`, [b.installId]);
   await recordSigninFunnelEvent(db, { ...b, screen: 'beeline/settings' }, 'client', 'b'.repeat(64));
   expect((await screens()).map(r => r.screen)).not.toContain('beeline/settings');
+  // Move it back so the readout does not depend on the UTC day boundary.
+  await db.query(`UPDATE signin_funnel_events SET occurred_at=occurred_at+interval '10 minutes 1 second' WHERE install_id=$1`, [b.installId]);
   const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
   expect(result.firstSession).toEqual({
     from: expect.any(String),
@@ -350,8 +352,10 @@ const newSignup = async (identity: string) => {
   await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '1 minute' WHERE install_id=$1`, [event.installId]);
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Customer')`, [identity]);
   await recordSigninFunnelEvent(db, { ...event, event: 'signed_in' }, 'client', identity);
-  return (screen: SigninFunnelEvent['screen']) =>
-    recordSigninFunnelEvent(db, { ...event, provider: undefined, event: 'screen_shown', screen }, 'client', identity);
+  let at = Date.now();
+  // Each screen event carries a later device time, as the client sends them.
+  return (screen: SigninFunnelEvent['screen'], timestamp = new Date((at += 1000)).toISOString()) =>
+    recordSigninFunnelEvent(db, { ...event, provider: undefined, event: 'screen_shown', screen, timestamp }, 'client', identity);
 };
 it('ends A, B, A on A with one stored row per screen and its last-seen time updated', async () => {
   const show = await newSignup('d'.repeat(64));
@@ -388,4 +392,17 @@ it('counts a person who reaches the send cap as capped, with reach but no last s
       { screen: 'beeline/tray', reached: 1, last: 0 },
     ],
   });
+});
+it('orders screens by device time, so a late-arriving earlier screen does not become last', async () => {
+  const show = await newSignup('9'.repeat(64));
+  const at = Date.now();
+  await show('beeline/tray', new Date(at).toISOString());
+  // The chat request is delayed and arrives after the final tray visit.
+  await show('beeline/tray', new Date(at + 2000).toISOString());
+  await show('beeline/chat/[channelId]', new Date(at + 1000).toISOString());
+  const result = await dashboardSigninFunnel(db, ['android'], new Date().toISOString(), today(), today(), null);
+  expect(result.firstSession.days[0]?.screens).toEqual([
+    { screen: 'beeline/chat/[channelId]', reached: 1, last: 0 },
+    { screen: 'beeline/tray', reached: 1, last: 1 },
+  ]);
 });

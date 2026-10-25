@@ -35,6 +35,15 @@ GitHub notes produce no device rows, while a note replying to the recipient stil
 qualifies. Prose remains queued for later preference changes.
 Room access, direct attention, mute, presence, and read rules stay authoritative.
 
+Preference-ineligible rows now wait until their expiry rather than retrying every
+minute. The existing `person_push_outbox` trigger wakes them transactionally when
+push preferences change. Disabled platforms retain their timed retry, provider
+claims retain their own backoff, and a concurrent preference or turn write keeps
+its new deadline. Expired and ineligible retirements are recorded in
+`push_outbox_retirements` with a reason, separate from delivery claims so a later
+message edit may still qualify. Evidence is retained for an hour and cleaned in
+bounded batches; existing terminal delivery claims remain authoritative.
+
 Each cycle processes at most ten batches, including zero-claim batches, before
 yielding to other jobs. Existing collapse IDs remain in use; distinct direct
 attention and permission requests keep their separate identities. No broad
@@ -83,3 +92,44 @@ DELETE production rows as part of this runbook; the bounded worker owns cleanup.
 A due backlog over 1,000 rows emits `Push outbox backlog exceeds 1000 due rows`
 through Sentry, tagged `background_job=push` and `signal=push-outbox-backlog`.
 The worker samples at most once a minute, even when no candidates qualify.
+
+
+## BEELINE-SERVER-17 follow-up
+
+Read-only production SQL on 2026-10-25 at 03:53 UTC found a queue of
+(1,256 rows), with no due or expired rows at that instant. All rows lacked a
+claim: Attention prose on Android (1,141 rows across 50 devices), web (69 rows
+across 3 devices), iOS (23 rows on 1 device), and Off prose on iOS (23 rows on
+1 device). Messages spanned 02:57–03:52 UTC. Recent claims showed delivered
+(33) and suppressed (3), so this was not a complete delivery outage.
+
+At 03:56 UTC, the shared direct-attention SQL confirmed all retained rows were
+not direct attention: Android Attention (1,241), web Attention (75), iOS
+Attention (25), and iOS Off (25). The prior fix intentionally retained these
+messages for preference changes but rescheduled them every minute, repeatedly
+spending eligibility batches on work that cannot qualify until a write.
+The latest Sentry event remained 2026-10-24 15:51:45 UTC on release `22d7abec6b91`.
+These observations identify the current repeat-work class; they do not establish
+the queue composition at the historical alert instant.
+
+The same `npm run prove:push-backlog` command now also exercises
+`BEELINE-SERVER-17` through the built worker and a provider stand-in. Before the
+fix, ordinary Attention prose recurred after one minute (1,100 rows). After the
+fix, recurring rows were (0), a fresh unread DM reached the provider in one
+cycle, and a change to Full woke all retained rows (1,100) and delivered prose.
+The tests additionally prove Off expiry records its reason without sending stale
+messages and retirement evidence does not prevent an edited message delivering.
+This is the closest isolated stand-in: production writes and a real device push
+were not performed during the read-only diagnosis.
+
+After release, observe due rows over a sustained interval and confirm a real
+unread DM arrives on a device. Total retained rows may exceed the alert threshold;
+parked rows must not repeatedly become due before a preference change or expiry.
+Count retirement reasons with:
+
+```sql
+SELECT reason,count(*),min(retired_at),max(retired_at)
+FROM push_outbox_retirements GROUP BY reason;
+```
+
+Production recovery remains unverified until that release and observation.

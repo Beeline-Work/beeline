@@ -202,6 +202,12 @@ it('R-PUSH-BACKLOG: delivers a DM behind ineligible notes and drops expired rows
     expect(send).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({ messageId:'fresh-dm',title:'@peer' }));
     expect((await db.query(`SELECT * FROM push_outbox`)).rows).toHaveLength(0);
+    expect((await db.query(`SELECT reason,count(*)::int count FROM push_outbox_retirements GROUP BY reason ORDER BY reason`)).rows)
+      .toEqual([{reason:'expired',count:1100},{reason:'ineligible',count:200}]);
+    // Retirement evidence must not suppress an edit that becomes deliverable.
+    await db.query(`UPDATE messages SET text='@owner please read',presentation='message',card_type=NULL WHERE id='noise-1'`);
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenLastCalledWith('proof-device',expect.objectContaining({messageId:'noise-1'}));
     console.info(`R-PUSH-BACKLOG: discarded 1300 rows, delivered DM; ${(1301/(elapsed/1000)).toFixed(1)} rows/sec (${elapsed.toFixed(1)} ms), local provider stand-in`);
   } finally { await db.close(); }
 });
@@ -381,5 +387,72 @@ it('preserves the old selector delivery set and retires only rows it would never
     expect(sent).toContain(key('working','proof-device'));
     expect(sent).toContain(key('join-parity','proof-device'));
     console.info(`Legacy parity: ${oldEligible.size} initial deliveries preserved; ${retired.length} ineligible rows retired; ${sent.length} preference/turn deliveries preserved`);
+  } finally { await db.close(); }
+});
+
+
+it('BEELINE-SERVER-17: parks preference backlog until a preference change or expiry', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+      SELECT 'preference-'||n,$1,$2,'Ordinary room conversation' FROM generate_series(1,1100) n`, [room,author]);
+    const send = vi.fn().mockResolvedValue(undefined);
+    const loop = new PushDeliveryLoop(db,{send});
+    await loop.runOnce();
+    await loop.runOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT * FROM push_outbox WHERE not_before<>expires_at`)).rows).toHaveLength(0);
+    expect((await db.query(`SELECT * FROM push_outbox`)).rows).toHaveLength(1100);
+    await post(db,'direct-attention');
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({messageId:'direct-attention'}));
+    // Changing preferences wakes the retained prose without waiting for expiry.
+    await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`,[person]);
+    expect((await db.query(`SELECT * FROM push_outbox WHERE not_before<=now()`)).rows).toHaveLength(1100);
+    await loop.runOnce();
+    await loop.runOnce();
+    expect(send.mock.calls.some(([,message])=>message.messageId.startsWith('preference-'))).toBe(true);
+    await db.query(`UPDATE identities SET push_level='off' WHERE id=$1`,[person]);
+    await post(db,'off-expiry');
+    await loop.runOnce();
+    expect((await db.query(`SELECT * FROM push_outbox WHERE message_id='off-expiry' AND not_before=expires_at`)).rows).toHaveLength(1);
+    await db.query(`UPDATE push_outbox SET expires_at=now()-interval '1 second' WHERE message_id='off-expiry'`);
+    await loop.runOnce();
+    expect((await db.query(`SELECT reason FROM push_outbox_retirements WHERE message_id='off-expiry'`)).rows)
+      .toEqual([{reason:'expired'}]);
+    expect(send.mock.calls.some(([,message])=>message.messageId==='off-expiry')).toBe(false);
+  } finally { await db.close(); }
+});
+
+it('keeps disabled-platform retries and a preference wake concurrent with parking', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await setup(db);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`,[person]);
+    await db.query(`UPDATE push_devices SET platform='ios' WHERE token='proof-device'`);
+    await post(db,'disabled-ios');
+    const send = vi.fn().mockResolvedValue(undefined);
+    await new PushDeliveryLoop(db,{send}).runOnce();
+    expect((await db.query(`SELECT * FROM push_outbox WHERE not_before<expires_at`)).rows).toHaveLength(1);
+    await db.query(`UPDATE identities SET push_level='off' WHERE id=$1`,[person]);
+    const query = db.query.bind(db);
+    let changed = false;
+    const spy = vi.spyOn(db,'query').mockImplementation(async (sql,values) => {
+      if (!changed && sql.includes('AND queue.not_before=due.lease_until')) {
+        changed=true;
+        await query(`UPDATE identities SET push_level='attention' WHERE id=$1`,[person]);
+      }
+      return query(sql,values);
+    });
+    const loop = new PushDeliveryLoop(db,undefined,{send});
+    await loop.runOnce();
+    spy.mockRestore();
+    expect(changed).toBe(true);
+    expect((await db.query(`SELECT * FROM push_outbox WHERE not_before<=now()`)).rows).toHaveLength(1);
+    expect(await loop.runOnce()).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith('proof-device',expect.objectContaining({messageId:'disabled-ios'}));
   } finally { await db.close(); }
 });

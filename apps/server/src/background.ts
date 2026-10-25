@@ -323,13 +323,23 @@ export class PushDeliveryLoop {
     // window cannot suppress a future push.
     // Retain mobile claims for read-clear for at most a week.
     await this.database.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
+    await this.database.query(`DELETE FROM push_outbox_retirements WHERE (message_id,device_token) IN (
+      SELECT message_id,device_token FROM push_outbox_retirements
+      WHERE retired_at<now()-interval '1 hour' ORDER BY retired_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
     await this.database.query(`DELETE FROM push_message_context WHERE message_id IN (
       SELECT message_id FROM push_message_context WHERE expires_at<=now()
       ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
-    const expired = await this.database.query(`DELETE FROM push_outbox WHERE (message_id,device_token) IN (
-      SELECT message_id,device_token FROM push_outbox WHERE expires_at<=now()
-      ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
-    const due = await this.database.query<{ message_id: string; device_token: string; expires_at: Date }>(`
+    const expired = await this.database.query(`WITH retired AS (
+      DELETE FROM push_outbox WHERE (message_id,device_token) IN (
+        SELECT message_id,device_token FROM push_outbox WHERE expires_at<=now()
+        ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)
+      RETURNING message_id,device_token
+    ), recorded AS (
+      INSERT INTO push_outbox_retirements(message_id,device_token,reason)
+      SELECT message_id,device_token,'expired' FROM retired
+      ON CONFLICT(message_id,device_token) DO UPDATE SET reason=EXCLUDED.reason,retired_at=now()
+    ) SELECT * FROM retired`);
+    const due = await this.database.query<{ message_id: string; device_token: string; expires_at: Date; lease_until: string }>(`
       WITH due AS (
         SELECT message_id,device_token FROM push_outbox
         WHERE not_before<=now() AND expires_at>now() ORDER BY not_before,message_id,device_token
@@ -337,7 +347,7 @@ export class PushDeliveryLoop {
       )
       UPDATE push_outbox queue SET not_before=now()+interval '30 seconds'
       FROM due WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
-      RETURNING queue.message_id,queue.device_token,queue.expires_at
+      RETURNING queue.message_id,queue.device_token,queue.expires_at,queue.not_before::text lease_until
     `);
     if (due.rows.length === 0) {
       this.#repeatBatch = (expired.rowCount ?? 0) === 1000;
@@ -757,7 +767,7 @@ export class PushDeliveryLoop {
     );
     delivered = workerResults.reduce((sum, count) => sum + count, 0);
     // Terminal claims are authoritative during rolling cutover as well as retries.
-    await this.database.query(`DELETE FROM push_outbox queue
+    await this.database.query(`WITH retired AS (DELETE FROM push_outbox queue
       USING jsonb_to_recordset($1::jsonb) due(message_id text,device_token text)
       WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
         AND (queue.expires_at<=now() OR (
@@ -780,16 +790,36 @@ export class PushDeliveryLoop {
             WHERE m.id=queue.message_id AND turn.status='working')
         ) OR EXISTS (
           SELECT 1 FROM push_delivery_claims claim WHERE claim.message_id=queue.message_id
-            AND claim.device_token=queue.device_token AND claim.status IN ('delivered','failed','suppressed')))`,
+            AND claim.device_token=queue.device_token AND claim.status IN ('delivered','failed','suppressed')))
+      RETURNING queue.message_id,queue.device_token,queue.expires_at)
+      INSERT INTO push_outbox_retirements(message_id,device_token,reason)
+      SELECT message_id,device_token,
+        CASE WHEN expires_at<=now() THEN 'expired' ELSE 'ineligible' END FROM retired
+      WHERE NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
+        WHERE claim.message_id=retired.message_id AND claim.device_token=retired.device_token
+          AND claim.status IN ('delivered','failed','suppressed'))
+      ON CONFLICT(message_id,device_token) DO UPDATE SET reason=EXCLUDED.reason,retired_at=now()`,
       [JSON.stringify(due.rows), JSON.stringify(candidates.rows),
         [this.sender && 'android', this.iosSender && 'ios', this.webSender && 'web'].filter(Boolean)]);
     await this.database.query(`UPDATE push_outbox queue SET not_before=COALESCE(
         (SELECT CASE WHEN claim.status='claimed' THEN claim.claimed_at+interval '1 minute' ELSE claim.next_retry_at END FROM push_delivery_claims claim
          WHERE claim.message_id=queue.message_id AND claim.device_token=queue.device_token
-           AND claim.status IN ('retryable','claimed')),now()+interval '1 minute')
-      FROM jsonb_to_recordset($1::jsonb) due(message_id text,device_token text)
-      WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token`,
-      [JSON.stringify(due.rows)]);
+           AND claim.status IN ('retryable','claimed')),
+        CASE WHEN NOT EXISTS (
+          SELECT 1 FROM jsonb_to_recordset($2::jsonb) candidate(message_id text,token text)
+          WHERE candidate.message_id=queue.message_id AND candidate.token=queue.device_token)
+          AND EXISTS (SELECT 1 FROM push_devices device JOIN identities recipient ON recipient.id=device.identity_id
+            WHERE device.token=queue.device_token AND recipient.push_level IN ('off','attention')
+              AND device.platform=ANY($3::text[]))
+        -- Preference changes already reset not_before in the write transaction.
+        -- Retain these rows without repeatedly competing with deliverable pushes.
+        THEN queue.expires_at ELSE now()+interval '1 minute' END)
+      FROM jsonb_to_recordset($1::jsonb) due(message_id text,device_token text,lease_until timestamptz)
+      WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
+        -- A concurrent preference/turn write owns its new deadline.
+        AND queue.not_before=due.lease_until`,
+      [JSON.stringify(due.rows), JSON.stringify(candidates.rows),
+        [this.sender && 'android', this.iosSender && 'ios', this.webSender && 'web'].filter(Boolean)]);
     this.#repeatBatch = due.rows.length === 100 || (expired.rowCount ?? 0) === 1000;
     return delivered;
   }

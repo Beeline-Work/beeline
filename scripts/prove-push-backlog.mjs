@@ -48,4 +48,24 @@ try {
   assert.equal(remaining,0,'Expired and ineligible work must drain');
   assert.equal(sent[0].messageId,'unread-dm');
   assert.equal(sent[0].title,'@peer');
+  // BEELINE-SERVER-17: production's remaining backlog is preference-ineligible prose.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+    SELECT 'preference-'||n,$1,$2,'Ordinary conversation' FROM generate_series(1,1100) n`,[room,peer]);
+  const loop = new PushDeliveryLoop(db,{send:async (_token,message)=>{sent.push(message);}});
+  await loop.runOnce();
+  await loop.runOnce();
+  const recurring = Number((await db.query(`SELECT count(*) recurring FROM push_outbox
+    WHERE not_before<=now()+interval '65 seconds'`)).rows[0].recurring);
+  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',retained:1100,recurringAfterOneMinute:recurring}));
+  assert.equal(recurring,0,'Preference-ineligible prose must stop competing every minute');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('next-unread-dm',$1,$2,'A fresh DM')`,[dm,peer]);
+  assert.equal(await loop.runOnce(),1,'Fresh unread DM must pass parked prose in one cycle');
+  assert.equal(sent.at(-1).messageId,'next-unread-dm');
+  await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`,[owner]);
+  const woken = Number((await db.query(`SELECT count(*) woken FROM push_outbox WHERE not_before<=now()`)).rows[0].woken);
+  assert.equal(woken,1100,'Preference change must wake retained messages');
+  await loop.runOnce();
+  await loop.runOnce();
+  assert.ok(sent.some(message=>message.messageId.startsWith('preference-')),'Retained prose reaches provider after preference change');
+  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',freshDmDelivered:true,preferenceRowsWoken:woken,preferenceDelivery:true}));
 } finally { await db.close(); }

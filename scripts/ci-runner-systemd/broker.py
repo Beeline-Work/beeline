@@ -1,6 +1,7 @@
 """Draft permanent root-only, socket-activated organization runner broker."""
 import base64
 import errno
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -105,7 +106,9 @@ def serve():
                     log('denied non-root peer')
                     continue
                 try:
-                    connection.sendall((registration() + '\n').encode())
+                    token = registration()
+                    log('registration_sha256=' + hashlib.sha256(token.encode()).hexdigest())
+                    connection.sendall((token + '\n').encode())
                     log('registration authorization delivered')
                 except urllib.error.HTTPError as error:
                     log(f'GitHub request failed status={error.code}; authorization withheld')

@@ -272,7 +272,7 @@ it.each(['dm', 'room', 'parent'] as const)('Reproduction CORNER-ROOM-2: keeps th
   const app = {
     installationToken: vi.fn(async () => ({ token: 'fixture-token' })),
     readCommitCheckRollup: vi.fn(async () => ({ state: 'passed', total: 0, failing: [], checks: [] })),
-    branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+    branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false })),
     openPullRequestsForBranch: vi.fn(async () => []), deleteBranch: vi.fn(async () => undefined),
   } as unknown as GitHubAppClient;
   const operations = new GitHubOperations(db, {} as GitHubOAuthClient, app, 'fixture-secret');

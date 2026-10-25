@@ -13,9 +13,10 @@ vi.mock('react-native', () => {
 });
 import { NotificationLifecycleCard, RepositoryLifecycleRow } from './PrLifecycleCard';
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
-import { LifecycleRecordCard } from './LifecycleCard';
+import { GitHubEventCard, LifecycleRecordCard } from './LifecycleCard';
 import { CornerOpenedMarker } from './CornerOpenedMarker';
-import { CornerBranchGlyph } from './CornerBranchGlyph';
+import { CornerGlyph } from './CornerGlyph';
+import { TranscriptNavigationRow } from './IndexRow';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const theme = completeTestTheme();
@@ -103,7 +104,7 @@ describe('mock A lifecycle rows', () => {
       .find((node: any) => node.props.ellipsizeMode === 'tail');
     expect(Object.assign({}, ...[title.props.style].flat()).fontFamily).toBe(theme.buzz.type.body.fontFamily);
     expect(Object.assign({}, ...[title.props.style].flat()).color).toBe(theme.buzz.textSecondary);
-    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+    expect(tree.root.findAllByType(CornerGlyph)).toHaveLength(0);
   });
   it('shows issues without a corner arrow and opens their GitHub URL', () => {
     const { get, onOpenUrl } = render([issue] as any);
@@ -136,7 +137,7 @@ describe('mock A lifecycle rows', () => {
     act(() => header.props.onPress());
     expect(get('notification-run-cell-pr')).toBeUndefined();
   });
-  it('keeps the branch mark when the call-site source is outside the loaded window', () => {
+  it('keeps the corner mark when the call-site source is outside the loaded window', () => {
     const fact: ChatDisplayMessage = {
       id: 'open',
       text: '',
@@ -153,7 +154,7 @@ describe('mock A lifecycle rows', () => {
     const rows = foldPrLifecycleRuns(anchorCornerMarkers([fact]));
     const { tree, get } = render(rows[0].notificationLifecycleRun!.items as any);
     expect(text(get('notification-run-cell-open'))).toBe('Opened dm-unread-clear');
-    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+    expect(tree.root.findAllByType(CornerGlyph)).toHaveLength(1);
     const source: ChatDisplayMessage = {
       id: 'dm-source',
       text: 'Do it',
@@ -212,7 +213,7 @@ it('shares Space Grotesk across grouped rows, standalone adapters and source mar
     expect(flatten(title.props.style).fontFamily).toBe(flatten(marker.props.style).fontFamily);
 });
 
-it('draws the call-site corner line as the Room row with the branch mark in front', () => {
+it('draws the call-site corner line as the Room row with the corner mark in front', () => {
   const fact: ChatDisplayMessage = {
     id: 'open',
     text: '',
@@ -258,8 +259,8 @@ it('draws the call-site corner line as the Room row with the branch mark in fron
   };
   expect(format(room.tree).words).toBe('Opened font-check-android');
   expect(format(callSite)).toEqual(format(room.tree));
-  expect(room.tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
-  expect(callSite.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+  expect(room.tree.root.findAllByType(CornerGlyph)).toHaveLength(1);
+  expect(callSite.root.findAllByType(CornerGlyph)).toHaveLength(1);
 });
 
 it('opens the corner when the text of a corner row or call-site line is pressed (Reproduction corner-row-tap-1)', () => {
@@ -469,10 +470,47 @@ describe('Reproduction R1: preserved repository type roles', () => {
   });
 });
 
- it('CALLSITE-GLYPH-1: suppresses the mark for an explicit off-call-site row and a repository-only row', () => {
-  for (const row of [{...item,kind:'corner' as const}, {...issue}]) {
-    let tree:any;
-    act(()=>{tree=create(<RepositoryLifecycleRow item={row} glyph={row.kind !== 'corner'} onOpenCorner={()=>{}} onOpenUrl={()=>{}} />);});
-    expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(0);
-  }
- });
+describe('Reproduction R1: GitHub lifecycle rows have no leading glyph', () => {
+  it('expands the reported corner-linked opened and merged Room run without glyphs', () => {
+    const items = [
+      { ...item, id: 'opened-2939', state: 'Opened', url: 'https://github.com/Beeline-Work/beeline/pull/2939' },
+      { ...item, id: 'merged-2939', url: 'https://github.com/Beeline-Work/beeline/pull/2939' },
+      { ...item, id: 'merged-2914', url: 'https://github.com/Beeline-Work/beeline/pull/2914' },
+    ];
+    const { tree, get, onOpenCorner } = render(items);
+    expect(text(get('notification-run-expand-run'))).toBe('1 PR opened · 2 PRs merged');
+    act(() => get('notification-run-expand-run').props.onPress());
+    const rows = tree.root.findAllByType(RepositoryLifecycleRow);
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.findByType(TranscriptNavigationRow).props.leading).toBeUndefined();
+      act(() => get(`notification-run-cell-url-${row.props.item.id}`).props.onPress());
+    }
+    expect(onOpenCorner).toHaveBeenCalledTimes(3);
+    expect(onOpenCorner).toHaveBeenCalledWith('corner');
+  });
+  it.each([
+    ['pull-request', 'opened'], ['pull-request', 'merged'], ['pull-request', 'closed'],
+    ['issue', 'opened'], ['issue', 'closed'],
+  ])('keeps %s %s glyph-free in grouped, single and standalone adapters', (kind, action) => {
+    const entry = {
+      ...(kind === 'issue' ? issue : item), kind, id: 'entry', cornerId: 'corner',
+      state: kind === 'issue' && action === 'opened' ? 'Filed' : action,
+    } as any;
+    const grouped = render([entry, { ...entry, id: 'second' }]);
+    act(() => grouped.get('notification-run-expand-run').props.onPress());
+    const single = render([entry]);
+    let adapters: any;
+    act(() => { adapters = create(<>
+      <LifecycleRecordCard item={entry} timestamp={1} testID="standalone" onOpenCorner={() => {}} onOpenUrl={() => {}} />
+      <GitHubEventCard message={{ id: 'github', timestamp: 1, githubEvent: {
+        type: kind, action, title: entry.title, url: entry.url, actor: 'github', cornerId: 'corner',
+      } } as ChatDisplayMessage} onOpenCorner={() => {}} onOpenUrl={() => {}} />
+    </>); });
+    for (const tree of [grouped.tree, single.tree, adapters]) {
+      for (const row of tree.root.findAllByType(RepositoryLifecycleRow))
+        expect(row.findByType(TranscriptNavigationRow).props.leading).toBeUndefined();
+      expect(tree.root.findAllByType(CornerGlyph)).toHaveLength(0);
+    }
+  });
+});

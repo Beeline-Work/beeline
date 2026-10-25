@@ -1,0 +1,36 @@
+[
+  {
+    "name": "android-before-bone",
+    "texts": [
+      "bone",
+      "#beeline",
+      "obsidian",
+      "Please fix the lifecycle glyphs.",
+      "Opened lifecycle-glyphs",
+      "1 PR opened \u00b7 2 PRs merged",
+      "Opened #2939 Preserve Android tail following",
+      "Merged #2939 Preserve Android tail following",
+      "Merged #2914 Record signup screens"
+    ],
+    "prDestination": "corner-2939",
+    "markerDestination": "corner-open",
+    "platform": "native Android"
+  },
+  {
+    "name": "android-before-obsidian",
+    "texts": [
+      "bone",
+      "#beeline",
+      "obsidian",
+      "Please fix the lifecycle glyphs.",
+      "Opened lifecycle-glyphs",
+      "1 PR opened \u00b7 2 PRs merged",
+      "Opened #2939 Preserve Android tail following",
+      "Merged #2939 Preserve Android tail following",
+      "Merged #2914 Record signup screens"
+    ],
+    "prDestination": "corner-2939",
+    "markerDestination": "corner-open",
+    "platform": "native Android"
+  }
+]

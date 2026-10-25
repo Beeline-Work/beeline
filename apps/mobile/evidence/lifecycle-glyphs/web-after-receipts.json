@@ -1,0 +1,28 @@
+[
+  {
+    "name": "web-after-bone",
+    "rows": 3,
+    "glyphs": [
+      0,
+      0,
+      0
+    ],
+    "cornerPoints": "4.5 4.5 4.5 19.5 19.5 19.5 15 15 9 15 9 9",
+    "destination": "corner-2939",
+    "overflow": false,
+    "warnings": []
+  },
+  {
+    "name": "web-after-obsidian",
+    "rows": 3,
+    "glyphs": [
+      0,
+      0,
+      0
+    ],
+    "cornerPoints": "4.5 4.5 4.5 19.5 19.5 19.5 15 15 9 15 9 9",
+    "destination": "corner-2939",
+    "overflow": false,
+    "warnings": []
+  }
+]

@@ -25,7 +25,9 @@ setTimeout(() => {
     if (!rows[0].textContent?.replace(/\u00a0/g, ' ').includes(expected))
       fail(`Wrong copy: ${rows[0].textContent}`);
     const glyph = rows[0].querySelector('polygon');
-    if (glyph?.getAttribute('fill') !== '#E5A645') fail('Missing gold corner glyph');
+    if (glyph?.getAttribute('fill') !== '#E5A645' ||
+      glyph?.getAttribute('points') !== '4.5 4.5 4.5 19.5 19.5 19.5 15 15 9 15 9 9')
+      fail('Missing shared corner glyph');
     if (rows[0].textContent?.includes('#') || rows[0].textContent?.includes('corner '))
       fail('Unexpected corner prefix');
     const completion = scene.querySelector('[data-testid="proof-room-completion"]');

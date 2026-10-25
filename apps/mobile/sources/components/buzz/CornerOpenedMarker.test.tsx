@@ -17,11 +17,10 @@ vi.mock('react-native-svg', async () => {
 });
 vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
 
-import { CORNER_BRANCH_POINTS, CornerBranchGlyph } from './CornerBranchGlyph';
-import { CORNER_EXTENT } from './CornerGlyph';
+import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
+import { TranscriptNavigationRow } from './IndexRow';
 import { RepositoryLifecycleRow } from './PrLifecycleCard';
 import { CornerOpenedMarker, CornerOpenedMarkers } from './CornerOpenedMarker';
-import brand from '@/buzz/brand.json';
 import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { anchorCornerMarkers } from '@/buzz/corner-markers';
 
@@ -78,8 +77,10 @@ describe('CornerOpenedMarker', () => {
     expect(target.props.accessibilityRole).toBe('link');
     expect(target.props.accessibilityLabel).toBe('Open corner quiet amber corner');
     expect(textOf(renderer)).toBe('Opened quiet amber corner');
-    // The drop-down mark leads the line.
-    expect(renderer.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+    // The shared corner mark leads the line.
+    expect(renderer.root.findAllByType(CornerGlyph)).toHaveLength(1);
+    expect(renderer.root.findByType(TranscriptNavigationRow).props.leading.type).toBe(CornerGlyph);
+    expect(renderer.root.findByType(CornerGlyph).props.size).toBe(CORNER_META_SIZE);
 
     act(() => target.props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -93,30 +94,6 @@ describe('CornerOpenedMarker', () => {
     expect(textOf(renderer)).toBe('Closed quiet amber corner');
     act(() => pressable(renderer).props.onPress());
     expect(onOpen).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('CornerBranchGlyph', () => {
-  it('is one gold polygon: a diagonal-cut stem turning into an arrowhead', () => {
-    const renderer = render(<CornerBranchGlyph size={13} testID="branch" />);
-    const svg = renderer.root.findByType('Svg' as never);
-    expect(svg.props).toMatchObject({ testID: 'branch', viewBox: '0 0 24 24', width: 13 });
-    expect(svg.props.accessibilityElementsHidden).toBe(true);
-    const [polygon, ...rest] = renderer.root.findAllByType('Polygon' as never);
-    expect(rest).toHaveLength(0);
-    expect(polygon!.props.fill).toBe(brand.mark);
-    expect(polygon!.props.points).toBe(CORNER_BRANCH_POINTS);
-
-    const points = CORNER_BRANCH_POINTS.split(' ').map(Number);
-    const xs = points.filter((_, index) => index % 2 === 0);
-    const ys = points.filter((_, index) => index % 2 === 1);
-    // Centred in the box like the corner mark, never the same outline.
-    expect((Math.min(...xs) + Math.max(...xs)) / 2).toBe(12);
-    expect((Math.min(...ys) + Math.max(...ys)) / 2).toBe(12);
-    expect(Math.max(...xs) - Math.min(...xs)).toBeLessThanOrEqual(CORNER_EXTENT);
-    // The rightmost point is the arrow's tip, level with the arm's middle.
-    const tip = xs.indexOf(Math.max(...xs));
-    expect(ys[tip]).toBe(16);
   });
 });
 
@@ -147,7 +124,9 @@ describe('anchored corner runs', () => {
         (node: any) => typeof node.type === 'string' && node.props.testID === id,
       )[0];
     expect(host('notification-run-expand-source')).toBeUndefined();
-    expect(renderer.root.findAllByType(CornerBranchGlyph)).toHaveLength(count);
+    expect(renderer.root.findAllByType(CornerGlyph)).toHaveLength(count);
+    for (const row of renderer.root.findAllByType(TranscriptNavigationRow))
+      expect(row.props.leading.type).toBe(CornerGlyph);
     for (let index = 0; index < count; index++) {
       expect(host(`corner-opened-marker-corner-${index}`)).toBeTruthy();
       expect(textOf(renderer)).toContain(`Opened name-${index}`);
@@ -242,6 +221,6 @@ it.each(['Room', 'DM', 'corner'])(
 
 it('CALLSITE-GLYPH-1: marks an unanchored opening at its parent Room call site', () => {
   const tree=render(<RepositoryLifecycleRow item={{id:'automatic',kind:'corner',state:'Opened',title:'automatic-work',kindLine:'corner',cornerId:'automatic',actor:'',updatedBy:''}} onOpenCorner={()=>{}} onOpenUrl={()=>{}} />);
-  expect(tree.root.findAllByType(CornerBranchGlyph)).toHaveLength(1);
+  expect(tree.root.findAllByType(CornerGlyph)).toHaveLength(1);
   expect(textOf(tree)).toBe('Opened automatic-work');
 });

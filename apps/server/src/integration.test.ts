@@ -128,7 +128,7 @@ describe('monolith integration', () => {
     githubRollupState = 'pending';
     githubApp = {
       deleteBranch: vi.fn(async () => undefined),
-      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false, openBasePullRequest: false })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false })),
       openPullRequestsForBranch: vi.fn(async () => []),
       mergePullRequest: vi.fn(async () => undefined),
       installationToken: vi.fn(async () => ({
@@ -5747,8 +5747,17 @@ describe('monolith integration', () => {
       name: 'Owner',
       handle: 'owner',
       pushLevel: 'attention',
+      speakingSpeed: 1.15,
       providers: [{ provider: 'github', login: 'owner', reconnect: true }],
     });
+
+    for (const speakingSpeed of [1.3, 1.5, 1.15]) {
+      const saved = await operation('updateIdentitySpeakingSpeed', { speakingSpeed });
+      expect(saved.status).toBe(200);
+      await expect(saved.json()).resolves.toMatchObject({ personId: HUMAN, speakingSpeed });
+      await expect((await operation('getManagedIdentity')).json()).resolves.toMatchObject({ speakingSpeed });
+    }
+    expect((await operation('updateIdentitySpeakingSpeed', { speakingSpeed: 2 })).status).toBe(400);
 
     const profile = await operation('updatePersonProfile', {
       name: 'Captain',

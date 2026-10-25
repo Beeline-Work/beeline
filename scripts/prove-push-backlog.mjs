@@ -48,4 +48,42 @@ try {
   assert.equal(remaining,0,'Expired and ineligible work must drain');
   assert.equal(sent[0].messageId,'unread-dm');
   assert.equal(sent[0].title,'@peer');
+  // BEELINE-SERVER-17: production's remaining backlog is preference-ineligible prose.
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+    SELECT 'preference-'||n,$1,$2,'Ordinary conversation' FROM generate_series(1,1100) n`,[room,peer]);
+  const loop = new PushDeliveryLoop(db,{send:async (_token,message)=>{sent.push(message);}});
+  await loop.runOnce();
+  await loop.runOnce();
+  const recurring = Number((await db.query(`SELECT count(*) recurring FROM push_outbox
+    WHERE not_before<=now()+interval '65 seconds'`)).rows[0].recurring);
+  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',retained:1100,recurringAfterOneMinute:recurring}));
+  assert.equal(recurring,0,'Preference-ineligible prose must stop competing every minute');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('next-unread-dm',$1,$2,'A fresh DM')`,[dm,peer]);
+  assert.equal(await loop.runOnce(),1,'Fresh unread DM must pass parked prose in one cycle');
+  assert.equal(sent.at(-1).messageId,'next-unread-dm');
+  await db.query(`UPDATE messages SET text='@owner please read this' WHERE id='preference-1'`);
+  assert.equal(await loop.runOnce(),1,'Editing parked prose into a mention must reach the provider');
+  assert.equal(sent.at(-1).messageId,'preference-1');
+  await db.query(`UPDATE messages SET text='Ordinary conversation again' WHERE id='preference-1'`);
+  assert.equal(await loop.runOnce(),0,'Removing a delivered mention must not resend it');
+  await db.query(`UPDATE messages SET text='@owner mention again' WHERE id='preference-1'`);
+  assert.equal(await loop.runOnce(),0,'Re-adding a delivered mention must not resend it');
+  assert.equal(sent.filter(message=>message.messageId==='preference-1').length,1,
+    'Edited mention must reach the provider exactly once');
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('retry-edit',$1,$2,'@owner retry')`,[room,peer]);
+  await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,next_retry_at)
+    VALUES('retry-edit','isolated-proof-device','retryable',now()+interval '5 minutes')`);
+  const retryBefore = (await db.query(`SELECT not_before FROM push_outbox WHERE message_id='retry-edit'`)).rows;
+  await db.query(`UPDATE messages SET text='@owner edited retry' WHERE id='retry-edit'`);
+  assert.deepEqual((await db.query(`SELECT not_before FROM push_outbox WHERE message_id='retry-edit'`)).rows,retryBefore,
+    'Message edits must preserve provider retry deadlines');
+  assert.equal(await loop.runOnce(),0,'Provider retry must stay asleep after editing');
+  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',editedMentionDelivered:true,alreadyDeliveredNotResent:true,providerRetryPreserved:true}));
+  await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`,[owner]);
+  const woken = Number((await db.query(`SELECT count(*) woken FROM push_outbox WHERE not_before<=now() AND message_id LIKE 'preference-%'`)).rows[0].woken);
+  assert.equal(woken,1099,'Preference change must wake retained messages');
+  await loop.runOnce();
+  await loop.runOnce();
+  assert.ok(sent.some(message=>message.messageId.startsWith('preference-')),'Retained prose reaches provider after preference change');
+  console.info(JSON.stringify({reproduction:'BEELINE-SERVER-17',freshDmDelivered:true,preferenceRowsWoken:woken,preferenceDelivery:true}));
 } finally { await db.close(); }

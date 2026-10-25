@@ -23,7 +23,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 - **Incoming subscription webhooks** use the existing subscription wake path with fixed saved actions and quoted outside payloads. Workspace admins manage Room links; human DM members manage links in their own DM; tokens are encrypted and only phone reveal/rotate returns them. Ingress and rotation serialize on the subscription. Sender contract and retention: [subscription webhooks](subscription-webhooks.md); proof: `subscription-webhooks.test.ts` and `apps/mobile/evidence/subscription-webhooks/README.md`.
 
-- Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture.
+- Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture. Caller validation failures use `ExpectedRefusalError` (or `CommandRefusalError` with an HTTP status); `captureServerError` excludes that shared type, never matching refusal message text. Unexpected exceptions and provider outages remain reportable. Handler proof: `BEELINE-SENTRY-REFUSALS` in `sentry.test.ts`.
 
 - Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.
 
@@ -45,5 +45,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 - `external-mcp-capabilities.ts` stores only the profiles `squire-credential-use`/`squire-app-access`; Squire spend verbs need an owner-signed one-use envelope.
 
 ## Object storage
+
+- Pending agent attachment queues are cleared transactionally by corner archival. `pending-attachment-cleanup.ts` reconciles at startup and hourly through the jobs pool, deleting at most 1,000 rows per pass: archived corners immediately, otherwise rows older than 24 hours with neither an active request command nor a working turn. Media bytes keep the existing TTL; tombstones survive. Coverage: `CLEANUP-ATTACH-1` in `corner-lifecycle.test.ts` and `data-cleanup.test.ts`. After deployment, verify `SELECT count(*) FROM agent_pending_attachments a JOIN rooms r ON r.id=a.room_id WHERE r.parent_id IS NOT NULL AND r.archived_at IS NOT NULL` returns zero after reconciliation; never manually delete production rows.
 
 - `apps/server/src/object-storage.ts` is the one SigV4 client (Fly Tigris); `object-service.ts` owns rows. Byte lifetimes live in `media-ttl.ts`: person uploads `MEDIA_TTL_HOURS` (24), agent artifacts `ARTIFACT_TTL_HOURS` (7 days). An expired object answers 410 `media_expired` from the `object_expirations` tombstone, and the UI says "expired", never "failed". `post_artifact` validates per MIME in `artifact-validation.ts` (≤ `ARTIFACT_MAXIMUM_BYTES`).

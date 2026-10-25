@@ -26,6 +26,7 @@ import {
   runMaintenance,
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
+import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
 import { BackgroundWork } from './background-work.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
@@ -297,6 +298,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
+  const pendingAttachmentCleanup = new PendingAttachmentCleanupLoop(jobsDatabase);
   const deadlineExpiry = new DeadlineExpiry(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
     ? createPushTestSender(database, pushSender, apnsPushSender, webPushSender)
@@ -511,6 +513,7 @@ async function main() {
         githubJobs.reconcileMergedCorners());
     }
     await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
+    await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce(now));
     await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
     await backgroundJobs.run('corner-checks-blocked', () =>
       noteBlockedCornerChecks(jobsDatabase));

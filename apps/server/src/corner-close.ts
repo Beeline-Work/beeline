@@ -46,6 +46,7 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
      WHERE room_id=$1 AND status='working'`,
     [cornerId],
   );
+  await database.query(`DELETE FROM agent_pending_attachments WHERE room_id=$1`, [cornerId]);
 }
 
 /** Release migration: old archived corners cannot have an active assignment. */
@@ -113,6 +114,53 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   await abandonCornerWorkflowRuns(database, cornerId);
   await deleteCornerWakeSources(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });
+  await enqueueCornerPullRequestClosure(database, cornerId);
   await enqueueCornerBranchDeletion(database, cornerId);
   return { parentId: corner.parent_id };
+}
+
+/** Must be committed with archival, even if the immediate GitHub call failed. */
+export async function enqueueCornerPullRequestClosure(database: SqlDatabase, cornerId?: string) {
+  await database.query(
+    `INSERT INTO corner_pr_closures(corner_id)
+     SELECT fact.corner_id FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     WHERE corner.archived_at IS NOT NULL AND corner.parent_id IS NOT NULL
+       AND ($1::uuid IS NULL OR corner.id=$1)
+       AND fact.workflow_state IS DISTINCT FROM 'landed'
+       AND fact.lifecycle->'pr'->>'number' IS NOT NULL
+       AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
+     ON CONFLICT (corner_id) DO NOTHING`, [cornerId ?? null]);
+}
+
+/** Leader-only, bounded leases recover crashes; provider outages never discard intent. */
+export async function retryCornerPullRequestClosures(
+  database: SqlDatabase,
+  closePullRequest: (cornerId: string) => Promise<{ status: string; blocker?: string }>,
+) {
+  const due = await database.query<{ corner_id: string }>(
+    `SELECT corner_id FROM corner_pr_closures WHERE finished_at IS NULL
+       AND next_attempt_at<=now() ORDER BY next_attempt_at LIMIT 10`);
+  for (const { corner_id: cornerId } of due.rows) {
+    const claimed = await database.query(
+      `UPDATE corner_pr_closures SET attempts=attempts+1,next_attempt_at=now()+interval '5 minutes'
+       WHERE corner_id=$1 AND finished_at IS NULL AND next_attempt_at<=now() RETURNING corner_id`, [cornerId]);
+    if (!claimed.rowCount) continue;
+    try {
+      const pending = await database.query(
+        `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+         WHERE corner.id=$1 AND corner.archived_at IS NOT NULL
+           AND fact.workflow_state IS DISTINCT FROM 'landed'
+           AND fact.lifecycle->'pr'->>'number' IS NOT NULL
+           AND fact.lifecycle->'pr'->>'mergedAt' IS NULL`, [cornerId]);
+      if (pending.rowCount) {
+        const result = await closePullRequest(cornerId);
+        if (result.status !== 'closed') throw new Error(result.blocker ?? 'PR close did not finish');
+      }
+      await database.query(`UPDATE corner_pr_closures SET finished_at=now(),last_error=NULL WHERE corner_id=$1`, [cornerId]);
+    } catch (error) {
+      await database.query(
+        `UPDATE corner_pr_closures SET last_error=$2,next_attempt_at=now()+interval '1 hour'
+         WHERE corner_id=$1`, [cornerId, error instanceof Error ? error.message : String(error)]);
+    }
+  }
 }

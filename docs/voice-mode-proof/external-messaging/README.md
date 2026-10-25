@@ -3,8 +3,9 @@
 Revision four requires bare contact names to stay silent while callers finish
 their request. Stored contacts remain in the human transcript, do not invoke
 the model or order, and produce no reply or audio. After recording the fragment,
-the runtime finishes it and remembers the addressed agent like a bare agent
-name. The next phrase uses normal persisted Room history to resolve the contact.
+the runtime keeps the silent draft and remembers the addressed agent. The next
+phrase joins that draft, so both model input and the actual command source
+contain the recipient without relying on older history.
 
 ## Reproduced
 
@@ -30,9 +31,10 @@ each invoke the model, dispatch and speak an acknowledgement (4 runs each).
 SPEEDY-CONTACT-2 uses the real VoiceService, database and phone read. A stored
 webhook contact supplies `Grok bot` to hints. The final `Grok bot` is visible
 in the phone transcript without an order or audio. A following `tell it hello`
-reaches the model with the stored contact in normal call history and creates
-exactly one ordinary agent command and one acknowledgement (4 runs). Both
-human phrases remain in the phone transcript. RTC/STT/TTS and the model are
+revises the same human source to `Grok bot tell it hello`, sends that complete
+text to the model, and creates exactly one ordinary command whose source
+contains the recipient, plus one acknowledgement (4 runs). The phone read
+shows one complete human request, replacing the earlier bare fragment. RTC/STT/TTS and the model are
 doubles; this is not physical microphone or external webhook delivery proof.
 
 Stored contact names use the existing parallel call-start read. Agent hints
@@ -42,7 +44,7 @@ remain included in validation.
 
 ## Retained live routing and latency evidence
 
-The captured model request is unchanged by revision four. Live streaming Luna
+The model prompt/tools are unchanged; only caller text is assembled differently. Live streaming Luna
 checks for Grok, Crock Pot, email and Telegram action requests each order
 (4/4); a knowledge question answers in-call (4/4). Raw bare `Grok` clarified
 (4/4), while raw bare `Grok bot` clarified (3/4) and ordered (1/4). Those bare
@@ -70,14 +72,34 @@ resamples, seed 1729): median difference (-4 to +104 ms), p90 difference
 this does not establish identical distributions or literal zero latency cost.
 Provider input shrinks relative to the base (660 to 630 tokens; -30).
 
-## Validation
+## Joined-contact reproduction and integration
 
-- `npm run corner:prepare`: passed.
-- `npm test -w @beeline/server -- voice --maxWorkers=2 --minWorkers=1`: passed (403 tests, 14 files).
-- Focused contact, resume, search-budget and startup command: passed (27 tests).
-- Server build and root typecheck (mobile and scripts included): passed.
-- Built provider request comparison and `git diff --check`: passed.
+SPEEDY-CONTACT-2 on reviewed head `e47581c30` fails when the model input must
+contain `Grok bot tell it hello` (4/4). Merely retaining the contact in older
+history did not satisfy a complete handoff. The correction leaves the recorded
+contact draft assembling instead of finishing it. Existing continuation
+assembly revises the same source before dispatch. The strengthened proof
+checks both model input and `agent_commands.source_message_id`'s actual text.
+Live streaming Luna replay of the joined request also orders once (4/4), with
+no outbound webhook execution. Prompt bytes remain unchanged.
 
-Relative to reviewed head `c60322be1`, runtime code adds the same addressed-agent
-continuation used by bare agent names. The spoken local draft was replaced
-before publication. No production-corpus threshold or unrelated code changed.
+Merged main `5d289039c` to resolve the existing PR conflicts. In
+`voice-room-runtime.ts`, contact lookup and speaking-speed refresh stay in the
+same startup Promise.all, with contact results in the correct tuple slot;
+input cleanup retains both contacts and speed caches. In
+`voice-room-runtime.test.ts`, both contact and speaking-speed blocks are kept.
+Caller-resume and committed search-budget handling are unchanged.
+
+## Validation after joined-contact repair
+
+- Workspace build, including the server: passed.
+- Root typecheck, including mobile and scripts: passed.
+- All voice suites: passed (446 tests, 14 files).
+- Focused contact/resume/search/startup/speaking-speed checks: passed (30 tests).
+- Live streaming joined-request routing: order exactly once (4/4).
+- Built provider payload comparison: byte-for-byte unchanged; no latency rerun.
+- No unmerged paths; whitespace checks pass.
+
+Raw before/after output, live generation IDs and payloads are attached in the
+corner. The real service/database proof verifies one revised human source and
+one actual agent command with its recipient in the source text.

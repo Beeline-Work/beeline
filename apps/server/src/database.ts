@@ -212,7 +212,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 37;
+export const REQUIRED_SCHEMA_VERSION = 38;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -637,6 +637,7 @@ ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
 ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
 ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS speaking_speed double precision NOT NULL DEFAULT 1.15 CHECK (speaking_speed IN (1.15,1.3,1.5));
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'attention';
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
 -- Record user counts (excluding hidden system identities) and convert once.
@@ -1957,12 +1958,22 @@ CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(revie
 -- any rename clears it (corner-title.ts).
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
--- Only newly closed/merged corners enqueue cleanup; no historical branch sweep.
+-- Cleanup intents survive archival and provider failures.
+CREATE TABLE IF NOT EXISTS corner_pr_closures (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  attempts integer NOT NULL DEFAULT 0,
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  last_error text
+);
+CREATE INDEX IF NOT EXISTS corner_pr_closures_due_idx
+  ON corner_pr_closures(next_attempt_at) WHERE finished_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS corner_branch_deletions (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  installation_id bigint NOT NULL,
-  repository_id bigint NOT NULL,
-  repository text NOT NULL,
+  installation_id bigint,
+  repository_id bigint,
+  repository text,
   branch text NOT NULL,
   attempts integer NOT NULL DEFAULT 0,
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
@@ -1971,6 +1982,10 @@ CREATE TABLE IF NOT EXISTS corner_branch_deletions (
 );
 CREATE INDEX IF NOT EXISTS corner_branch_deletions_due_idx
   ON corner_branch_deletions(next_attempt_at) WHERE finished_at IS NULL;
+ALTER TABLE corner_branch_deletions ADD COLUMN IF NOT EXISTS require_containment boolean NOT NULL DEFAULT false;
+ALTER TABLE corner_branch_deletions ALTER COLUMN installation_id DROP NOT NULL;
+ALTER TABLE corner_branch_deletions ALTER COLUMN repository_id DROP NOT NULL;
+ALTER TABLE corner_branch_deletions ALTER COLUMN repository DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS corner_watches (
   watcher_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

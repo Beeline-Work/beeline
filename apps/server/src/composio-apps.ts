@@ -1,6 +1,6 @@
 /** Server-only Composio v3 boundary. Credentials and provider tokens never leave Composio. */
 import { createHash } from 'node:crypto';
-import { CommandRefusalError } from './commander.js';
+import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
 
 type Json = Record<string, unknown>;
 const API = 'https://backend.composio.dev/api';
@@ -81,6 +81,17 @@ function providerErrorDetail(value: unknown): string | undefined {
   if (typeof value === 'string' && value) return boundedDetail(value);
   const found = firstErrorMessage(stripSecrets(value));
   return found ? boundedDetail(found) : undefined;
+}
+
+/** Tool providers sometimes encode an upstream HTTP error as a JSON string. */
+function isMissingAppResource(value: unknown): boolean {
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return value === 'Not Found'; }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const error = value as Json;
+  const status = error.status_code ?? error.status ?? error.http_status_code;
+  return status === 404 || status === '404' || (status === undefined && error.message === 'Not Found');
 }
 
 /** Read a response body bounded so a huge error dump cannot blow memory. */
@@ -643,8 +654,11 @@ export class ComposioApps {
       if (error instanceof Error) {
         // Provider errors can have read-only messages; their stack and cause may contain secrets.
         const message = conceal(error.message) as string;
-        const concealed = error instanceof CommandRefusalError
-          ? new CommandRefusalError(message, error.status) : new Error(message);
+        const concealed = (error as Error & { status?: unknown }).status === 404
+          ? new CommandRefusalError(message, 404)
+          : error instanceof CommandRefusalError
+          ? new CommandRefusalError(message, error.status)
+          : error instanceof ExpectedRefusalError ? new ExpectedRefusalError(message) : new Error(message);
         const status = (error as Error & { status?: unknown }).status;
         if (typeof status === 'number') Object.assign(concealed, { status });
         throw concealed;
@@ -680,7 +694,10 @@ export class ComposioApps {
     });
     if (result.error || result.successfull === false || result.successful === false) {
       const detail = providerErrorDetail(result.error);
-      throw new Error(detail ? `App tool execution failed: ${detail}` : 'App tool execution failed');
+      const message = detail ? `App tool execution failed: ${detail}` : 'App tool execution failed';
+      if (isMissingAppResource(result.error) || isMissingAppResource(result))
+        throw new CommandRefusalError(message, 404);
+      throw new Error(message);
     }
     return stripSecrets(result.data);
   }

@@ -13,6 +13,16 @@ CREATE TABLE IF NOT EXISTS push_outbox (
 CREATE INDEX IF NOT EXISTS push_outbox_device_idx ON push_outbox(device_token);
 CREATE INDEX IF NOT EXISTS push_outbox_due_idx ON push_outbox(not_before,message_id,device_token);
 CREATE INDEX IF NOT EXISTS push_outbox_expiry_idx ON push_outbox(expires_at);
+-- Retirement evidence is separate from claims: editing a message may enqueue it again.
+CREATE TABLE IF NOT EXISTS push_outbox_retirements (
+  message_id text NOT NULL,
+  device_token text NOT NULL REFERENCES push_devices(token) ON DELETE CASCADE,
+  reason text NOT NULL,
+  retired_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(message_id,device_token)
+);
+CREATE INDEX IF NOT EXISTS push_outbox_retirements_device_idx ON push_outbox_retirements(device_token);
+CREATE INDEX IF NOT EXISTS push_outbox_retirements_time_idx ON push_outbox_retirements(retired_at);
 CREATE TABLE IF NOT EXISTS push_message_context (
   message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -73,7 +83,12 @@ BEGIN
       -- Other kinds need direct attention under every possible push level.
       AND ((m.presentation='message' AND m.card_type IS NULL)
         OR ${pushDirectAttentionSql('collected_turn_ids')})
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT(message_id,device_token) DO UPDATE SET not_before=now()
+      -- Only wake preference-parked work; claims retain provider retry authority.
+      WHERE push_outbox.not_before=push_outbox.expires_at
+        AND NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
+          WHERE claim.message_id=push_outbox.message_id
+            AND claim.device_token=push_outbox.device_token);
 END $$;
 CREATE OR REPLACE FUNCTION message_push_outbox_trigger() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

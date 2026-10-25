@@ -1429,7 +1429,7 @@ export async function handoff(
         ...(typeof reason !== 'string' || !reason.trim() || reason.length > 500
           ? ['blocked needs contents.reason: why you cannot do this step, 1-500 characters'] : []),
       ];
-      if (errors.length) throw new Error(errors.join('; '));
+      if (errors.length) throw new ExpectedRefusalError(errors.join('; '));
       await bindWorkflowStepOutput(db, command, input.runId);
       const why = `${(reason as string).replace(/\s+/g, ' ').trim().slice(0, 200)}`;
       const result = await failOver(db, scope, {
@@ -1459,7 +1459,7 @@ export async function handoff(
       const outcomes = Object.entries(on).map(([outcome, target]) => `${outcome} -> ${target}`).join(', ');
       const blocked = isHandoffState(state) && !Object.hasOwn(on, WORKFLOW_BLOCKED_OUTCOME)
         ? ', or blocked with contents.reason' : '';
-      throw new Error(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
+      throw new ExpectedRefusalError(`${errors.join('; ')}; outcome must be one of: ${outcomes}${blocked}`);
     }
     if (scope.contract.name === 'workspace-walk' && stateName === 'browse' && input.outcome === 'reviewed') {
       await completeServiceReview(db,command.agent_id,input.runId,(input.contents as Record<string, unknown>).receipts);

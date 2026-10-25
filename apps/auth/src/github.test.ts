@@ -567,6 +567,19 @@ describe('GitHub-only account and repository access', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
+  it.each(['merged', 'base', 'closed'])('CLEANUP-GIT-1: PR closure preserves a %s PR safely', async kind => {
+    const { privateKey } = await generateKeyPair('RS256');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: 'close-token', expires_at: '2030-01-01T00:00:00Z' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ merged: kind === 'merged', state: kind === 'closed' ? 'closed' : 'open', head: { ref: 'work' } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ number: 43 }])));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: await exportPKCS8(privateKey), slug: 'beeline' });
+    if (kind === 'closed') await expect(app.closePullRequest(77, 9, 'acme/beeline', 42)).resolves.toBeUndefined();
+    else await expect(app.closePullRequest(77, 9, 'acme/beeline', 42)).rejects.toThrow(kind === 'merged' ? 'already merged' : 'base of an open pull request');
+    expect(fetchMock.mock.calls.some(call => call[1]?.method === 'PATCH')).toBe(false);
+  });
+
   it('closes a pull request without merging, with only pull-request write', async () => {
     const { privateKey } = await generateKeyPair('RS256');
     const privateKeyPem = await exportPKCS8(privateKey);
@@ -577,6 +590,8 @@ describe('GitHub-only account and repository access', () => {
           status: 201,
         }),
       )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'open', head: { ref: 'feature/work' } })))
+      .mockResolvedValueOnce(new Response('[]'))
       .mockResolvedValueOnce(new Response(JSON.stringify({ state: 'closed' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: privateKeyPem, slug: 'beeline' });
@@ -585,7 +600,7 @@ describe('GitHub-only account and repository access', () => {
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
       body: JSON.stringify({ repository_ids: [9], permissions: { pull_requests: 'write' } }),
     });
-    expect(fetchMock.mock.calls[1]).toEqual([
+    expect(fetchMock.mock.calls[3]).toEqual([
       'https://api.github.com/repos/acme/beeline/pulls/42',
       expect.objectContaining({
         method: 'PATCH',
@@ -1280,13 +1295,28 @@ describe('live branch deletion safety reads', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ default_branch: 'trunk' })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ protected: true })))
-      .mockResolvedValueOnce(new Response(JSON.stringify([{ number: 42 }])));
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ number: 42 }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ahead_by: 0 })));
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
     await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'feature/corner'))
-      .resolves.toEqual({ defaultBranch: 'trunk', protected: true, openBasePullRequest: true });
+      .resolves.toEqual({ defaultBranch: 'trunk', protected: true, openBasePullRequest: true, aheadBy: 0 });
     expect(String(fetchMock.mock.calls[1]![0])).toContain('branches/feature%2Fcorner');
     expect(String(fetchMock.mock.calls[2]![0])).toContain('base=feature%2Fcorner');
+    expect(String(fetchMock.mock.calls[3]![0])).toContain('compare/trunk...feature%2Fcorner');
+  });
+  it.each([3, undefined, -1])('CLEANUP-GIT-1: returns ahead commits or refuses an invalid comparison (%s)', async aheadBy => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ default_branch: 'main' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ protected: false })))
+      .mockResolvedValueOnce(new Response('[]'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ahead_by: aheadBy })));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    if (aheadBy === 3) await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'work'))
+      .resolves.toMatchObject({ aheadBy: 3 });
+    else await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'work'))
+      .rejects.toThrow('commit comparison is missing');
   });
   it('returns missing for a branch 404 but refuses a repository 404', async () => {
     const fetchMock = vi.fn()

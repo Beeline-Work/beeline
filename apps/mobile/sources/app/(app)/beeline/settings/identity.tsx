@@ -59,6 +59,7 @@ import WorkspaceSettings, {
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { PushLevelSetting } from '@/components/buzz/PushLevelSetting';
 import { AppearanceSetting } from '@/components/buzz/AppearanceSetting';
+import { SpeakingSpeedSetting } from '@/components/buzz/SpeakingSpeedSetting';
 import { UiSizeSetting } from '@/components/buzz/UiSizeSetting';
 import { applyAppearanceChoice, setAppDisplay } from '@/unistyles';
 import { useLocalSettingMutable } from '@/sync/storage';
@@ -577,6 +578,10 @@ export default function BuzzIdentitySettings() {
           ) : null}
           <AppearanceSetting onChange={changeAppearance} value={appearance} />
           <UiSizeSetting onChange={changeUiSize} value={uiSize} />
+          <SpeakingSpeedSetting value={managedProjection?.speakingSpeed ?? 1.15} onChange={(speakingSpeed) => {
+            void monolithPhoneOperation('updateIdentitySpeakingSpeed', { speakingSpeed })
+              .then(publishManagedIdentity).catch((e) => setError(e instanceof Error ? e.message : 'Could not save speaking speed'));
+          }} />
           {roomOpenTraceEnabled() && (
             <View testID="debug-settings">
               <SettingsRow

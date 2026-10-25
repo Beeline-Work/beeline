@@ -108,6 +108,20 @@ export class VoiceRoomRuntime {
   private budgetDisplay = '';
   private budgetEnding = false;
   private readonly recentSpeech: { text: string; until: number }[] = [];
+  private readonly speedRefreshes = new Map<string, symbol>();
+  private readonly speakingSpeeds = new Map<string, number>();
+  async refreshSpeakingSpeed(human: string) {
+    if (!this.inputs.has(human)) return;
+    const version = this.inputVersions.get(human);
+    const refresh = Symbol();
+    this.speedRefreshes.set(human, refresh);
+    this.speakingSpeeds.delete(human);
+    try {
+      const row = (await this.service.db.query<{ speaking_speed: number }>(
+        `SELECT speaking_speed FROM identities WHERE id=$1`, [human])).rows[0];
+      if (this.inputs.has(human) && this.inputVersions.get(human) === version && this.speedRefreshes.get(human) === refresh) this.speakingSpeeds.set(human, row?.speaking_speed ?? 1.15);
+    } catch { /* Optional preference reads never block a call. */ }
+  }
   private readonly targets = new Map<string, string>();
   private readonly explicitTargets = new Map<string, string>();
   private readonly turnIndices = new Map<string, number>();
@@ -339,6 +353,7 @@ export class VoiceRoomRuntime {
           `SELECT btrim(title) AS name FROM agent_subscriptions
            WHERE room_id=$1 AND source='webhook' AND btrim(title)<>''
            GROUP BY btrim(title) ORDER BY name LIMIT 80`, [this.roomId])),
+        this.refreshSpeakingSpeed(human),
       ]);
       if (this.closed || this.inputVersions.get(human) !== version) return;
       this.task(() => this.enforceBudget(budget));
@@ -467,6 +482,8 @@ export class VoiceRoomRuntime {
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
     this.externalContacts.delete(human);
+    this.speakingSpeeds.delete(human);
+    this.speedRefreshes.delete(human);
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human);
@@ -692,6 +709,7 @@ export class VoiceRoomRuntime {
   }
 
   async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true, confirmedSpeech = true) {
+    const speakingSpeed = this.speakingSpeeds.get(human);
     const eager = this.eager.get(human);
     this.eager.delete(human);
     this.markCallActivity();
@@ -866,7 +884,7 @@ export class VoiceRoomRuntime {
                 if (firstAudio) return;
                 firstAudio = true; timing('first_voiced_audio_published');
                 this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-              }, () => { generation.signal.throwIfAborted(); }, timing, members);
+              }, () => { generation.signal.throwIfAborted(); }, timing, members, undefined, speakingSpeed);
             } finally {
               if (this.speaking === controller) {
                 this.speaking = undefined;
@@ -929,7 +947,7 @@ export class VoiceRoomRuntime {
             if (firstAudio) return;
             firstAudio = true; timing('first_voiced_audio_published');
             this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-          }, commitReply, timing, members, opening);
+          }, commitReply, timing, members, opening, speakingSpeed);
           opening = undefined;
         }
       } catch (error) {
@@ -1032,7 +1050,7 @@ export class VoiceRoomRuntime {
                   firstAt: performance.now(), lastAt: performance.now() };
                 const request = this.assembler.current(report.human_id);
                 if (request?.id === report.source_message_id) this.assembler.finish(report.human_id, request);
-              }, undefined, undefined, members);
+              }, undefined, undefined, members, undefined, this.speakingSpeeds.get(report.human_id));
             } finally { controller.abort(); finishSpeech(); if (this.speaking === controller) { this.clearAudioQueue(); this.speaking = undefined; await this.safeSignal({ type: 'speaker', agentId: null }); } this.finishVoicedReply(controller.signal); }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });
@@ -1043,7 +1061,7 @@ export class VoiceRoomRuntime {
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
-    onFirstVoicedFrame?: () => void | Promise<void>, timing?: (stage: string) => void, members?: SpeechMember[], opening?: VoiceSpeechPrefetch) {
+    onFirstVoicedFrame?: () => void | Promise<void>, timing?: (stage: string) => void, members?: SpeechMember[], opening?: VoiceSpeechPrefetch, speakingSpeed?: number) {
     text = markdownToSpeech(cleanVoiceReply(text, agent.name), members);
     if (!text) return;
     let pending = Buffer.alloc(0); let first = true; let firstByte = true; let firstPublished = true;
@@ -1064,7 +1082,7 @@ export class VoiceRoomRuntime {
     try {
       timing?.('tts_request');
       if (voice !== agent.voice) { opening?.cancel(); opening = undefined; }
-      for await (const bytes of voiceTempo(opening ? opening.read() : speech.synthesize(spoken.text, voice, signal))) {
+      for await (const bytes of voiceTempo(opening ? opening.read() : speech.synthesize(spoken.text, voice, signal), speakingSpeed)) {
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
         if (firstByte && bytes.length) { firstByte = false; timing?.('tts_first_byte'); }
         pending = Buffer.concat([pending, bytes]);

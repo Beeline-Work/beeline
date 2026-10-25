@@ -125,6 +125,56 @@ async function cornerTurn() {
   return command;
 }
 
+it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-commander-refused: repair %s reaches its ordering agent after a new head', async status => {
+  const incoming = await cornerTurn();
+  const context = { cornerId: incoming.roomId, headSha: 'old-head', pullRequest: 42, briefRevision: 1 };
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','old-head')) WHERE corner_id=$1`, [incoming.roomId]);
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [incoming.id, JSON.stringify(context)]);
+  const receipt = await daemon.execute('order', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
+    generationId: 'guard', address: incoming.roomId, agent: 'baby', text: 'Repair this head' }, CANDY);
+  const assigned = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, BABY)).commands.find(c => c.id === receipt.id)!;
+  await daemon.execute('claimAgentCommand', { roomId: assigned.roomId, commandId: assigned.id, generationId: 'repair' }, BABY);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`, [incoming.roomId]);
+  const text = `${status.replace('_', '-')}: repair result`;
+  await daemon.execute('report', { roomId: assigned.roomId, requestId: assigned.turnRequestId,
+    generationId: 'repair', status, text }, BABY);
+  const replies = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, CANDY)).commands;
+  const reply = replies.find(c => c.reason === 'report')!;
+  expect(reply).toMatchObject({ private: true, source: { authorId: BABY, body: text } });
+  await daemon.execute('claimAgentCommand', { roomId: reply.roomId, commandId: reply.id, generationId: 'received' }, CANDY);
+  expect((await db.query(`SELECT state,parent_command_id,review_context FROM agent_commands WHERE id=$1`, [reply.id])).rows[0])
+    .toMatchObject({ state: 'claimed', parent_command_id: incoming.id, review_context: null });
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [JELLYBEAN])).rowCount).toBe(0);
+  expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
+  // The old review itself still cannot publish a verdict on the replacement head.
+  const stale = await daemon.execute('report', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
+    generationId: 'guard', status: 'done', text: 'done: stale review verdict' }, CANDY);
+  expect(stale).toMatchObject({ skipped: true });
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE private_payload->>'text'='done: stale review verdict'`)).rowCount).toBe(0);
+  console.info(`Demonstrated Reproduction report-commander-refused: ${status} after repair delivered privately and claimed by ordering agent`);
+});
+
+it('Reproduction report-commander-refused: a current reviewer report keeps its own head across an older repair parent', async () => {
+  const incoming = await cornerTurn();
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','new-head')) WHERE corner_id=$1`, [incoming.roomId]);
+  const context = { cornerId: incoming.roomId, headSha: 'new-head', pullRequest: 42, briefRevision: 1 };
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [incoming.id, JSON.stringify(context)]);
+  const receipt = await daemon.execute('order', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
+    generationId: 'guard', address: incoming.roomId, agent: 'baby', text: 'Review the replacement head' }, CANDY);
+  // A fresh review can be resumed from an older repair order, as in the incident.
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [incoming.id, JSON.stringify({ ...context, headSha: 'old-head', purpose: 'repair' })]);
+  await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [receipt.id, JSON.stringify(context)]);
+  const assigned = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, BABY)).commands.find(c => c.id === receipt.id)!;
+  await daemon.execute('claimAgentCommand', { roomId: assigned.roomId, commandId: assigned.id, generationId: 'review' }, BABY);
+  await daemon.execute('report', { roomId: assigned.roomId, requestId: assigned.turnRequestId,
+    generationId: 'review', status: 'done', text: 'done: current review complete' }, BABY);
+  const reply = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, CANDY)).commands.find(c => c.reason === 'report')!;
+  expect(reply).toMatchObject({ source: { authorId: BABY, body: expect.stringContaining('done: current review complete') } });
+  expect((await db.query(`SELECT review_context FROM agent_commands WHERE id=$1`, [reply.id])).rows[0]?.review_context)
+    .toMatchObject({ ...context, purpose: 'verdict' });
+  await daemon.execute('claimAgentCommand', { roomId: reply.roomId, commandId: reply.id, generationId: 'received' }, CANDY);
+});
+
 it('rejects corner self-orders, humans, outsiders and removed members without queueing', async () => {
   const incoming = await cornerTurn();
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, EARTH]);

@@ -90,6 +90,8 @@ export type TranscriptScrollController<Row extends TranscriptScrollRow> = {
   request(destination: TranscriptScrollDestination): void;
   /** Follow new content to the newest end, unless a drag, a row request or a held landing owns the list. */
   follow(): void;
+  /** Keep a pinned tail through the next native content layout, after React commits growing rows. */
+  followAfterLayout(): void;
   /** Enter a live call at its tail unless the reader deliberately chose history. */
   enterCall(): boolean;
   /** Same as `follow`, without waiting a frame (a measured desktop resize). */
@@ -159,8 +161,13 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
   let momentumOwed = false;
   let held = false;
   let readerMoved = false;
+  let followPendingLayout = false;
+  let awaitingTailPin = false;
+  let observedTailPinned = true;
 
   const end = (reason: TranscriptScrollCancelReason) => {
+    followPendingLayout = false;
+    awaitingTailPin = false;
     held = false;
     const ended = active;
     if (!ended) return;
@@ -274,6 +281,13 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       if (active?.destination.kind === 'newest') return;
       request({ kind: 'newest' });
     },
+    followAfterLayout() {
+      // Like follow(), the caller has already decided against the pre-commit
+      // tail pin. Native anchoring may have moved it before this effect runs.
+      if (!followAllowed()) return;
+      if (active?.destination.kind !== 'newest') request({ kind: 'newest' });
+      followPendingLayout = true;
+    },
     followNow() {
       if (!followAllowed()) return;
       options.list()?.toNewest();
@@ -290,6 +304,8 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       end('cancelled');
     },
     reset() {
+      followPendingLayout = false;
+      awaitingTailPin = false;
       active = null;
       held = false;
       momentumOwed = false;
@@ -299,6 +315,12 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
     },
     observeLayout() {
       if (active) attempt(active);
+      if (followPendingLayout && followAllowed()) {
+        followPendingLayout = false;
+        awaitingTailPin = true;
+        options.list()?.toNewest();
+        pinned = true;
+      }
     },
     observeVisibleRows(rows) {
       visibleRows = rows;
@@ -306,6 +328,13 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       if (active) attempt(active);
     },
     observeTailPinned(next) {
+      observedTailPinned = next;
+      // Android can deliver the old anchor's offset after onContentSizeChange
+      // has already issued the tail scroll. Only a native tail observation
+      // after layout acknowledges that move. A drag or history request cancels
+      // both waits through end(), so this never claims the reader's gesture.
+      if ((followPendingLayout || awaitingTailPin) && !next) return;
+      if (next && !followPendingLayout && !momentum) awaitingTailPin = false;
       pinned = next;
     },
     dragStarted() {
@@ -342,6 +371,13 @@ export function createTranscriptScrollController<Row extends TranscriptScrollRow
       momentum = false;
       momentumOwed = false;
       if (active?.destination.kind === 'offset') attempt(active);
+      // Native visible-position maintenance uses a fling animator. A zero
+      // seen mid-animation can be followed by another old offset. Wait for
+      // its resting observation, and correct an interrupted native follow.
+      if (awaitingTailPin && !followPendingLayout && followAllowed()) {
+        if (observedTailPinned) awaitingTailPin = false;
+        else options.list()?.toNewest();
+      }
     },
     userScrolled() {
       readerMoved = true;

@@ -68,6 +68,97 @@ const message = (messageId: string) =>
   ({ kind: 'message', messageId, align: 'top', jump: true }) as const;
 
 describe('transcript scroll controller', () => {
+  it('STREAM-CLIP-1: follows growing concurrent rows after native anchoring moves the old tail', () => {
+    const { controller, moves, flush } = setup();
+    controller.followAfterLayout();
+    flush(); // The first scroll precedes Fabric's new content height.
+    expect(moves).toEqual(['newest']);
+    controller.observeTailPinned(false); // Native anchors the older stream.
+    expect(controller.isPinnedToTail()).toBe(true);
+    controller.followAfterLayout(); // Another lane commits before layout.
+    flush();
+    const beforeLayout = moves.length;
+    controller.observeLayout();
+    expect(moves.length).toBe(beforeLayout + 1);
+    expect(moves.at(-1)).toBe('newest');
+    controller.observeLayout();
+    expect(moves.length).toBe(beforeLayout + 1);
+  });
+
+  it('honors the pre-commit arrival decision when native anchoring reports an offset before the effect', () => {
+    const { controller, moves, flush } = setup();
+    const wasPinnedBeforeCommit = controller.isPinnedToTail();
+    controller.observeTailPinned(false);
+    if (wasPinnedBeforeCommit) controller.followAfterLayout();
+    flush();
+    controller.observeLayout();
+    expect(moves.at(-1)).toBe('newest');
+    expect(controller.isPinnedToTail()).toBe(true);
+  });
+
+  it('STREAM-CLIP-1: keeps following when native anchoring reports its old offset after layout', () => {
+    const { controller, moves, flush } = setup();
+    controller.followAfterLayout();
+    flush();
+    controller.observeLayout();
+    // The failed release trace reported offset 84 after the content-size
+    // callback had already issued scrollToOffset(0), without any drag.
+    controller.observeTailPinned(false);
+    expect(controller.isPinnedToTail()).toBe(true);
+    controller.followAfterLayout(); // The next draft must still follow.
+    flush();
+    // An acknowledgement for an earlier scroll cannot settle newer growth.
+    controller.observeTailPinned(true);
+    controller.observeTailPinned(false);
+    expect(controller.isPinnedToTail()).toBe(true);
+    controller.observeLayout();
+    controller.observeTailPinned(false);
+    expect(controller.isPinnedToTail()).toBe(true);
+    expect(moves.at(-1)).toBe('newest');
+    controller.observeTailPinned(true);
+    controller.observeTailPinned(false);
+    expect(controller.isPinnedToTail()).toBe(false);
+  });
+
+  it('cancels a pending streaming layout follow when the reader takes history', () => {
+    for (const takeHistory of ['drag', 'message', 'offset', 'cancel', 'reset'] as const) {
+      const { controller, moves, flush } = setup();
+      controller.followAfterLayout();
+      flush();
+      controller.observeLayout();
+      const before = moves.filter(move => move === 'newest').length;
+      if (takeHistory === 'drag') controller.dragStarted();
+      if (takeHistory === 'message') controller.request(message('m2'));
+      if (takeHistory === 'offset') controller.request({ kind: 'offset', offset: 200 });
+      if (takeHistory === 'cancel') controller.cancel();
+      if (takeHistory === 'reset') controller.reset();
+      controller.observeTailPinned(false);
+      expect(controller.isPinnedToTail()).toBe(false);
+      if (controller.isPinnedToTail()) controller.followAfterLayout();
+      controller.observeLayout();
+      flush();
+      expect(moves.filter(move => move === 'newest')).toHaveLength(before);
+    }
+  });
+
+  it('does not acknowledge a native tail scroll at a transient zero during native momentum', () => {
+    const { controller, moves, flush } = setup();
+    controller.followAfterLayout();
+    flush();
+    controller.observeLayout();
+    controller.momentumStarted(); // Native autoscroll, without a reader drag.
+    controller.observeTailPinned(false);
+    controller.observeTailPinned(true);
+    controller.observeTailPinned(false); // The animator emits another old offset.
+    expect(controller.isPinnedToTail()).toBe(true);
+    const before = moves.length;
+    controller.momentumEnded();
+    expect(moves.length).toBe(before + 1);
+    expect(moves.at(-1)).toBe('newest');
+    controller.observeTailPinned(true);
+    controller.observeTailPinned(false);
+    expect(controller.isPinnedToTail()).toBe(false);
+  });
   it('CALL-FOLLOW-1: leaves an automatic unread landing for a call and follows arrivals', () => {
     const { controller, moves, flush } = setup();
     controller.request({ kind: 'firstUnread', messageId: 'm2' });

@@ -1,0 +1,403 @@
+{
+  "reproduction": "STREAM-CLIP-1",
+  "baselineApk": "5de7208326400f245aeed334312ad7d32a212df933ba3fc6e42840e3b0b9c36c",
+  "fixedApk": "54b8383eab79dfa46d3d600c046bddef5963bd8cbfa076f77d6b6afaad804670",
+  "build": {
+    "listEngine": "shipped",
+    "propTrace": false,
+    "reactCompiler": false,
+    "platform": "android",
+    "engine": "hermes",
+    "checkoutSha": "aaac9f7f7782774e692120e73469830b50bcae3c",
+    "sourceDiffSha256": "78be9d7eb7d304917cdd31a445f8bf3ba61052a27411d555306fe4059f958260"
+  },
+  "fixtureFingerprint": "cd7b92b10869393264cc3c20f1ff42f4c3c8a9ef77223697504231deeec64ae4",
+  "warmTrials": 10,
+  "warmClipped": 0,
+  "baselineFullFailures": [
+    {
+      "scenario": "concurrent-streams-visible",
+      "repeat": 0,
+      "reason": "Screenshot did not show both live streams"
+    },
+    {
+      "scenario": "concurrent-streams-visible",
+      "repeat": 2,
+      "reason": "Screenshot did not show both live streams"
+    }
+  ],
+  "fixedFullFailures": [],
+  "scenarios": {
+    "idle": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 16.838972999947146,
+        "jsP50Median": 16.662175999954343,
+        "jsP95Range": [
+          16.831038999836892,
+          16.88940400001593
+        ],
+        "rowMedian": 0,
+        "uiP95Median": 16.0,
+        "worstJsGap": 20.039103999966756,
+        "missedJsFrameOpportunities": 0
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 16.821603000164032,
+        "jsP50Median": 16.665413999930024,
+        "jsP95Range": [
+          16.798661000095308,
+          16.949611000716686
+        ],
+        "rowMedian": 0,
+        "uiP95Median": 6.5,
+        "worstJsGap": 17.89526499994099,
+        "missedJsFrameOpportunities": 0
+      }
+    },
+    "keystroke": {
+      "baseline": {
+        "n": 21,
+        "jsP95Median": 18.002646999899298,
+        "jsP50Median": 16.668461999855936,
+        "jsP95Range": [
+          16.786459000082687,
+          180.20461299992166
+        ],
+        "rowMedian": 0,
+        "uiP95Median": 16,
+        "worstJsGap": 205.12727900012396,
+        "missedJsFrameOpportunities": 213
+      },
+      "fixed": {
+        "n": 21,
+        "jsP95Median": 17.791042000055313,
+        "jsP50Median": 16.66395500022918,
+        "jsP95Range": [
+          16.85373399965465,
+          18.370491999201477
+        ],
+        "rowMedian": 0,
+        "uiP95Median": 16,
+        "worstJsGap": 28.112533000297844,
+        "missedJsFrameOpportunities": 1
+      }
+    },
+    "scroll": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 22.56125000002794,
+        "jsP50Median": 16.683240999933332,
+        "jsP95Range": [
+          22.18892000010237,
+          25.614777999930084
+        ],
+        "rowMedian": 0,
+        "uiP95Median": 44,
+        "worstJsGap": 199.22102900012396,
+        "missedJsFrameOpportunities": 62
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 21.850915000773966,
+        "jsP50Median": 16.667810999788344,
+        "jsP95Range": [
+          21.25729400012642,
+          23.270632000640035
+        ],
+        "rowMedian": 0,
+        "uiP95Median": 36,
+        "worstJsGap": 53.0291489996016,
+        "missedJsFrameOpportunities": 29
+      }
+    },
+    "fling": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 41.374250000109896,
+        "jsP50Median": 16.68227200000547,
+        "jsP95Range": [
+          21.614089000038803,
+          51.34548999997787
+        ],
+        "rowMedian": 31,
+        "uiP95Median": 34,
+        "worstJsGap": 175.4875849999953,
+        "missedJsFrameOpportunities": 118
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 27.716797000728548,
+        "jsP50Median": 16.683291000314057,
+        "jsP95Range": [
+          21.79525600001216,
+          38.14073600061238
+        ],
+        "rowMedian": 31,
+        "uiP95Median": 32,
+        "worstJsGap": 213.34314399957657,
+        "missedJsFrameOpportunities": 94
+      }
+    },
+    "history-prepend": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 22.922735000029206,
+        "jsP50Median": 16.675103000132367,
+        "jsP95Range": [
+          22.650502000004053,
+          34.20682099997066
+        ],
+        "rowMedian": 149,
+        "uiP95Median": 36,
+        "worstJsGap": 409.51851200009696,
+        "missedJsFrameOpportunities": 645
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 22.634166999720037,
+        "jsP50Median": 16.671071000397205,
+        "jsP95Range": [
+          21.9840979995206,
+          22.777472999878228
+        ],
+        "rowMedian": 191,
+        "uiP95Median": 36,
+        "worstJsGap": 368.4175420003012,
+        "missedJsFrameOpportunities": 568
+      }
+    },
+    "incoming": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 17.66923899995163,
+        "jsP50Median": 16.666832000017166,
+        "jsP95Range": [
+          17.145275000017136,
+          17.775037999963388
+        ],
+        "rowMedian": 1,
+        "uiP95Median": 32,
+        "worstJsGap": 67.52041400014423,
+        "missedJsFrameOpportunities": 24
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 17.83410200010985,
+        "jsP50Median": 16.673247000202537,
+        "jsP95Range": [
+          17.236902000382543,
+          18.515983999706805
+        ],
+        "rowMedian": 1,
+        "uiP95Median": 16,
+        "worstJsGap": 67.79743200074881,
+        "missedJsFrameOpportunities": 22
+      }
+    },
+    "warm-room-switches": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 70.60966200008988,
+        "jsP50Median": 16.667516000103205,
+        "jsP95Range": [
+          65.29437300004065,
+          96.19994900003076
+        ],
+        "rowMedian": 1142,
+        "uiP95Median": 101,
+        "worstJsGap": 565.6109370000195,
+        "missedJsFrameOpportunities": 2042
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 70.24557900056243,
+        "jsP50Median": 16.672739999368787,
+        "jsP95Range": [
+          42.222800000570714,
+          82.85456399992108
+        ],
+        "rowMedian": 1142,
+        "uiP95Median": 101,
+        "worstJsGap": 365.20040100067854,
+        "missedJsFrameOpportunities": 2009
+      }
+    },
+    "concurrent-streams": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 38.21677400008775,
+        "jsP50Median": 16.699449999956414,
+        "jsP95Range": [
+          29.422800000058487,
+          43.26116900006309
+        ],
+        "rowMedian": 23,
+        "uiP95Median": 32,
+        "worstJsGap": 220.90263699996285,
+        "missedJsFrameOpportunities": 191
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 31.06509199924767,
+        "jsP50Median": 16.671874000690877,
+        "jsP95Range": [
+          29.728432999923825,
+          31.31695600040257
+        ],
+        "rowMedian": 23,
+        "uiP95Median": 21,
+        "worstJsGap": 261.7244309997186,
+        "missedJsFrameOpportunities": 159
+      }
+    },
+    "optimistic-send": {
+      "baseline": {
+        "n": 3,
+        "jsP95Median": 32.60739900008775,
+        "jsP50Median": 16.670626000035554,
+        "jsP95Range": [
+          26.895728999981657,
+          33.04465500009246
+        ],
+        "rowMedian": 6,
+        "uiP95Median": 30,
+        "worstJsGap": 103.93934700009413,
+        "missedJsFrameOpportunities": 64
+      },
+      "fixed": {
+        "n": 3,
+        "jsP95Median": 32.96957900002599,
+        "jsP50Median": 16.67031600046903,
+        "jsP95Range": [
+          23.963971000164747,
+          43.652072000317276
+        ],
+        "rowMedian": 6,
+        "uiP95Median": 30,
+        "worstJsGap": 102.77259999979287,
+        "missedJsFrameOpportunities": 61
+      }
+    }
+  },
+  "transitions": {
+    "baseline": {
+      "n": 6,
+      "timeToSettledMs": {
+        "median": 981.6447687108302,
+        "range": [
+          958.0297621404752,
+          1028.471118874848
+        ]
+      },
+      "jsBusyCpuMs": {
+        "median": 490.01695492106126,
+        "range": [
+          486.89840829484035,
+          570.4055293101922
+        ]
+      },
+      "worstJsGapMs": {
+        "median": 173.28629249997903,
+        "range": [
+          160.18639499973506,
+          214.572521999944
+        ]
+      },
+      "firstPaintMs": {
+        "median": 226.0,
+        "range": [
+          220,
+          267
+        ]
+      }
+    },
+    "fixed": {
+      "n": 6,
+      "timeToSettledMs": {
+        "median": 970.2637509447522,
+        "range": [
+          957.629804359749,
+          1005.6078623281792
+        ]
+      },
+      "jsBusyCpuMs": {
+        "median": 487.091883604584,
+        "range": [
+          476.75391240854503,
+          536.2013419520264
+        ]
+      },
+      "worstJsGapMs": {
+        "median": 170.62198850046843,
+        "range": [
+          165.93144700024277,
+          175.1656909994781
+        ]
+      },
+      "firstPaintMs": {
+        "median": 231.5,
+        "range": [
+          223,
+          241
+        ]
+      }
+    }
+  },
+  "rowUpdates": {
+    "keyboardDock": {
+      "restingComposer": [
+        491,
+        2260
+      ],
+      "raisedComposer": [
+        491,
+        1440
+      ],
+      "restoredComposer": [
+        491,
+        2260
+      ]
+    },
+    "scrollAnchor": {
+      "anchorText": "Fixture 0999: agent answer",
+      "beforePoint": [
+        541,
+        1192
+      ],
+      "afterPoint": [
+        541,
+        1192
+      ]
+    },
+    "status": "passed",
+    "samples": [
+      {
+        "scenario": "incoming-risk",
+        "rowCommits": 2,
+        "distinctRowsCommitted": 2
+      },
+      {
+        "scenario": "edit-risk",
+        "rowCommits": 1,
+        "distinctRowsCommitted": 1
+      },
+      {
+        "scenario": "reaction-risk",
+        "rowCommits": 1,
+        "distinctRowsCommitted": 1
+      },
+      {
+        "scenario": "reaction-toggle-risk",
+        "rowCommits": 3,
+        "distinctRowsCommitted": 1
+      },
+      {
+        "scenario": "typing-risk",
+        "rowCommits": 0,
+        "distinctRowsCommitted": 0
+      }
+    ]
+  }
+}

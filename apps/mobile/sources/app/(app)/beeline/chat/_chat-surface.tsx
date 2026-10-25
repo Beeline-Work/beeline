@@ -3271,7 +3271,9 @@ export function BuzzChatSurface({
   useEffect(
     () =>
       liveDraftStore.subscribeCommit(() => {
-        if (scrollController.isPinnedToTail()) scrollController.follow();
+        if (!scrollController.isPinnedToTail()) return;
+        if (Platform.OS === 'android') scrollController.followAfterLayout();
+        else scrollController.follow();
       }),
     [liveDraftStore, scrollController],
   );
@@ -3297,7 +3299,8 @@ export function BuzzChatSurface({
     // call is a harmless, idempotent second landing for the same content —
     // native has no such observer and depends on it entirely. A landing in
     // progress keeps the list; `follow` yields to it.
-    scrollController.follow();
+    if (Platform.OS === 'android') scrollController.followAfterLayout();
+    else scrollController.follow();
   }, [newestMessageId, scrollController]);
   // Land on the exact fact that caused the alert, at the top of the screen.
   // A host row near the newest end lands at once. Otherwise the store opens

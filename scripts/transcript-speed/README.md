@@ -148,6 +148,24 @@ leak.
 
 Android stream visibility uses `tesseract` on retained emulator screenshots outside the timing window; accessibility dumps cannot reliably obtain idle state during streaming. The OCR check requires both stream labels (allowing O for zero), and the images remain available for inspection.
 
+For STREAM-CLIP-1, sign the owned emulator into the fixture, set
+`LATENCY_RIG_DEVICE`, `LATENCY_RIG_DATABASE_URL` and `TRANSCRIPT_APK`, then run:
+
+```sh
+node scripts/transcript-speed/reset.mjs
+node scripts/transcript-speed/capture-concurrent-streams.mjs <evidence-directory>
+```
+
+This repeats the same two-agent stimulus ten times, taking its screenshot at
+chunk fifteen outside timing measurement. Each trial restarts the fixture app;
+`TRANSCRIPT_STREAM_COLD=0` instead navigates through Transcript A between trials.
+It verifies the installed APK hash and retains every screenshot, OCR result and trial verdict.
+A missing stream fails the command after all trials; the existing
+`TRANSCRIPT_EXPERIMENT_KEEP_FAILURES=1` records failures without a failing exit.
+These midpoint snapshots establish the recorded reproduction, not visibility
+of every intermediate frame or performance. Use the normal capture suite for
+timing and redraw comparisons.
+
 ### Isolated redraw comparisons
 
 Only one app may poll a capture channel. An older instrumented emulator can

@@ -10,7 +10,7 @@ import urllib.request
 if os.geteuid() != 0:
     raise SystemExit('Host root grant required')
 source = Path(__file__).with_name('prepare-ephemeral-ci-runner.py')
-expected = '4f54a1866b36fe0d1789ec7f406f49468f2097160abe250712f8665e7a5dab75'
+expected = 'd392e67db8b6cdf4e95ba7832a03ff74c15fcac65b462a62ac391f11ae9911f4'
 if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
     raise SystemExit('Pre-job script differs from reviewed bytes')
 units = Path('/etc/systemd/system')

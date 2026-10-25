@@ -23,10 +23,10 @@ if result.returncode not in (0, 1):
     raise SystemExit('Could not stop previous job processes')
 # The parent is root-owned; never follow a job-created state directory symlink.
 for path in state.iterdir():
-    if path.is_symlink():
-        path.unlink()
-    elif path.exists():
+    if path.is_dir() and not path.is_symlink():
         shutil.rmtree(path)
+    else:
+        path.unlink()
 for directory in ['home', 'work', 'docker', 'run', 'runner']:
     path = state / directory
     path.mkdir(mode=0o700)

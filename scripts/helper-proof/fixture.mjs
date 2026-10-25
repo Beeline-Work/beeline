@@ -108,7 +108,7 @@ const server = createServer(async (request, response) => {
       harnessListeners.clear();
       if (hold && input.agentId === agents[0] && input.text.includes('native-held')) {
         // Undici's default five-minute headers/body timeout must not make the
-        // held command become idle just before the real five-minute handoff.
+        // held command become idle just before the real admission deadline.
         response.writeHead(200, { 'content-type': 'application/json' });
         response.write(' ');
         const heartbeat = setInterval(() => response.write(' '), 30_000);

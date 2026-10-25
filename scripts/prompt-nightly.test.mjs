@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
-import { assessExperiment, budget, chooseBlock, median, needsSquire, removalBlocks, replaySample } from './prompt-nightly.mjs';
-import { loadCases } from './prompt-cases.ts';
+import { assessExperiment, budget, buildCandidateTree, chooseBlock, median, needsSquire, removalBlocks, replaySample } from './prompt-nightly.mjs';
+import { loadCases, loadSource } from './prompt-cases.ts';
 
 const model = 'fixture/model';
 const response = (answer, tokens = 100) => ({ id: 'fixture', model, usage: { total_tokens: tokens, cost: 0.0001 },
@@ -15,6 +16,18 @@ test('browser-session cases are skipped while a text-only case with browser tool
     'squire-busy-request-capability', 'squire-drive-starts-drive', 'squire-long-history-host-recovery',
   ]);
   assert.equal(needsSquire(cases.find(({ id }) => id === 'long-incident-shipped-status')), false);
+});
+
+test('candidate tree holds every file loadSource reads', async () => {
+  const temp = buildCandidateTree(process.cwd());
+  try {
+    const guide = 'apps/server/src/free-agents.ts';
+    assert.deepEqual(readFileSync(join(temp, guide)), readFileSync(guide));
+    const [candidate, root] = await Promise.all([loadSource(temp), loadSource(process.cwd())]);
+    assert.equal(candidate.freeAgentRepositoryGuide, root.freeAgentRepositoryGuide);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test('removal requires the same cases, no passing-case regression, and lower measured tokens', () => {

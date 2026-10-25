@@ -1,3 +1,7 @@
+const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
+if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3) throw new Error('TRANSCRIPT_REPEAT_COUNT must be from 1 to 3');
+const webOrigin = process.env.TRANSCRIPT_WEB_ORIGIN ?? 'http://127.0.0.1:19882';
+const viewport = { width: Number(process.env.TRANSCRIPT_WEB_WIDTH ?? 390), height: 844 };
 import { mkdir, writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { rooms, workspace } from './fixture.mjs';
@@ -6,7 +10,7 @@ const output = process.argv[2] ?? '/tmp/transcript-browser-opens';
 await mkdir(output, { recursive: true });
 let browser, context, page, chromium;
 const launchOptions = { executablePath: process.env.CHROMIUM_PATH ?? '/home/lunchbox/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome', headless: true, args: ['--no-sandbox'] };
-const base = desktop ? 'tauri://localhost' : 'http://127.0.0.1:19882';
+const base = desktop ? 'tauri://localhost' : webOrigin;
 async function wd(path, body) {
   const response = await fetch(`http://127.0.0.1:19885/session/${desktop}/${path}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -37,7 +41,7 @@ async function signIn() {
 async function warm(room) {
   if (!desktop && await page.getByRole('button', { name: 'Back to Rooms', exact: true }).count())
     await page.getByRole('button', { name: 'Back to Rooms', exact: true }).click();
-  const selector = `[data-testid="${desktop ? 'desktop-room-' : 'room-'}${room}"]`;
+  const selector = `[data-testid="${desktop || viewport.width >= 1024 ? 'desktop-room-' : 'room-'}${room}"]`;
   if (desktop) {
     const element = await wd('element', { using: 'css selector', value: selector });
     await wd(`element/${element['element-6066-11e4-a52e-4f735466cecf']}/click`, {});
@@ -48,15 +52,15 @@ try {
   if (!desktop) {
     ({ chromium } = await import(process.env.PLAYWRIGHT_CORE_PATH ?? '/home/lunchbox/gstack/node_modules/playwright-core/index.mjs'));
     browser = await chromium.launch(launchOptions);
-    context = await browser.newContext({ viewport: { width: 390, height: 844 } }); page = await context.newPage();
+    context = await browser.newContext({ viewport: viewport }); page = await context.newPage();
     await signIn();
   }
   await navigate(route(rooms[0])); await ready(rooms[0]);
   for (const variant of ['cold-process-retained-storage', 'warm', 'cache-miss']) {
-    for (let repeat = 0; repeat < 3; repeat++) {
+    for (let repeat = 0; repeat < repeatCount; repeat++) {
       if (variant === 'cache-miss') {
         if (!desktop) {
-          await context.close(); context = await browser.newContext({ viewport: { width: 390, height: 844 } }); page = await context.newPage();
+          await context.close(); context = await browser.newContext({ viewport: viewport }); page = await context.newPage();
         } else {
           // Unload the application before deleting its fixture-origin stores.
           await navigate(`${base}/favicon.ico`);
@@ -81,7 +85,7 @@ try {
           await browser.close();
           start = performance.now();
           browser = await chromium.launch(launchOptions);
-          context = await browser.newContext({ viewport: { width: 390, height: 844 }, storageState });
+          context = await browser.newContext({ viewport: viewport, storageState });
           page = await context.newPage();
         }
       }
@@ -101,7 +105,7 @@ try {
       console.log(variant, Math.round(firstVisibleUpperBoundMs));
     }
   }
-  await writeFile(`${output}/capture.json`, JSON.stringify({ platform: desktop ? 'packaged-tauri' : 'narrow-web', samples,
+  await writeFile(`${output}/capture.json`, JSON.stringify({ platform: desktop ? 'packaged-tauri' : viewport.width >= 1024 ? 'desktop-web' : 'narrow-web', samples,
     method: 'External action to observed fixture DOM plus two animation frames; upper bound includes driver round trips and 100ms readiness polling, not a physical scanout timestamp. Settled means five unchanged text/image-state polls.',
     coldDefinition: 'new browser/app process with retained fixture storage; OS disk cache is not flushed', finalDesktopSession: desktop ?? null }, null, 2));
 } finally { if (browser) await browser.close(); }

@@ -3,6 +3,10 @@ export function percentile(values, fraction) {
   if (values.some(value => !Number.isFinite(value) || value < 0)) throw new Error('Invalid timing sample');
   return [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * fraction) - 1)];
 }
+/** The fixture opens on messages 970–999; mounting within that page is not paging. */
+export function historyPageProved(oldestBefore, oldestAfter) {
+  return Number.isFinite(oldestAfter) && oldestAfter < Math.min(970, oldestBefore);
+}
 export function summarize(sample, refreshHz) {
   if (!Number.isFinite(refreshHz) || refreshHz <= 0) throw new Error('Measured refresh rate required');
   const values = sample.jsFrameIntervalsMs;

@@ -1,18 +1,23 @@
+const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
+if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3) throw new Error('TRANSCRIPT_REPEAT_COUNT must be from 1 to 3');
+const webOrigin = process.env.TRANSCRIPT_WEB_ORIGIN ?? 'http://127.0.0.1:19882';
+const viewport = { width: Number(process.env.TRANSCRIPT_WEB_WIDTH ?? 390), height: 844 };
 import { writeFile, mkdir } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { rooms, workspace, corner, fixtureFingerprint } from './fixture.mjs';
 import { fixtureStimulus } from './stimulus.mjs';
-import { summarize, percentile } from './metrics.mjs';
+import { summarize, percentile, historyPageProved } from './metrics.mjs';
 
 const { chromium } = await import(process.env.PLAYWRIGHT_CORE_PATH ?? '/home/lunchbox/gstack/node_modules/playwright-core/index.mjs');
 const output = process.argv[2] ?? '/tmp/transcript-web-results';
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? '/home/lunchbox/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome', headless: true, args: ['--no-sandbox'] });
 const results = [];
+const pathFailures = [];
 const stimulus = await fixtureStimulus();
 try {
-  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  const page = await browser.newPage({ viewport: viewport });
   await page.addInitScript(() => {
     globalThis.__keyPaintEvents = [];
     globalThis.__keyPaintBounds = [];
@@ -27,11 +32,14 @@ try {
         globalThis.__keyPaintEvents.push({ startTime: event.startTime, duration: event.duration, processingStart: event.processingStart });
     }).observe({ type: 'event', durationThreshold: 16, buffered: true });
   });
-  await page.goto('http://127.0.0.1:19882/review/transcript-fixture-local-only-36bbb7b4');
+  await page.goto(`${webOrigin}/review/transcript-fixture-local-only-36bbb7b4`);
   await page.waitForURL('**/beeline/channels**');
-  await page.goto(`http://127.0.0.1:19882/beeline/chat/${rooms[0]}?communityId=${workspace}`);
+  await page.goto(`${webOrigin}/beeline/chat/${rooms[0]}?communityId=${workspace}`);
   await page.getByText('Fixture 0999: agent answer', { exact: false }).first().waitFor();
   await page.waitForTimeout(3000);
+  const build = await page.evaluate(() => globalThis.__transcriptBuild);
+  if (process.env.TRANSCRIPT_EXPECT_ENGINE && build?.listEngine !== process.env.TRANSCRIPT_EXPECT_ENGINE)
+    throw new Error(`Expected ${process.env.TRANSCRIPT_EXPECT_ENGINE}, loaded ${build?.listEngine}`);
   const refreshHz = await page.evaluate(async () => {
     const times = [];
     for (let i = 0; i < 61; i++) times.push(await new Promise(requestAnimationFrame));
@@ -40,8 +48,13 @@ try {
   });
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Performance.enable');
+  const transcriptPoint = async () => {
+    const box = await page.getByTestId('chat-messages').boundingBox();
+    if (!box) throw new Error('Transcript viewport missing');
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
   const open = async room => {
-    await page.goto(`http://127.0.0.1:19882/beeline/chat/${room}?communityId=${workspace}`);
+    await page.goto(`${webOrigin}/beeline/chat/${room}?communityId=${workspace}`);
     await page.getByRole('textbox', { name: 'Message', exact: true }).waitFor();
     await page.waitForTimeout(1500);
   };
@@ -54,7 +67,7 @@ try {
     await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'running', samples: results }, null, 2));
     console.log(name, repeat);
   };
-  for (let repeat = 0; repeat < 3; repeat++) {
+  for (let repeat = 0; repeat < repeatCount; repeat++) {
     const input = page.getByRole('textbox', { name: 'Message', exact: true });
     await input.fill('');
     await input.focus();
@@ -70,10 +83,12 @@ try {
         keyPaintUpperBounds: await page.evaluate(start => globalThis.__keyPaintBounds.filter(event => event.startTime >= start), eventStart),
         keyPaintMethod: 'Chrome Event Timing keydown-to-next-paint, 8ms quantization; unreported events censored below 16ms' });
     }
+    await page.screenshot({ path: `${output}/typing-${repeat}.png` });
     await input.fill('');
     const scrollBefore = await page.evaluate(() => Array.from(document.querySelectorAll('*')).filter(e => e.scrollHeight > e.clientHeight).map(e => e.scrollTop));
     await page.evaluate(() => globalThis.__transcriptSpeed.begin('scroll'));
-    await page.mouse.move(190, 400);
+    const point = await transcriptPoint();
+    await page.mouse.move(point.x, point.y);
     for (let i = 0; i < 10; i++) {
       await page.mouse.wheel(0, -500);
       await page.waitForTimeout(100);
@@ -84,13 +99,16 @@ try {
     const scrollAfter = await page.evaluate(() => Array.from(document.querySelectorAll('*')).filter(e => e.scrollHeight > e.clientHeight).map(e => e.scrollTop));
     results.at(-1).scrollChanged = JSON.stringify(scrollBefore) !== JSON.stringify(scrollAfter);
     await capture('fling', repeat, async () => {
-      await page.mouse.move(190, 400);
+      const point = await transcriptPoint();
+      await page.mouse.move(point.x, point.y);
       for (const delta of [-2400, -1600, -900, -400, -100]) {
         await page.mouse.wheel(0, delta); await page.waitForTimeout(30);
       }
       await page.waitForTimeout(1200);
     });
     const oldest = () => page.evaluate(() => Math.min(...Array.from(document.body.innerText.matchAll(/Fixture (\d{4})/g), m => Number(m[1]))));
+    // Recycling may unmount initial-page rows. Merely rendering another one
+    // is not proof that the initial 30-message window (970–999) was paged.
     const oldestBefore = await oldest();
     await capture('history-prepend', repeat, async () => {
       // RN Web wheel events do not establish native drag intent. Use the
@@ -106,7 +124,13 @@ try {
       await page.mouse.up();
     });
     results.at(-1).history = { oldestBefore, oldestAfter: await oldest() };
-    if (!(results.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Web history gesture did not reveal an older fixture row');
+    await page.screenshot({ path: `${output}/history-${repeat}.png` });
+    results.at(-1).history.proved = historyPageProved(oldestBefore, results.at(-1).history.oldestAfter);
+    if (!results.at(-1).history.proved) {
+      pathFailures.push({ scenario: 'history-prepend', repeat, reason: 'History gesture did not reveal an older fixture row' });
+      if (process.env.TRANSCRIPT_EXPERIMENT_KEEP_FAILURES !== '1')
+        throw new Error('Web history gesture did not reveal an older fixture row');
+    }
     await open(rooms[0]);
     let incoming;
     await capture('incoming', repeat, async () => {
@@ -130,7 +154,7 @@ try {
     });
     results.at(-1).serverSettled = await stimulus.settled(sent);
   }
-  for (let repeat = 0; repeat < 3; repeat++) {
+  for (let repeat = 0; repeat < repeatCount; repeat++) {
   const memoryBeforeSwitches = (await cdp.send('Performance.getMetrics')).metrics.find(metric => metric.name === 'JSHeapUsedSize')?.value;
   await capture('warm-room-switches', repeat, async () => {
     for (let i = 0; i < 20; i++) {
@@ -151,11 +175,14 @@ try {
   const metrics = (await cdp.send('Performance.getMetrics')).metrics;
   const record = {
     status: 'partial',
+    completed: true,
+    pathFailures,
     fixtureFingerprint,
+    build,
     buildSha: results.find(sample => sample.raw.build)?.raw.build.checkoutSha ?? null,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     dirty: execFileSync('git', ['diff', '--stat'], { encoding: 'utf8' }).trim(),
-    runtime: await browser.version(), platform: 'narrow-web', viewport: { width: 390, height: 844 },
+    runtime: await browser.version(), platform: viewport.width >= 1024 ? 'desktop-web' : 'narrow-web', viewport: viewport,
     device: `${os.hostname()} ${os.cpus()[0]?.model}`, refreshHz,
     refreshMethod: 'median requestAnimationFrame interval, headless virtual display',
     profilingOverhead: 'unmeasured; build-only layout-effect commit counters and rAF sampler',

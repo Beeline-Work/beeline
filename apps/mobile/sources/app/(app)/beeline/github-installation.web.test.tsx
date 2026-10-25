@@ -1,3 +1,4 @@
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 // @vitest-environment jsdom
 import React, { act } from 'react';
 // @ts-expect-error react-dom has no declarations in this workspace.

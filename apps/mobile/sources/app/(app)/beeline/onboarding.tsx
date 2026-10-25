@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { beginFunnelAttempt, pendingFunnelAttempt, funnelScreen, funnelCallback } from '@/auth/signin-funnel';
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
@@ -125,6 +126,7 @@ export default function BuzzOnboarding() {
   useLatencyRouteFrame('/beeline/onboarding', true, true);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const pendingBind = useRef<PendingBind | null>(null);
   const existingIdentity = useRef<Identity | null>(null);
   const canSignIn = accountSignInAvailable(Platform.OS, isTauri());
@@ -602,7 +604,7 @@ export default function BuzzOnboarding() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={[styles.brandSurface, desktopAuthSurface && styles.desktopBrandSurface]}>
         <BeelineMark size={desktopAuthSurface ? 156 : 112} shimmer />
         <Text

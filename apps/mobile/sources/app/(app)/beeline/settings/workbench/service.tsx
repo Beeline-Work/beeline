@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -32,6 +33,7 @@ export default function ConnectorServiceScreen() {
   const { value: view, error: loadError, refresh } = useSharedWorkbench(scope);
   const row = view?.companies?.rows.find(item => item.id === service || (service === 'trusty-squire' && item.kind === 'sign-in-service'));
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const { theme } = useUnistyles();
   const actions = useConnectCompanyApp(scope);
   const [machine, setMachine] = useState<Machine | null>(null);
@@ -110,7 +112,7 @@ export default function ConnectorServiceScreen() {
       setMachine(null); setLinkOpen(false); await refresh();
     } catch { setError('Could not disconnect. Try again.'); }
   };
-  return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
+  return <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="connector-service-screen">
     <PageHeader eyebrow="Connectors" prominent title={row?.name ?? 'Connectors'} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
     {loadError && !row ? <NetworkUnavailableState onRetry={() => void refresh()} /> : !view ? <SurfaceGlyphLoader /> : !row ?
       <Text style={styles.note}>This company is no longer connected.</Text> :

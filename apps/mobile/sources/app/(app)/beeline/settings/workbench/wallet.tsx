@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -73,6 +74,7 @@ export default function WalletScreen() {
   const [copied, setCopied] = useState(false);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
 
   useEffect(() => {
     let cancelled = false;
@@ -175,7 +177,7 @@ export default function WalletScreen() {
     return (
       <View style={screenStyle}>
         {header}
-        <View style={[styles.container, styles.centered]} testID="wallet-loading">
+        <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, styles.centered]} testID="wallet-loading">
           <SurfaceGlyphLoader testID="wallet-loader" />
         </View>
       </View>

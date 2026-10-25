@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -25,6 +26,7 @@ function first(value: string | string[] | undefined): string | undefined {
 export default function PromptSchedule() {
   useLatencyRouteFrame('/beeline/settings/schedule');
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const params = useLocalSearchParams<{
     roomId?: string | string[];
     scheduleId?: string | string[];
@@ -53,7 +55,7 @@ export default function PromptSchedule() {
   };
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Schedules and subscriptions"
         eyebrow="Schedules and subscriptions"

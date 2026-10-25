@@ -1,3 +1,4 @@
+vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { Typography } from '@/constants/Typography';
@@ -44,6 +45,7 @@ export function HumanProfile({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const navigation = useNavigation();
   const allowNavigation = useRef(false);
   const active = useRef(true);
@@ -214,7 +216,7 @@ export function HumanProfile({
       });
   };
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]} testID="human-profile">
+    <View style={[styles.container, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]} testID="human-profile">
       <PageHeader
         backAccessibilityLabel="Back"
         backTestID="close-human-profile"

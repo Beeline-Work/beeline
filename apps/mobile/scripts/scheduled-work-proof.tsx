@@ -112,6 +112,9 @@ async function run() {
   }
   report(
     JSON.stringify({ rowLines,
+      pageWidth: document.querySelector('#root > *')?.getBoundingClientRect().width,
+      pageLeft: document.querySelector('#root > *')?.getBoundingClientRect().left,
+      viewport: window.innerWidth,
       text,
       eyebrowFont: font(eyebrow),
       titleFont: font(title),

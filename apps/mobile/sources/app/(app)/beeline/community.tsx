@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
@@ -43,6 +44,7 @@ export default function WorkspaceChoice() {
   const enabled = useRepositoryOnboarding();
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const requestedMode = first(useLocalSearchParams<{ mode?: string | string[] }>().mode);
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [workspaceList, setWorkspaceList] = useState<WorkspaceListView | null>(null);
@@ -155,7 +157,7 @@ export default function WorkspaceChoice() {
         style={styles.container}
         testID="workspace-choice"
       >
-        <View style={styles.column}>
+        <View style={[styles.column, desktopPageLayout && { maxWidth: 640 }]}>
           <Text ref={welcomeRef} adjustsFontSizeToFit numberOfLines={2} accessibilityRole="header" testID="choice-title" style={styles.title}>{welcomeText}</Text>
           <Text style={styles.copy}>
             {`Start a ${WORKSPACE_LABEL}, or join one you were invited to.`}

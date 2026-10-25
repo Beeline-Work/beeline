@@ -893,7 +893,7 @@ const styles = StyleSheet.create((theme) => ({
   body: { flex: 1, flexDirection: 'row' },
   list: { flex: 1 },
   desktopList: {
-    maxWidth: 390, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.buzz.border,
+    maxWidth: 720, borderRightWidth: StyleSheet.hairlineWidth, borderRightColor: theme.buzz.border,
   },
   sectionHead: {
     minHeight: 44, marginTop: theme.buzz.space.lg, paddingHorizontal: 16,

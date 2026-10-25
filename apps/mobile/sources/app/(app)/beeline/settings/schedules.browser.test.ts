@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
@@ -168,6 +168,9 @@ function fontsCss(mobile: string): string {
 }
 
 type Page = {
+  pageWidth: number;
+  pageLeft: number;
+  viewport: number;
   rowLines: Array<{ id: string; words: string[]; ys: number[]; cornerFills: string[] }>;
   text: string[];
   eyebrowFont: string | null;
@@ -195,17 +198,17 @@ type Page = {
   back: number;
 };
 
-async function proof(query: string, screenshotPath?: string): Promise<Page> {
+async function proof(query: string, screenshotPath?: string, width = 390): Promise<Page> {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/scheduled-work-proof.tsx'),
     mobile,
     shims: shims(mobile),
-    width: 390,
+    width,
     query,
     ...(screenshotPath ? { screenshotPath, height: 844 } : {}),
     // A screenshot shows the page alone, not the proof's own result line.
-    head: `<style>html,body,#root{height:100%;}#root{display:flex;}${fontsCss(mobile)}${screenshotPath ? '#result{display:none}' : ''}</style>`,
+    head: `<style>html,body,#root{height:100%;}#root{display:flex;flex-direction:column;}${fontsCss(mobile)}#result{display:none}</style>`,
   });
   expect(status, stderr).toBe(0);
   if (process.env.PRINT_PROOF) console.log(result);
@@ -474,4 +477,21 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
     expect(page.text.some((line) => line.includes('Could not load'))).toBe(false);
     expect(page.operations).not.toContain('listRoomSchedules');
   }, 120_000);
+});
+
+
+describe.skipIf(!existsSync(CHROME))('Desktop scheduled work page widths', () => {
+  for (const width of [500, 1280, 1440, 1920]) for (const page of ['list', 'schedule', 'subscription']) {
+    it(`centres ${page} at its planned width in a ${width}px window`, async () => {
+      const directory = process.env.DESKTOP_PAGE_EVIDENCE;
+      if (directory) mkdirSync(directory, { recursive: true });
+      const result = await proof(`?page=${page}&roomId=room-1&workspaceId=workspace-1&scheduleId=daily&subscriptionId=sub-1`, directory ? path.join(directory, `${page}-${width}.png`) : undefined, width);
+      if (directory) writeFileSync(path.join(directory, `${page}-${width}.json`), JSON.stringify({ viewport: result.viewport, pageWidth: result.pageWidth, pageLeft: result.pageLeft }, null, 2) + '\n');
+      expect(result.text.join(' ')).not.toContain('has stopped');
+      expect(result.text.join(' ')).not.toContain('target is missing');
+      if (page === 'list' || page === 'schedule') expect(result.text.join(' ')).toContain('Morning card');
+      expect(result.pageWidth).toBe(width < 768 ? width : page === 'list' ? 720 : 640);
+      expect(Math.abs(result.pageLeft + result.pageWidth / 2 - result.viewport / 2)).toBeLessThan(1);
+    }, 90_000);
+  }
 });

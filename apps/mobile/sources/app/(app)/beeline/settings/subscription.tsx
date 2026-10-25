@@ -1,3 +1,4 @@
+import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import * as Clipboard from 'expo-clipboard';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
@@ -29,6 +30,7 @@ function first(value: string | string[] | undefined): string | undefined {
 export default function Subscription() {
   useLatencyRouteFrame('/beeline/settings/subscription');
   const insets = useSafeAreaInsets();
+  const desktopPageLayout = useDesktopPageLayout();
   const params = useLocalSearchParams<{ roomId?: string | string[]; subscriptionId?: string | string[] }>();
   const roomId = first(params.roomId);
   const subscriptionId = first(params.subscriptionId);
@@ -81,7 +83,7 @@ export default function Subscription() {
   };
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={[styles.screen, desktopPageLayout && { width: '100%', maxWidth: 640, alignSelf: 'center' }, { paddingTop: insets.top }]}>
       <PageHeader
         backAccessibilityLabel="Back to Schedules and subscriptions"
         eyebrow="Schedules and subscriptions"

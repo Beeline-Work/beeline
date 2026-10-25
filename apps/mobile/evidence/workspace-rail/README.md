@@ -30,3 +30,10 @@ alpha 0.66 in both themes; see the measurement JSON files.
 | --- | --- | --- |
 | Obsidian | ![Closed](obsidian-rail-closed-1600.png) | ![Open](obsidian-rail-open-1600.png) |
 | Bone | ![Closed](bone-rail-closed-1600.png) | ![Open](bone-rail-open-1600.png) |
+
+The existing full proportions proof also passes without `BEELINE_PROOF_RAIL`:
+workspace switching no longer reserves an offset for the document pane. At
+1280 px the pane measures 704 px; at 1920 px it measures 1056 px (55% of the
+whole window in each case). Restoring the room list retains the transcript
+minimum. The same run covers brief/file opening, Settings, members, phone
+layout and touch controls. See `pane-measurements.json`.

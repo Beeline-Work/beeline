@@ -5,7 +5,7 @@ import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { lifecycleSummary, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
 import { InlineRow, TranscriptNavigationRow } from './IndexRow';
 import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
-import { CornerBranchGlyph } from './CornerBranchGlyph';
+import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
@@ -49,7 +49,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
       </LedgerDisclosure> : null}
       {items.length === 1 || expanded ? <>
         {(showAll || items.length <= 3 ? items : items.slice(0, 2)).map((item, index) => (
-          <RepositoryLifecycleRow key={item.id} item={item} glyph={anchored || (isRepositoryLifecycleItem(item) && !!item.cornerId && item.cornerId !== cornerId)} divider={index > 0}
+          <RepositoryLifecycleRow key={item.id} item={item} divider={index > 0}
             testID={anchored ? `corner-opened-marker-${item.cornerId}` : undefined}
             onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />
         ))}
@@ -69,19 +69,16 @@ export function isRepositoryLifecycleItem(item: RepositoryItem) {
 
 /**
  * GitHub and corner destinations are separate; the title keeps the remaining width.
- * Corner-linked rows received here belong to this call site. A caller showing
- * a row inside the corner itself can suppress its branch mark with `glyph`.
+ * Corner rows lead with the corner mark; GitHub rows have no leading glyph.
  */
 export function RepositoryLifecycleRow({
   item,
-  glyph = isRepositoryLifecycleItem(item) && Boolean(item.cornerId),
   divider = false,
   testID,
   onOpenCorner,
   onOpenUrl,
 }: {
   item: RepositoryItem;
-  glyph?: boolean;
   divider?: boolean;
   /** Replaces the corner target's test id. */
   testID?: string;
@@ -99,7 +96,7 @@ export function RepositoryLifecycleRow({
         testID={`notification-run-cell-${item.id}`}
         divider={divider}
         singleDestination
-        leading={glyph && item.cornerId ? <CornerBranchGlyph /> : undefined}
+        leading={item.cornerId ? <CornerGlyph size={CORNER_META_SIZE} /> : undefined}
         trailing={
           item.cornerId
             ? {
@@ -144,7 +141,6 @@ export function RepositoryLifecycleRow({
     <TranscriptNavigationRow
       testID={`notification-run-cell-${item.id}`}
         divider={divider}
-      leading={glyph && item.cornerId ? <CornerBranchGlyph /> : undefined}
       singleDestination={!isRepositoryLifecycleItem(item) && !item.cornerId}
       primary={
         item.url && (isRepositoryLifecycleItem(item) || item.cornerId)

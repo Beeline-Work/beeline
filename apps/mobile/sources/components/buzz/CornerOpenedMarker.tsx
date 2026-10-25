@@ -21,7 +21,6 @@ export function CornerOpenedMarker({
   return (
     <View>
       <RepositoryLifecycleRow
-        glyph
         testID={testID}
         item={{
           id: testID ?? title,
@@ -60,7 +59,6 @@ export function CornerOpenedMarkers({
       {items.map((item) => (
         <RepositoryLifecycleRow
           key={item.id}
-          glyph
           item={item}
           testID={`corner-opened-marker-${item.cornerId}`}
           onOpenCorner={onOpenCorner}

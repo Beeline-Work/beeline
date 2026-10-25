@@ -37,6 +37,8 @@ const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
 if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3)
   throw new Error('TRANSCRIPT_REPEAT_COUNT must be an integer from 1 to 3');
 const regressionOnly = process.env.TRANSCRIPT_REGRESSION_ONLY === '1';
+const profileRows = process.env.TRANSCRIPT_PROFILE_ROWS === '1';
+const profiledScenarios = new Set(['fling', 'history-prepend', 'concurrent-streams', 'optimistic-send']);
 const control = startControl();
 const stimulus = await fixtureStimulus();
 const samples = [];
@@ -59,10 +61,21 @@ const frameStats = text => {
     retainedFrameCount: frames.length, retainedFrameP95Ms: percentile(frames, .95), rawMs: frames };
 };
 async function capture(name, duration, action) {
+  const profiling = profileRows && profiledScenarios.has(name);
+  if (profiling) adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_PROFILE',
+    '-n', 'app.usebeeline/.LatencyRigReceiver', '--es', 'action', 'start');
   adb('shell', 'dumpsys', 'gfxinfo', 'app.usebeeline', 'reset');
-  const sample = await control.capture(name, duration, action);
+  let sample;
+  try {
+    sample = await control.capture(name, duration, action);
+  } finally {
+    if (profiling) adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_PROFILE',
+      '-n', 'app.usebeeline/.LatencyRigReceiver', '--es', 'action', 'stop');
+  }
+  if (profiling) await writeFile(`${output}/profile-${name}-${samples.filter(s => s.scenario === name).length}.json`,
+    adb('shell', 'cat', '/sdcard/Android/data/app.usebeeline/files/latency-profile.json'));
   const rawFrames = adb('shell', 'dumpsys', 'gfxinfo', 'app.usebeeline', 'framestats');
-  const result = { ...summarize(sample, refreshHz), raw: sample, uiFrames: frameStats(rawFrames) };
+  const result = { ...summarize(sample, refreshHz), profiling, raw: sample, uiFrames: frameStats(rawFrames) };
   samples.push(result);
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, refreshHz, samples }, null, 2));
   console.log(name, result.uiFrames.count, 'UI frames');
@@ -144,7 +157,7 @@ try {
     if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
-    scenarioOptions: { repeatCount, regressionOnly, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
+    scenarioOptions: { repeatCount, regressionOnly, profileRows, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     refreshHz,

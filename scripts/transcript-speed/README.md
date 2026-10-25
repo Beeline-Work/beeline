@@ -176,6 +176,31 @@ send trials. Both arms must use the same option, recorded in capture metadata.
 The Android driver rejects incoming/stream/send samples with no row commits:
 visibility after sampling alone cannot establish that the action was measured.
 
+For separate row-cost diagnosis, set `TRANSCRIPT_PROFILE_ROWS=1` when running
+`capture-android.mjs`. It saves Hermes sampling profiles around history prepend,
+fast scroll, concurrent streams and optimistic send. The capture records this
+flag; profiled runs must never be used as acceptance timing. Leave the flag off
+for every before/after timing arm. Symbolicate against the exact build with
+`TRANSCRIPT_APK=<matching-apk> node scripts/transcript-speed/symbolicate-row-profiles.mjs <capture-directory>`.
+The symbolicator verifies APK and local bytecode hashes before using the composed
+source map. `TRANSCRIPT_MAP_DIRECTORY` can select a retained generated-build
+directory containing `assets/` and `sourcemaps/`. Rankings count sampled stacks,
+not invocations or additive CPU time.
+
+Hover-only captures use the same seeded Room and real pointer input. Export
+the web build with `--source-maps external`, then set
+`TRANSCRIPT_WEB_DIRECTORY` to that export and `TRANSCRIPT_WEB_ORIGIN` to its
+loopback server before running `capture-hover.mjs <output>`. It captures three
+unprofiled trials at narrow and desktop widths, followed by separate Chrome
+timeline and symbolicated CPU profiles. For the packaged app, start the
+isolated Tauri WebDriver and set `TRANSCRIPT_DESKTOP_BINARY` to the extracted
+binary, `TRANSCRIPT_DESKTOP_PACKAGE` to its Debian package and optionally
+`TRANSCRIPT_WEBDRIVER_PORT` (default 20085), then run
+`capture-hover-desktop.mjs <output>`. It creates and closes its own session,
+checks that hovered actions become visible and retains a screenshot. WebKit
+does not provide a Chrome trace; the packaged timing and shared-code Chromium
+diagnosis remain distinct evidence. Stop or suspend builds during captures.
+
 For alternating-order regression checks, `TRANSCRIPT_REPEAT_COUNT=1`
 (default: 3; accepted range: 1–3) and `TRANSCRIPT_REGRESSION_ONLY=1`
 retain the exact idle, typing, scroll/fling, Room-return and incoming sequence,

@@ -1,0 +1,35 @@
+{
+  "capture.json.gz": {
+    "uncompressedSha256": "7cac2b7ef22de85d21ce8b14fddda9a45f3057f4f781144ce2ec1612d19bf17b"
+  },
+  "hover-390.png": {
+    "sha256": "2c74c613b8f2e4dbb0d23862c7ee6f4d66a744552bbca473af5b0ca17db6f5a8"
+  },
+  "hover-1280-trace.json.gz": {
+    "uncompressedSha256": "0a9df8bd24fa3feccc3f354417985b9012e0ea48f06330535e7c33fcd3564fbf"
+  },
+  "hover-1280-summary.json.gz": {
+    "uncompressedSha256": "49dc26a7fa66831efb07122e2db4084a7373c756a6f74c7a92b3dbf36b7bc184"
+  },
+  "hover-390-profile.json.gz": {
+    "uncompressedSha256": "8243a998edc9edf2eddf670fd97622c71fe553d3c1f8d25957476d3b646760b6"
+  },
+  "hover-390-bundle-hashes.json.gz": {
+    "uncompressedSha256": "21aaef3103b81a9d9fe628d6b9ac7978fee78108e62aa8860e312714747c450f"
+  },
+  "hover-1280-profile.json.gz": {
+    "uncompressedSha256": "cccdc0d2368e4d5303b75ca79e02701d26a6a7faed9bb4ab008e8470db5f3c93"
+  },
+  "hover-390-trace.json.gz": {
+    "uncompressedSha256": "1ed14c02915ddfee416cf226e39c9b54660ab4d92df1e4e875869f75e8efd784"
+  },
+  "hover-390-summary.json.gz": {
+    "uncompressedSha256": "1b66ecf4bf844cbcb3f932cb66b47d5afb01db4d79defc6c0918b9c61bf534ff"
+  },
+  "hover-1280-bundle-hashes.json.gz": {
+    "uncompressedSha256": "0e0f26cec1a99c2feef648c18c5b7c18750df1511314debdef1980e0e9a9bac4"
+  },
+  "hover-1280.png": {
+    "sha256": "12eb2fd023ce114f2198ec64ad4bed19d300f6ee86404f9d6f3357c9b155b1fd"
+  }
+}

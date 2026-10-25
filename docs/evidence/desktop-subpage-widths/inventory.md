@@ -183,3 +183,7 @@ The real Wallet page is rendered with fixture service responses and device bound
 Before is the pre-review branch page bundled over the same fixture and layout. Evidence is in `wallet/before/` and `wallet/after/`, including populated, loading and error screenshots and bounding-box JSON. These fixture pages occupy a standalone pane; widths describe that pane rather than a production navigation-shell split.
 
 The populated phone before/after PNG files compare byte-for-byte equal at 500 px. Both baseline and fixed browser matrices passed all 12 cases.
+
+## Current-main integration
+
+Integrated main `f32794966` after review reported conflicts. The three conflicts were adjacent imports in human-profile, connector setup and workflow pages. Both shared width imports and main’s newer inline-action/error-banner imports are retained. The diff against the integrated main contains no `_chat-surface.tsx` or shared-token changes. Wallet still applies its detail cap through the shared screenStyle across populated, loading and error returns. Refreshed after captures use this integrated tree.

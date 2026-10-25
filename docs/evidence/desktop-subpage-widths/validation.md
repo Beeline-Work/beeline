@@ -25,3 +25,11 @@ Final server shard 1/4 passed after integration (53 files; 781 tests passed, 1 s
 The shared Wallet shell now owns the desktop detail cap across populated, loading and error states. The built-page browser matrix passed all 12 cases, as did the pre-fix baseline matrix. It displays a fixture address, balance and asset row rather than merely checking an inner style. Before/after phone PNGs at 500 px are byte-identical; desktop after widths are centred at 640 px. Typecheck and UI component policy passed. Full mobile suite passed (616 files passed, 5 skipped; 5438 tests passed, 6 skipped).
 
 Wallet pre-push server shard 1/4 passed (53 files; 781 tests passed, 1 skipped). Diff check passed.
+
+## Current-main conflict resolution
+
+Main f32794966 is integrated. Conflicting imports were combined so the desktop caps coexist with main’s InlineActionRow/ErrorBanner changes. The Wallet shell cap remains shared across populated/loading/error states. Root typecheck and UI component policy passed. The refreshed browser matrix passed (28 tests: schedule pages, Wallet states and sheet placement at 500/1280/1440/1920); after widths are unchanged.
+
+Full mobile validation after current-main integration passed (617 files passed, 5 skipped; 5450 tests passed, 6 skipped).
+
+Server shard 1/4 after current-main integration passed (53 files; 781 tests passed, 1 skipped). Diff check passed.

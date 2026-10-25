@@ -109,7 +109,10 @@ vi.mock('@/components/buzz/IdentityMark', async () => {
 });
 vi.mock('@/components/buzz/CornerGlyph', async () => {
   const ReactModule = await import('react');
-  return { CornerGlyph: (props: any) => ReactModule.createElement('CornerGlyph', props) };
+  return {
+    CORNER_META_SIZE: 13,
+    CornerGlyph: (props: any) => ReactModule.createElement('CornerGlyph', props),
+  };
 });
 vi.mock('@/components/buzz/MessageReactionRoster', async () => {
   const ReactModule = await import('react');

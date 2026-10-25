@@ -1,5 +1,10 @@
-import { parseSigninFunnelEvent, FUNNEL_UUID } from '@beeline/api-contract/signin-funnel';
-import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
+import {
+  parseSigninFunnelEvent,
+  FUNNEL_FIRST_SESSION_MS,
+  FUNNEL_SCREEN_SEND_CAP,
+  FUNNEL_UUID,
+} from './signin-funnel.js';
+import type { FunnelScreen, SigninFunnelEvent } from './signin-funnel.js';
 
 interface Store {
   getItem(key: string): Promise<string | null>;
@@ -87,7 +92,12 @@ export function createSigninFunnelClient(input: {
         context,
         provider: event.provider!,
         createdAt: value.createdAt as number,
-        sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 7),
+        ...(Number.isFinite(value.signedInAt) ? { signedInAt: value.signedInAt as number } : {}),
+        ...(typeof value.lastScreen === 'string' ? { lastScreen: value.lastScreen as string } : {}),
+        screenSends: Number.isInteger(value.screenSends) ? (value.screenSends as number) : 0,
+        ...(Number.isFinite(value.lastScreenAt) ? { lastScreenAt: value.lastScreenAt as number } : {}),
+        // Seven funnel steps plus at most one entry per first-session screen.
+        sent: value.sent.filter((v: unknown): v is string => typeof v === 'string').slice(0, 64),
       };
     } catch {
       return null;
@@ -112,6 +122,7 @@ export function createSigninFunnelClient(input: {
     if (pending?.context.attemptId === base.attemptId) {
       if (pending.sent.includes(key)) return pending.context;
       pending.sent.push(key);
+      if (event === 'signed_in') pending.signedInAt = now();
       await input.storage.setItem(ATTEMPT_KEY, JSON.stringify(pending));
     } else {
       if (seen.has(key)) return base;
@@ -165,6 +176,38 @@ export function createSigninFunnelClient(input: {
       serial(() => step('callback_result', undefined, outcome, errorCode)),
     signedIn: (authorization: string) =>
       serial(() => step('signed_in', undefined, undefined, undefined, authorization)),
+    /**
+     * Each screen change in the 10 minutes after sign-in, so the server knows
+     * both which screens were reached and which one came last. Route pattern only,
+     * at most FUNNEL_SCREEN_SEND_CAP sends.
+     */
+    screenShown: (screen: FunnelScreen, authorization: () => Promise<string | undefined>) =>
+      serial(async () => {
+        if (suppressed || input.environment !== 'production') return;
+        const pending = await readPending();
+        if (!pending?.signedInAt) return;
+        const elapsed = now() - pending.signedInAt;
+        if (elapsed < 0 || elapsed >= FUNNEL_FIRST_SESSION_MS) return;
+        if (pending.lastScreen === screen || pending.screenSends >= FUNNEL_SCREEN_SEND_CAP) return;
+        const token = await authorization().catch(() => undefined);
+        if (!token) return;
+        // Strictly increasing device times carry the screen order, since
+        // requests can arrive at the server out of order.
+        const at = Math.max(now(), (pending.lastScreenAt ?? 0) + 1);
+        pending.lastScreen = screen;
+        pending.lastScreenAt = at;
+        pending.screenSends += 1;
+        await input.storage.setItem(ATTEMPT_KEY, JSON.stringify(pending));
+        send(
+          {
+            ...pending.context,
+            event: 'screen_shown',
+            screen,
+            timestamp: new Date(at).toISOString(),
+          },
+          token,
+        );
+      }),
     activation: (event: 'workspace_created' | 'first_message_sent', authorization: string) =>
       serial(() => step(event, undefined, undefined, undefined, authorization)),
     pending: () =>

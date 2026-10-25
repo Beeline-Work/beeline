@@ -2,8 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 import { randomUUID } from 'expo-crypto';
 import { Platform } from 'react-native';
-import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
-import { createSigninFunnelClient } from './signin-funnel-client';
+import type { FunnelScreen, SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
+import { createSigninFunnelClient } from '@beeline/api-contract/signin-funnel-client';
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 
@@ -68,6 +68,13 @@ export async function funnelOpened(signedIn: boolean, newOpen = false, authoriza
 }
 export async function funnelScreen() {
   await (await getClient())?.screen();
+}
+/** First-session screen reach after sign-in; sends the route pattern only. */
+export async function funnelScreenShown(screen: FunnelScreen) {
+  await (await getClient())?.screenShown(screen, async () => {
+    const { monolithSession } = await import('./monolith-session');
+    return monolithSession.authorization();
+  });
 }
 export async function beginFunnelAttempt(provider: 'github' | 'google') {
   return (await getClient())?.begin(provider);

@@ -1,6 +1,7 @@
 import { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { recordSigninFunnelEvent } from './signin-funnel.js';
+import { createSigninFunnelClient } from '@beeline/api-contract/signin-funnel-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -218,6 +219,76 @@ describe('private operator dashboard', () => {
     ).toMatchObject({ count: 0, denominator: 1, dropOffCount: 1, dropOffRate: 1 });
     expect(value.usage.people.find((s: any) => s.stage === 'signup').count).toBe(1);
   });
+  it('R-first-session-screens: the app client sends tray → chat → tray over HTTP, chat arriving last, and the dashboard ends it on tray, counts only', async () => {
+    const person = '9'.repeat(64);
+    const app = createBeelineServer({
+      database: db,
+      auth: { authenticatePhone: async (value: string) => (value === 'phone-key-for-dashboard-test' ? person : null) } as TokenAuth,
+      phone: {} as PhoneService, daemon: {} as DaemonService, live: {} as LiveHub,
+      mediaMaximumBytes: 1,
+    });
+    await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+    const appBase = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    try {
+      const post = (data: unknown, authorization?: string) => fetch(`${appBase}/v1/funnel/events`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(authorization ? { authorization: `Bearer ${authorization}` } : {}),
+        },
+        body: JSON.stringify(data),
+      });
+      const statuses: Promise<number>[] = [];
+      // Hold the chat request until the final tray visit has been stored.
+      let releaseChat = () => {};
+      const chatHeld = new Promise<void>(resolve => { releaseChat = resolve; });
+      const items = new Map<string, string>();
+      const client = createSigninFunnelClient({
+        storage: { getItem: async (k) => items.get(k) ?? null, setItem: async (k, v) => { items.set(k, v); } },
+        uuid: randomUUID,
+        platform: 'android',
+        version: '0.2.22',
+        environment: 'production',
+        send: async (event, authorization) => {
+          const delay = event.screen === 'beeline/chat/[channelId]' ? chatHeld : Promise.resolve();
+          statuses.push(delay.then(() => post(event, authorization)).then(r => r.status));
+        },
+      });
+      const sent = async () => Promise.all(statuses.splice(0));
+      const attempt = (await client.begin('github'))!;
+      expect(await sent()).toEqual([204]);
+      await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','New customer')`, [person]);
+      await client.signedIn('phone-key-for-dashboard-test');
+      expect(await sent()).toEqual([204]);
+      const auth = async () => 'phone-key-for-dashboard-test';
+      await client.screenShown('beeline/tray', auth);
+      expect(await sent()).toEqual([204]);
+      await client.screenShown('beeline/chat/[channelId]', auth);
+      const chat = statuses.splice(0);
+      await client.screenShown('beeline/tray', auth);
+      expect(await sent()).toEqual([204]);
+      releaseChat();
+      expect(await Promise.all(chat)).toEqual([204]);
+      // The HTTP boundary still refuses an unsigned event, a route value and any extra field.
+      const screen = { ...attempt, provider: undefined, event: 'screen_shown', timestamp: new Date().toISOString() };
+      expect((await post({ ...screen, screen: 'beeline/tray' })).status).toBe(401);
+      expect((await post({ ...screen, screen: 'beeline/chat/2f1c' }, 'phone-key-for-dashboard-test')).status).toBe(400);
+      expect((await post({ ...screen, screen: 'beeline/tray', name: 'Ada' }, 'phone-key-for-dashboard-test')).status).toBe(400);
+      const value = await (await get('?platforms=android')).json();
+      const today = new Date().toISOString().slice(0, 10);
+      expect(value.signinFunnel.firstSession.days).toEqual([{
+        date: today, signups: 1, withScreens: 1, capped: 0,
+        screens: [
+          { screen: 'beeline/chat/[channelId]', reached: 1, last: 0 },
+          { screen: 'beeline/tray', reached: 1, last: 1 },
+        ],
+      }]);
+      expect(JSON.stringify(value.signinFunnel.firstSession)).not.toContain(attempt.installId);
+      expect(JSON.stringify(value.signinFunnel.firstSession)).not.toContain(person);
+    } finally {
+      await new Promise<void>(resolve => app.close(() => resolve()));
+    }
+  });
   it('validates anonymous events at the HTTP boundary and rate limits without persisting personal fields', async () => {
     const input={event:'app_opened',installId:'00000000-0000-4000-8000-000000000001',attemptId:'00000000-0000-4000-8000-000000000002',platform:'android',version:'0.2.22',environment:'production',timestamp:new Date().toISOString()};
     const send=(data:unknown,ip='funnel-proof')=>fetch(`${base}/v1/funnel/events`,{method:'POST',headers:{'content-type':'application/json','fly-client-ip':ip},body:JSON.stringify(data)});
@@ -235,7 +306,7 @@ describe('private operator dashboard', () => {
     expect(JSON.stringify(rows)).not.toContain('private@example.com');
     expect(JSON.stringify(rows)).not.toContain('funnel-proof');
     // Invalid input also spends the per-IP budget, before body parsing or storage.
-    for(let i=0;i<60;i++)expect((await send({},'rate-proof')).status).toBe(400);
+    for(let i=0;i<128;i++)expect((await send({},'rate-proof')).status).toBe(400);
     expect((await send({},'rate-proof')).status).toBe(429);
   });
 

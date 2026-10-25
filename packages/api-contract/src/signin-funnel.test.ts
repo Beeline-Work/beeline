@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { parseSigninFunnelEvent } from './signin-funnel.js';
+import { funnelScreenFromSegments, parseSigninFunnelEvent } from './signin-funnel.js';
 const valid = {
   event: 'app_opened',
   installId: '00000000-0000-4000-8000-000000000001',
@@ -34,4 +34,32 @@ it.each([
   'identityId',
 ])('refuses personal field %s', (field) => {
   expect(parseSigninFunnelEvent({ ...valid, [field]: 'private' })).toBeNull();
+});
+const screen = { ...valid, event: 'screen_shown', screen: 'beeline/chat/[channelId]' };
+it('accepts a screen event only for an allowlisted route pattern', () => {
+  expect(parseSigninFunnelEvent(screen)).not.toBeNull();
+  for (const value of [
+    undefined,
+    'beeline/chat/7f3a9c',
+    'beeline/chat/[channelId]?name=Ada',
+    '(app)/beeline/tray',
+    'Ada Lovelace',
+    'pageview',
+    42,
+  ])
+    expect(parseSigninFunnelEvent({ ...screen, screen: value })).toBeNull();
+  expect(parseSigninFunnelEvent({ ...valid, screen: 'beeline/tray' })).toBeNull();
+  expect(parseSigninFunnelEvent({ ...screen, provider: 'github' })).toBeNull();
+});
+it.each(['text', 'name', 'id', 'params', 'channelId', 'title', 'email'])(
+  'refuses extra field %s on a screen event',
+  (field) => {
+    expect(parseSigninFunnelEvent({ ...screen, [field]: 'private' })).toBeNull();
+  },
+);
+it('maps route segments to a pattern without groups or index', () => {
+  expect(funnelScreenFromSegments(['(app)'])).toBe('index');
+  expect(funnelScreenFromSegments(['(app)', 'beeline', 'settings', 'index'])).toBe('beeline/settings');
+  expect(funnelScreenFromSegments(['(app)', 'beeline', 'chat', '[channelId]'])).toBe('beeline/chat/[channelId]');
+  expect(funnelScreenFromSegments(['(app)', 'beeline', 'chat', 'abc123'])).toBeNull();
 });

@@ -1971,7 +1971,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     catch { json(response,400,{error:'invalid_funnel_event'}); return; }
     const event = parseSigninFunnelEvent(input);
     if (!event) { json(response,400,{error:'invalid_funnel_event'}); return; }
-    const requiresIdentity = ['signed_in', 'workspace_created', 'first_message_sent'].includes(event.event);
+    const requiresIdentity = ['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event);
     const viewerId = requiresIdentity || request.headers.authorization ? await phoneIdentity(request,options) : undefined;
     if (requiresIdentity && !viewerId) { json(response,401,{error:'unauthorized'}); return; }
     await recordSigninFunnelEvent(options.database,event,'client',viewerId ?? undefined);

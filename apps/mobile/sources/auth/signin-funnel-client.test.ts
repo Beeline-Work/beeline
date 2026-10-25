@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { createSigninFunnelClient } from './signin-funnel-client';
+import { createSigninFunnelClient } from '../../../../packages/api-contract/src/signin-funnel-client';
 import {
   parseSigninFunnelEvent,
   type SigninFunnelEvent,
@@ -153,4 +153,71 @@ it('keeps activation attribution after sign-in across a later session and sends 
   const milestones = send.mock.calls.map(([event]) => event).filter(event => ['workspace_created', 'first_message_sent'].includes(event.event));
   expect(milestones.map(event => event.event)).toEqual(['workspace_created', 'first_message_sent']);
   expect(milestones.every(event => event.attemptId === attempt?.attemptId)).toBe(true);
+});
+
+it('sends each screen change in the 10 minutes after sign-in, including revisits, and none after', async () => {
+  const { input, send } = setup();
+  let time = Date.now();
+  input.now = () => time;
+  const timed = createSigninFunnelClient(input);
+  const auth = async () => 'session';
+  await timed.screenShown('beeline/tray', auth);
+  expect(send).not.toHaveBeenCalled();
+  const attempt = await timed.begin('github');
+  await timed.signedIn('session');
+  send.mockClear();
+  await timed.screenShown('beeline/tray', auth);
+  // Re-rendering the same screen is not a change.
+  await timed.screenShown('beeline/tray', auth);
+  time += 9 * 60_000;
+  await createSigninFunnelClient(input).screenShown('beeline/chat/[channelId]', auth);
+  // A revisit after a reload still counts as the latest screen.
+  await createSigninFunnelClient(input).screenShown('beeline/tray', auth);
+  expect(send.mock.calls.map(([event]) => [event.event, event.screen])).toEqual([
+    ['screen_shown', 'beeline/tray'],
+    ['screen_shown', 'beeline/chat/[channelId]'],
+    ['screen_shown', 'beeline/tray'],
+  ]);
+  for (const [event, authorization] of send.mock.calls) {
+    expect(parseSigninFunnelEvent(event)).not.toBeNull();
+    expect(event.attemptId).toBe(attempt?.attemptId);
+    expect(authorization).toBe('session');
+  }
+  time += 60_000;
+  await timed.screenShown('beeline/settings', auth);
+  await createSigninFunnelClient(input).screenShown('beeline/members', auth);
+  expect(send).toHaveBeenCalledTimes(3);
+});
+it('caps screen sends in one first session', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  await client.signedIn('session');
+  send.mockClear();
+  for (let i = 0; i < 40; i++) {
+    await client.screenShown('beeline/tray', async () => 'session');
+    await client.screenShown('beeline/channels', async () => 'session');
+  }
+  expect(send).toHaveBeenCalledTimes(64);
+});
+it('sends no screen event without a session', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  await client.signedIn('session');
+  send.mockClear();
+  await client.screenShown('beeline/tray', async () => undefined);
+  await client.screenShown('beeline/tray', async () => { throw new Error('signed out'); });
+  expect(send).not.toHaveBeenCalled();
+  await client.screenShown('beeline/tray', async () => 'session');
+  expect(send).toHaveBeenCalledTimes(1);
+});
+it('stamps screen changes with strictly increasing device times, even within one millisecond', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  await client.signedIn('session');
+  send.mockClear();
+  for (const screen of ['beeline/tray', 'beeline/chat/[channelId]', 'beeline/tray'] as const)
+    await client.screenShown(screen, async () => 'session');
+  const times = send.mock.calls.map(([event]) => Date.parse(event.timestamp));
+  expect(times).toHaveLength(3);
+  expect(times[0]! < times[1]! && times[1]! < times[2]!).toBe(true);
 });

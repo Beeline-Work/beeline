@@ -7,7 +7,71 @@ export const FUNNEL_EVENTS = [
   'signed_in',
   'workspace_created',
   'first_message_sent',
+  'screen_shown',
 ] as const;
+/**
+ * Route patterns a first-session screen event may name. Patterns only, with
+ * groups removed and dynamic segments left as `[name]`; never a value.
+ */
+export const FUNNEL_SCREENS = [
+  'index',
+  'artifact-viewer',
+  'beeline/agent-profile',
+  'beeline/agents',
+  'beeline/browser-share',
+  'beeline/channels',
+  'beeline/chat/[channelId]',
+  'beeline/community',
+  'beeline/corner-app/[slug]',
+  'beeline/corners/[roomId]',
+  'beeline/create-workspace',
+  'beeline/github-callback',
+  'beeline/github-installation',
+  'beeline/google-callback',
+  'beeline/human-profile',
+  'beeline/members',
+  'beeline/onboarding',
+  'beeline/settings',
+  'beeline/settings/identity',
+  'beeline/settings/schedule',
+  'beeline/settings/schedules',
+  'beeline/settings/subscription',
+  'beeline/settings/workbench',
+  'beeline/settings/workbench/app',
+  'beeline/settings/workbench/connect',
+  'beeline/settings/workbench/connect-app',
+  'beeline/settings/workbench/connect-signin',
+  'beeline/settings/workbench/connection',
+  'beeline/settings/workbench/service',
+  'beeline/settings/workbench/wallet',
+  'beeline/settings/workbench/wallet-receive',
+  'beeline/settings/workbench/wallet-send',
+  'beeline/settings/workbench/wallet-service',
+  'beeline/settings/workflows',
+  'beeline/settings/workspace',
+  'beeline/tray',
+  'beeline/workflow',
+  'beeline/workflow-run',
+  'buzz/github-callback',
+  'buzz/github-installation',
+  'changelog',
+  'join/[token]',
+  'review/[secret]',
+  'settings',
+  'text-selection',
+] as const;
+export type FunnelScreen = (typeof FUNNEL_SCREENS)[number];
+/** Screen events are sent and kept only within this long after `signed_in`. */
+export const FUNNEL_FIRST_SESSION_MS = 10 * 60_000;
+/** At most this many screen events per install in that window; a person who reaches it is "capped". */
+export const FUNNEL_SCREEN_SEND_CAP = 64;
+/** Maps expo-router segment patterns to an allowlisted screen, or null. */
+export function funnelScreenFromSegments(segments: readonly string[]): FunnelScreen | null {
+  const parts = segments.filter((segment) => !segment.startsWith('('));
+  if (parts[parts.length - 1] === 'index') parts.pop();
+  const route = parts.join('/') || 'index';
+  return FUNNEL_SCREENS.includes(route as never) ? (route as FunnelScreen) : null;
+}
 export const FUNNEL_PLATFORMS = ['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const;
 export const FUNNEL_ERRORS = [
   'offline',
@@ -27,6 +91,7 @@ export interface SigninFunnelEvent {
   provider?: 'github' | 'google';
   outcome?: 'success' | 'cancelled' | 'error';
   errorCode?: (typeof FUNNEL_ERRORS)[number];
+  screen?: FunnelScreen;
   timestamp: string;
 }
 export const FUNNEL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,6 +105,7 @@ const KEYS = [
   'provider',
   'outcome',
   'errorCode',
+  'screen',
   'timestamp',
 ];
 export function parseSigninFunnelEvent(value: unknown, now = Date.now()): SigninFunnelEvent | null {
@@ -78,6 +144,12 @@ export function parseSigninFunnelEvent(value: unknown, now = Date.now()): Signin
     )
       return null;
   } else if (v.outcome !== undefined || v.errorCode !== undefined) return null;
+  if (
+    v.event === 'screen_shown'
+      ? !FUNNEL_SCREENS.includes(v.screen as never)
+      : v.screen !== undefined
+  )
+    return null;
   return v as unknown as SigninFunnelEvent;
 }
 export interface FunnelAuthObservation {

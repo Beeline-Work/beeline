@@ -1,4 +1,6 @@
 import {
+  FUNNEL_FIRST_SESSION_MS,
+  FUNNEL_SCREEN_SEND_CAP,
   parseSigninFunnelEvent,
   type SigninFunnelEvent,
   type FunnelAuthObservation,
@@ -23,7 +25,8 @@ export class FunnelRateLimit {
       this.clients.set(ip, { start: now, count: 1 });
       return true;
     }
-    return ++row.count <= 60;
+    // Allows a first session's FUNNEL_SCREEN_SEND_CAP screen events plus its funnel steps.
+    return ++row.count <= 128;
   }
 }
 export async function recordSigninFunnelEvent(
@@ -47,7 +50,21 @@ export async function recordSigninFunnelEvent(
       throw error;
     }
   }
-  if (source === 'client' && ['signed_in', 'workspace_created', 'first_message_sent'].includes(event.event) && !identityId) return;
+  if (source === 'client' && ['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event) && !identityId) return;
+  if (event.event === 'screen_shown') {
+    // Keep screens only for a new-account signup on this attempt, within its first session,
+    // and stop at the send cap.
+    const firstSession = (
+      await database.query<{ visits: string }>(
+        `SELECT (SELECT COALESCE(sum(visits),0) FROM signin_funnel_events
+          WHERE install_id=$1 AND attempt_id=$2 AND event='screen_shown') AS visits
+        FROM signin_funnel_events WHERE install_id=$1 AND attempt_id=$2 AND event='signup'
+        AND occurred_at > now()-$3::int*interval '1 millisecond'`,
+        [event.installId, event.attemptId, FUNNEL_FIRST_SESSION_MS],
+      )
+    ).rows[0];
+    if (!firstSession || !event.screen || Number(firstSession.visits) >= FUNNEL_SCREEN_SEND_CAP) return;
+  }
   let internal = false;
   if (identityId) {
     const row = (
@@ -67,10 +84,12 @@ export async function recordSigninFunnelEvent(
       [event.installId, internal],
     );
     await tx.query(
-      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,occurred_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now()) ON CONFLICT(install_id,attempt_id,event,provider)
-      DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source
-      WHERE EXCLUDED.source='server' AND signin_funnel_events.source='client'`,
+      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) ON CONFLICT(install_id,attempt_id,event,provider,screen)
+      DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source,
+        last_seen_at=GREATEST(signin_funnel_events.last_seen_at,EXCLUDED.last_seen_at),
+        visits=signin_funnel_events.visits+CASE WHEN EXCLUDED.event='screen_shown' THEN 1 ELSE 0 END
+      WHERE (EXCLUDED.source='server' AND signin_funnel_events.source='client') OR EXCLUDED.event='screen_shown'`,
       [
         event.installId,
         event.attemptId,
@@ -81,6 +100,9 @@ export async function recordSigninFunnelEvent(
         event.outcome ?? '',
         event.errorCode ?? null,
         source,
+        event.screen ?? '',
+        // Screen order comes from the device's time, not arrival order.
+        event.event === 'screen_shown' ? event.timestamp : null,
       ],
     );
     if (event.event === 'signed_in' && identityId && !internal) {
@@ -204,7 +226,7 @@ export async function dashboardSigninFunnel(
     }>(
       `WITH eligible AS (
     SELECT e.* FROM signin_funnel_events e JOIN signin_funnel_installs i ON i.install_id=e.install_id
-    WHERE NOT i.internal AND e.platform=ANY($1::text[]) AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
+    WHERE NOT i.internal AND e.event<>'screen_shown' AND e.platform=ANY($1::text[]) AND e.occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
       AND e.occurred_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC')
   ), periods AS (
     SELECT *, 'window' period, '' date FROM eligible UNION ALL
@@ -335,6 +357,7 @@ export async function dashboardSigninFunnel(
     ).rows[0];
     signupCounts.set(selection, Number(row?.count ?? 0));
   }
+  const firstSession = await dashboardFirstSessionScreens(database, platforms, measuredAt);
   return {
     state: coverageStart && through >= coverageStart ? 'measured' : 'not_measured',
     measuredAt,
@@ -368,6 +391,71 @@ export async function dashboardSigninFunnel(
         dropOffRate: coverageStart && through >= coverageStart ? s.dropOffRate : null,
       })),
     })),
+    firstSession,
     dailyAggregatesRetainedAfterDays: 90,
+  };
+}
+/**
+ * Per Signup cohort day: how many new signups reached each screen in their
+ * first 10 minutes, and on which screen each one's first session ended,
+ * counting revisits.
+ * Aggregated counts only. Builds without screen events count as zero.
+ * Covers the last 14 UTC days through today; it does not wait for store reports.
+ */
+async function dashboardFirstSessionScreens(
+  database: SqlDatabase,
+  platforms: readonly string[],
+  measuredAt: string,
+) {
+  const through = measuredAt.slice(0, 10);
+  const from = new Date(Date.parse(through) - 13 * 86_400_000).toISOString().slice(0, 10);
+  const params = [[...platforms], from, through, FUNNEL_FIRST_SESSION_MS, FUNNEL_SCREEN_SEND_CAP];
+  const cohort = `cohort AS (
+    SELECT s.install_id,s.attempt_id,s.occurred_at AS signed_at,(s.occurred_at AT TIME ZONE 'UTC')::date::text AS day
+    FROM signin_funnel_events s JOIN signin_funnel_installs i ON i.install_id=s.install_id
+    WHERE s.event='signup' AND NOT i.internal AND s.platform=ANY($1::text[])
+      AND s.occurred_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
+      AND s.occurred_at < (($3::date+1)::timestamp AT TIME ZONE 'UTC')
+  ), shown AS (
+    SELECT c.day,c.install_id,c.attempt_id,e.screen,row_number() OVER (
+      PARTITION BY c.install_id,c.attempt_id ORDER BY e.last_seen_at DESC,e.recorded_at DESC) AS recency,
+      sum(e.visits) OVER (PARTITION BY c.install_id,c.attempt_id) >= $5::int AS capped
+    FROM cohort c JOIN signin_funnel_events e ON e.install_id=c.install_id AND e.attempt_id=c.attempt_id
+      AND e.event='screen_shown' AND e.occurred_at < c.signed_at+$4::int*interval '1 millisecond'
+  )`;
+  const days = (
+    await database.query<{ day: string; signups: string; with_screens: string; capped: string }>(
+      `WITH ${cohort} SELECT c.day,count(*) AS signups,count(*) FILTER (WHERE EXISTS(SELECT 1 FROM shown s
+        WHERE s.install_id=c.install_id AND s.attempt_id=c.attempt_id)) AS with_screens,
+        count(*) FILTER (WHERE EXISTS(SELECT 1 FROM shown s
+        WHERE s.install_id=c.install_id AND s.attempt_id=c.attempt_id AND s.capped)) AS capped
+      FROM cohort c GROUP BY c.day ORDER BY c.day`,
+      params,
+    )
+  ).rows;
+  const screens = (
+    await database.query<{ day: string; screen: string; reached: string; last: string }>(
+      `WITH ${cohort} SELECT day,screen,count(*) AS reached,count(*) FILTER (WHERE recency=1 AND NOT capped) AS last
+      FROM shown GROUP BY day,screen ORDER BY day,count(*) DESC,screen`,
+      params,
+    )
+  ).rows;
+  return {
+    from,
+    through,
+    unit: 'people',
+    windowMinutes: FUNNEL_FIRST_SESSION_MS / 60_000,
+    source:
+      'Authenticated screen_shown route patterns from new-account Signup attempts, kept only within 10 minutes of sign-in.',
+    days: days.map((d) => ({
+      date: d.day,
+      signups: Number(d.signups),
+      withScreens: Number(d.with_screens),
+      // People who hit the send cap: their screens count as reached, but they get no last screen.
+      capped: Number(d.capped),
+      screens: screens
+        .filter((s) => s.day === d.day)
+        .map((s) => ({ screen: s.screen, reached: Number(s.reached), last: Number(s.last) })),
+    })),
   };
 }

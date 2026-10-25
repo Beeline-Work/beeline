@@ -753,7 +753,16 @@ function scan(files: Map<string, string>): Entry[] {
       )
     )
       return false;
-    const options = invocationArguments(call)[6];
+    const args = invocationArguments(call);
+    // Invocation adapters and argument spreads can obscure the options position.
+    if (
+      args.length !== call.arguments.length ||
+      args.some(
+        (argument, index) => argument !== call.arguments[index] || ts.isSpreadElement(argument),
+      )
+    )
+      return false;
+    const options = args[6];
     if (!options || !ts.isObjectLiteralExpression(options)) return false;
     if (
       options.properties.some(
@@ -1041,6 +1050,13 @@ it.each([
   '{automatic: true, agentOnly: true, agentOnly: false}',
 ])('locks reports with a possible human delivery path: %s', (options) => {
   const source = `report(db, room, author, 'hello', undefined, 'id', ${options});`;
+  expect(() =>
+    enforce(scan(reportFixture(source.replace('hello', 'goodbye'))), scan(reportFixture(source))),
+  ).toThrow(failure);
+});
+
+it('keeps argument spreads fail-closed even when flags appear in the options position', () => {
+  const source = `report(...unknownArgs, room, author, 'hello', undefined, 'id', {automatic: true, agentOnly: true});`;
   expect(() =>
     enforce(scan(reportFixture(source.replace('hello', 'goodbye'))), scan(reportFixture(source))),
   ).toThrow(failure);

@@ -7,6 +7,7 @@ const out = process.env.BEELINE_PROOF_WEB_DIR;
 if (!out) throw new Error('Set BEELINE_PROOF_WEB_DIR to an Expo web export');
 const output =
   process.env.BEELINE_PROOF_OUTPUT || path.resolve('evidence/desktop-proportions/web-after');
+const railOnly = process.env.BEELINE_PROOF_RAIL === '1';
 const before = process.env.BEELINE_PROOF_BEFORE === '1';
 fs.mkdirSync(output, { recursive: true });
 const server = http.createServer((req, res) => {
@@ -36,6 +37,8 @@ const ws = {
   role: 'owner',
   updatedAt: 1,
 };
+const otherWorkspace = { ...ws, id: '55555555-5555-4555-8555-555555555555', name: 'Another Workspace', attention: true, roomCount: 2 };
+const workspaceFixtures = railOnly ? [{ ...ws, roomCount: 4 }, otherWorkspace] : [ws];
 const room = {
   id: '22222222-2222-4222-8222-222222222222',
   workspaceId: ws.id,
@@ -138,9 +141,9 @@ function roomView(isCorner = false) {
           pushLevel: 'attention',
           providers: [],
         },
-        workspaces: { viewer, workspaces: [ws], watchFilters: [] },
+        workspaces: { viewer, workspaces: workspaceFixtures, watchFilters: [] },
       };
-    else if (p === '/v1/phone/workspaces') body = { viewer, workspaces: [ws], watchFilters: [] };
+    else if (p === '/v1/phone/workspaces') body = { viewer, workspaces: workspaceFixtures, watchFilters: [] };
     else if (p.endsWith('/chats'))
       body = {
         viewer,
@@ -179,7 +182,7 @@ function roomView(isCorner = false) {
       body = {
         viewer,
         identity: viewer,
-        workspaces: [ws],
+        workspaces: workspaceFixtures,
         workspace: ws,
         items: [],
         members: [],
@@ -205,6 +208,39 @@ function roomView(isCorner = false) {
     await page.waitForTimeout(700);
     await page.evaluate(() => document.fonts.ready);
   };
+  if (railOnly) {
+    const theme = process.env.BEELINE_PROOF_DARK === '1' ? 'obsidian' : 'bone';
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await navigate('chat/' + room.id + '?communityId=' + ws.id);
+    await page.getByTestId('workspace-avatar-trigger').waitFor();
+    await page.getByTestId('chat-messages').waitFor();
+    await settle();
+    if (await page.getByTestId('desktop-workspace-strip').count()) throw Error('permanent strip remains');
+    const navigation = await page.getByTestId('desktop-navigation-pane').boundingBox();
+    if (navigation.x !== 0) throw Error('room list is not at left edge');
+    await page.getByTestId('workspace-attention').waitFor();
+    await page.getByTestId('profile-settings-navigation').waitFor();
+    await capture(theme + '-rail-closed', 1600);
+    await page.getByTestId('workspace-avatar-trigger').click();
+    const scrim = page.getByTestId('desktop-workspace-rail-scrim');
+    await scrim.waitFor();
+    await settle();
+    const background = await scrim.evaluate(el => getComputedStyle(el).backgroundColor);
+    if (background === 'transparent' || background === 'rgba(0, 0, 0, 0)') throw Error('transparent scrim');
+    await capture(theme + '-rail-open', 1600);
+    await page.keyboard.press('Escape');
+    await page.getByTestId('desktop-workspace-rail-overlay').waitFor({ state: 'detached' });
+    await page.keyboard.press('Control+Shift+S');
+    await scrim.waitFor();
+    await scrim.click({ position: { x: 500, y: 500 } });
+    await page.getByTestId('desktop-workspace-rail-overlay').waitFor({ state: 'detached' });
+    metrics.push({ theme, width: 1600, navigationX: navigation.x, background, avatar: true, escape: true, shortcut: true, outsideClick: true });
+    fs.writeFileSync(path.join(output, 'rail-measurements.json'), JSON.stringify(metrics, null, 2));
+    console.log('PASS desktop-workspace-rail: ' + JSON.stringify(metrics));
+    await browser.close();
+    server.close();
+    return;
+  }
   for (const width of [1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     await navigate('chat/' + room.id + '?communityId=' + ws.id);
@@ -225,14 +261,14 @@ function roomView(isCorner = false) {
     await capture('file', width);
     const panel = await page.getByTestId('desktop-inspector').boundingBox();
     if (!before) {
-      if (Math.abs(panel.width - (width - (width >= 1360 ? 76 : 0)) * 0.55) > 2)
+      if (Math.abs(panel.width - width * 0.55) > 2)
         throw Error('document proportion ' + panel.width);
       if (panel.x < 440) throw Error('chat below minimum ' + panel.x);
       await page.getByTestId('desktop-toggle-room-list').click();
       await settle();
       const shown = await page.getByTestId('desktop-inspector').boundingBox();
       const nav = await page.getByTestId('desktop-navigation-pane').boundingBox();
-      if (shown.x - nav.width - (width >= 1360 ? 76 : 0) < 439)
+      if (shown.x - nav.width < 439)
         throw Error('chat below minimum with restored list');
     }
     await page.getByTestId('desktop-artifact-close').click();
@@ -330,7 +366,7 @@ function roomView(isCorner = false) {
       let body = { viewer, items: [], members: [], runs: [], watchFilters: [] };
       if (p.endsWith('/chats'))
         body = { viewer, workspace: ws, chats: [{ room, cornerCount: 1 }], watchFilters: [] };
-      else if (p === '/v1/phone/workspaces') body = { viewer, workspaces: [ws], watchFilters: [] };
+      else if (p === '/v1/phone/workspaces') body = { viewer, workspaces: workspaceFixtures, watchFilters: [] };
       else if (p.includes('/phone/rooms/')) body = roomView();
       else if (p.endsWith('/' + ws.id))
         body = {

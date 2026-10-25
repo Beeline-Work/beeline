@@ -492,7 +492,7 @@ describe('desktop Workspace navigation', () => {
       viewport.width = 1440;
       await act(async () => tree.update(<SidebarView key="mac-wide" />));
       expect(tree.root.findAllByType('View')[0]!.props.style.paddingTop).toBe(56);
-      expect(control('desktop-workspace-strip')).toBeTruthy();
+      expect(tree.root.findAllByProps({ testID: 'desktop-workspace-strip' })).toHaveLength(0);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -527,20 +527,21 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
   });
 
-  it('shows the permanent Workspace strip on wide desktop without removing its actions', async () => {
-    viewport.width = 1440;
-    await act(async () => tree.update(<SidebarView key="wide" />));
+  it.each([1024, 1280, 1360, 1440, 1600, 1920])('keeps the rail behind the avatar at %i px', async (width) => {
+    viewport.width = width;
+    await act(async () => tree.update(<SidebarView key={`width-${width}`} />));
     await settle();
-    expect(control('desktop-workspace-strip')).toBeTruthy();
-    expect(tree.root.findAllByProps({ testID: 'profile-settings-navigation' })).toHaveLength(0);
-    act(() => control('desktop-strip-add-workspace').props.onPress());
-    expect(routerPush).toHaveBeenCalledWith('/beeline/community');
-    act(() => control('desktop-strip-account').props.onPress());
+    expect(tree.root.findAllByProps({ testID: 'desktop-workspace-strip' })).toHaveLength(0);
+    expect(control('profile-settings-navigation')).toBeTruthy();
+    const trigger = tree.root.findByType('CommunitySwitcherTrigger');
+    expect(trigger.props.attention).toBe(true);
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
+    act(() => trigger.props.onPress());
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
+    act(() => tree.root.findByType('DesktopWorkspaceRail').props.onClose());
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
+    act(() => control('profile-settings-navigation').props.onPress());
     expect(routerPush).toHaveBeenCalledWith('/beeline/settings');
-    await act(async () => control('desktop-strip-workspace-workspace-empty').props.onPress());
-    expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
-      'Empty Workspace',
-    );
   });
 
   it('switches header, list, URL, and closes the switcher for an empty Workspace', async () => {

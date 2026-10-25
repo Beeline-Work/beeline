@@ -1,7 +1,6 @@
 import React from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
-import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { RoomCornersList } from '@/components/buzz/RoomCornersList';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
@@ -28,15 +27,6 @@ const corners = ['short', 'a-long-corner-title-that-wraps-across-several-lines']
 
 createRoot(document.getElementById('root')!).render(
   <div style={{ display: 'flex', height: 680 }}>
-    <DesktopWorkspaceStrip
-      workspaces={[{ id: 'workspace', name: 'Sample Workspace' } as any]}
-      activeWorkspaceId="workspace"
-      viewerName="Sample account with a longer name that must wrap"
-      viewerPubkey="viewer"
-      onSelect={() => {}}
-      onAdd={() => {}}
-      onAccount={() => clicks.push('settings')}
-    />
     <div style={{ width: 480, padding: 24 }}>
       <CommunitySwitcherTrigger
         community={{ communityId: 'workspace', name: 'Sample Workspace' }}

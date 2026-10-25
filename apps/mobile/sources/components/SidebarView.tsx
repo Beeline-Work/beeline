@@ -31,7 +31,6 @@ import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
 import { CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopWorkspaceRail } from '@/components/buzz/DesktopWorkspaceRail';
-import { DesktopWorkspaceStrip } from '@/components/buzz/DesktopWorkspaceStrip';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
@@ -58,7 +57,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
@@ -173,8 +171,6 @@ export const SidebarView = React.memo(function SidebarView() {
       ? headerHeight
       : 0;
   const isDesktop = useIsDesktop();
-  const { width: windowWidth } = useWindowDimensions();
-  const showWorkspaceStrip = isDesktop && windowWidth >= 1360;
   const router = useRouter();
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams<{
@@ -473,19 +469,6 @@ export const SidebarView = React.memo(function SidebarView() {
 
   return (
     <View style={{ flex: 1, flexDirection: 'row', paddingTop: macTitlebarInset }}>
-      {showWorkspaceStrip && (
-        <DesktopWorkspaceStrip
-          workspaces={workspaces}
-          activeWorkspaceId={workspaceId}
-          viewerName={viewerIdentity?.name}
-          viewerPubkey={identityPubkey ?? undefined}
-          viewerFace={viewerIdentity?.face}
-          viewerAvatarUrl={viewerIdentity?.avatar}
-          onSelect={selectWorkspace}
-          onAdd={() => router.push('/beeline/community' as Href)}
-          onAccount={() => router.push('/beeline/settings' as Href)}
-        />
-      )}
       {(!isDesktop || showRoomList) && <View
         style={[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]}
         testID="desktop-navigation-pane"
@@ -648,7 +631,6 @@ export const SidebarView = React.memo(function SidebarView() {
               }}
             />
           </ScrollView>
-          {!showWorkspaceStrip && (
             <Pressable
               accessibilityLabel={
                 viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings'
@@ -698,7 +680,6 @@ export const SidebarView = React.memo(function SidebarView() {
                 </>
               )}
             </Pressable>
-          )}
         </>
         {isDesktop && (
           <DesktopWorkspaceRail

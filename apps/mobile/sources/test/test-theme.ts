@@ -1,10 +1,12 @@
 import { beelineThemes } from '@/buzz/groknight';
+import { obsidianTheme } from '@/theme';
 
 /** Keep isolated screen mocks complete when they override only a few tokens. */
 export function completeTestTheme(theme: { buzz?: Record<string, any>; [key: string]: any } = {}) {
   const buzz = theme.buzz ?? {};
   const base = beelineThemes.obsidian;
   return {
+    ...obsidianTheme,
     ...theme,
     buzz: {
       ...base,

@@ -9,7 +9,6 @@ import { View, Text } from 'react-native';
 import { PinnedConversationsEmpty } from '../sources/components/buzz/PinnedConversationsEmpty';
 import { AgentProfileView } from '../sources/components/buzz/AgentProfileView';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
-import { DesktopWorkspaceStrip } from '../sources/components/buzz/DesktopWorkspaceStrip';
 import { CommunityRail } from '../sources/components/buzz/CommunityRail';
 import { RoomListToolbar } from '../sources/components/buzz/RoomListToolbar';
 import { beelineThemes } from '../sources/buzz/groknight';
@@ -208,17 +207,7 @@ function App() {
   );
   return (
     <View style={{ flex: 1, flexDirection: 'row' }}>
-      {desktop ? (
-        <DesktopWorkspaceStrip
-          workspaces={workspaces as any}
-          activeWorkspaceId={agent.workspaceId}
-          viewerName="Viewer"
-          viewerPubkey="viewer"
-          onSelect={() => undefined}
-          onAdd={() => undefined}
-          onAccount={() => undefined}
-        />
-      ) : !profile && mode !== 'pinned' ? (
+      {!desktop && !profile && mode !== 'pinned' ? (
         <View style={{ width: 72 }}>
           <CommunityRail
             communities={workspaces.map((w) => ({ communityId: w.id, name: w.name }))}

@@ -144,7 +144,7 @@ describe('SidebarNavigator web width class', () => {
     const tree = await renderNavigator(1440);
     const options = tree.root.findByType('Drawer' as any).props.screenOptions;
     expect(options.drawerType).toBe('permanent');
-    expect(options.drawerStyle.width).toBe(356);
+    expect(options.drawerStyle.width).toBe(280);
     expect(resizer(tree).props.testID).toBe('desktop-navigation-resizer');
   });
 });

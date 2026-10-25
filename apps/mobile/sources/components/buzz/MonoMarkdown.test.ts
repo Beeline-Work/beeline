@@ -149,7 +149,7 @@ describe('MonoMarkdown lists', () => {
         (node) =>
           node.type === 'Text' && node.children.includes(word) && Array.isArray(node.props.style),
       );
-      return Object.assign({}, ...span.props.style.filter(Boolean));
+      return Object.assign({}, ...span.props.style.flat(Infinity).filter(Boolean));
     };
     expect(styleOf('Title').fontSize).toBe(22);
     expect(styleOf('Section').fontSize).toBe(16);

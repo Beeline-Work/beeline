@@ -9,6 +9,7 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    Platform: { OS: 'ios' },
     Pressable: host('Pressable'),
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),

@@ -8,7 +8,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
+  return { Platform: { OS: 'ios' }, Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
 });
 vi.mock('@/constants/Typography', () => ({
   Typography: { default: () => ({}), mono: () => ({}) },

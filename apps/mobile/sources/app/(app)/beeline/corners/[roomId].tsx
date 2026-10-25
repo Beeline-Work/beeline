@@ -1,3 +1,4 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -197,10 +198,11 @@ export default function BuzzCorners() {
       viewerAvatarUrl={surface.viewer.identity.avatar}
       viewerFace={surface.viewer.identity.face}
     >
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={[styles.container, { paddingTop: insets.top }, desktop && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }]}>
         {/* Chrome sits on the slab: no plate, no texture, one hairline and
           type weight — the same header the Members screen carries. */}
         <RoomCornersHeader
+          desktop={desktop}
           title={title}
           onBack={() => router.back()}
           busy={creating}

@@ -1,3 +1,4 @@
+import { useFinePointer } from '@/utils/use-fine-pointer';
 import { InlineRow } from './IndexRow';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
@@ -27,6 +28,7 @@ export function RoomListToolbar({
   desktop?: boolean;
   counts?: { all: number; unread: number; pinned: number };
 }) {
+  const finePointer = useFinePointer();
   const localSearchRef = useRef<TextInput>(null);
   const [localSearchOpen, setLocalSearchOpen] = useState(false);
   const searchOpen = controlledSearchOpen ?? localSearchOpen;
@@ -74,7 +76,7 @@ export function RoomListToolbar({
           accessibilityLabel={`${value} conversations`}
           accessibilityState={{ selected: value === filter }}
           onPress={() => onFilter(value)}
-          style={[styles.filter, desktop && styles.desktopFilter]}
+          style={[styles.filter, desktop && styles.desktopFilter, finePointer && { minHeight: 32 }]}
           testID={`room-filter-${value}`}
         >
           <Text style={[styles.label, value === filter && styles.selected]}>
@@ -134,7 +136,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   // Labels start on the edge whatever their count width.
   filter: { minHeight: 44, minWidth: 32, alignItems: 'flex-start', justifyContent: 'center' },
-  desktopFilter: { minHeight: 30, position: 'relative' },
+  desktopFilter: { minHeight: 44, position: 'relative' },
   action: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   label: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   count: { color: theme.buzz.ledgerQuiet },

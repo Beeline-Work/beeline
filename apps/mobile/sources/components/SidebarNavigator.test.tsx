@@ -1,3 +1,5 @@
+vi.mock('@/components/buzz/IndexRow', async () => { const R = await import('react'); return { InlineRow: (props: any) => R.createElement('View', props, props.children) }; });
+vi.mock('@/components/buzz/DesktopArtifactPane', () => ({ DesktopArtifactPane: 'DesktopArtifactPane' }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

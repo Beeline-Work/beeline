@@ -359,6 +359,7 @@ describe('phone surface readers', () => {
 
   it('preserves a saved brief, its exact approval quote, and its files for the objective panel', () => {
     const cornerBrief = {
+      authorHandle: 'ruby',
       revision: 2,
       spec: '## Intent\n\n> Read the saved request\n\n## Checklist\n\n- Keep every detail',
       approval: {

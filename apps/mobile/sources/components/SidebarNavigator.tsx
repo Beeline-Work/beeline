@@ -1,3 +1,8 @@
+import { InlineRow } from '@/components/buzz/IndexRow';
+import { subscribeDesktopArtifact, type DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
+import { DesktopArtifactPane } from '@/components/buzz/DesktopArtifactPane';
+import { desktopDocumentPaneWidth, DESKTOP_WORK_PANE_THRESHOLD } from '@/buzz/desktop-workbench-state';
+import { setDesktopPaneOpen, useDesktopLayout, setDesktopAvailableWidth } from '@/buzz/desktop-layout-state';
 import * as React from 'react';
 import { Drawer } from 'expo-router/drawer';
 import { useIsDesktop, useIsTablet, useHeaderHeight } from '@/utils/responsive';
@@ -61,7 +66,22 @@ export const SidebarNavigator = React.memo(() => {
     !SETUP_SURFACES.includes(pathname);
   const showSessionChrome =
     isAppSurface && showsDesktopSessionChrome(inDesktopShell, isTablet, desktopSession);
-  const showSidebar = showSessionChrome && !zenMode;
+  const desktopLayout = useDesktopLayout();
+  const [document, setDocument] = React.useState<DesktopArtifactSelection | null>(null);
+  React.useEffect(() => {
+    return subscribeDesktopArtifact((selection) => {
+      if (!desktopPlatform || !isDesktopLayout || pathname.startsWith('/beeline/chat/') || desktopLayout.availableWidth < DESKTOP_WORK_PANE_THRESHOLD) return false;
+      setDocument(selection);
+      return true;
+    });
+  }, [desktopPlatform, isDesktopLayout, pathname, desktopLayout.availableWidth]);
+  React.useEffect(() => {
+    if (!document) return;
+    setDesktopPaneOpen(true);
+    return () => setDesktopPaneOpen(false);
+  }, [document]);
+  React.useEffect(() => setDocument(null), [pathname]);
+  const showSidebar = showSessionChrome && !zenMode && desktopLayout.showRoomList;
   const { width: windowWidth } = useWindowDimensions();
   const workspaceStripWidth =
     isDesktopLayout && windowWidth >= 1360 ? DESKTOP_WORKSPACE_STRIP_WIDTH : 0;
@@ -107,7 +127,10 @@ export const SidebarNavigator = React.memo(() => {
           : storedDrawerWidth,
       )
     : DESKTOP_NAV_DEFAULT_WIDTH;
-  const drawerWidth = showSidebar ? fullDrawerWidth + workspaceStripWidth : 0;
+  const drawerWidth = showSessionChrome && !zenMode ? (showSidebar ? fullDrawerWidth : 0) + workspaceStripWidth : 0;
+  React.useEffect(() => {
+    setDesktopAvailableWidth(windowWidth - drawerWidth);
+  }, [windowWidth, drawerWidth]);
   // fullDrawerWidth changes on every move (it derives from storedDrawerWidth,
   // which onPanResponderMove updates), so it can't be a dependency here: on
   // web, rebuilding the PanResponder mid-gesture makes react-native-web
@@ -184,10 +207,19 @@ export const SidebarNavigator = React.memo(() => {
     <View style={{ flex: 1 }}>
       {/* DOM order follows the desktop's spatial reading order. */}
       {showSessionChrome && <PersistentHeader />}
-      <Drawer
-        screenOptions={drawerNavigationOptions}
-        drawerContent={showSessionChrome ? drawerContent : undefined}
-      />
+      <InlineRow style={{ flex: 1, alignItems: 'stretch' }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+        <Drawer
+          screenOptions={drawerNavigationOptions}
+          drawerContent={showSessionChrome ? drawerContent : undefined}
+        />
+        </View>
+        {document && desktopLayout.availableWidth >= DESKTOP_WORK_PANE_THRESHOLD && (
+          <View style={{ width: desktopDocumentPaneWidth(desktopLayout.availableWidth) }}>
+            <DesktopArtifactPane {...document} onClose={() => setDocument(null)} />
+          </View>
+        )}
+      </InlineRow>
       {desktopPlatform && showSidebar && (
         <View
           {...resizePan.panHandlers}

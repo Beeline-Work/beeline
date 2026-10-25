@@ -1,0 +1,23 @@
+[
+  {
+    "width": 1280,
+    "transcript": {
+      "viewport": 980,
+      "column": 720
+    },
+    "mouseChipHeight": 32,
+    "panelWidth": 704
+  },
+  {
+    "width": 1920,
+    "transcript": {
+      "viewport": 1544,
+      "column": 720
+    },
+    "mouseChipHeight": 32,
+    "panelWidth": 1014.1875
+  },
+  {
+    "touchChipHeight": 44
+  }
+]

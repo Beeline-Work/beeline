@@ -1,3 +1,5 @@
+vi.mock('@/components/buzz/IndexRow', async () => { const R = await import('react'); const { View } = await import('react-native'); return { InlineRow: (props: any) => R.createElement(View, props, props.children) }; });
+vi.mock('@/components/buzz/DesktopArtifactPane', () => ({ DesktopArtifactPane: 'DesktopArtifactPane' }));
 // @vitest-environment jsdom
 //
 // The unit-level width-formula test in SidebarNavigator.test.tsx stubs

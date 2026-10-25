@@ -11,6 +11,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
 
 import {
   clampDesktopPaneWidth,
+  desktopDocumentPaneWidth,
   desktopComposerKeyAction,
   desktopDraftKey,
   desktopWorkPaneVisibleContent,
@@ -27,14 +28,14 @@ import {
 describe('desktop workbench state', () => {
   beforeEach(() => values.clear());
 
-  it('derives the threshold from the three minimum readable regions', () => {
-    expect(DESKTOP_WORK_PANE_THRESHOLD).toBe(240 + 440 + 320);
+  it('derives the threshold from the measured transcript and pane minima', () => {
+    expect(DESKTOP_WORK_PANE_THRESHOLD).toBe(440 + 320);
     expect(desktopWorkPaneWidthMode(DESKTOP_WORK_PANE_THRESHOLD)).toBe('wide');
     expect(desktopWorkPaneWidthMode(DESKTOP_WORK_PANE_THRESHOLD - 1)).toBe('narrow');
   });
 
   it('uses a dead band around the threshold instead of flickering', () => {
-    const low = DESKTOP_WORK_PANE_THRESHOLD - DESKTOP_WORK_PANE_HYSTERESIS;
+    const low = DESKTOP_WORK_PANE_THRESHOLD;
     const high = DESKTOP_WORK_PANE_THRESHOLD + DESKTOP_WORK_PANE_HYSTERESIS;
     expect(desktopWorkPaneWidthMode(low, 'wide')).toBe('wide');
     expect(desktopWorkPaneWidthMode(low - 1, 'wide')).toBe('narrow');
@@ -155,6 +156,8 @@ describe('desktop workbench state', () => {
   });
 
   it('opens the Room list at its default width until the reader drags it', async () => {
+    expect(await loadDesktopPaneWidth('navigation')).toBe(300);
+    values.set('beeline.desktop.nav-width.v1', '340');
     expect(await loadDesktopPaneWidth('navigation')).toBe(340);
   });
 
@@ -198,5 +201,16 @@ describe('desktop workbench state', () => {
       pathname: '/beeline/channels',
       params: { communityId: 'workspace-empty' },
     });
+  });
+});
+
+describe('desktop document proportions', () => {
+  it.each([760, 980, 1204, 1280, 1544, 1844, 1920])('reserves the chat minimum at available width %i', (available) => {
+    const pane = desktopDocumentPaneWidth(available);
+    expect(available - pane).toBeGreaterThanOrEqual(440);
+    expect(pane).toBeLessThanOrEqual(available * 0.55);
+  });
+  it('gives the document about seven hundred pixels at the smaller desktop size', () => {
+    expect(desktopDocumentPaneWidth(1280)).toBe(704);
   });
 });

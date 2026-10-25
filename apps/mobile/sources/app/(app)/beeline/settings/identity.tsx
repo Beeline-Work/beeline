@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
@@ -85,6 +87,7 @@ const PRIVACY_URL = 'https://usebeeline.app/privacy/';
 const TERMS_URL = 'https://usebeeline.app/terms/';
 const FEEDBACK_MAILTO = 'mailto:hello@usebeeline.app';
 export default function BuzzIdentitySettings() {
+  const desktop = useIsDesktop();
   useLatencyRouteFrame('/beeline/settings/identity');
   const { githubReconnect, githubConnectionError, tab, workspaceId: linkedWorkspaceId } = useLocalSearchParams<{
     githubReconnect?: string; githubConnectionError?: string; tab?: string; workspaceId?: string;
@@ -454,7 +457,7 @@ export default function BuzzIdentitySettings() {
         title="Settings"
       />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[styles.content, desktop && styles.desktopColumn]} keyboardShouldPersistTaps="handled">
         <View testID="identity-settings">
           {workspaceTab ? (
           <SettingsScopeTabs
@@ -742,6 +745,7 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     container: { flex: 1, backgroundColor: hull.bgBase },
+    desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     content: {
       paddingHorizontal: hull.space.md,
       paddingBottom: hull.space.xxl,

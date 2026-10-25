@@ -1,3 +1,5 @@
+import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
+import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { CornerActionsSheet } from '@/components/buzz/CornerActionsSheet';
@@ -33,7 +35,6 @@ import {
   TouchableOpacity,
   Platform,
   AppState,
-  useWindowDimensions,
   AccessibilityInfo,
   type ViewProps,
   type ViewToken,
@@ -588,7 +589,7 @@ export function BuzzChatSurface({
   useEffect(() => {
     allowOlderHistoryRef.current = Boolean(messageAnchorId);
   }, [decodedId, messageAnchorId]);
-  const { width: windowWidth } = useWindowDimensions();
+  const { availableWidth: desktopAvailableWidth } = useDesktopLayout();
   // Desktop chrome and the work pane follow the live window, not the
   // monitor. `isDesktopPlatform()` is true for every browser, and
   // `screen.availWidth` is the display — either one sizes a phone tab as a
@@ -876,10 +877,14 @@ export function BuzzChatSurface({
   const activeComposerDraftRef = useRef(composerDraft);
   activeComposerDraftRef.current = composerDraft;
   const [composerInputRevision, setComposerInputRevision] = useState(0);
-  const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(windowWidth));
+  const initialWorkPaneStateRef = useRef(initialDesktopWorkPaneState(desktopAvailableWidth));
   const [desktopWorkPane, setDesktopWorkPane] = useState(initialWorkPaneStateRef.current);
   const desktopWorkPaneRef = useRef(desktopWorkPane);
   const desktopWorkPaneContent = desktopWorkPaneVisibleContent(desktopWorkPane);
+  useEffect(() => {
+    setDesktopPaneOpen(Boolean(desktopExperience && desktopWorkPaneContent));
+    return () => setDesktopPaneOpen(false);
+  }, [desktopExperience, Boolean(desktopWorkPaneContent)]);
   const [desktopDeliveryState, setDesktopDeliveryState] = useState<
     'sending' | 'delivered' | 'failed' | null
   >(null);
@@ -1104,8 +1109,8 @@ export function BuzzChatSurface({
 
   useEffect(() => {
     if (!desktopExperience) return;
-    commitDesktopWorkPane({ type: 'resize', width: windowWidth });
-  }, [commitDesktopWorkPane, desktopExperience, windowWidth]);
+    commitDesktopWorkPane({ type: 'resize', width: desktopAvailableWidth });
+  }, [commitDesktopWorkPane, desktopExperience, desktopAvailableWidth]);
 
   // The second pane belongs to the view it opened beside: switching rooms
   // closes it. Declared before the corner subscription so a rail corner that
@@ -6107,6 +6112,7 @@ export function BuzzChatSurface({
             style={[styles.header, { minHeight: insets.top + 60, paddingTop: insets.top + 8 }]}
             testID={isCorner ? 'corner-session-header' : undefined}
           >
+            {desktopExperience && <DesktopRoomListToggle />}
             {(!isDesktop || isCorner) && (
               <TouchableOpacity
                 accessibilityLabel={
@@ -6570,7 +6576,7 @@ export function BuzzChatSurface({
                 </Text>
               </View>
             ) : (
-              <View style={styles.bottomChromeStack} testID="room-bottom-chrome">
+              <View style={[styles.bottomChromeStack, desktopExperience && styles.desktopReadingColumn]} testID="room-bottom-chrome">
                 {/* Phone turn chrome paints over the transcript's own bottom
                 margin: `TurnBandSlot` is absolute (`room-bottom-chrome`),
                 anchored to this stack's top edge, so it takes no height from
@@ -7676,6 +7682,9 @@ const styles = StyleSheet.create((theme) => {
       paddingVertical: groknight.space.md,
     },
     messageListContentDesktop: {
+      width: '100%',
+      maxWidth: 720,
+      alignSelf: 'center',
       flexGrow: 1,
       justifyContent: 'flex-end',
     },
@@ -7705,6 +7714,7 @@ const styles = StyleSheet.create((theme) => {
     // `buzz/room-bottom-chrome.ts` owns both. The turn line is an absolute
     // overlay on the stack's top edge, styled inside `TurnBandSlot`; it takes
     // no height in this column.
+    desktopReadingColumn: { width: '100%', maxWidth: 720, alignSelf: 'center' },
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
     // No longer drawn. The UI component policy fingerprints the header's

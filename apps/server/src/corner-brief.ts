@@ -442,6 +442,7 @@ export type CornerBriefRow = FoldedBriefFields & {
   approval_basis: Partial<StoredCornerBriefApproval> | null;
   change: string | null;
   author_id: string;
+  author_handle?: string | null;
   source_room_id: string;
   source_message_id: string | null;
   attachments: CornerBriefAttachment[];

@@ -1,3 +1,5 @@
+import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
+import { useIsDesktop } from '@/utils/responsive';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -227,6 +229,7 @@ export default function BuzzMembers({
   onClose?: () => void;
 } = {}) {
   useLatencyRouteFrame('/beeline/members');
+  const desktop = useIsDesktop();
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
@@ -1409,6 +1412,7 @@ export default function BuzzMembers({
           bottomOffset={16}
           contentContainerStyle={[
             styles.content,
+            desktop && styles.desktopColumn,
             { paddingBottom: theme.buzz.space.xxl + insets.bottom },
           ]}
           keyboardShouldPersistTaps="handled"
@@ -1543,6 +1547,7 @@ const styles = StyleSheet.create((theme) => {
       color: hull.danger,
       textAlign: 'center',
     },
+    desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' },
     content: {
       padding: hull.space.md,
       gap: hull.layout.sectionGap,

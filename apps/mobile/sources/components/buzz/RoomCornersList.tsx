@@ -350,6 +350,7 @@ export function RoomCornersList({
               return (
                 <Button
                   key={option.key}
+                  compact
                   label={count === undefined ? option.label : `${option.label} · ${count}`}
                   variant={filter === option.key ? 'brass' : 'secondary'}
                   accessibilityState={{ selected: filter === option.key }}

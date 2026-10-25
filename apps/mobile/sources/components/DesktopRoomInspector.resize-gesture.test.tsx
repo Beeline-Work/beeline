@@ -1,3 +1,4 @@
+vi.mock('@/buzz/use-text-draft', () => ({ useTextDraft: () => ['', () => {}, { clear: () => {} }] }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -159,10 +160,7 @@ async function renderInspector(): Promise<void> {
         room,
         client: null,
         content: {
-          kind: 'artifact',
-          artifact: {
-            attachment: { id: 'a', name: 'a.html', mimeType: 'text/html', size: 1, url: '/a' } as never,
-          },
+          kind: 'corner', cornerId: 'corner',
         },
         onOpenCorner: () => undefined,
         onOpenInMain: () => undefined,

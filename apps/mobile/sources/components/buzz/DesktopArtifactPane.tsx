@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
+import type { DesktopArtifactSelection } from '@/buzz/desktop-artifact-pane';
 
 import { artifactFormat, wrapArtifactMarkup } from '@/buzz/artifact';
 import {
@@ -35,19 +36,17 @@ import { RunnableArtifact } from './RunnableArtifact';
  */
 export function DesktopArtifactPane({
   attachment,
+  markdown,
   authorHandle,
   roomId,
   onClose,
 }: {
-  attachment: AttachmentReference;
-  authorHandle?: string;
-  roomId?: string;
   onClose(): void;
-}) {
-  const format = artifactFormat(attachment.mimeType);
-  const title = attachment.title ?? attachment.name;
+} & DesktopArtifactSelection) {
+  const format = markdown ? 'markdown' : artifactFormat(attachment!.mimeType);
+  const title = markdown?.title ?? attachment!.title ?? attachment!.name;
   const { showCopied, showCopyFailed, toast } = useCopiedToast('desktop-artifact-copied');
-  const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${format === 'game' ? 'Interactive' : format} · ${formatAttachmentSize(attachment.size)}`;
+  const kindLine = `${authorHandle ? `@${authorHandle.replace(/^@/, '')} · ` : ''}${markdown ? `brief · revision ${markdown.revision}` : `${format === 'game' ? 'Interactive' : format} · ${formatAttachmentSize(attachment!.size)}`}`;
   return (
     <View style={styles.screen} testID="desktop-artifact-pane">
       <View style={styles.header}>
@@ -59,7 +58,7 @@ export function DesktopArtifactPane({
             {kindLine}
           </Text>
         </View>
-        {format === 'image' ? (
+        {attachment && format === 'image' ? (
           <>
             <Button
               accessibilityLabel="Copy image"
@@ -85,7 +84,7 @@ export function DesktopArtifactPane({
               />
           </>
         ) : null}
-        <Button
+        {attachment && <Button
           accessibilityLabel="Open in browser"
           accessibilityRole="link"
           onPress={() => void openArtifactInBrowserOrExplain(attachment)}
@@ -93,7 +92,7 @@ export function DesktopArtifactPane({
           label={'Open in browser ↗'}
           variant="quiet"
           appearance={{ control: styles.headerAction, label: styles.openLink }}
-        />
+        />}
           <Button
             accessibilityLabel="Close artifact pane"
             accessibilityRole="button"
@@ -106,7 +105,11 @@ export function DesktopArtifactPane({
             appearance={{ control: styles.headerAction, label: undefined }}
           />
       </View>
-      {format === 'game' ? (
+      {markdown ? (
+        <ScrollView contentContainerStyle={styles.markdownBody} testID="desktop-artifact-markdown">
+          <MonoMarkdown markdown={markdown.text} textStyle={styles.markdownText} document />
+        </ScrollView>
+      ) : !attachment ? null : format === 'game' ? (
         <RunnableArtifact attachment={attachment} />
       ) : format === 'markdown' ? (
         <DesktopArtifactMarkdown attachment={attachment} />
@@ -129,8 +132,8 @@ export function DesktopArtifactPane({
           </Text>
         </View>
       )}
-      <ViewerConversationDock kind="artifact" title={attachment.name} roomId={roomId} agentHandle={authorHandle}
-        artifact={attachment} />
+      {attachment && <ViewerConversationDock kind="artifact" title={attachment.name} roomId={roomId} agentHandle={authorHandle}
+        artifact={attachment} />}
       {toast}
     </View>
   );

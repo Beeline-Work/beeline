@@ -1,3 +1,4 @@
+import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { resolveComposerMentions } from '@/buzz/room-participants';
 import { Button } from '@/components/buzz/Button';
@@ -12,9 +13,8 @@ import type { RoomViewClient } from '@/sync/transport/room-view-client';
 import {
   clampDesktopPaneWidth,
   DESKTOP_INSPECTOR_DEFAULT_WIDTH,
-  DESKTOP_INSPECTOR_MIN_WIDTH,
-  DESKTOP_TRANSCRIPT_MIN_WIDTH,
   desktopComposerKeyAction,
+  desktopDocumentPaneWidth,
   loadDesktopPaneWidth,
   saveDesktopPaneWidth,
   type DesktopWorkPaneContent,
@@ -166,17 +166,18 @@ export function DesktopRoomInspector({
 
   // Mirrors the navigation divider in SidebarNavigator. The pane is the last
   // child of its row, so its layout x plus its width is the row's width.
-  // Reserve DESKTOP_TRANSCRIPT_MIN_WIDTH for the transcript, but only when the
-  // row is wide enough that doing so still leaves the pane its own minimum.
+  // The available row always reserves the transcript minimum; documents
+  // start at its proportional width and can still be resized.
   const [rowWidth, setRowWidth] = React.useState<number | null>(null);
-  const maxWidthForTranscript =
-    rowWidth === null ? Number.POSITIVE_INFINITY : rowWidth - DESKTOP_TRANSCRIPT_MIN_WIDTH;
-  const renderedWidth = clampDesktopPaneWidth(
-    'inspector',
-    maxWidthForTranscript >= DESKTOP_INSPECTOR_MIN_WIDTH
-      ? Math.min(width, maxWidthForTranscript)
-      : width,
-  );
+  const { availableWidth } = useDesktopLayout();
+  const [documentWidth, setDocumentWidth] = React.useState<number | undefined>();
+  const measuredWidth = availableWidth || rowWidth || Number.POSITIVE_INFINITY;
+  const documentMode = content.kind === 'artifact';
+  const renderedWidth = desktopDocumentPaneWidth(measuredWidth, documentMode ? documentWidth : width);
+  const documentModeRef = React.useRef(documentMode);
+  documentModeRef.current = documentMode;
+  const measuredWidthRef = React.useRef(measuredWidth);
+  measuredWidthRef.current = measuredWidth;
   // Read the latest width through a ref so the PanResponder is never rebuilt
   // mid-drag: on web, rebuilding it resets the gesture's move accounting.
   const renderedWidthRef = React.useRef(renderedWidth);
@@ -189,12 +190,18 @@ export function DesktopRoomInspector({
         onPanResponderGrant: () => {
           dragStart.current = renderedWidthRef.current;
         },
-        onPanResponderMove: (_, gesture) =>
-          setWidth(clampDesktopPaneWidth('inspector', dragStart.current - gesture.dx)),
+        onPanResponderMove: (_, gesture) => {
+          if (documentModeRef.current) setDocumentWidth(desktopDocumentPaneWidth(measuredWidthRef.current, dragStart.current - gesture.dx));
+          else setWidth(clampDesktopPaneWidth('inspector', dragStart.current - gesture.dx));
+        },
         onPanResponderRelease: (_, gesture) => {
           const next = clampDesktopPaneWidth('inspector', dragStart.current - gesture.dx);
-          setWidth(next);
-          void saveDesktopPaneWidth('inspector', next);
+          if (documentModeRef.current) {
+            setDocumentWidth(desktopDocumentPaneWidth(measuredWidthRef.current, dragStart.current - gesture.dx));
+          } else {
+            setWidth(next);
+            void saveDesktopPaneWidth('inspector', next);
+          }
         },
       }),
     [],
@@ -221,8 +228,7 @@ export function DesktopRoomInspector({
       />
       {content.kind === 'artifact' ? (
         <DesktopArtifactPane
-          attachment={content.artifact.attachment}
-          authorHandle={content.artifact.authorHandle}
+          {...content.artifact}
           roomId={content.artifact.roomId ?? room.room.id}
           onClose={onClose}
         />

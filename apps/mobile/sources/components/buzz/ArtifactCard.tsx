@@ -1,4 +1,3 @@
-import { InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
@@ -284,7 +283,7 @@ function ArtifactCardShell({
           {kindLine}
         </Text>
       </View>
-      <InlineRow style={styles.footer}>
+      <View style={styles.footer}>
         {actions.includes('browser') ? (
           <Button
             accessibilityLabel="Open in browser"
@@ -292,22 +291,23 @@ function ArtifactCardShell({
             onPress={onOpenInBrowser}
             testID="artifact-open-browser"
             label={'Open in browser ↗'}
-            variant="secondary"
-            size="inline"
+            variant="quiet"
+            appearance={{ control: undefined, label: styles.footerQuiet }}
           />
         ) : null}
+        <View style={styles.footerSpacer} />
         {actions.includes('open') ? (
           <Button
             accessibilityLabel="Open artifact"
             accessibilityRole="link"
             onPress={onOpenFull}
             testID="artifact-open"
-            label={'Open'}
-            variant="secondary"
-            size="inline"
+            label={'Open →'}
+            variant="quiet"
+            appearance={{ control: undefined, label: styles.footerPrimary }}
           />
         ) : null}
-      </InlineRow>
+      </View>
     </View>
   );
 }
@@ -569,13 +569,14 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: theme.buzz.transcriptCard.footerMinHeight,
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: theme.buzz.space.md,
     paddingHorizontal: theme.buzz.transcriptCard.side,
     paddingVertical: theme.buzz.transcriptCard.footerVertical,
     borderTopWidth: 1,
     borderTopColor: theme.buzz.border,
   },
+  footerSpacer: { flex: 1 },
+  footerQuiet: { ...theme.buzz.type.body, color: theme.buzz.ledgerQuiet },
+  footerPrimary: { ...theme.buzz.type.body, color: theme.buzz.accent },
 }));
 
 // Referenced by tests and the cache module's key derivation.

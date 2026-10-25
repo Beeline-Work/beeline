@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BodyConfig } from './config.js';
@@ -29,7 +29,7 @@ import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './co
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
 import { reclaimHelperStorage, capturePrivateProcessUse, removeStoragePath, storageTree, isSquirePath, hasMount, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
-import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
+import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout, type StorageOwner } from './storage-owners.js';
 import { cornerProofRetentionActive } from './corner-proof-output.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
@@ -1965,11 +1965,17 @@ export class RoomRuntimeCoordinator {
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
     if (await this.cleanupWasRefused(worktree.cornerId)) return;
-    const owner = (await readStorageOwners(this.runtime.supervisorRoot)).find(item => item.kind === 'corners' && item.itemId === worktree.cornerId) ??
-      { workspaceId: this.runtime.communityId, roomId: worktree.cornerId, kind: 'corners' as const, itemId: worktree.cornerId };
-    const endedAt = owner.endedAt ?? Date.now();
-    await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, endedAt });
-    if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, endedAt)) return;
+    // Refused backlogs often have no declared proof. Do not scan or populate
+    // the whole owner store for each entry in that backlog.
+    if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, undefined)) {
+      const ownerPath = resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${worktree.cornerId}.json`);
+      const owner = await readFile(ownerPath, 'utf8').then(text => JSON.parse(text) as StorageOwner, () => undefined) ??
+        { workspaceId: this.runtime.communityId, roomId: worktree.cornerId, kind: 'corners' as const, itemId: worktree.cornerId };
+      const endedAt = owner.endedAt ?? Date.now();
+      if (!owner.ended || owner.endedAt === undefined)
+        await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, endedAt });
+      if (await cornerProofRetentionActive(worktree.path, worktree.cornerId, endedAt)) return;
+    }
     // The exact local ref is the deletion authority. It was created for this
     // corner's worktree and survives a failed remote deletion so reconcile can
     // retry the same exact ref. A missing local ref plus a missing remote ref

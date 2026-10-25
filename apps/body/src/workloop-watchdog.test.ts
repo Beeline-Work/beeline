@@ -123,6 +123,12 @@ it('acknowledges watchdog progress throughout 615 archived refusals while preser
     expect(established).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(pending.size).toBe(0), { timeout: 25_000 });
     expect(pending.size).toBe(0);
+    // Undeclared proof must not cause per-refusal owner records or a growing
+    // owner-store scan on every iteration of this backlog.
+    expect(await readdir(resolve(root, 'beeline/storage-owners')).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    })).toEqual([]);
     // Clearing the queue can precede the final atomic refusal write.
     await vi.waitFor(async () => {
       expect(await readdir(resolve(root, 'corner-cleanup-refusals'))).toHaveLength(615);

@@ -17,9 +17,9 @@ users = [pwd.getpwnam(f'beeline-ci-shard-{i}') for i in range(1, 5)]
 for user in users:
     unit = (units / (user.pw_name + '-docker.service')).read_text()
     if unit.count('Environment=_DOCKERD_ROOTLESS_CHILD=1') != 1:
-        raise SystemExit('Expected exactly one rootless environment marker')
+        raise SystemExit('Missing or duplicate rootless marker')
     if (units / (user.pw_name + '.service')).exists():
-        raise SystemExit('Runner service already exists')
+        raise SystemExit('Runner already exists')
 archive = Path('/var/lib/beeline-ci-runner.tar.gz')
 url = 'https://github.com/actions/runner/releases/download/v2.338.1/actions-runner-linux-x64-2.338.1.tar.gz'
 with urllib.request.urlopen(url, timeout=120) as response:
@@ -37,6 +37,7 @@ rules = f'''table inet beeline_ci {{
  chain output {{
   type filter hook output priority 0; policy accept;
   meta skuid {{ {uids} }} fib daddr type local counter drop
+  meta skuid {{ {uids} }} oifname "lo" counter drop
   meta skuid {{ {uids} }} oifname "tailscale0" counter drop
   meta skuid {{ {uids} }} ip daddr {{ 100.64.0.0/10, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }} counter drop
   meta skuid {{ {uids} }} ip6 daddr {{ fd7a:115c:a1e0::/48, fc00::/7, fe80::/10 }} counter drop

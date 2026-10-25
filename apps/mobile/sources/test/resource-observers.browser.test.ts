@@ -95,7 +95,7 @@ describe('resource observers in the desktop web renderer', () => {
         '@/sync/transport/room-view-client': `export class RoomViewClient {}`,
         '@/components/buzz/ConversationComposer': `export const COMPOSER_MAX_INPUT_HEIGHT = 115; export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const ConversationComposer = props => { globalThis.__composer = props; return null; };`,
         '@/app/(app)/beeline/chat/RoomMessageVariants': `export const DaemonFactCard = () => null; export const GitHubEventCard = () => null; export const NotificationLifecycleCard = () => null; export const OrdinaryLedgerMessage = ({ message }) => <span>{message.text}</span>;`,
-        '@/buzz/desktop-workbench-state': `export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400; export const DESKTOP_INSPECTOR_MIN_WIDTH = 320; export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 300;
+        '@/buzz/desktop-workbench-state': `export const DESKTOP_INSPECTOR_DEFAULT_WIDTH = 400; export const DESKTOP_INSPECTOR_MIN_WIDTH = 320; export const DESKTOP_TRANSCRIPT_MIN_WIDTH = 440; export const desktopDocumentPaneWidth = width => Math.min(width * 0.55, width - 440);
           export const clampDesktopPaneWidth = (_, width) => width; export const desktopComposerKeyAction = () => null; export const loadDesktopPaneWidth = async () => 400; export const saveDesktopPaneWidth = async () => undefined;`,
       } });
       expect(result.status, result.stderr).toBe(0);

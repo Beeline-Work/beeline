@@ -136,10 +136,10 @@
   },
   {
     "file": "components/buzz/Button.tsx",
-    "line": 151,
+    "line": 157,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "a321e6bca9f9b11c7f0c",
+    "id": "81bf16a34f89804db706",
     "control": "<Pressable accessibilityRole=\"button\" {...props} accessibilityState={{ ...accessibilityState, disabled: isDisabled, busy: loading || accessibilityState?.busy === true, }} disabled={isDisabled} onPress={(event) => { if (primary) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onPress?.(event); }} style={(state) => appearance ? [ typeof appearance.control === 'function' ? appearance.con",
     "reason": "Shared Button implementation, including provider-free recovery path."
   },
@@ -487,11 +487,11 @@
   },
   {
     "file": "components/buzz/RoomListToolbar.tsx",
-    "line": 71,
+    "line": 73,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "95926f29fe08b83414f0",
-    "control": "<Pressable key={value} accessibilityRole=\"button\" accessibilityLabel={`${value} conversations`} accessibilityState={{ selected: value === filter }} onPress={() => onFilter(value)} style={[styles.filter, desktop && styles.desktopFilter]} testID={`room-filter-${value}`} > <Text style={[styles.label, value === filter && styles.selected]}> {value === 'pinned' ? 'Pinned' : value === 'all' ? 'All' : 'Un",
+    "id": "7c29d77a0e2cfdf19800",
+    "control": "<Pressable key={value} accessibilityRole=\"button\" accessibilityLabel={`${value} conversations`} accessibilityState={{ selected: value === filter }} onPress={() => onFilter(value)} style={[styles.filter, desktop && styles.desktopFilter, finePointer && { minHeight: 32 }]} testID={`room-filter-${value}`} > <Text style={[styles.label, value === filter && styles.selected]}> {value === 'pinned' ? 'Pinne",
     "reason": "Conversation filter selection options retain selected-state semantics."
   },
   {

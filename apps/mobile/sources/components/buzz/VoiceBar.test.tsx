@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { VOICE_QUOTA_MESSAGE } from '@beeline/api-contract/phone';
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
-  return { View: host('View'), Text: host('Text'), ScrollView: host('ScrollView'), Pressable: host('Pressable'),
+  return { Platform: { OS: 'ios' }, View: host('View'), Text: host('Text'), ScrollView: host('ScrollView'), Pressable: host('Pressable'),
     AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) } };
 });
 vi.mock('./MonoHull', () => ({ HullLivePulse: (props: any) => React.createElement('LivePulse', props, props.children) }));

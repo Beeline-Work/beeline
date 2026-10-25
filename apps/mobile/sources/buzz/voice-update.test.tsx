@@ -4,7 +4,7 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const openURL = vi.hoisted(() => vi.fn(async (_url: string) => {}));
-vi.mock('react-native', () => ({ Linking: { openURL }, View: 'View', Text: 'Text', Pressable: 'Pressable' }));
+vi.mock('react-native', () => ({ Platform: { OS: 'ios' }, Linking: { openURL }, View: 'View', Text: 'Text', Pressable: 'Pressable' }));
 vi.mock('@/components/buzz/HullDialog', () => ({ HullDialog: (props: any) => React.createElement('HullDialog', props) }));
 import { Modal } from '@/modal/ModalManager';
 import { WebAlertModal } from '@/modal/components/WebAlertModal';

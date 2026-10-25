@@ -181,6 +181,26 @@ describe('Postgres live fanout', () => {
       ownerId: AUTHOR, resource: 'workbench' });
   });
 
+  it('MCP-DISCOVERY-1: committed public discovery invalidates only the requesting owner Workbench', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll(event => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.transaction(async db => {
+      await db.query(`INSERT INTO connector_discovery_cache(cache_key,manifests,expires_at) VALUES('search:fly','[]',now()+interval '1 minute')`);
+      await db.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
+        JSON.stringify({ table: 'connector_discovery_cache', operation: 'UPDATE', roomId: '', ownerId: AUTHOR })]);
+      expect(received.filter(event => event.type === 'resource-change')).toHaveLength(0);
+    });
+    await eventually(() => received.some(event => event.type === 'resource-change' && event.resource === 'workbench'));
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
+    expect((await database.query(`SELECT cache_key FROM connector_discovery_cache`)).rows).toEqual([{ cache_key: 'search:fly' }]);
+  });
+
   it('wallet-2593: committed wallet revocation invalidates only the owner Workbench', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

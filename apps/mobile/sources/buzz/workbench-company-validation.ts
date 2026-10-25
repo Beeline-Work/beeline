@@ -24,6 +24,7 @@ export function isWorkbenchCompanyIndex(v: unknown): v is WorkbenchCompanyIndex 
       && ['company', 'sign-in-service', 'other'].includes(String(r.kind)) && ['attention', 'signin', 'apps', 'keys'].includes(String(r.section)) && logo(r.logo)
       && (r.state === undefined || ['connected', 'connect', 'error'].includes(String(r.state)))
       && optionalString(r.status) && optionalString(r.attention) && list(r.alsoAvailable, suggestion)
+      && (r.mcp === undefined || suggestion(r.mcp))
       && list(r.items, i => record(i) && string(i.id) && string(i.title) && string(i.subtitle) && ['key', 'login', 'connection'].includes(String(i.kind))
         && target(i.target) && (i.state === undefined || ['connected', 'connect', 'error'].includes(String(i.state)))
         && optionalString(i.status) && optionalBoolean(i.attention))

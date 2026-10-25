@@ -9,6 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
+import { CompanyMcpDiscovery } from './company-mcp-discovery.js';
 import { applyVaultList } from './workbench.js';
 import { recordSquireSignIn } from './squire-machine.js';
 import { beginComposioAppSignIn, connectApp, readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
@@ -68,7 +69,7 @@ function fakeRegistry(servers: Record<string, unknown>[], fail = false) {
     );
     return server ? Response.json({ server }) : new Response('missing', { status: 404 });
   });
-  return { client: new McpRegistryClient(transport as unknown as typeof fetch), transport };
+  return { client: new McpRegistryClient(transport as unknown as typeof fetch, undefined, new CompanyMcpDiscovery(async () => ({ status: 404, body: '' }))), transport };
 }
 
 describe('the app route order', () => {
@@ -1817,6 +1818,166 @@ describe('connect_app', () => {
     });
   });
 
+  async function publishFlySignIn() {
+    let connectorId = '';
+    await vi.waitFor(async () => {
+      connectorId = (await database.query<{ id: string }>(`SELECT id FROM workspace_connectors WHERE registry_server_name='io.fly/company-mcp'`)).rows[0]?.id ?? '';
+      expect(connectorId).not.toBe('');
+    });
+    await database.query(`UPDATE workspace_connectors SET sign_in=$2::jsonb WHERE id=$1`,
+      [connectorId, JSON.stringify({ method: 'oauth', url: 'https://fly.io/mcp/oauth/authorize?fixture=1', attemptId: 'proof' })]);
+  }
+
+  it('Reproduction MCP-DISCOVERY-1: offers Fly on its service page and replaces only an explicitly selected Squire route, retaining keys', async () => {
+    await connectSquire();
+    const keys = Array.from({ length: 6 }, (_, index) => ({ reference: `vault:fly-${index}`,
+      service: 'fly', label: `Fly key ${index}`, fieldNames: ['access_token'], allowedHosts: ['api.fly.io'],
+      createdAt: 1, stale: false, state: 'active' as const }));
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, keys);
+    const registry = fakeRegistry([]);
+    const discovery = new CompanyMcpDiscovery(async () => ({ status: 200,
+      body: JSON.stringify({ resource: 'https://mcp.fly.io', authorization_servers: ['https://fly.io/mcp/oauth'] }) }));
+    registry.client.companies.discover = discovery.discover.bind(discovery);
+    const provider = fakeComposio(); provider.searchToolkits = vi.fn(async () => []);
+    const daemon = daemonWith(registry.client, provider);
+    const original = await daemon.execute('connectApp', { ...turn, app: 'fly', reason: 'Use Fly' }, HELPER);
+    expect(original).toMatchObject({ transport: 'squire-api', connectionReference: 'vault:fly-0' });
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    await vi.waitFor(async () => expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).companies?.rows.find(row => row.id === 'fly')?.mcp).toBeDefined());
+    const before = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(before.companies?.rows.find(row => row.id === 'fly')).toMatchObject({ subtitle: '6 keys',
+      mcp: { appName: 'Fly.io', registryServerName: 'io.fly/company-mcp' } });
+    const results = await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER);
+    expect(results).toEqual([expect.objectContaining({ name: 'Fly.io', companyId: 'fly', description: '6 keys' })]);
+    const automatic = await daemon.execute('connectApp', { ...turn, app: 'fly', reason: 'Use Fly again' }, HELPER);
+    expect(automatic).toMatchObject({ appId: original.appId, transport: 'squire-api', connectionReference: 'vault:fly-0' });
+    const manifest = (await discovery.discover('fly'))!;
+    const selection = phone.execute('connectWorkbenchApp', { app: 'Fly.io', helperAgentId: HELPER,
+      registryServerName: manifest.name, registryVersion: manifest.version }, OWNER);
+    await publishFlySignIn();
+    const chosen = await selection;
+    expect(chosen.authorizationUrl).toBe('https://fly.io/mcp/oauth/authorize?fixture=1');
+    expect(chosen).toMatchObject({ appId: original.appId, transport: 'registry-mcp' });
+    const after = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    const company = after.companies?.rows.find(row => row.id === 'fly');
+    expect(company).toMatchObject({ subtitle: '1 app · 6 keys' });
+    expect(company?.mcp).toBeUndefined();
+    expect(company?.items.find(item => item.kind === 'connection')).toMatchObject({ title: 'Fly.io', subtitle: 'via Fly MCP' });
+    expect(after.connections.map(key => key.reference).sort()).toEqual(keys.map(key => key.reference).sort());
+    expect((await database.query(`SELECT reference,state,hosts FROM workspace_connections ORDER BY reference`)).rows)
+      .toEqual(keys.map(key => ({ reference: key.reference, state: 'active', hosts: key.allowedHosts })));
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).connections.map(key => key.label).sort())
+      .toEqual(keys.map(key => key.label).sort());
+    expect((await database.query(`SELECT reason,requested_by FROM workspace_app_routes WHERE transport='registry-mcp'`)).rows)
+      .toContainEqual({ reason: 'person selected verified company MCP', requested_by: OWNER });
+  });
+
+  it('Reproduction MCP-DISCOVERY-1: offers company discovery to a new person and searches the Registry for non-allowlisted queries', async () => {
+    const registry = fakeRegistry([
+      { name: 'com.pulsemcp/fly-io', version: '1', title: 'Fly.io', websiteUrl: 'https://fly.io',
+        remotes: [{ type: 'streamable-http', url: 'https://evil.test' }] },
+      { name: 'io.sentry/mcp', version: '1.2', title: 'Sentry', websiteUrl: 'https://sentry.io',
+        remotes: [{ type: 'streamable-http', url: 'https://mcp.sentry.io/mcp' }] },
+    ]);
+    const discovery = new CompanyMcpDiscovery(async url => url.host === 'mcp.fly.io'
+      ? { status: 200, body: JSON.stringify({ resource: 'https://mcp.fly.io', authorization_servers: ['https://fly.io/mcp/oauth'] }) }
+      : { status: 404, body: '' });
+    registry.client.companies.discover = discovery.discover.bind(discovery);
+    const provider = fakeComposio(); provider.searchToolkits = vi.fn(async () => []);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER);
+    await vi.waitFor(async () => expect((await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER)).some(row => row.registryServerName === 'io.fly/company-mcp')).toBe(true));
+    const fly = await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER);
+    expect(fly.filter(row => row.name === 'Fly.io')).toHaveLength(1);
+    expect(fly.find(row => row.name === 'Fly.io')).toMatchObject({ company: { registryServerName: 'io.fly/company-mcp' } });
+    expect(fly.some(row => row.registryServerName === 'com.pulsemcp/fly-io')).toBe(false);
+    await phone.execute('searchWorkbenchApps', { query: 'sentry' }, OWNER);
+    await vi.waitFor(async () => expect(await phone.execute('searchWorkbenchApps', { query: 'sentry' }, OWNER))
+      .toContainEqual(expect.objectContaining({ name: 'Sentry', registryServerName: 'io.sentry/mcp', registryVersion: '1.2' })));
+    expect(registry.transport.mock.calls.some(call => new URL(String(call[0])).searchParams.get('search') === 'sentry')).toBe(true);
+    const manifest = (await discovery.discover('fly'))!;
+    await expect(phone.execute('connectWorkbenchApp', { app: 'Fly.io', helperAgentId: HELPER,
+      registryServerName: 'com.pulsemcp/fly-io', registryVersion: '1' }, OWNER)).rejects.toThrow('official sign-in');
+    const selection = phone.execute('connectWorkbenchApp', { app: 'Fly.io', helperAgentId: HELPER,
+      registryServerName: manifest.name, registryVersion: manifest.version }, OWNER);
+    await publishFlySignIn();
+    await expect(selection).resolves.toMatchObject({ transport: 'registry-mcp' });
+  });
+
+  it('MCP-DISCOVERY-1: cold results never wait for stalled providers; committed discovery is visible from another server', async () => {
+    await connectSquire();
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+      reference: 'vault:fly', service: 'fly', label: 'Fly key', fieldNames: ['token'], allowedHosts: ['api.fly.io'],
+      createdAt: 1, stale: false, state: 'active',
+    }]);
+    let finishProbe!: (value: { status: number; body: string }) => void;
+    let finishRegistry!: (value: []) => void;
+    const registry = fakeRegistry([]);
+    registry.client.search = () => new Promise(resolve => { finishRegistry = resolve; });
+    const discovery = new CompanyMcpDiscovery(() => new Promise(resolve => { finishProbe = resolve; }));
+    registry.client.companies.discover = discovery.discover.bind(discovery);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client);
+    const first = await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER);
+    expect(first.map(row => row.name)).toEqual(['Fly.io']);
+    expect(first[0]?.description).toBe('1 key');
+    await vi.waitFor(() => { expect(finishProbe).toBeTypeOf('function'); expect(finishRegistry).toBeTypeOf('function'); });
+    const cold = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(cold.companies?.rows.find(row => row.id === 'fly')?.mcp).toBeUndefined();
+    finishRegistry([]);
+    finishProbe({ status: 200, body: JSON.stringify({ resource: 'https://mcp.fly.io', authorization_servers: ['https://fly.io/mcp/oauth'] }) });
+    const other = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client);
+    await vi.waitFor(async () => expect((await other.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER))
+      .companies?.rows.find(row => row.id === 'fly')?.mcp?.registryServerName).toBe('io.fly/company-mcp'));
+    expect(await phone.execute('searchWorkbenchApps', { query: 'fly' }, OWNER)).toEqual(first);
+  });
+
+  it.each([true, false])('MCP-DISCOVERY-1: hides insightfulpipe Notion when the official Notion server exists (%s)', async official => {
+    const thirdParty = { name: 'com.insightfulpipe/notion', version: '1', title: 'Notion',
+      description: 'Hosted Notion MCP server', websiteUrl: 'https://insightfulpipe.com',
+      remotes: [{ type: 'streamable-http', url: 'https://mcp.insightfulpipe.com/notion' }] };
+    const officialServer = { name: 'com.notion/mcp', version: '1.0.1', title: 'Notion', description: 'Official Notion MCP server',
+      remotes: [{ type: 'streamable-http', url: 'https://mcp.notion.com/mcp' }] };
+    const registry = fakeRegistry([thirdParty, ...(official ? [officialServer] : [])]);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client);
+    const first = await phone.execute('searchWorkbenchApps', { query: 'notion' }, OWNER);
+    expect(first[0]?.name).toBe('Notion');
+    await vi.waitFor(async () => expect((await database.query(`SELECT cache_key FROM connector_discovery_cache WHERE cache_key='search:notion'`)).rows).toHaveLength(1));
+    const results = await phone.execute('searchWorkbenchApps', { query: 'notion' }, OWNER);
+    expect(results[0]?.name).toBe('Notion');
+    expect(results.some(row => row.name === 'insightfulpipe.com')).toBe(!official);
+    if (official) expect(results).toEqual([expect.objectContaining({ name: 'Notion', registryServerName: 'com.notion/mcp' })]);
+    else expect(results.map(row => row.name)).toEqual(['Notion', 'insightfulpipe.com']);
+  });
+
+  it('keeps a third-party Registry publisher separate from the company named in its title or website', async () => {
+    const registry = fakeRegistry([{ name: 'com.pulsemcp/fly-io', version: '1', title: 'Fly.io',
+      websiteUrl: 'https://fly.io', remotes: [{ type: 'streamable-http', url: 'https://third-party.example/mcp' }] }]);
+    const daemon = daemonWith(registry.client);
+    await daemon.execute('connectMcpServer', { ...turn, serverName: 'com.pulsemcp/fly-io', version: '1', reason: 'Use the third-party server' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client);
+    const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(view.companies?.rows.some(company => company.id === 'fly')).toBe(false);
+    expect(view.companies?.rows.find(company => company.id === 'pulsemcp.com')?.items).toHaveLength(1);
+  });
+
+  it('keeps an existing Composio route when a person selects an MCP', async () => {
+    const registry = fakeRegistry([]); const provider = fakeComposio();
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    const first = await phone.execute('connectWorkbenchApp', { app: 'Slack', helperAgentId: HELPER }, OWNER);
+    expect(first).toMatchObject({ transport: 'composio' });
+    await expect(phone.execute('connectWorkbenchApp', { app: 'Slack', helperAgentId: HELPER,
+      registryServerName: 'com.slack/mcp', registryVersion: '1' }, OWNER)).resolves.toMatchObject({ appId: first.appId, transport: 'composio' });
+    expect((await database.query(`SELECT id FROM workspace_connectors WHERE connector_type='registry-mcp'`)).rows).toHaveLength(0);
+  });
+
   it('searches real Workbench services and refuses arbitrary app text before a connection exists', async () => {
     const provider = fakeComposio();
     provider.searchToolkits = vi.fn(async (query: string) => query === 'resend'
@@ -1845,6 +2006,8 @@ describe('connect_app', () => {
       remotes: [{ type: 'streamable-http', url: 'https://mcp.stripe.com' }] }]);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, registry.client, provider);
+    await phone.execute('searchWorkbenchApps', { query: 'Stripe' }, OWNER);
+    await vi.waitFor(async () => expect((await phone.execute('searchWorkbenchApps', { query: 'Stripe' }, OWNER))[0]?.registryServerName).toBe('com.stripe/mcp'));
     const results = await phone.execute('searchWorkbenchApps', { query: 'Stripe' }, OWNER);
     expect(results).toEqual([
       expect.objectContaining({ appKey: 'stripe', registryServerName: 'com.stripe/mcp', company: expect.objectContaining({

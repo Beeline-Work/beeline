@@ -1712,6 +1712,14 @@ CREATE TABLE IF NOT EXISTS institutional_curator_cycles (
   UNIQUE(workspace_id,cycle_key)
 );
 
+-- Public, credential-free connector discovery shared across server instances.
+CREATE TABLE IF NOT EXISTS connector_discovery_cache (
+  cache_key text PRIMARY KEY,
+  manifests jsonb NOT NULL,
+  expires_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS live_outputs (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   agent_id text NOT NULL REFERENCES identities(id),

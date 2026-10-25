@@ -32,6 +32,8 @@ export type WorkbenchCompany = {
   readonly machines: readonly { readonly id: string; readonly name: string;
     readonly online: boolean; readonly status: 'connected' | 'error' | 'not-added'; readonly error?: string; readonly signedInAs?: string; readonly reconnecting?: boolean; readonly statusText?: string }[];
   readonly alsoAvailable: readonly CompanySuggestion[];
+  /** Verified MCP offered on the service page; does not count as an installed app. */
+  readonly mcp?: CompanySuggestion;
 };
 export type WorkbenchCompanyIndex = {
   readonly version: 1; readonly rows: readonly WorkbenchCompany[];

@@ -1282,7 +1282,7 @@ export async function backfillRegistryApps(
         row.owner_identity_id,
         key,
         row.display_name ?? row.registry_server_name,
-        domainOf(row.website_url ?? undefined) ?? registryServerDomain(row.registry_server_name) ?? null,
+        registryServerDomain(row.registry_server_name) ?? null,
         row.id,
         row.machine_id,
       ],

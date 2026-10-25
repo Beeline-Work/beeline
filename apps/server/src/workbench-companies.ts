@@ -152,8 +152,10 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
       neverAuthorised: app.status === 'error' && !app.errorMessage,
       computerOffline: helper ? !helper.online : false,
     });
+    const companyMcp = view.connectors.some(connector => connector.connectorId === app.connectorId
+      && connector.registryServerName?.endsWith('/company-mcp'));
     row.items.push({ id: app.appId, kind: 'connection', title: humanize(app.name),
-      subtitle: app.transport === 'composio' ? 'via Composio' : app.transport === 'registry-mcp' ? 'MCP server' : 'via Trusty Squire',
+      subtitle: app.transport === 'composio' ? 'via Composio' : app.transport === 'registry-mcp' ? companyMcp ? `via ${provider.name.replace(/\.[a-z]+$/i, '')} MCP` : 'MCP server' : 'via Trusty Squire',
       target: { kind: 'app', appId: app.appId }, state: classified.state,
       status: classified.state === 'error' ? classified.label : app.status === 'connecting' ? 'Connecting' : undefined,
       attention: classified.state !== 'connected' });

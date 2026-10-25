@@ -12,6 +12,10 @@
 
 The original fixture failures are resolved; the full mobile rerun completed successfully.
 
-Production-before proof accepted by revision 2 is complete for members, a profile, tray, Appearance and Interface size sheets, and a cancelled member-removal confirmation, at native 1279 and emulated 1920 CSS layout widths. See the measurement table and viewport caveats in inventory.md. Shared token integration remains deferred until Ruby orders the rebase after PR #2915.
+Production-before proof accepted by revision 2 is complete for members, a profile, tray, Appearance and Interface size sheets, and a cancelled member-removal confirmation, at native 1279 and emulated 1920 CSS layout widths. See the measurement table and viewport caveats in inventory.md. Shared token integration is complete after Ruby’s ordered rebase onto main at 3f3f4a905. All temporary page-local 640/720 caps now reference the shared detail/list tokens.
 
 Fresh pre-push reruns for this evidence delivery also passed: full mobile suite (614 files; 5413 tests passed, 6 skipped) and server shard 1/4 (53 files; 781 tests passed, 1 skipped).
+
+After shared-token integration: root typecheck and UI policy passed; full mobile suite passed (615 files passed, 5 skipped; 5426 tests passed, 6 skipped). This includes desktop sheet placement/scrolling and real schedule page browser proofs.
+
+Final server shard 1/4 passed after integration (53 files; 781 tests passed, 1 skipped). The confirmation opener was verified by screenshot before clicking; the open dialog was measured at both widths and closed with Cancel.

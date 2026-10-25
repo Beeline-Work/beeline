@@ -117,7 +117,7 @@ The shared `HullActionSheetModal` already uses center on desktop (460 px source 
 | Modal.prompt → WebPromptModal | 460 / 460 cap (source) | 460 / 460 | Centred small input dialog |
 | Modal.actionSheet → WebAlertModal action-sheet mode | HullActionSheetModal; 460 / 460 cap (source) | ≤560 centred | Shared action menu |
 
-## Delivery and deferred integration
+## Delivery and shared integration
 
 Revision 2 accepts the production-before set below and built-component after proof. Reviewer-bypass authentication is superseded by the existing owner GitHub session. DESKTOP-SHEET-1 is the recorded reproduction. Other routes retain explicitly source-derived widths; they are not claimed as individually browser-measured.
 

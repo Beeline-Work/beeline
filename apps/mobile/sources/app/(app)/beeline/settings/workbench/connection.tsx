@@ -66,6 +66,7 @@ export default function ConnectionDetailScreen() {
 
   const revoke = useCallback(async () => {
     if (!detail) return;
+    setError(null);
     setRevoking(true);
     try {
       const { revoked, pending } = await getWorkbenchSource().revokeAllGrants({ workspaceId, connectionId });
@@ -309,7 +310,7 @@ export default function ConnectionDetailScreen() {
           </Text>
         ) : null}
         {error || loadError ? (
-          <ErrorBanner
+          <ErrorBanner inline
             title={error ?? (loadError?.includes('Key not found')
                 ? 'Key not found — it belongs to another member or no longer exists'
                 : 'Key unavailable right now')}
@@ -317,7 +318,7 @@ export default function ConnectionDetailScreen() {
             testID="connection-error-state"
             retryLabel="Retry"
             retryTestID="connection-retry"
-            onRetry={!detail ? () => void retry() : undefined} />
+            onRetry={() => void (detail && error ? revoke() : retry())} />
         ) : null}
       </ScrollView>
     </View>

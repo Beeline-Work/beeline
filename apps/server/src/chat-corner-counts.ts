@@ -32,8 +32,6 @@ export type CornerStateRow = {
   waiting_reason?: CornerStateReason | null;
   waiting_person_id?: string | null;
   waiting_since?: Date | null;
-  /** A worker `blocked:` report is still open. It is not a question. */
-  blocked_report?: boolean;
   /** Selected blocker is a report addressed to the agent commander. */
   agent_commander?: boolean | null;
   /** Another blocker in the same corner is addressed to a person. */
@@ -45,21 +43,8 @@ export type CornerStateRow = {
   follows_viewer?: boolean | null;
 };
 
-/** Worker `blocked:` report to an agent commander. The body is the command payload, so the chat list does not scan messages. */
-export function blockedReportSql(corner = 'c'): string {
-  return `EXISTS (
-    SELECT 1 FROM corner_report_blockers report
-    JOIN agent_commands command ON command.id=report.report_id
-    WHERE report.corner_id=${corner}.id
-      AND command.private_payload->>'text' LIKE 'blocked:%')`;
-}
-
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {
   const agentCommander = row.agent_commander === true && row.human_blocker !== true;
-  // Any open blocked report. deriveCornerState idles that stall only while
-  // checks are pending or not yet reported, and keeps the repair window
-  // while they are failing. A needs-decision report leaves this unset.
-  const stallReport = agentCommander && row.blocked_report === true;
   return deriveCornerState({
     archived: Boolean(row.archived_at),
     turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
@@ -67,12 +52,10 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
     lastTurnEndedAt: row.last_turn_ended_at
       ? new Date(row.last_turn_ended_at).getTime() / 1000
       : undefined,
-    ciStartedAt: row.ci_started_at ? new Date(row.ci_started_at).getTime() / 1000 : undefined,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
-    stallReport,
     owed: row.blocking ?? false,
     ...(agentCommander ? { agentCommanderReport: true } : {}),
     ...(row.waiting_item_id && row.waiting_reason
@@ -127,7 +110,6 @@ export function cornerFactsSql(viewerExpr: string): {
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,
       blocker.agent_commander,blocker.human_blocker,
-      ${blockedReportSql('c')} blocked_report,
       turn.status latest_turn_status,turn.created_at latest_turn_created_at,
       lm.created_at latest_created_at,
       ${followsCornerSql('c', viewerExpr)} follows_viewer,

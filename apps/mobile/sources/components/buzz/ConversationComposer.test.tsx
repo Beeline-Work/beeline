@@ -214,8 +214,8 @@ describe('one composer', () => {
     const imageRow = adjuncts.findByProps({ testID: 'pending-chat-attachment-0' });
     const pdfRow = adjuncts.findByProps({ testID: 'pending-chat-attachment-1' });
     expect(imageRow.findAllByType('Image')).toHaveLength(0);
-    expect(imageRow.findAllByType('View')).toHaveLength(2);
-    expect(pdfRow.findAllByType('View')).toHaveLength(2);
+    expect(imageRow.findAllByType('View')).toHaveLength(3);
+    expect(pdfRow.findAllByType('View')).toHaveLength(3);
     expect(adjuncts.findAllByProps({ testID: 'pending-chat-attachment-2' }).length).toBeGreaterThan(
       0,
     );

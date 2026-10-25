@@ -9,6 +9,7 @@ import {
 } from '@beeline/buzz-client';
 
 import {
+  createTranscriptRowFolder,
   foldTranscriptRows,
   hostRowIndex,
   JUMP_NEWER_ROWS,
@@ -431,6 +432,35 @@ describe('Reproduction W1', () => {
 });
 
 describe('foldTranscriptRows host map', () => {
+  it('preserves a row across a temporary live-to-history handoff', () => {
+    const fold = createTranscriptRowFolder();
+    const first = chat('first', 100);
+    const second = chat('second', 110);
+    fold([first, second], null);
+    const incoming = chat('incoming', 120);
+    fold([second, incoming], null);
+    const restored = fold([{ ...first }, second, incoming], null);
+    expect(restored.rows[0]).toBe(first);
+  });
+
+  it('retains an unchanged folded card when another message arrives, but refreshes changed runs', () => {
+    const fold = createTranscriptRowFolder();
+    const started = check('started');
+    const before = fold([started], null);
+    const incoming = chat('incoming', 120);
+    const after = fold([started, incoming], null);
+    expect(after.rows[0]).toBe(before.rows[0]);
+    expect(after.rows[1]).toBe(incoming);
+    const settled = fold([started, check('passed', 'passed', 110), incoming], null);
+    expect(settled.rows[0]).not.toBe(after.rows[0]);
+    expect(hostRowIndex(settled.rows, settled.hostIds, 'passed')).toBe(0);
+    expect(settled.rows[1]).toBe(incoming);
+    const edited = fold([started, check('passed', 'passed', 110), { ...incoming, text: 'Edited' }], null);
+    expect(edited.rows[0]).toBe(settled.rows[0]);
+    expect(edited.rows[1]?.text).toBe('Edited');
+    expect(edited.rows[1]).not.toBe(incoming);
+  });
+
   it('path 2: a notification for a folded check card lands on the run row that shows it', () => {
     const { rows, hostIds } = foldTranscriptRows(
       [chat('before', 90), check('started'), check('passed', 'passed', 110)],

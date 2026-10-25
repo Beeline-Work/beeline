@@ -7,19 +7,24 @@ import { rooms, workspace, corner, fixtureFingerprint } from './fixture.mjs';
 import { summarize, percentile } from './metrics.mjs';
 import { pointFor } from '../latency-rig/capture-ui.mjs';
 const device = process.env.LATENCY_RIG_DEVICE;
-if (!/^emulator-\d+$/.test(device ?? '')) throw new Error('Select the leased fixture emulator with LATENCY_RIG_DEVICE');
+if (!/^(emulator-\d+|127\.0\.0\.1:\d+)$/.test(device ?? '')) throw new Error('Select the leased fixture emulator with LATENCY_RIG_DEVICE');
 const output = process.argv[2] ?? '/tmp/transcript-android-results';
 await mkdir(output, { recursive: true });
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 32e6 });
+if (adb('shell', 'getprop', 'ro.kernel.qemu').trim() !== '1') throw new Error('Disposable emulator required');
 const artifact = androidArtifact(adb);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const open = room => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d',
   `beeline://beeline/chat/${room}?communityId=${workspace}`, 'app.usebeeline/.MainActivity');
 const dump = () => {
   for (let attempt = 0; attempt < 3; attempt++) {
-    adb('shell', 'rm', '-f', '/sdcard/transcript.xml');
-    const result = adb('shell', 'uiautomator', 'dump', '/sdcard/transcript.xml');
-    if (result.includes('dumped to:')) return adb('shell', 'cat', '/sdcard/transcript.xml');
+    try {
+      adb('shell', 'rm', '-f', '/sdcard/transcript.xml');
+      const result = adb('shell', 'uiautomator', 'dump', '/sdcard/transcript.xml');
+      if (result.includes('dumped to:')) return adb('shell', 'cat', '/sdcard/transcript.xml');
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
   }
   throw new Error('Android accessibility dump could not get idle state after three attempts');
 };
@@ -28,9 +33,14 @@ const newestPoint = xml => {
   return label ? pointFor(xml, 'content-desc', label) : null;
 };
 const tap = point => { if (!point) throw new Error('Expected fixture UI control missing'); adb('shell', 'input', 'tap', ...point.map(String)); };
+const repeatCount = Number(process.env.TRANSCRIPT_REPEAT_COUNT ?? 3);
+if (!Number.isInteger(repeatCount) || repeatCount < 1 || repeatCount > 3)
+  throw new Error('TRANSCRIPT_REPEAT_COUNT must be an integer from 1 to 3');
+const regressionOnly = process.env.TRANSCRIPT_REGRESSION_ONLY === '1';
 const control = startControl();
 const stimulus = await fixtureStimulus();
 const samples = [];
+
 const refreshHz = Number(process.env.TRANSCRIPT_REFRESH_HZ ?? 60);
 const frameStats = text => {
   const frames = [];
@@ -63,7 +73,7 @@ try {
   if (!xml.includes('Transcript A')) throw new Error('The fixture Room did not open');
   const newest = newestPoint(xml);
   if (newest) { tap(newest); await pause(2000); }
-  for (let repeat = 0; repeat < 3; repeat++) {
+  for (let repeat = 0; repeat < repeatCount; repeat++) {
     await capture('idle', 2000, async () => {});
     const composer = pointFor(dump(), 'content-desc', 'Message');
     tap(composer); await pause(500);
@@ -77,15 +87,17 @@ try {
     await capture('fling', 4000, async () => {
       for (let i = 0; i < 4; i++) { adb('shell', 'input', 'swipe', '500', '700', '500', '1850', '120'); await pause(350); }
     });
-    const oldest = xml => Math.min(...Array.from(xml.matchAll(/Fixture (\d{4})/g), m => Number(m[1])));
-    const oldestBefore = Math.min(970, oldest(dump()));
-    await capture('history-prepend', 25000, async () => {
-      for (let i = 0; i < 30; i++) {
-        adb('shell', 'input', 'swipe', '500', '550', '500', '2000', '90'); await pause(100);
-      }
-    });
-    samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
-    if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
+    if (process.env.TRANSCRIPT_SKIP_HISTORY !== '1') {
+      const oldest = xml => Math.min(...Array.from(xml.matchAll(/Fixture (\d{4})/g), m => Number(m[1])));
+      const oldestBefore = Math.min(970, oldest(dump()));
+      await capture('history-prepend', 25000, async () => {
+        for (let i = 0; i < 30; i++) {
+          adb('shell', 'input', 'swipe', '500', '550', '500', '2000', '90'); await pause(100);
+        }
+      });
+      samples.at(-1).history = { oldestBefore, oldestAfter: oldest(dump()) };
+      if (!(samples.at(-1).history.oldestAfter < oldestBefore)) throw new Error('Android history gestures did not reveal an older fixture row');
+    }
     open(rooms[1]); await pause(1200); open(rooms[0]); await pause(1200);
     let atNewest = false;
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -102,6 +114,8 @@ try {
     const incomingXml = dump();
     samples.at(-1).visible = incomingXml.includes(incoming.text);
     if (!samples.at(-1).visible) throw new Error('Android incoming message did not become visible');
+    if (!samples.at(-1).rowCommits) throw new Error('Incoming message was not captured inside the sampling window');
+    if (regressionOnly) continue;
     const memoryBefore = adb('shell', 'dumpsys', 'meminfo', 'app.usebeeline');
     await capture('warm-room-switches', 30000, async () => {
       for (let i = 0; i < 20; i++) { open(rooms[i % 2]); await pause(900); }
@@ -118,6 +132,7 @@ try {
       if (!/Stream [0O]:/.test(visible) || !/Stream 1:/.test(visible)) throw new Error('Android screenshot did not show both live streams');
     });
     await capture('concurrent-streams', 5000, async () => { await stimulus.stream(); });
+    if (!samples.at(-1).rowCommits) throw new Error('Streaming rows were not captured inside the sampling window');
     open(rooms[0]); await pause(2000);
     tap(pointFor(dump(), 'content-desc', 'Message'));
     const sent = `Settlement-${repeat}-${Date.now()}`;
@@ -126,8 +141,10 @@ try {
     await capture('optimistic-send', 3000, async () => { tap(send); });
     samples.at(-1).serverSettled = await stimulus.settled(sent);
     if (!samples.at(-1).serverSettled) throw new Error('Android optimistic send did not settle on the fixture server');
+    if (!samples.at(-1).rowCommits) throw new Error('Optimistic send was not captured inside the sampling window');
   }
   await writeFile(`${output}/capture.json`, JSON.stringify({ status: 'partial', device, fixtureFingerprint,
+    scenarioOptions: { repeatCount, regressionOnly, skipHistory: process.env.TRANSCRIPT_SKIP_HISTORY === '1', controlPort: Number(process.env.TRANSCRIPT_CONTROL_PORT ?? 19886) },
     ...artifact,
     checkoutSha: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     refreshHz,

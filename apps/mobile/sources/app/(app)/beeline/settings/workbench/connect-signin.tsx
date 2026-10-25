@@ -125,6 +125,7 @@ function ConnectorSignInOverlay() {
               {observed.error ?? pageError}
             </Text>
             <Button
+              size="inline"
               label="Retry"
               variant="secondary"
               style={{ alignSelf: 'flex-end' }}

@@ -9,22 +9,13 @@ import type { CornerLifecycleView, CornerState } from './phone-types.js';
  * 2. `review` iff a reviewer turn is active and checks are not failing, or
  *    checks are pending on the current head with no human-owed blocker and
  *    no worker turn running.
- * 3. `working` is a running worker turn, unless failing checks are past the
- *    30-minute repair window; the repair window itself after checks start
- *    failing with no blocker; or the 30-second grace after a non-failing
- *    turn. It does not override archived. A live reviewer beats it only
- *    while checks are not failing. An expired repair with a still-running
- *    turn is idle when nothing is owed, and waiting when a blocker is.
- * 4. `waiting` iff there is a blocker and it is not the case that checks are
- *    pending on the current head and every blocker is owed to an agent.
- *    This scan leaves `stallReport` unset, so an agent-commander report on a
- *    red head stays waiting. A `stallReport` during pending checks is idle
- *    and is covered outside this scan.
- * 5. Anything else left over is `idle`, including failing checks once the
- *    repair window is missing or older than 30 minutes.
+ * 3. `working` is a running worker turn or the existing 30-second post-turn
+ *    grace. It never overrides archived or an explicit wait. A live reviewer
+ *    beats worker work while checks are not failing.
+ * 4. `waiting` is a blocker, except agent-only reports during pending CI.
+ * 5. Everything else is `idle`; failing checks alone establish no activity.
  *
- * `workerQueued` is enumerated and must not change the result. `ciStartedAt`
- * does not end a pending run. It does open the failing-check repair window.
+ * Queued work alone must not change the result.
  */
 
 const NOW = 1_700_000_000;
@@ -47,7 +38,6 @@ type BlockerKind =
   | 'agent'
   | 'human+agent';
 type Grace = 'within' | 'outside' | 'absent';
-type CiAge = 'fresh' | 'stale' | 'absent';
 
 const RUNS = [
   undefined,
@@ -70,7 +60,6 @@ const BLOCKERS: readonly BlockerKind[] = [
   'human+agent',
 ];
 const GRACES: readonly Grace[] = ['within', 'outside', 'absent'];
-const AGES: readonly CiAge[] = ['fresh', 'stale', 'absent'];
 
 function lifecycleFor(shape: CheckShape, prPresent: boolean, closure: Closure): CornerLifecycleView {
   const checks =
@@ -153,7 +142,6 @@ function isClosed(facts: CornerStateFacts): boolean {
 function scan(
   failures: string[],
   closures: readonly Closure[],
-  ages: readonly CiAge[],
   queuedValues: readonly boolean[],
 ): number {
   let count = 0;
@@ -168,50 +156,42 @@ function scan(
                   for (const prPresent of [false, true]) {
                     if (closure === 'merged' && !prPresent) continue;
                     for (const blocker of BLOCKERS) {
-                      for (const age of ages) {
-                        count += 1;
-                        const facts: CornerStateFacts = {
-                          archived,
-                          turnRunning,
-                          workerQueued,
-                          reviewerActive,
-                          now: NOW,
-                          ...(run ? { run } : {}),
-                          ...(grace === 'within' ? { lastTurnEndedAt: NOW - 10 } : {}),
-                          ...(grace === 'outside' ? { lastTurnEndedAt: NOW - 40 } : {}),
-                          ...(age === 'fresh' ? { ciStartedAt: NOW - 10 } : {}),
-                          ...(age === 'stale' ? { ciStartedAt: NOW - 31 * 60 } : {}),
-                          lifecycle: lifecycleFor(shape, prPresent, closure),
-                          ...blockerFacts(blocker),
-                        };
-                        const actual: CornerState = deriveCornerState(facts).state;
-                        const closed = isClosed(facts);
-                        const pending = pendingOnHead(facts);
-                        const anyBlocker = blocker !== 'none';
-                        const agentOnly = blocker === 'agent';
-                        const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
-                        const failing = checks === 'failing';
-                        const repairOpen =
-                          facts.ciStartedAt !== undefined && NOW - facts.ciStartedAt < 30 * 60;
-                        const repairExpired = failing && facts.ciStartedAt !== undefined && !repairOpen;
-                        let expected: CornerState;
-                        if (closed) expected = 'archived';
-                        else if (reviewerActive && !failing) expected = 'review';
-                        else if (turnRunning && !repairExpired) expected = 'working';
-                        else if (failing && !anyBlocker) expected = repairOpen ? 'working' : 'idle';
-                        else if (anyBlocker && !(pending && agentOnly)) expected = 'waiting';
-                        else if (pending) expected = 'review';
-                        else if (
-                          facts.lastTurnEndedAt !== undefined &&
-                          NOW - facts.lastTurnEndedAt < 30
-                        )
-                          expected = 'working';
-                        else expected = 'idle';
-                        if (actual !== expected && failures.length < 8) {
-                          failures.push(
-                            `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} grace=${grace} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker} age=${age}`,
-                          );
-                        }
+                      count += 1;
+                      const facts: CornerStateFacts = {
+                        archived,
+                        turnRunning,
+                        workerQueued,
+                        reviewerActive,
+                        now: NOW,
+                        ...(run ? { run } : {}),
+                        ...(grace === 'within' ? { lastTurnEndedAt: NOW - 10 } : {}),
+                        ...(grace === 'outside' ? { lastTurnEndedAt: NOW - 40 } : {}),
+                        lifecycle: lifecycleFor(shape, prPresent, closure),
+                        ...blockerFacts(blocker),
+                      };
+                      const actual: CornerState = deriveCornerState(facts).state;
+                      const closed = isClosed(facts);
+                      const pending = pendingOnHead(facts);
+                      const anyBlocker = blocker !== 'none';
+                      const agentOnly = blocker === 'agent';
+                      const checks = facts.lifecycle?.checksSummary?.status ?? facts.lifecycle?.checks;
+                      const failing = checks === 'failing';
+                      let expected: CornerState;
+                      if (closed) expected = 'archived';
+                      else if (reviewerActive && !failing) expected = 'review';
+                      else if (turnRunning) expected = 'working';
+                      else if (anyBlocker && !(pending && agentOnly)) expected = 'waiting';
+                      else if (pending) expected = 'review';
+                      else if (
+                        facts.lastTurnEndedAt !== undefined &&
+                        NOW - facts.lastTurnEndedAt < 30
+                      )
+                        expected = 'working';
+                      else expected = 'idle';
+                      if (actual !== expected && failures.length < 8) {
+                        failures.push(
+                          `got ${actual} expected ${expected} archived=${archived} run=${run?.state ?? '-'} closure=${closure} turn=${turnRunning} grace=${grace} queued=${workerQueued} reviewer=${reviewerActive} checks=${shape} pr=${prPresent} blocker=${blocker}`,
+                        );
                       }
                     }
                   }
@@ -230,11 +210,7 @@ describe('deriveCornerState invariants', () => {
   it('enumerates archived, turns, grace, checks, pull requests, and blockers', () => {
     const failures: string[] = [];
     const started = performance.now();
-    // Clock age is independent of landed/closed, so the full age cross runs once
-    // and each closure is checked against one age.
-    const count =
-      scan(failures, ['none'], AGES, [false, true]) +
-      scan(failures, ['landed', 'done', 'abandoned', 'merged'], ['stale'], [false]);
+    const count = scan(failures, ['none', 'landed', 'done', 'abandoned', 'merged'], [false, true]);
     const elapsed = performance.now() - started;
     expect(failures).toEqual([]);
     expect(count).toBeGreaterThan(50_000);

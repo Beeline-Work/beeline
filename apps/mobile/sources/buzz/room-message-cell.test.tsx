@@ -8,6 +8,7 @@ import {
   useRoomMessageRenderItem,
 } from './room-message-cell';
 import type { ChatDisplayMessage } from './room-view-presentation';
+import { useTranscriptCardMotion } from '@/components/buzz/transcript-card-motion-context';
 
 vi.mock('react-native', () => ({
   Text: (props: Record<string, unknown>) => React.createElement('Text', props),
@@ -22,6 +23,83 @@ vi.mock('@/components/buzz/Ledger', () => ({
 }));
 
 describe('RoomMessageCell', () => {
+  it('updates card arrival context without rerendering unchanged message bodies', () => {
+    const first: ChatDisplayMessage = { id: 'first', text: 'First', isUser: false, timestamp: 1 };
+    const incoming: ChatDisplayMessage = { id: 'incoming', text: 'Incoming', isUser: false, timestamp: 2 };
+    function CardMotionProbe() {
+      const motion = useTranscriptCardMotion();
+      return React.createElement('card-motion', { cardId: motion.cardId, arriving: motion.arriving });
+    }
+    const render = vi.fn<RoomMessageRenderer>(() => React.createElement(CardMotionProbe));
+    function Harness({ rows, arriving }: { rows: ChatDisplayMessage[]; arriving: Set<string> }) {
+      const renderItem = useRoomMessageRenderItem({
+        render, arrivingCardIds: arriving, continuedIds: new Set(),
+        precedingMessageById: new Map(), messageById: new Map(),
+      });
+      return React.createElement(React.Fragment, null,
+        ...rows.map(item => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(React.createElement(Harness, { rows: [first], arriving: new Set(['first']) })); });
+    render.mockClear();
+    act(() => { renderer.update(React.createElement(Harness, { rows: [first, incoming], arriving: new Set(['incoming']) })); });
+    expect(render.mock.calls.map(([item]) => item.id)).toEqual(['incoming']);
+    expect(renderer.root.findAllByType('card-motion').map((node: { props: Record<string, unknown> }) => node.props))
+      .toEqual([{ cardId: 'first', arriving: false }, { cardId: 'incoming', arriving: true }]);
+    act(() => renderer.unmount());
+  });
+
+  it('isolates typing, arrivals, streaming, edits, reactions and per-row presentation', () => {
+    const first: ChatDisplayMessage = { id: 'first', text: 'First', isUser: false, timestamp: 1 };
+    const second: ChatDisplayMessage = { id: 'second', text: 'Second', isUser: false, timestamp: 2 };
+    const third: ChatDisplayMessage = { id: 'third', text: 'Incoming', isUser: false, timestamp: 3 };
+    const render = vi.fn<RoomMessageRenderer>((item, context) =>
+      React.createElement('message-row', {
+        id: item.id, text: item.text, reactions: item.reactions, ...context,
+      }),
+    );
+    function Harness({ rows, hint }: { rows: ChatDisplayMessage[]; hint?: string }) {
+      const renderItem = useRoomMessageRenderItem({
+        render,
+        continuedIds: new Set(),
+        precedingMessageById: new Map(rows.slice(1).map((row, index) => [row.id, rows[index]!])),
+        messageById: new Map(rows.map(row => [row.id, row])),
+        // Typing recreates the list callback, but unchanged scalar row props
+        // must survive the pure cell boundary.
+        presentationForMessage: item => ({ untaggedHint: item.id === hint }),
+      });
+      return React.createElement(React.Fragment, null,
+        ...rows.map(item => React.createElement(React.Fragment, { key: item.id }, renderItem({ item }))),
+      );
+    }
+    let renderer!: ReactTestRenderer;
+    const update = (rows: ChatDisplayMessage[], hint?: string) => {
+      render.mockClear();
+      act(() => {
+        const node = React.createElement(Harness, { rows, hint });
+        if (renderer) renderer.update(node);
+        else renderer = create(node);
+      });
+      return render.mock.calls.map(([item]) => item.id);
+    };
+    expect(update([first, second])).toEqual(['first', 'second']);
+    expect(update([first, second])).toEqual([]);
+    expect(update([first, second, third])).toEqual(['third']);
+    const streamed = { ...third, text: 'Incoming token' };
+    expect(update([first, second, streamed])).toEqual(['third']);
+    // Editing the second row also changes its successor's predecessor input.
+    const edited = { ...second, text: 'Edited' };
+    expect(update([first, edited, streamed])).toEqual(['second', 'third']);
+    const reacted: ChatDisplayMessage = { ...streamed, reactions: [{ emoji: '👍', count: 1, reacted: true }] };
+    expect(update([first, edited, reacted])).toEqual(['third']);
+    expect(update([first, edited, reacted], 'first')).toEqual(['first']);
+    expect(renderer.root.findByProps({ id: 'first' }).props.untaggedHint).toBe(true);
+    expect(renderer.root.findByProps({ id: 'third' }).props.text).toBe('Incoming token');
+    expect(renderer.root.findByProps({ id: 'third' }).props.reactions).toEqual(reacted.reactions);
+    act(() => renderer.unmount());
+  });
+
   it('does not rerender an identity-stable row when its parent list updates', () => {
     const message: ChatDisplayMessage = {
       id: 'message',

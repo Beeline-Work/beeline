@@ -1,5 +1,6 @@
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
+import { InlineActionRow } from '@/components/buzz/IndexRow';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { Typography } from '@/constants/Typography';
@@ -381,7 +382,9 @@ export function HumanProfile({
               <Text style={styles.copy}>No connected agents in this Workspace.</Text>
             )}
             {agentsHasMore && (
-              <Button
+              <InlineActionRow><Button
+                size="inline"
+
                 label="More"
                 disabled={busy}
                 testID="more-connected-agents"
@@ -404,7 +407,7 @@ export function HumanProfile({
                     setAgentsHasMore(page.agentsTruncated);
                   })
                 }
-              />
+              /></InlineActionRow>
             )}
             <RoomListSectionHeader title="Grants" inset="content" />
             {grants.length ? (

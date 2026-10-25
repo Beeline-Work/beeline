@@ -95,7 +95,7 @@ export default function Subscription() {
       {stopFailed ? (
         <ErrorBanner
           title="Could not stop this subscription."
-          retryLabel="Try again"
+          retryLabel="Retry"
           onRetry={() => void stop()}
           retryTestID="subscription-stop-error-retry"
           testID="subscription-stop-error"

@@ -19,7 +19,16 @@ import {
   type TranscriptCardMotionStore,
 } from '@/components/buzz/transcript-card-motion-context';
 
-export type RoomMessageRenderContext = {
+export type RoomMessagePresentation = {
+  firstBylineOfDay?: boolean;
+  untaggedHint?: boolean;
+  deliveryFailed?: boolean;
+  speakerWorking?: boolean;
+  cornerProposalAnswer?: { decision: 'open' | 'cancel' | null; handle: string } | null;
+  cornerProposalAction?: 'open' | 'cancel' | null;
+};
+
+export type RoomMessageRenderContext = RoomMessagePresentation & {
   continued: boolean;
   immediatelyPrecedingMessage?: ChatDisplayMessage;
   referencedMessage?: ChatDisplayMessage;
@@ -40,6 +49,7 @@ export function useRoomMessageRenderItem({
   firstNewMessageId,
   arrivalFlashMessageId = null,
   sourceLandingFlashMessageId = null,
+  presentationForMessage,
 }: {
   render: RoomMessageRenderer;
   continuedIds: ReadonlySet<string>;
@@ -52,24 +62,30 @@ export function useRoomMessageRenderItem({
   arrivalFlashMessageId?: string | null;
   /** The row a settled quote/forward/notification message-source jump just centered, or null. */
   sourceLandingFlashMessageId?: string | null;
+  presentationForMessage?: (item: ChatDisplayMessage) => RoomMessagePresentation;
 }) {
-  const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
+  const [fallbackMotionStore] = React.useState(createTranscriptCardMotionStore);
   const resolvedCardMotionStore = cardMotionStore ?? fallbackMotionStore;
   return React.useCallback(
     ({ item }: { item: ChatDisplayMessage }) => (
-      <RoomMessageCell
-        item={item}
-        render={render}
-        startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
-        continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
-        immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
-        referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
-        cardArriving={arrivingCardIds.has(item.id)}
-        cardMotionStore={resolvedCardMotionStore}
-        arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
-        sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
+      <TranscriptCardMotionBoundary
+        arriving={arrivingCardIds.has(item.id)}
+        cardId={item.id}
+        store={resolvedCardMotionStore}
+      >
+        <RoomMessageCell
+          {...presentationForMessage?.(item)}
+          item={item}
+          render={render}
+          startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
+          continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
+          immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
+          referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
+          arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
+          sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
 
-      />
+        />
+      </TranscriptCardMotionBoundary>
     ),
     [
       arrivalFlashMessageId,
@@ -78,6 +94,7 @@ export function useRoomMessageRenderItem({
       firstNewMessageId,
       messageById,
       precedingMessageById,
+      presentationForMessage,
       render,
       resolvedCardMotionStore,
       sourceLandingFlashMessageId,
@@ -93,40 +110,37 @@ export const RoomMessageCell = React.memo(function RoomMessageCell({
   immediatelyPrecedingMessage,
   referencedMessage,
   startsNewMessages = false,
-  cardArriving = false,
-  cardMotionStore,
   arrivalFlashing = false,
   sourceLandingFlashing = false,
-}: {
+  firstBylineOfDay,
+  untaggedHint,
+  deliveryFailed,
+  speakerWorking,
+  cornerProposalAnswer,
+  cornerProposalAction,
+}: RoomMessagePresentation & {
   item: ChatDisplayMessage;
   render: RoomMessageRenderer;
   continued: boolean;
   immediatelyPrecedingMessage?: ChatDisplayMessage;
   referencedMessage?: ChatDisplayMessage;
   startsNewMessages?: boolean;
-  cardArriving?: boolean;
-  cardMotionStore?: TranscriptCardMotionStore;
   arrivalFlashing?: boolean;
   sourceLandingFlashing?: boolean;
 }) {
-  const fallbackMotionStore = React.useRef(createTranscriptCardMotionStore()).current;
-  return (
-    <TranscriptCardMotionBoundary
-      arriving={cardArriving}
-      cardId={item.id}
-      store={cardMotionStore ?? fallbackMotionStore}
+  return withLedgerDayCaption(
+    <ArrivalFlashGround
+      flashing={arrivalFlashing || sourceLandingFlashing}
+      tint={sourceLandingFlashing ? 'brass' : 'pointer'}
     >
-      {withLedgerDayCaption(
-        <ArrivalFlashGround
-          flashing={arrivalFlashing || sourceLandingFlashing}
-          tint={sourceLandingFlashing ? 'brass' : 'pointer'}
-        >
-          {startsNewMessages && <NewMessagesDivider />}
-          {render(item, { continued, immediatelyPrecedingMessage, referencedMessage })}
-        </ArrivalFlashGround>,
-        ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
-      )}
-    </TranscriptCardMotionBoundary>
+      {startsNewMessages && <NewMessagesDivider />}
+      {render(item, {
+        continued, immediatelyPrecedingMessage, referencedMessage,
+        firstBylineOfDay, untaggedHint, deliveryFailed, speakerWorking,
+        cornerProposalAnswer, cornerProposalAction,
+      })}
+    </ArrivalFlashGround>,
+    ledgerDayCaption(item.timestamp, immediatelyPrecedingMessage?.timestamp),
   );
 });
 

@@ -284,3 +284,22 @@ describe('the shared Button anatomy', () => {
 
 
 });
+
+describe('inline actions', () => {
+  it.each(['bone', 'obsidian'] as const)('keeps meta text, no box and a touch target in %s', async (name) => {
+    active.theme = name;
+    const { frame, text, pressable, label } = await render({ size: 'inline', label: 'Retry', accessibilityLabel: 'Retry uploading photo.png' });
+    expect(frame()).toMatchObject({ minHeight: 0, minWidth: 0, borderWidth: 0, paddingHorizontal: 0, backgroundColor: 'transparent' });
+    expect(text).toMatchObject({ fontSize: beelineThemes[name].type.meta.fontSize, lineHeight: beelineThemes[name].type.meta.lineHeight, color: beelineThemes[name].accent });
+    expect(Number(text.lineHeight) + pressable.props.hitSlop.top + pressable.props.hitSlop.bottom).toBeGreaterThanOrEqual(44);
+    expect(pressable.props.hitSlop.left + pressable.props.hitSlop.right).toBeGreaterThanOrEqual(44);
+    expect(pressable.props.accessibilityLabel).toBe('Retry uploading photo.png');
+    expect(label.props.numberOfLines).toBeUndefined();
+  });
+  it('recolours quiet and destructive actions and preserves busy state', async () => {
+    active.theme = 'obsidian';
+    expect((await render({ size: 'inline', variant: 'quiet' })).text.color).toBe(beelineThemes.obsidian.textSecondary);
+    expect((await render({ size: 'inline', variant: 'destructive' })).text.color).toBe(beelineThemes.obsidian.dialogDanger);
+    expect((await render({ size: 'inline', loading: true })).pressable.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+  });
+});

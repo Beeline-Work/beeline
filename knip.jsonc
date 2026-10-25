@@ -59,7 +59,7 @@
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
         // The transcript benchmark README invokes these measurement CLIs by path.
-        "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report}.mjs",
+        "scripts/transcript-speed/{capture-*,seed,serve,inspect-web,reset,report,symbolicate-room-profile}.mjs",
       ],
       "project": [
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",
@@ -170,6 +170,10 @@
         "scripts/desktop-ui-fixes-proof.tsx",
         "scripts/room-card-spacing-proof.tsx",
         "scripts/render-room-list-proof.mjs",
+        // The quiet row actions runbook invokes these CLIs; esbuild and Gradle select entries by path.
+        "scripts/render-quiet-row-actions-proof.mjs",
+        "scripts/capture-quiet-row-actions-web.mjs",
+        "scripts/quiet-row-actions-{native,web}-proof.tsx",
         // esbuild and Gradle load the header alignment proof entries by path.
         "scripts/render-header-alignment-proof.mjs",
         "scripts/header-alignment-proof/{native,web}.tsx",

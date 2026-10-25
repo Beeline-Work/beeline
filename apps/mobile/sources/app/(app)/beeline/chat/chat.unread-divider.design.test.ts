@@ -73,7 +73,8 @@ describe('the chat surface unread-divider wiring', () => {
   });
 
   it('splits folding only at the visible unread divider without consulting the live queue', () => {
-    expect(chatSource).toContain('foldTranscriptRows(combinedMessages, firstNewMessageId)');
+    expect(chatSource).toContain('foldRoomRows(combinedMessages, firstNewMessageId)');
+    expect(storeSource).toContain('foldTranscriptRows(messages, firstNewMessageId)');
     expect(storeSource).toContain('boundaryRowIndex(anchored, firstNewMessageId)');
   });
 

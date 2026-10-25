@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 
 /**
  * Reference-identity preservation for derived render inputs.
@@ -121,7 +121,13 @@ function sameSelectedMember(
     previous.pubkey === next.pubkey &&
     previous.role === next.role &&
     previous.kind === next.kind &&
-    previous.identity === next.identity
+    (previous.identity === next.identity ||
+      (previous.identity != null && next.identity != null &&
+        typeof previous.identity === 'object' && typeof next.identity === 'object' &&
+        shallowEqualRecord(
+          previous.identity as Readonly<Record<string, unknown>>,
+          next.identity as Readonly<Record<string, unknown>>,
+        )))
   );
 }
 
@@ -146,4 +152,16 @@ export function sameSelectedMembers(
     if (!sameSelectedMember(previous[index]!, next[index]!)) return false;
   }
   return true;
+}
+
+/** Stable event callbacks within one Room/viewer scope; keys must remain fixed. */
+export function useScopedCallbacks<T extends Record<string, (...args: any[]) => any>>(
+  callbacks: T,
+  scope: string,
+): T {
+  const state = useMemo(() => ({ callbacks }), [scope]);
+  state.callbacks = callbacks;
+  return useMemo(() => Object.fromEntries(
+    Object.keys(callbacks).map(key => [key, (...args: any[]) => state.callbacks[key]!(...args)]),
+  ) as T, [state]);
 }

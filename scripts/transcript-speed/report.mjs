@@ -34,7 +34,7 @@ for (const [index, directory] of [androidDir, webDir, desktopDir].entries()) {
     const activeMs=active.samples.map(s=>s.latencyMs),inactiveMs=inactive.samples.map(s=>s.latencyMs);
     md += `Sampling overhead: sequential native keypaint trials, sampler inactive p50/p95 ${format(percentile(inactiveMs,.5))}/${format(percentile(inactiveMs,.95))} ms; active ${format(percentile(activeMs,.5))}/${format(percentile(activeMs,.95))} ms. Polling is suspended in both arms. Hooks remain installed in both arms; this measures incremental sampling cost, not total instrumentation overhead.\n\n`;
   }
-  md += '| Scenario | Trials | JS/render interval p50 / p95 ms | UI frame p50 / p95 ms | UI janky / rendered frames | Median transcript / row commits | Missed JS opportunities |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n';
+  md += '| Scenario | Trials | JS/render interval p50 / p95 ms | Worst JS interval ms | UI frame p50 / p95 ms | UI janky / rendered frames | Median transcript / row commits | Missed JS frame opportunities |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n';
   for (const scenario of [...new Set(run.samples.map(s => s.scenario))]) {
     const samples = run.samples.filter(s => s.scenario === scenario);
     const frames = samples.flatMap(s => s.raw.jsFrameIntervalsMs);
@@ -42,7 +42,7 @@ for (const [index, directory] of [androidDir, webDir, desktopDir].entries()) {
     const p95 = percentile(frames, .95);
     const missed = samples.reduce((sum, s) => sum + s.missedJsFrameOpportunities, 0);
     const rowCommits = percentile(samples.map(s => s.rowCommits), .5);
-    md += `| ${scenario} | ${samples.length} | ${format(percentile(frames, .5))} / ${format(p95)} | ${ui.length ? `${format(percentile(ui.map(s => s.uiFrames.p50Ms), .5))} / ${format(percentile(ui.map(s => s.uiFrames.p95Ms), .5))}` : 'not separately measured'} | ${ui.length ? `${ui.reduce((n,s)=>n+s.uiFrames.jankyFrames,0)} / ${ui.reduce((n,s)=>n+s.uiFrames.count,0)}` : 'not measured'} | ${format(percentile(samples.map(s=>s.transcriptCommits),.5))} / ${format(rowCommits)} | ${missed} |\n`;
+    md += `| ${scenario} | ${samples.length} | ${format(percentile(frames, .5))} / ${format(p95)} | ${format(percentile(frames, 1))} | ${ui.length ? `${format(percentile(ui.map(s => s.uiFrames.p50Ms), .5))} / ${format(percentile(ui.map(s => s.uiFrames.p95Ms), .5))}` : 'not separately measured'} | ${ui.length ? `${ui.reduce((n,s)=>n+s.uiFrames.jankyFrames,0)} / ${ui.reduce((n,s)=>n+s.uiFrames.count,0)}` : 'not measured'} | ${format(percentile(samples.map(s=>s.transcriptCommits),.5))} / ${format(rowCommits)} | ${missed} |\n`;
     if (scenario !== 'idle') costs.push({ platform: label, scenario, p95Ms: p95, missedFraction: missed/(frames.length+missed), rowCommits });
   }
   md += '\n| Room open | Trials | First content p50 / p95 ms | Settled p50 / p95 ms |\n| --- | ---: | ---: | ---: |\n';

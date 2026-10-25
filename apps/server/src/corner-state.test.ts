@@ -7,7 +7,6 @@ const facts: CornerStateFacts = {
   turnRunning: false,
   owed: false,
   now: 1000,
-  ciStartedAt: 990,
   lifecycle: { lifecycle: 'working', checks: 'unknown' },
 };
 const pushed = {
@@ -52,7 +51,7 @@ describe('observed corner states', () => {
     ],
     [
       'checks failed without worker',
-      { lifecycle: { lifecycle: 'in-review', checks: 'failing' }, ciStartedAt: undefined },
+      { lifecycle: { lifecycle: 'in-review', checks: 'failing' } },
       'idle',
     ],
     ['human merge yes', { owed: true, lifecycle: { ...pushed, checks: 'passing' } }, 'waiting'],
@@ -86,42 +85,15 @@ describe('observed corner states', () => {
 it.each([[10,'working'],[40,'idle']])('turn ended %s seconds ago', (age,state) => {
   expect(deriveCornerState({...facts,lastTurnEndedAt:1000-Number(age)}).state).toBe(state);
 });
-it('failing checks past the repair window are idle', () => {
-  expect(deriveCornerState({
-    ...facts,
-    ciStartedAt: 1000 - 1801,
-    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  })).toEqual({ state: 'idle' });
+it('FIC-1: a live implementer stays working regardless of failing-check age', () => {
+  expect(deriveCornerState({ ...facts, turnRunning: true,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' } }).state).toBe('working');
 });
-it('a repair turn still running past 30 minutes without a push is idle', () => {
-  expect(deriveCornerState({
-    ...facts,
-    turnRunning: true,
-    ciStartedAt: 1000 - 1801,
-    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  })).toEqual({ state: 'idle' });
-  expect(deriveCornerState({
-    ...facts,
-    turnRunning: true,
-    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  }).state).toBe('working');
+it('failing checks without a turn or blocker fall through to idle', () => {
+  expect(deriveCornerState({ ...facts,
+    lifecycle: { lifecycle: 'in-review', checks: 'failing' } }).state).toBe('idle');
 });
-it('checks pending for 45 minutes, with no blocker and no turn running, stay review', () => {
-  expect(deriveCornerState({
-    ...facts,
-    owed: false,
-    turnRunning: false,
-    ciStartedAt: 1000 - 45 * 60,
-    lifecycle: { lifecycle: 'in-review', checks: 'pending' },
-  })).toEqual({ state: 'review' });
-});
-it('a fresh failing repair window is working', () => {
-  expect(deriveCornerState({
-    ...facts,
-    lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  }).state).toBe('working');
-});
-it('a blocked report while checks are pending or unreported is idle', () => {
+it('FIC-1: a blocked report while checks are pending or unreported stays review', () => {
   const unreported = {
     lifecycle: 'in-review' as const,
     checks: 'unknown' as const,
@@ -130,41 +102,37 @@ it('a blocked report while checks are pending or unreported is idle', () => {
   };
   expect(deriveCornerState({
     ...facts,
-    stallReport: true,
     owed: true,
     agentCommanderReport: true,
     lifecycle: { lifecycle: 'in-review', checks: 'pending' },
-  }).state).toBe('idle');
+  }).state).toBe('review');
   expect(deriveCornerState({
     ...facts,
-    stallReport: true,
     owed: true,
     agentCommanderReport: true,
     lifecycle: unreported,
-  }).state).toBe('idle');
+  }).state).toBe('review');
 });
-it('a blocked report during a fresh failing repair window stays working', () => {
+it('a blocked report with failing checks waits for the commander', () => {
   expect(deriveCornerState({
     ...facts,
-    stallReport: true,
     owed: true,
     agentCommanderReport: true,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
-  }).state).toBe('working');
+  }).state).toBe('waiting');
 });
 it('a running reviewer does not keep a red head in review', () => {
   expect(deriveCornerState({
     ...facts,
     reviewerActive: true,
-    ciStartedAt: undefined,
     lifecycle: { lifecycle: 'in-review', checks: 'failing' },
   }).state).toBe('idle');
 });
 it.each([
   ['pending', 'review'],
   ['failing', 'idle'],
-] as const)('CI %s past 30 minutes is %s', (checks, state) => {
-  expect(deriveCornerState({...facts,ciStartedAt:1000-1801,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state});
+] as const)('CI %s without work or a blocker is %s', (checks, state) => {
+  expect(deriveCornerState({...facts,lifecycle:{lifecycle:'in-review',checks}})).toEqual({state});
 });
 
 it('Reproduction R1: an agent-commander report stays review while checks run, and a human blocker stays waiting', () => {
@@ -201,7 +169,7 @@ it('Reproduction R1: an agent-commander report stays review while checks run, an
     lifecycle: { lifecycle: 'in-review', checks: 'failing' }, blocker: agentReport,
   })).toEqual({ state: 'waiting', ...agentReport });
   expect(deriveCornerState({
-    ...facts, owed: true, agentCommanderReport: true, ciStartedAt: 1000 - 1801,
+    ...facts, owed: true, agentCommanderReport: true,
     lifecycle: pending, blocker: agentReport,
   })).toEqual({ state: 'review' });
 });

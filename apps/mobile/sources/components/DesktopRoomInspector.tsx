@@ -1,3 +1,4 @@
+import { ErrorBanner } from './buzz/ErrorBanner';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { resolveComposerMentions } from '@/buzz/room-participants';
@@ -238,18 +239,7 @@ export function DesktopRoomInspector({
       ) : (
         <>
           {observed.error ? (
-            <View>
-              <Text accessibilityRole="alert" style={styles.error}>
-                {observed.error}
-              </Text>
-              <Button
-                label="Retry"
-                variant="secondary"
-                style={{ alignSelf: 'flex-end' }}
-                onPress={observed.retry}
-                testID="desktop-corner-retry"
-              />
-            </View>
+            <ErrorBanner inline title={observed.error} onRetry={observed.retry} retryTestID="desktop-corner-retry" />
           ) : null}
           <CornerCockpit
             client={client}

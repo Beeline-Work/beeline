@@ -90,7 +90,14 @@ type Props = {
  * workflow circles; waiting pulses the one instrument dot (`StateDot`); a code or key is sent once, never
  * posted, drafted, or shown back.
  */
-export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, testID = 'agent-sign-in' }: Props) {
+export function AgentSignInCard({
+  card,
+  agentName,
+  isOwner,
+  stamp,
+  onSubmit,
+  testID = 'agent-sign-in',
+}: Props) {
   const { theme } = useUnistyles();
   const [value, setValue] = useState('');
   const [opened, setOpened] = useState(false);
@@ -98,9 +105,12 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
   const [error, setError] = useState<string | null>(null);
 
   const keyHarness = card.harness in KEY_HARNESS_LABEL;
-  const service = keyHarness ? undefined : HARNESS_SERVICE[card.harness as keyof typeof HARNESS_SERVICE];
+  const service = keyHarness
+    ? undefined
+    : HARNESS_SERVICE[card.harness as keyof typeof HARNESS_SERVICE];
   const provider = card.provider ? PROVIDER_LABEL[card.provider] : undefined;
-  const harnessLabel = service?.harness ?? KEY_HARNESS_LABEL[card.harness as keyof typeof KEY_HARNESS_LABEL];
+  const harnessLabel =
+    service?.harness ?? KEY_HARNESS_LABEL[card.harness as keyof typeof KEY_HARNESS_LABEL];
   const logo = service
     ? { name: service.name, domain: service.domain }
     : card.provider
@@ -152,11 +162,12 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
   const failure =
     error ?? (card.status === 'failed' ? (card.errorMessage ?? 'Sign-in failed.') : null);
   const waitingForLink = card.status === 'starting';
-  const canAct = card.status === 'pending' || card.status === 'failed' || card.status === 'signing-in';
+  const canAct =
+    card.status === 'pending' || card.status === 'failed' || card.status === 'signing-in';
   const sending = busy || card.status === 'signing-in';
 
   const failureLine = failure ? (
-    <ErrorBanner title={failure} testID={`${testID}-error`} />
+    <ErrorBanner inline title={failure} testID={`${testID}-error`} />
   ) : null;
 
   const linkStep = (
@@ -170,12 +181,28 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
       <WorkflowStepCircle status={opened ? 'done' : 'current'} />
       <View style={styles.stepBody}>
         <Text style={styles.stepTitle}>{opened ? label.done : label.ahead}</Text>
-        <Text ellipsizeMode="middle" numberOfLines={1} style={styles.url} testID={`${testID}-url`}>
-          {displayUrl(url)}
-        </Text>
-        <Button label={button} onPress={() => open(url)} testID={`${testID}-open`} variant="secondary" />
+        <InlineRow style={styles.linkLine}>
+          <Text
+            ellipsizeMode="middle"
+            numberOfLines={1}
+            style={styles.url}
+            testID={`${testID}-url`}
+          >
+            {displayUrl(url)}
+          </Text>
+          <Button
+            label={card.kind === 'device-code' ? 'Open' : button}
+            accessibilityLabel={button}
+            onPress={() => open(url)}
+            testID={`${testID}-open`}
+            size="inline"
+            variant="secondary"
+          />
+        </InlineRow>
         {index === 1 && card.kind === 'paste-code' ? (
-          <Text style={styles.meta}>{`Made by ${agentName}'s machine · holds no password or token`}</Text>
+          <Text
+            style={styles.meta}
+          >{`Made by ${agentName}'s machine · holds no password or token`}</Text>
         ) : null}
       </View>
     </InlineRow>
@@ -208,6 +235,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
         label={value ? 'Clear' : 'Paste'}
         onPress={() => (value ? setValue('') : void paste())}
         testID={`${testID}-paste`}
+        size="inline"
         variant="secondary"
       />
     </InlineRow>
@@ -250,8 +278,17 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
         </InlineRow>
       </>
     );
-  } else if (ask && canAct && card.kind === 'device-code' && card.authorizeUrl && card.userCode && service) {
-    const minutes = card.expiresAt ? Math.max(1, Math.round((card.expiresAt - Date.now()) / 60_000)) : undefined;
+  } else if (
+    ask &&
+    canAct &&
+    card.kind === 'device-code' &&
+    card.authorizeUrl &&
+    card.userCode &&
+    service
+  ) {
+    const minutes = card.expiresAt
+      ? Math.max(1, Math.round((card.expiresAt - Date.now()) / 60_000))
+      : undefined;
     steps = (
       <>
         {linkStep(
@@ -273,12 +310,21 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
                 label="Copy code"
                 onPress={() => void copyText(card.userCode!)}
                 testID={`${testID}-copy`}
+                size="inline"
                 variant="secondary"
               />
             </InlineRow>
-            {card.status === 'failed' ? failureLine : waitLine(minutes ? `Waiting for approval · expires in ${minutes} min` : 'Waiting for approval')}
+            {card.status === 'failed'
+              ? failureLine
+              : waitLine(
+                  minutes
+                    ? `Waiting for approval · expires in ${minutes} min`
+                    : 'Waiting for approval',
+                )}
             {card.harness === 'codex' ? (
-              <Text style={styles.meta}>Device-code sign-in must be on in ChatGPT → Settings → Security.</Text>
+              <Text style={styles.meta}>
+                Device-code sign-in must be on in ChatGPT → Settings → Security.
+              </Text>
             ) : null}
           </View>
         </InlineRow>
@@ -324,7 +370,15 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
 
   return (
     <TranscriptCard
-      identity={logo ? <AppMark domain={logo.domain} name={logo.name} size={36} /> : undefined}
+      identity={
+        logo ? (
+          <AppMark
+            domain={logo.domain}
+            name={logo.name}
+            size={theme.buzz.transcriptCard.identitySize}
+          />
+        ) : undefined
+      }
       stamp={stamp}
       subline={subline}
       testID={testID}
@@ -332,7 +386,9 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
       title={title}
     >
       {steps ? (
-        <View style={styles.body} testID={`${testID}-body`}>{steps}</View>
+        <View style={styles.body} testID={`${testID}-body`}>
+          {steps}
+        </View>
       ) : null}
     </TranscriptCard>
   );
@@ -341,7 +397,8 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
 const styles = StyleSheet.create((theme) => ({
   body: {
     paddingHorizontal: theme.buzz.transcriptCard.side,
-    paddingVertical: theme.buzz.space.sm,
+    paddingTop: theme.buzz.space.sm,
+    paddingBottom: theme.buzz.space.md,
     minWidth: 0,
   },
   step: {
@@ -351,11 +408,12 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.buzz.border,
   },
-  stepLast: { borderBottomWidth: 0 },
+  stepLast: { borderBottomWidth: 0, paddingBottom: 0 },
+  linkLine: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   stepBody: { flex: 1, minWidth: 0, gap: theme.buzz.space.sm },
   stepTitle: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   stepTitleAhead: { color: theme.buzz.textMuted },
-  url: { ...theme.buzz.type.machine, color: theme.buzz.textSecondary },
+  url: { flex: 1, minWidth: 0, ...theme.buzz.type.machine, color: theme.buzz.textSecondary },
   meta: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   field: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.buzz.space.sm },
   input: {
@@ -373,7 +431,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   inputFilled: { ...theme.buzz.type.machine, color: theme.buzz.textPrimary },
   code: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.buzz.space.sm },
-  codeText: { ...theme.buzz.type.machine, flex: 1, flexBasis: 120, minWidth: 0, color: theme.buzz.textPrimary },
+  codeText: {
+    ...theme.buzz.type.machine,
+    flex: 1,
+    flexBasis: 120,
+    minWidth: 0,
+    color: theme.buzz.textPrimary,
+  },
   wait: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
   waitText: { flex: 1, minWidth: 0 },
 }));

@@ -1,7 +1,7 @@
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import React, { useCallback, useState } from 'react';
@@ -60,17 +60,7 @@ export default function Workflow() {
         testID="workflow-header"
       />
       {error ? (
-        <View>
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
-          </Text>
-          <Button
-            label="Retry"
-            variant="secondary"
-            style={{ alignSelf: 'flex-end' }}
-            onPress={() => void reload()}
-          />
-        </View>
+        <ErrorBanner inline title={error} onRetry={() => void reload()} />
       ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (

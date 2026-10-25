@@ -611,7 +611,7 @@ describe('Corner list live path', () => {
       `Corner not opened${why}`,
     );
     const toast = renderer.root.findByProps({ testID: 'corner-open-failed' });
-    expect(textOf(toast)).toBe("Couldn't reach BeelineCheck your connection, then retry.");
+    expect(textOf(toast)).toBe("Couldn't reach Beeline");
 
     list.createFailure = null;
     await act(async () => renderer.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());

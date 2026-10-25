@@ -67,7 +67,7 @@ export default function PromptSchedule() {
       {stopFailed ? (
         <ErrorBanner
           title="Could not stop this schedule."
-          retryLabel="Try again"
+          retryLabel="Retry"
           onRetry={() => void stop()}
           retryTestID="schedule-stop-error-retry"
           testID="schedule-stop-error"

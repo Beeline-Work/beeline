@@ -95,6 +95,10 @@
         // The approved GitHub card proof uses temporary native/web entry and resolver overrides.
         "scripts/github-card-proof.tsx",
         "scripts/github-card-proof-metro.cjs",
+        // The card-button runbook invokes the renderer and selects the native Metro entry by path.
+        "scripts/render-card-buttons.mjs",
+        "scripts/card-button-gallery.tsx",
+        "scripts/card-buttons-native-proof.tsx",
         // The desktop proportions evidence runbook invokes these standalone proof tools by path.
         "scripts/desktop-proportions-browser-proof.cjs",
         "scripts/desktop-proportions-native-fixture.cjs",

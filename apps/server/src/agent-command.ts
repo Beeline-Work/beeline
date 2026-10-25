@@ -110,6 +110,7 @@ ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS hiccup_attempts integer NOT 
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS renudged_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS review_context jsonb;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS wake_context jsonb;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS report_outcome text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS cancellation_reason text;
@@ -196,6 +197,7 @@ export type CommandRow = {
   hiccup_attempts: number;
   lifecycle_before: string | null;
   review_context?: Record<string, unknown> | null;
+  wake_context?: { briefRevision: number } | null;
   restart_confirmed_at: Date | null;
   recovery_context: string | null;
   wake_after?: Date | null;
@@ -285,7 +287,16 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
       OR (command.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
         AND source.system_event->'object'->>'headSha' IS NOT NULL
         AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
-      OR (EXISTS (SELECT 1 FROM corner_brief_revisions brief
+      OR (command.wake_context->>'briefRevision' IS NOT NULL
+        AND (command.wake_context->>'briefRevision')::int <
+          (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id)
+        AND EXISTS (SELECT 1 FROM agent_commands replacement
+          WHERE replacement.room_id=command.room_id AND replacement.agent_id=command.agent_id
+            AND replacement.reason='corner_brief_revision'
+            AND replacement.state IN ('pending','claimed','complete')
+            AND replacement.wake_context->>'briefRevision'=
+              (SELECT max(revision)::text FROM corner_brief_revisions WHERE corner_id=command.room_id)))
+      OR (command.wake_context IS NULL AND EXISTS (SELECT 1 FROM corner_brief_revisions brief
           WHERE brief.corner_id=command.room_id AND brief.created_at>command.created_at)
         AND (command.reason='corner_brief_revision'
           OR (command.reason IN ('corner_review_dispatch','subscribed_event')
@@ -349,6 +360,24 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     WHERE NOT EXISTS(SELECT 1 FROM stale_wakes stale WHERE stale.id=head.id)
       AND NOT EXISTS(SELECT 1 FROM superseded_corner_wakes superseded WHERE superseded.id=head.id)
     GROUP BY head.id,newest.recovery_context
+  ), wake_drop_log AS (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'event','wake_dropped_stale','commandId',cancelled.id,'kind',cancelled.reason,
+      'recorded',jsonb_build_object('review',jsonb_build_object(
+        'headSha',cancelled.review_context->>'headSha','pullRequest',cancelled.review_context->'pullRequest',
+        'briefRevision',cancelled.review_context->'briefRevision'),'brief',cancelled.wake_context,
+        'headSha',source.system_event->'object'->>'headSha',
+        'runId',workflow.run_id,'attempt',workflow.attempt),
+      'current',jsonb_build_object('headSha',fact.lifecycle->'pr'->>'headSha',
+        'briefRevision',(SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),
+        'runId',workflow.latest_card->>'runId','attempt',workflow.latest_card->>'seq',
+        'runStatus',workflow.start_card->>'runStatus')
+    )), '[]'::jsonb) drops
+    FROM cancelled_wakes cancelled
+    LEFT JOIN messages source ON source.id=cancelled.source_message_id
+    LEFT JOIN corner_facts fact ON fact.corner_id=COALESCE((cancelled.review_context->>'cornerId')::uuid,cancelled.room_id)
+    LEFT JOIN recovery_workflows workflow ON workflow.id=cancelled.id
+    WHERE cancelled.cancellation_reason IN ('superseded_wake','workflow_attempt_expired')
   )`;
 }
 
@@ -590,6 +619,11 @@ export async function createAgentCommand(
       AND agent_id=$4 AND action=$5) LIMIT 1`,
     [id, input.roomId, input.sourceMessageId, input.agentId, input.action ?? 'input'],
   )).rows[0];
+  if (command && input.reason === 'corner_brief_revision') {
+    await db.query(`UPDATE agent_commands SET wake_context=jsonb_build_object('briefRevision',
+      COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$2),0))
+      WHERE id=$1 AND wake_context IS NULL`, [command.id, input.roomId]);
+  }
   if (command && reviewContext) {
     await db.query('UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1', [command.id, JSON.stringify(reviewContext)]);
     command.review_context = reviewContext;
@@ -1189,6 +1223,17 @@ export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandR
   return dropped.rowCount;
 }
 
+type WakeDropLog = { drops: Record<string, unknown>[] };
+
+function logStaleWakeDrops(drops: WakeDropLog['drops'] | undefined): void {
+  for (const drop of drops ?? []) console.info(JSON.stringify(drop));
+}
+
+export class StaleWakeClaimRefused extends Error {
+  constructor(readonly drops: WakeDropLog['drops']) { super('command claim conflict'); }
+  log(): void { logStaleWakeDrops(this.drops); }
+}
+
 export async function claimAgentCommand(
   db: SqlDatabase,
   roomId: string,
@@ -1199,7 +1244,7 @@ export async function claimAgentCommand(
   if (!generation || generation.length > 200) throw new Error('command generation is required');
   for (const digestRefreshed of [false, true]) {
     const row = (
-      await db.query<CommandRow & { turn_claimed: boolean; needs_digest_refresh: boolean }>(
+      await db.query<CommandRow & WakeDropLog & { turn_claimed: boolean; needs_digest_refresh: boolean }>(
         `WITH claim_fence AS MATERIALIZED (
              SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($2::uuid)::text || ':' || $3::text))
            ), digest_refresh AS MATERIALIZED (
@@ -1247,18 +1292,23 @@ export async function claimAgentCommand(
                AND notice.card->>'agentId'=command.agent_id
                AND COALESCE(notice.card->>'status','open')='open'
              RETURNING notice.id
-           ), ${workflowOutputBindingCtes('claimed')}
+           ), ${workflowOutputBindingCtes('claimed')}, claim_result AS (
            SELECT claimed.*,true turn_claimed,false needs_digest_refresh FROM claimed
            UNION ALL
            SELECT eligible.*,false turn_claimed,false needs_digest_refresh FROM eligible
            WHERE eligible.action<>'stop' AND eligible.action<>'restart'
              AND NOT EXISTS(SELECT 1 FROM working)
            UNION ALL
-           SELECT digest_refresh.*,false turn_claimed,true needs_digest_refresh FROM digest_refresh`,
+           SELECT digest_refresh.*,false turn_claimed,true needs_digest_refresh FROM digest_refresh
+           ) SELECT claim_result.*,wake_drop_log.drops FROM wake_drop_log LEFT JOIN claim_result ON true`,
         [commandId, roomId, agentId, generation, digestRefreshed],
       )
     ).rows[0];
-    if (!row) throw new Error('command claim conflict');
+    if (!row?.id) {
+      if (row?.drops.length) throw new StaleWakeClaimRefused(row.drops);
+      throw new Error('command claim conflict');
+    }
+    logStaleWakeDrops(row.drops);
     if (row.needs_digest_refresh) {
       // Ordinary commands retain their single-statement claim. Only a digest
       // needs the source-expiry and Stop repair transaction before claiming.
@@ -1439,7 +1489,7 @@ export async function readAgentCommands(
 ): Promise<{ commandProtocol: 1; commands: AgentCommand[] }> {
   if (!digestIds) await refreshWakeDigests(db, roomId, agentId);
   const rows = await db.query<
-    CommandRow & {
+    CommandRow & WakeDropLog & {
       text: string;
       delivered_context: string | null;
       voice_origin: boolean;
@@ -1467,7 +1517,7 @@ export async function readAgentCommands(
     `WITH ${commandRecoveryCtes('$1', '$2', 'NULL::text', false, '($3::text[] IS NULL OR command.id=ANY($3::text[]))', true)}, kept_context AS (
        UPDATE agent_commands command SET recovery_context=context.recovery_context
        FROM return_context context WHERE context.id=command.id RETURNING command.id,command.recovery_context
-     )
+     ), delivery AS (
      SELECT c.*,EXISTS(SELECT 1 FROM voice_orders voice WHERE voice.source_message_id=c.source_message_id AND voice.agent_id=c.agent_id) voice_origin,COALESCE(kept_context.recovery_context,c.recovery_context) delivered_context,CASE WHEN c.reason='corner_objective' THEN f.objective ELSE m.text END text,CASE WHEN m.card_type='daemon-fact' AND m.card->>'type'='corner-complete' THEN m.card END merge_card,CASE WHEN workflow_latest.card IS NOT NULL THEN workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->>'hint' WHEN m.room_id=c.room_id THEN COALESCE(m.card->>'receiptHint',choice_message.card->>'receiptHint') END receipt_hint,m.author_id,m.attachments,m.system_event,m.presentation,m.reply_to_message_id,reply_parent.author_id reply_to_author_id,reply_author.name reply_to_author_name,left(reply_parent.text,${REPLY_EXCERPT_MAX_LENGTH + 1}) reply_to_excerpt,CASE WHEN m.room_id=c.room_id AND m.card->>'runId' IS NOT NULL THEN m.card_type WHEN resume_source.room_id=c.room_id AND resume_source.card->>'runId' IS NOT NULL THEN resume_source.card_type WHEN m.room_id=c.room_id THEN m.card_type END wake_card_type,CASE WHEN m.room_id=c.room_id AND m.card->>'runId' IS NOT NULL THEN m.card WHEN resume_source.room_id=c.room_id AND resume_source.card->>'runId' IS NOT NULL THEN resume_source.card WHEN m.room_id=c.room_id THEN m.card END wake_card,workflow_latest.card->>'toState' workflow_state,NULLIF(workflow_start.card->>'runStatus','live') workflow_status,workflow_version.markdown::jsonb->'handoffs'->(workflow_latest.card->>'toState')->'on' workflow_outcomes,watched_corner.id watched_corner_id,watched_corner.name watched_corner_name,watched_fact.lifecycle->'pr'->>'mergeCommitSha' watched_merge_commit FROM agent_commands c LEFT JOIN messages m ON m.id=c.source_message_id LEFT JOIN corner_facts f ON f.corner_id=c.room_id
  LEFT JOIN kept_context ON kept_context.id=c.id
  LEFT JOIN messages reply_parent ON reply_parent.id=m.reply_to_message_id
@@ -1506,12 +1556,16 @@ export async function readAgentCommands(
    AND ${reviewerQuietSql('c')} AND ${waitingReportSql('c')}
    ))
  ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,CASE WHEN ${ordinaryWakeSql('c')} THEN 0 ELSE 1 END,c.created_at,c.id
- LIMIT CASE WHEN $3::text[] IS NULL THEN 100 ELSE NULL END`,
+ LIMIT CASE WHEN $3::text[] IS NULL THEN 100 ELSE NULL END
+     ) SELECT delivery.*,wake_drop_log.drops FROM wake_drop_log LEFT JOIN delivery ON true
+     ORDER BY CASE delivery.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,
+       CASE WHEN ${ordinaryWakeSql('delivery')} THEN 0 ELSE 1 END,delivery.created_at,delivery.id`,
     [roomId, agentId, digestIds ?? null],
   );
+  logStaleWakeDrops(rows.rows[0]?.drops);
   return {
     commandProtocol: 1,
-    commands: rows.rows.map((r) => ({
+    commands: rows.rows.filter(r => r.id).map((r) => ({
       id: r.id,
       roomId: r.room_id,
       agentId: r.agent_id,

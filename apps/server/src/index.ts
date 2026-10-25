@@ -1,3 +1,5 @@
+import { syncXAdReports } from './x-ad-reports.js';
+import { deliverXSignups } from './x-ads.js';
 import { flushOperatorSystemDms } from './operator-system-dm.js';
 import { captureServerError, flushServerErrors } from './sentry.js';
 
@@ -470,6 +472,22 @@ async function main() {
   });
   if (freeAgents) work.add('free-agents', FREE_AGENT_SWEEP_MS, async () => {
     await backgroundJobs.run('free-agents', () => freeAgents.sweep());
+  });
+  // External X requests must not hold up push delivery or schedule dispatch.
+  // Database claims fence retries across leaders; one local run per job bounds concurrency.
+  let xConversionsRunning = false;
+  let xReportsRunning = false;
+  work.add('x-conversions', reconciliationMs, async () => {
+    if (xConversionsRunning) return;
+    xConversionsRunning = true;
+    void backgroundJobs.run('x-signup-conversions', () => deliverXSignups(jobsDatabase))
+      .finally(() => { xConversionsRunning = false; });
+  });
+  work.add('x-reports', reconciliationMs, async () => {
+    if (xReportsRunning) return;
+    xReportsRunning = true;
+    void backgroundJobs.run('x-ad-reports', () => syncXAdReports(jobsDatabase))
+      .finally(() => { xReportsRunning = false; });
   });
   work.add('repair', reconciliationMs, async (newLeader) => {
     if (newLeader) {

@@ -189,8 +189,8 @@ export async function syncXAdReports(
       await db.query(`DELETE FROM x_ad_daily WHERE day>=$1 AND day<$2`, [start, through]);
       for (const r of rows)
         await db.query(
-          `INSERT INTO x_ad_daily(day,level,entity_id,name,campaign_id,ad_group_id,currency,spend_micros,impressions,link_clicks)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          `INSERT INTO x_ad_daily(day,level,entity_id,name,campaign_id,ad_group_id,currency,spend_micros,impressions,link_clicks,source)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'api')`,
           [
             r.day,
             r.level,

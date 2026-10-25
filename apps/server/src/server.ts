@@ -1,3 +1,4 @@
+import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
@@ -1851,6 +1852,19 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       sourceSha: process.env.BEELINE_RELEASE_SHA ?? 'unknown',
       ...(helperVersionGate.minimum ? { minimumHelperVersion: helperVersionGate.minimum } : {}),
     });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/admin/dashboard/x-ads/screen') {
+    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
+      json(response, 403, { error: 'access_denied' });
+      return;
+    }
+    let input: unknown;
+    try { input = await body(request); }
+    catch { json(response, 400, { error: 'invalid_screen_report' }); return; }
+    const report = parseScreenReport(input);
+    if (!report) { json(response, 400, { error: 'invalid_screen_report' }); return; }
+    json(response, 200, await ingestScreenReport(options.database, report));
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/admin/dashboard') {

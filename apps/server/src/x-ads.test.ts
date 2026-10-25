@@ -59,6 +59,47 @@ describe('X web attribution user path (feature, not a defect report)', () => {
     expect(response.status).toBe(200);
     return response.json();
   }
+  const yesterday = () => new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const screenRow = (entityId = 'campaign') => ({ level: 'campaign', entityId, name: 'Launch', spend: 10, impressions: 1000, linkClicks: 20 });
+  const screen = (payload: unknown, bearer = 'dashboard-fixture-secret') => fetch(`${base}/v1/admin/dashboard/x-ads/screen`, {
+    method: 'POST', headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  it('authenticates screen writes and rejects the whole invalid snapshot', async () => {
+    const payload = { day: yesterday(), currency: 'USD', rows: [screenRow()] };
+    for (const bearer of ['', 'wrong']) expect((await screen(payload, bearer)).status).toBe(403);
+    expect((await db.query('SELECT * FROM x_ad_daily')).rows).toEqual([]);
+    for (const invalid of [
+      { ...payload, day: '0000-01-01' }, { ...payload, day: '2026-02-30' }, { ...payload, day: '9999-01-01' },
+      { ...payload, currency: 'usd' }, { ...payload, rows: Array(501).fill(screenRow()) },
+      { ...payload, rows: [screenRow(), screenRow()] },
+      ...[{entityId: ''}, {name: ' '}, {level: 'audience'}, {spend: -1}, {spend: 0.0000001},
+        {spendMicros: 1}, {impressions: 1.5}, {linkClicks: Number.MAX_SAFE_INTEGER + 1}].map(patch =>
+        ({ ...payload, rows: [screenRow('valid'), {...screenRow(), ...patch}] })),
+    ]) expect((await screen(invalid)).status).toBe(400);
+    expect((await db.query('SELECT * FROM x_ad_daily')).rows).toEqual([]);
+    expect((await db.query('SELECT * FROM x_ad_sync')).rows).toEqual([]);
+  });
+  it('shows a screen snapshot with signup cost, replaces retries and becomes stale', async () => {
+    await signup('github', 'screen-customer');
+    await db.query(`UPDATE x_ad_signups SET created_at=$1::date+interval '1 hour'`, [yesterday()]);
+    const payload = { day: yesterday(), currency: 'USD', rows: [screenRow(), screenRow('removed')] };
+    expect(await (await screen(payload)).json()).toEqual({written: 2, skipped: 0});
+    const next = (await db.query('SELECT next_attempt_at FROM x_ad_sync')).rows[0]!.next_attempt_at;
+    payload.rows = [screenRow(),
+      {...screenRow('audience'), level: 'ad_group'}, {...screenRow('clip'), level: 'ad'}];
+    expect(await (await screen(payload)).json()).toEqual({written: 3, skipped: 0});
+    expect((await db.query('SELECT * FROM x_ad_daily')).rows).toHaveLength(3);
+    expect((await db.query('SELECT next_attempt_at FROM x_ad_sync')).rows[0]!.next_attempt_at).toEqual(next);
+    const response = await fetch(`${base}/v1/admin/dashboard`, {headers: {authorization: 'Bearer dashboard-fixture-secret'}});
+    expect(response.status).toBe(200);
+    const ads = (await response.json()).xAds;
+    expect(ads.adsState).toBe('measured');
+    for (const level of ['campaign', 'ad_group', 'ad']) expect(ads.rows).toContainEqual(expect.objectContaining({level, spend: 10, impressions: 1000, linkClicks: 20, signups: 1, costPerSignup: 10}));
+    await db.query(`UPDATE x_ad_sync SET completed_at=now()-interval '37 hours'`);
+    expect(await dashboardXAds(db, new Date().toISOString())).toMatchObject({adsState: 'stale'});
+    expect(await (await screen({...payload, rows: []})).json()).toEqual({written: 0, skipped: 0});
+    expect((await db.query('SELECT * FROM x_ad_daily')).rows).toEqual([]);
+  });
   it.each(['github', 'google'])(
     'counts a new %s account once across retries and devices and delivers only click data',
     async (provider) => {
@@ -153,7 +194,14 @@ describe('X web attribution user path (feature, not a defect report)', () => {
         ],
       } as T;
     };
+    expect((await screen({day: yesterday(), currency: 'USD', rows: [screenRow(), screenRow('screen-only')]})).status).toBe(200);
+    await db.query(`UPDATE x_ad_sync SET next_attempt_at=now()-interval '1 minute'`);
     await syncXAdReports(db, get, 'fixture');
+    expect((await db.query(`SELECT * FROM x_ad_daily WHERE source='screen'`)).rows).toEqual([]);
+    const apiRows = (await db.query(`SELECT * FROM x_ad_daily WHERE day=$1 AND entity_id='campaign'`, [yesterday()])).rows;
+    expect(apiRows).toHaveLength(1);
+    expect(await (await screen({day: yesterday(), currency: 'EUR', rows: [{...screenRow(), spend: 99}]})).json()).toEqual({written: 0, skipped: 1});
+    expect((await db.query(`SELECT * FROM x_ad_daily WHERE day=$1 AND entity_id='campaign'`, [yesterday()])).rows).toEqual(apiRows);
     const response = await fetch(`${base}/v1/admin/dashboard`, {
       headers: { authorization: 'Bearer dashboard-fixture-secret' },
     });

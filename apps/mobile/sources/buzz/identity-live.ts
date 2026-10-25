@@ -7,7 +7,7 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { identityScope, recordPerson, recordWorkspaceHeader, type WorkspaceHeaderChange } from './identity-records';
 import { savePreferredPersonName } from './person-name';
 import { mobileSurfaceCache } from './surface-storage';
-import { applyManagedIdentityLive } from './managed-identity-surface';
+import { readManagedIdentity, applyManagedIdentityLive } from './managed-identity-surface';
 
 const ownIdentityListeners = new Set<(person: RoomViewIdentity) => void>();
 
@@ -46,6 +46,7 @@ export async function applyPersonChanged(
     (stamp) => recordPerson(scope, person, stamp));
   if (person.pubkey !== identity.publicKey) return;
   await applyManagedIdentityLive(person, pushLevel).catch(() => undefined);
+  await readManagedIdentity(true).catch(() => undefined);
   await savePreferredPersonName(identity.publicKey, person.name).catch(() => undefined);
   if (pushLevel) await saveStoredPushLevel(identity.publicKey, pushLevel);
   for (const listener of ownIdentityListeners) listener(person);

@@ -189,6 +189,13 @@ vi.mock('@/components/buzz/UiSizeSetting', async () => {
       ReactModule.createElement('UiSizeSetting', { ...(props as object), testID: 'ui-size-setting' }),
   };
 });
+vi.mock('@/components/buzz/SpeakingSpeedSetting', async () => {
+  const ReactModule = await import('react');
+  return {
+    SpeakingSpeedSetting: (props: unknown) =>
+      ReactModule.createElement('SpeakingSpeedSetting', { ...(props as object), testID: 'speaking-speed-setting' }),
+  };
+});
 vi.mock('@/components/buzz/SettingsRow', async () => {
   const ReactModule = await import('react');
   return {
@@ -345,6 +352,20 @@ describe('identity settings push row honesty', () => {
     expect(phoneOperation).toHaveBeenCalledWith('updateIdentityPushLevel', { pushLevel: 'off' });
     expect(notificationApi.setBadgeCountAsync).toHaveBeenCalledWith(0);
     expect(renderer.root.findByProps({ testID: 'push-level-setting' }).props.value).toBe('off');
+  });
+
+  it('reads Normal speaking speed and publishes the saved identity choice', async () => {
+    phoneOperation.mockImplementation(async (name: string, input: { speakingSpeed?: number }) => {
+      if (name === 'readIdentitySettings') return IDENTITY_SETTINGS;
+      if (name === 'updateIdentitySpeakingSpeed')
+        return { ...IDENTITY_SETTINGS.identity, speakingSpeed: input.speakingSpeed };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const renderer = await renderScreen();
+    expect(renderer.root.findByProps({ testID: 'speaking-speed-setting' }).props.value).toBe(1.15);
+    await act(async () => renderer.root.findByProps({ testID: 'speaking-speed-setting' }).props.onChange(1.5));
+    expect(phoneOperation).toHaveBeenCalledWith('updateIdentitySpeakingSpeed', { speakingSpeed: 1.5 });
+    expect(renderer.root.findByProps({ testID: 'speaking-speed-setting' }).props.value).toBe(1.5);
   });
 
   it('keeps the level picker and retry action visible when registration failed', async () => {

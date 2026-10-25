@@ -181,6 +181,35 @@ describe('app-level Room list store', () => {
     sidebar.release();
   });
 
+  it('NET-READS-2: ignores presence bursts but reconciles durable and legacy invalidations', async () => {
+    let server = listOf([row('room-a', 10, { unread: true })]);
+    const chats = vi.fn(async () => server);
+    const handle = join(chats, visible);
+    await vi.advanceTimersByTimeAsync(10);
+    for (const status of ['online', 'offline', 'online']) {
+      emit({ monolithLive: { type: 'presence', roomId: 'room-a', agentId: 'agent', status, observedAt: 42 } });
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(chats).toHaveBeenCalledTimes(1);
+    expect(handle.current()?.chats[0]?.unread).toBe(true);
+
+    server = listOf([row('room-a', 10, { unread: false })]);
+    emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'postgres:room_read_marks', readerId: 'viewer' } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(chats).toHaveBeenCalledTimes(2);
+    expect(handle.current()?.chats[0]?.unread).toBe(false);
+
+    for (const reason of ['postgres:rooms', 'postgres:memberships', 'corner-text', 'legacy-unknown']) {
+      emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason } });
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+    expect(chats).toHaveBeenCalledTimes(6);
+    emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: false } });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(chats).toHaveBeenCalledTimes(7);
+    handle.release();
+  });
+
   it('keeps one live copy for every screen, with or without the deck', async () => {
     const server = listOf([row('room-a', 10), row('room-b', 5)]);
     const chats = vi.fn(async () => server);

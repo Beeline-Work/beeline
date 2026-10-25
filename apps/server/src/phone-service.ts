@@ -4523,6 +4523,14 @@ export class PhoneService {
           input as Input<'updateRoomPushState'>,
           viewerId,
         )) as Output<Name>;
+      case 'updateIdentitySpeakingSpeed': {
+        const { speakingSpeed } = input as Input<'updateIdentitySpeakingSpeed'>;
+        if (![1.15, 1.3, 1.5].includes(speakingSpeed)) throw new Error('invalid speaking speed');
+        const updated = await this.database.query(
+          `UPDATE identities SET speaking_speed=$2,updated_at=now() WHERE id=$1 AND kind='human'`, [viewerId, speakingSpeed]);
+        if (!updated.rowCount) throw new Error('identity not found');
+        return await this.managedIdentity(viewerId) as Output<Name>;
+      }
       case 'updateIdentityPushLevel':
         return (await this.updatePushLevel(
           input as Input<'updateIdentityPushLevel'>,
@@ -4895,9 +4903,8 @@ export class PhoneService {
       [roomId, viewerId, messageIdValue],
     )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
-    if (result.changed) {
-      this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
-    }
+    // The committed row's PostgreSQL notification reconciles every reader
+    // device, including those on this server. Publishing here duplicates it.
   }
 
   /**
@@ -4956,7 +4963,7 @@ export class PhoneService {
       throw new Error(
         'messageId is invalid: only a row that counts as unread can be marked unread',
       );
-    this.live?.publish({ type: 'invalidate', roomId, reason: 'read-mark', readerId: viewerId });
+    // INSERT/UPDATE/DELETE all notify through PostgreSQL, once per changed row.
   }
 
   async uploadMedia(
@@ -8660,12 +8667,12 @@ export class PhoneService {
   }
   private async managedIdentity(viewerId: string) {
     const id = await this.requireIdentity(viewerId);
-    const pushLevel = (
-      await this.database.query<{ push_level: import('@beeline/api-contract/phone').PushLevel }>(
-        `SELECT push_level FROM identities WHERE id=$1`,
+    const preferences = (
+      await this.database.query<{ push_level: import('@beeline/api-contract/phone').PushLevel; speaking_speed: number }>(
+        `SELECT push_level,speaking_speed FROM identities WHERE id=$1`,
         [viewerId],
       )
-    ).rows[0]?.push_level;
+    ).rows[0];
     const links = await this.database.query<{
       provider: 'google' | 'github';
       provider_login: string | null;
@@ -8689,7 +8696,8 @@ export class PhoneService {
       ...(id.handle ? { handle: id.handle } : {}),
       ...(id.avatar ? { avatar: id.avatar } : {}),
       ...(id.face ? { face: id.face } : {}),
-      pushLevel: pushLevel ?? 'attention',
+      pushLevel: preferences?.push_level ?? 'attention',
+      speakingSpeed: preferences?.speaking_speed === 1.3 ? 1.3 as const : preferences?.speaking_speed === 1.5 ? 1.5 as const : 1.15 as const,
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
@@ -10735,6 +10743,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updatePersonProfile',
   'updateIdentityFace',
   'updateRoomPushState',
+  'updateIdentitySpeakingSpeed',
   'updateIdentityPushLevel',
   'actOnRepositoryCard',
   'setRoomRepository',

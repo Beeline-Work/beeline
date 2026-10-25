@@ -11,3 +11,9 @@
 The full mobile run excluded only `accepts this tree and rejects a real native edit, end to end`, using `--testNamePattern='^(?!.*accepts this tree and rejects a real native edit, end to end)'`. That fingerprint case fails on the untouched PR 2913 tree as well: recorded iOS hash `831938dc46dab9517152283c79603577d5765008`, locally computed `dd2a82afc91da03eff2220ee359aa09055eeaf98`. Android remains `1c79c05996990e45972da74d27e1382577a8608f`. Native fingerprints and the CI gate were not changed. Native-import coverage timed out in an earlier full run and passed its focused rerun.
 
 The Android release app and visible-path capture are additional evidence; unit tests alone do not establish the displayed result. Both comparison APKs use Hermes, Fabric, the measurement hooks and a disabled React Compiler. The final release build uses the repository's fixture signing configuration and local fixture services only.
+
+## CI repair after first review handoff
+
+The first PR head's mobile suite passed 612 files and 5,399 tests, but the corner-forward source assertion still searched for `handleForwardToNewCorner` after the renderer moved to `rowActions.handleForwardToNewCorner`. Its failed string search produced an empty gate. Update the assertion to follow the scoped callback, explicitly reject a missing match, and preserve the same Room/corner forwarding permission assertions. The complete affected file passes (3 tests). No product behavior changed in this repair.
+
+`FRAME-BUDGET` and `STATE-UPGRADE` failed only because they derive their verdicts from the mobile suite; their logs contain no separate failing test. The gate definitions are unchanged. The harness measurement tests also pass (4 tests).

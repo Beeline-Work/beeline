@@ -19,6 +19,10 @@ Room-switch JS p95 is lower by 61%; send by 38%; concurrent replies by 35%. **Fa
 
 The fresh-data same-device before run measured 204 ms Room-switch JS p95, versus the earlier published 154 ms run. The table compares the matched fresh-data arms, not those different cache histories. Each arm cleared only the fixture app's data, reset scenario traffic and used the same emulator, seed, network, driver and scenario options. No builds/tests ran during sampling. Both captures contain 42 samples; the driver's legacy `status: partial` label remains even on normal completion. Final artifact/fixture/build fields, all three send settlements, incoming visibility and all scenario counts are present.
 
+## Regression repeat investigation
+
+[All repeat results, median and spread](repeats/REPEATS.md) retain the alternating before/after trials, full-suite repeats and separate scroll profiles. The original table above is historical; it is not a no-regression acceptance verdict.
+
 ## Runtime and provenance
 
 Android 15 API 35 userdebug emulator, `se_api35`, 1080×2400, 60 Hz, x86_64, software GPU, four cores, 2560 MiB. Owned serial `127.0.0.1:5567` (same emulator as `emulator-5566`). Local Postgres fixture and delayed proxy: RTT 100 ms, jitter 0, 10 Mbps. Seed fingerprint `cd7b92b10869393264cc3c20f1ff42f4c3c8a9ef77223697504231deeec64ae4`.

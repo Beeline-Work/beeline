@@ -93,7 +93,13 @@ try {
     await pause(1000);
     beforeScroll = dump();
     anchor = [...beforeScroll.matchAll(/<node\b[^>]*>/g)].map(match => match[0])
-      .find(node => /text="Fixture \d{4}/.test(node) && !node.includes('bounds="[0,0][0,0]"'));
+      .find(node => {
+        if (!/text="Fixture \d{4}/.test(node)) return false;
+        const bounds = node.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);
+        // Accessibility retains offscreen titles with collapsed bounds at
+        // the viewport edge. Keep looking until a title has visible area.
+        return bounds && bounds[2] > bounds[0] && bounds[3] > bounds[1];
+      });
     if (anchor) break;
   }
   const anchorText = anchor?.match(/text="([^"]*)"/)?.[1];

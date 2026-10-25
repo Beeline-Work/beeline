@@ -294,3 +294,140 @@ it('ATTACH-CAP-1: attachment cap is a client error and unexpected failures still
     ]);
   } finally { await new Promise<void>(r => collector.close(() => r())); }
 }, 60_000);
+
+it('BEELINE-SENTRY-REFUSALS: real agent handlers keep refusals out of Sentry', async () => {
+  const envelopes: string[] = [];
+  const collector = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    envelopes.push(Buffer.concat(chunks).toString());
+    response.writeHead(200); response.end('{}');
+  });
+  await new Promise<void>(r => collector.listen(0, '127.0.0.1', r));
+  try {
+    const port = (collector.address() as AddressInfo).port;
+    const source = `
+      import assert from 'node:assert/strict';
+      import { reserveServiceReviewWorkspaces } from './src/service-review.ts';
+      import { saveWorkflow, startWorkflow } from './src/workflow-runs.ts';
+      import { ComposioApps } from './src/composio-apps.ts';
+      import { describedWorkflow } from './src/test-support.ts';
+      import { PgliteDatabase } from './src/test-support.ts';
+      import { migrate } from './src/database.ts';
+      import { DaemonService } from './src/daemon-service.ts';
+      import { LiveHub } from './src/live.ts';
+      import { createAgentCommand } from './src/agent-command.ts';
+      import { createBeelineServer } from './src/server.ts';
+      import { flushServerErrors } from './src/sentry.ts';
+      const db = new PgliteDatabase();
+      await migrate(db);
+      const agent = 'c'.repeat(64), human = 'a'.repeat(64);
+      const room = '22222222-2222-4222-8222-222222222222';
+      const workspace = '11111111-1111-4111-8111-111111111111';
+      const media = '33333333-3333-4333-8333-333333333333';
+      await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Worker'),($2,'human','Owner')", [agent,human]);
+      await db.query("INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)", [agent,human]);
+      await db.query("INSERT INTO workspaces(id,name) VALUES($1,'Test')", [workspace]);
+      await db.query("INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Test')", [room,workspace]);
+      await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')", [workspace,room,agent]);
+      await db.query("INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at) VALUES($1,$2,'artifact','test/key','text/plain','File',10,repeat('d',64),'ready',now()+interval '24 hours')", [media,agent]);
+      const live = new LiveHub();
+      let providerFault = 'flagged404';
+      const provider = new ComposioApps('fixture-only', async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path.includes('/connected_accounts/')) return Response.json({id:'fixture-account',user_id:human,status:'ACTIVE',toolkit:{slug:'slack'}});
+        if (path.endsWith('/tools/SLACK_FETCH')) return Response.json({version:'fixture',toolkit:{slug:'slack'}});
+        if (path.endsWith('/tools/execute/SLACK_FETCH')) {
+          if (providerFault === 'flagged404') return Response.json({successful:false,error:JSON.stringify({message:'Not Found',status_code:404})});
+          return Response.json({message:'upstream broken'}, {status:providerFault === 'http404' ? 404 : 500});
+        }
+        throw new Error('unexpected provider path');
+      });
+      const daemon = new DaemonService(db, live, undefined, 10);
+      Object.assign(daemon,{composio:provider});
+      await db.query("INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route,composio_account_id) VALUES('44444444-4444-4444-8444-444444444444',$1,$2,'slack','Slack','composio','composio','fixture-account')",[workspace,human]);
+      await db.query("INSERT INTO messages(id,room_id,author_id,text) VALUES('human-root',$1,$2,'Run the refusal proof')",[room,human]);
+      const command = await createAgentCommand(db, {roomId:room,agentId:agent,sourceMessageId:'human-root',reason:'test'});
+      const [pending] = (await daemon.execute('getAgentCommands',{roomId:room},agent)).commands;
+      assert.equal(pending.id,command.id);
+      await daemon.execute('claimAgentCommand',{roomId:room,commandId:pending.id,generationId:'proof'},agent);
+      const server = createBeelineServer({ database: db, live, daemon, phone: {},
+        auth: { authenticateDaemon: async () => agent, authenticatePhone: async () => null }, mediaMaximumBytes: 10 });
+      await new Promise(r => server.listen(0,'127.0.0.1',r));
+      const input = {roomId:room,requestId:pending.turnRequestId,generationId:'proof',
+        attachment:{url:'http://test/v1/media/'+media,name:'file.txt',mimeType:'text/plain',size:9}};
+      const call = async (payload=input, operation='postAgentAttachment') => {
+        const response = await fetch('http://127.0.0.1:' + server.address().port + '/v1/daemon/operations/' + operation, {
+          method:'POST', headers:{authorization:'Bearer isolated-sentry-proof-token','content-type':'application/json'}, body:JSON.stringify(payload) });
+        return {status:response.status, body:await response.json()};
+      };
+      const queue = async () => (await db.query('SELECT * FROM agent_pending_attachments ORDER BY id')).rows;
+      try {
+        assert.equal((await call()).status,200); // One byte below the total cap.
+        assert.equal((await call({...input,attachment:{...input.attachment,size:1}})).status,200); // Exactly at cap.
+        const before = await queue();
+        assert.equal(before.length,2);
+        const over = await call({...input,attachment:{...input.attachment,size:1}});
+        console.log('BEELINE-SENTRY-REFUSALS over-cap HTTP response',JSON.stringify(over));
+        assert.equal(over.status,400);
+        assert.deepEqual(over.body,{error:'Queued attachments exceed the 10-byte total limit per reply: 10 bytes already queued; artifact size: 1 bytes. Use smaller files, or deliver the queued attachments with your next reply or report before posting more.'});
+        assert.deepEqual(await queue(),before);
+        await db.query('DELETE FROM agent_pending_attachments');
+        assert.equal((await call({...input,attachment:{...input.attachment,size:11}})).status,400);
+        assert.deepEqual(await queue(),[]);
+        // Stale turns must still refuse without queueing.
+        assert.equal((await call({...input,generationId:'stale'})).status,403);
+        // Schedule and tray validators already carry typed refusals.
+        const schedule = await call({...input,agentId:agent,title:'one two three four five',prompt:'Check work',cadence:{kind:'interval',everyMinutes:60}},'createAgentSchedule');
+        assert.match(schedule.body.error,/title must be one to four words/);
+        const ask = await call({...input,status:'needs_decision',text:'needs-decision: Choose a path',ask:'x'.repeat(141)},'report');
+        assert.equal(ask.status,400);
+        assert.match(ask.body.error,/ask must be plain text/);
+        const worker = (await db.query('SELECT * FROM agent_commands WHERE id=$1',[command.id])).rows[0];
+        for (const name of ['refusal-proof','workspace-walk']) {
+          await saveWorkflow(db,worker,{contract:describedWorkflow({version:1,name,description:'Prove caller refusals',roles:['triager'],start:'browse',handoffs:{
+            browse:{role:'triager',requires:[],on:{reviewed:'done'}},done:{kind:'terminal',status:'done'}
+          }})});
+          const {runId} = await startWorkflow(db,worker,{name,roleBindings:{triager:agent}});
+          if (name === 'workspace-walk') await reserveServiceReviewWorkspaces(db,agent,runId,true);
+          const contents = name === 'workspace-walk' ? {receipts:(await db.query('SELECT * FROM service_review_targets($1,$2)',[agent,runId])).rows.map(row=>({workspace:row.workspace_id,rowsRead:0,firstMessageTime:null,lastMessageTime:null,findings:'none'}))} : {text:'x'.repeat(17000)};
+          const result = await call({...input,runId,outcome:'reviewed',contents},'handoff');
+          assert.match(result.body.error,name === 'workspace-walk' ? /workspace receipt must match/ : /contents exceeds 16 KB/);
+        }
+        for (const failure of ['flagged404','http404']) {
+          providerFault = failure;
+          const result = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
+          assert.ok(result.body.error.includes(failure === 'flagged404' ? 'App tool execution failed:' : 'App provider request failed (404)'));
+          if (failure === 'flagged404') assert.ok(result.body.error.includes('Not Found'));
+        }
+        await flushServerErrors();
+        providerFault = 'http500';
+        const outage = await call({...input,appId:'app:slack',tool:'SLACK_FETCH',arguments:{}},'executeAppTool');
+        assert.equal(outage.status,503);
+        assert.equal(outage.body.error,'App provider request failed (500): upstream broken');
+        // The exact same wording on an unexpected failure must still alert.
+        daemon.execute = async () => { throw new Error('queued attachments exceed the size cap'); };
+        assert.equal((await call()).status,503);
+        await flushServerErrors();
+      } finally {
+        await new Promise(r => server.close(r));
+        await db.close();
+      }
+      process.exit(0);`;
+    const result = await new Promise<{ code: number | null; error: string }>((done, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', source], {
+        env: { ...process.env, SENTRY_DSN: `http://public@127.0.0.1:${port}/1`, SENTRY_ENVIRONMENT: 'test' },
+        stdio: ['ignore', 'inherit', 'pipe'],
+      });
+      let error = ''; child.stderr.on('data', value => { error += String(value); });
+      child.on('error', reject); child.on('exit', code => done({ code, error }));
+    });
+    expect(result, result.error).toMatchObject({ code: 0 });
+    const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line)))
+      .filter(item => item.exception);
+    expect(events).toHaveLength(2);
+    expect(events.map(event => event.exception.values[0].value).sort()).toEqual([
+      'App provider request failed (500): upstream broken', 'queued attachments exceed the size cap',
+    ]);
+  } finally { await new Promise<void>(r => collector.close(() => r())); }
+}, 60_000);

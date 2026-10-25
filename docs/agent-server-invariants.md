@@ -23,7 +23,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 - **Incoming subscription webhooks** use the existing subscription wake path with fixed saved actions and quoted outside payloads. Workspace admins manage Room links; human DM members manage links in their own DM; tokens are encrypted and only phone reveal/rotate returns them. Ingress and rotation serialize on the subscription. Sender contract and retention: [subscription webhooks](subscription-webhooks.md); proof: `subscription-webhooks.test.ts` and `apps/mobile/evidence/subscription-webhooks/README.md`.
 
-- Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture.
+- Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture. Caller validation failures use `ExpectedRefusalError` (or `CommandRefusalError` with an HTTP status); `captureServerError` excludes that shared type, never matching refusal message text. Unexpected exceptions and provider outages remain reportable. Handler proof: `BEELINE-SENTRY-REFUSALS` in `sentry.test.ts`.
 
 - Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.
 

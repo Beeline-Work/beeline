@@ -1,3 +1,5 @@
+import { InlineActionRow } from './IndexRow';
+import { ErrorBanner } from './ErrorBanner';
 import { AgentUsageSection } from './AgentUsageSection';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
@@ -319,20 +321,20 @@ export function AgentProfileView({
                   No merged work to show yet.
                 </Text>
               )}
-              {cursor && loadMoreWork && (
-                <Button
-                  label={workLoading ? 'Loading…' : workError ? 'Retry recent work' : 'More'}
+              {cursor && loadMoreWork && !workError && (
+                <InlineActionRow><Button
+                  size="inline"
+
+                  label={workLoading ? 'Loading…' : 'More'}
                   loading={workLoading}
                   disabled={workLoading}
                   onPress={() => void moreWork()}
                   variant="secondary"
                   testID="load-more-agent-work"
-                />
+                /></InlineActionRow>
               )}
               {workError && (
-                <Text style={styles.copy} accessibilityRole="alert">
-                  Could not load older work. Your current list is still available.
-                </Text>
+                <ErrorBanner inline title="Could not load older work. Your current list is still available." onRetry={() => void moreWork()} retrying={workLoading} retryTestID="load-more-agent-work" />
               )}
               {linkError && (
                 <Text style={styles.copy} accessibilityRole="alert">

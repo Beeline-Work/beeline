@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -315,7 +316,7 @@ function ConnectToolFlow() {
               ))}
             </View>
             {install.steps.some((step) => step.status === 'failed') ? (
-              <Button label="Retry" onPress={retry} testID="connect-retry" variant="secondary" />
+              <ErrorBanner inline title="Connection failed" onRetry={retry} retryTestID="connect-retry" />
             ) : install.signIn ? (
               <View style={styles.signInBlock}>
                 <Button
@@ -353,14 +354,8 @@ function ConnectToolFlow() {
           </View>
         ) : null}
         {error || helperLoadError ? (
-          <View>
-            <Text accessibilityRole="alert" style={styles.errorText} testID="connect-error">
-              {error ?? 'Helpers are unavailable right now'}
-            </Text>
-            {pairedHelperRef.current || observedId ? (
-              <Button label="Retry" onPress={retry} testID="connect-pair-retry" variant="secondary" />
-            ) : null}
-          </View>
+          <ErrorBanner inline title={error ?? 'Helpers are unavailable right now'} titleTestID="connect-error"
+            onRetry={pairedHelperRef.current || observedId ? retry : undefined} retryTestID="connect-pair-retry" />
         ) : null}
       </ScrollView>
     </View>

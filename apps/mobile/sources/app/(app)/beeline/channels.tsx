@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
@@ -954,12 +955,7 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && <Button
-          label={error}
-          variant="quiet"
-          onPress={refreshNow}
-          appearance={{ control: styles.errorBar, label: styles.error }}
-        />}
+        {!!error && <ErrorBanner inline title={error} onRetry={refreshNow} />}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions

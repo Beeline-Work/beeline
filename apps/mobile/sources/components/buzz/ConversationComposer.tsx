@@ -1,3 +1,4 @@
+import { InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
 import * as React from 'react';
 import {
@@ -408,38 +409,42 @@ function ConversationComposerContent({
               testID={`pending-chat-attachment-${index}`}
             >
               <View style={styles.attachmentCopy}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={styles.attachmentName}>
-                  {attachment.name}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={styles.attachmentMeta}
-                  testID={`pending-chat-attachment-meta-${index}`}
-                >
-                  <Text
-                    style={attachment.uploadState === 'failed' && styles.attachmentFailed}
-                    testID={`pending-chat-attachment-state-${index}`}
-                  >
-                    {attachment.uploadState === 'uploaded'
-                      ? 'Ready'
-                      : attachment.uploadState === 'failed'
-                        ? 'Upload failed'
-                        : 'Uploading…'}
-                  </Text>{' '}
-                  · {attachment.sizeLabel} · {attachment.mimeType.toUpperCase()}
-                </Text>
-              </View>
-              {attachment.uploadState === 'failed' && (
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={styles.attachmentName}>
+                    {attachment.name}
+                  </Text>
+                  <InlineRow style={styles.attachmentInfo}>
+                    <Text
+                      numberOfLines={1}
+                      style={styles.attachmentMeta}
+                      testID={`pending-chat-attachment-meta-${index}`}
+                    >
+                      <Text
+                        style={attachment.uploadState === 'failed' && styles.attachmentFailed}
+                        testID={`pending-chat-attachment-state-${index}`}
+                      >
+                        {attachment.uploadState === 'uploaded'
+                          ? 'Ready'
+                          : attachment.uploadState === 'failed'
+                            ? 'Upload failed'
+                            : 'Uploading…'}
+                      </Text>{' '}
+                      · {attachment.sizeLabel} · {attachment.mimeType.toUpperCase()}
+                    </Text>
+                    {attachment.uploadState === 'failed' && (
+                      <Button
+                        label="Retry"
+                        size="inline"
+                        variant="secondary"
+                        accessibilityLabel={`Retry uploading ${attachment.name}`}
+                        disabled={attachmentsUploading}
+                        onPress={() => onRetryAttachment?.(index)}
+                        testID={`pending-chat-attachment-retry-${index}`}
+                      />
+                    )}
+                  </InlineRow>
+                </View>
+
                 <Button
-                  label="Retry"
-                  variant="secondary"
-                  accessibilityLabel={`Retry uploading ${attachment.name}`}
-                  disabled={attachmentsUploading}
-                  onPress={() => onRetryAttachment?.(index)}
-                  testID={`pending-chat-attachment-retry-${index}`}
-                />
-              )}
-              <Button
                 accessibilityLabel={`Remove ${attachment.name}`}
                 accessibilityRole="button"
                 disabled={attachmentsUploading}
@@ -835,7 +840,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.buzz.transcriptCard.rowTitleSize,
     color: theme.buzz.textPrimary,
   },
+  attachmentInfo: { flexDirection: 'row', alignItems: 'center', gap: groknight.space.sm },
   attachmentMeta: {
+    flexShrink: 1,
     ...theme.buzz.type.machine,
     fontSize: theme.buzz.transcriptCard.rowKindSize,
     color: theme.buzz.ledgerGhost,

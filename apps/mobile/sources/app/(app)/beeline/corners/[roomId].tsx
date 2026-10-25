@@ -209,7 +209,7 @@ export default function BuzzCorners() {
           onAdd={() => void createCorner()}
         />
         {!!error && (
-          <ErrorBanner
+          <ErrorBanner inline
             title={`! ${error}`}
             retryLabel="Retry"
             onRetry={() => void corners.refresh()} />

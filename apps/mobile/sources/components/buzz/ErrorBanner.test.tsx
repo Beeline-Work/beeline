@@ -14,7 +14,7 @@ it('keeps Retry and Dismiss independently operable on a failed delivery', async 
   let tree: any;
   await act(async () => {
     tree = create(
-      <ErrorBanner
+      <ErrorBanner inline
         title="Delivery failed"
         retryLabel="Retry"
         onRetry={retry}
@@ -24,6 +24,7 @@ it('keeps Retry and Dismiss independently operable on a failed delivery', async 
     );
   });
   const actions = tree.root.findAllByType('Button');
+  expect(actions.every((node: any) => node.props.size === 'inline')).toBe(true);
   expect(actions.map((node: any) => node.props.label)).toEqual(['Retry', 'Dismiss']);
   await act(async () => actions[0].props.onPress());
   expect(retry).toHaveBeenCalledOnce();

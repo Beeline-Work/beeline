@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -30,7 +31,6 @@ import {
   HullActionSheetRow,
 } from '@/components/buzz/HullActionSheet';
 import { Button } from '@/components/buzz/Button';
-import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { Typography } from '@/constants/Typography';
@@ -157,6 +157,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [workingKey, setWorkingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorRow, setErrorRow] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retryGeneration, setRetryGeneration] = useState(0);
   const workspaceSchedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
@@ -171,6 +172,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
   const loadPublicJoinLink = useCallback(async () => {
     if (!communityId || workspace?.visibility !== 'public') return;
     const generation = ++joinLinkGeneration.current;
+    setErrorRow('join-link');
     setJoinLinkBusy(true);
     setError(null);
     try {
@@ -303,6 +305,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
 
   const saveWorkspaceName = useCallback(async () => {
     if (!client || !communityId || !workspaceName.trim()) return;
+    setErrorRow('name');
     setWorkingKey('name');
     setError(null);
     const clearWorkspace = workspaceDraft.capture(false);
@@ -320,6 +323,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
 
   const changeWorkspacePicture = useCallback(async () => {
     if (!client || !communityId || !canManageWorkspace) return;
+    setErrorRow('picture');
     setWorkingKey('picture');
     setError(null);
     try {
@@ -338,6 +342,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
 
   const resetWorkspacePicture = useCallback(async () => {
     if (!client || !communityId || !canManageWorkspace) return;
+    setErrorRow('picture');
     setWorkingKey('picture');
     setError(null);
     try {
@@ -354,6 +359,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
     async (visibility: 'public' | 'invite-only') => {
       setVisibilityPickerOpen(false);
       if (!client || !communityId || workspace?.visibility === visibility) return;
+      setErrorRow('visibility');
       setWorkingKey('visibility');
       setError(null);
       try {
@@ -373,6 +379,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
       if (!client || !room.canManage) return;
       const visibility = room.visibility === 'public' ? 'invite-only' : 'public';
       setRoomSheetId(null);
+      setErrorRow(`room-${room.id}`);
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
@@ -392,6 +399,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
     async (room: WorkspaceRoomSetting) => {
       const viewerId = chatListKey?.viewerPubkey;
       if (!viewerId || !room.canManage) return;
+      setErrorRow(`room-${room.id}`);
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
@@ -418,6 +426,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
     if (!communityId || !workspace || deleteConfirmText.trim() !== workspace.name || deleteBusy)
       return;
     const clearDeletion = deletionDraft.capture();
+    setErrorRow('delete');
     setDeleteBusy(true);
     setError(null);
     try {
@@ -478,6 +487,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
         </View>
       ) : (
         <View testID={canManageWorkspace ? 'workspace-settings-manage' : 'workspace-settings-read-only'}>
+          {error && !errorRow ? <ErrorBanner inline title={error} /> : null}
           <View testID="workspace-overview-settings">
             <RoomListSectionHeader title="General" inset="content" />
             {canManageWorkspace ? (
@@ -517,6 +527,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                       workingKey === 'name', label: workingKey === 'name' ? 'Saving…' : 'Save', loading: workingKey === 'name', onPress: () => void saveWorkspaceName(), testID: "workspace-name-save", variant: 'primary' }]} />
               </View>
             )}
+            {error && errorRow === 'name' ? <ErrorBanner inline title={error} /> : null}
             <View testID="workspace-visibility-setting">
               {canManageWorkspace ? (
                 <SettingsRow
@@ -532,6 +543,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                 <SettingsRow testID="workspace-visibility-row" title="Visibility" value={visibilityLabel} />
               )}
             </View>
+            {error && errorRow === 'visibility' ? <ErrorBanner inline title={error} /> : null}
             {workspace?.visibility === 'public' && (
               <View testID="workspace-public-join-setting">
                 <SettingsRow
@@ -543,6 +555,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                   testID="workspace-public-join-copy"
                   title="Public join link"
                 />
+                {error && errorRow === 'join-link' ? <ErrorBanner inline title={error} /> : null}
               </View>
             )}
             {canManageWorkspace && workspace?.avatar ? (
@@ -554,6 +567,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                 tone="action"
               />
             ) : null}
+            {error && errorRow === 'picture' ? <ErrorBanner inline title={error} /> : null}
             {canManageWorkspace ? (
               <SettingsRow
                 title="Allow fix sweep"
@@ -564,6 +578,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                   disabled: workingKey !== null || typeof workspaceView?.managerSettings?.allowFixSweep !== 'boolean',
                   onValueChange: (allowFixSweep) => {
                     if (!communityId) return;
+                    setErrorRow('fix-sweep');
                     setWorkingKey('fix-sweep');
                     setError(null);
                     void monolithPhoneOperation('updateWorkspace', { workspaceId: communityId, allowFixSweep })
@@ -574,6 +589,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                 }}
               />
             ) : null}
+            {error && errorRow === 'fix-sweep' ? <ErrorBanner inline title={error} /> : null}
           </View>
 
           <View testID="workspace-members-link">
@@ -632,6 +648,7 @@ function WorkspaceSettings({ workspaceId }, ref) {
                       title={displayName}
                       value={ROOM_VISIBILITY_LABELS[room.visibility]}
                     />
+                    {error && errorRow === `room-${room.id}` ? <ErrorBanner inline title={error} /> : null}
                   </View>
                 );
               })}
@@ -647,15 +664,11 @@ function WorkspaceSettings({ workspaceId }, ref) {
                 title={`Delete ${WORKSPACE_LABEL}`}
                 tone="destructive"
               />
+              {error && errorRow === 'delete' ? <ErrorBanner inline title={error} /> : null}
             </View>
           )}
 
-          {error && (
-            <PixelGateReveal accessibilityRole="alert" style={styles.errorPanel}>
-              <Text style={styles.errorLabel}>! Error</Text>
-              <Text style={styles.errorText}>{error}</Text>
-            </PixelGateReveal>
-          )}
+
         </View>
       )}
 

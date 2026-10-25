@@ -127,7 +127,7 @@ function MessageSearchRow({
 }
 
 function Retry({ label, onPress, testID }: { label: string; onPress: () => void; testID: string }) {
-  return <ErrorBanner title={label} retryLabel="Retry" onRetry={onPress} retryTestID={testID} />;
+  return <ErrorBanner inline title={label} retryLabel="Retry" onRetry={onPress} retryTestID={testID} />;
 }
 
 const styles = StyleSheet.create((theme) => ({

@@ -26,6 +26,7 @@ export class VoiceEagerReply {
       if (this.onText) this.onText(text); else this.deltas.push(text);
     }, this.controller.signal, {
       agents,
+      ready: async () => { await gate; },
       diagnostic: timing => { if (this.diagnostic) this.diagnostic(timing); else this.diagnostics.push(timing); },
       announce: async text => (await gate).announce(text),
       search: async (request, signal) => (await gate).search(request, signal),

@@ -363,6 +363,12 @@ export class VoiceRoomRuntime {
         (!!this.assembler.current(human) || (!!this.speaking && this.speakingHuman === human));
       if (this.inputVersions.get(human) !== version ||
           (event.turn_index <= (this.turnIndices.get(human) ?? -1) && !resumesFinal)) return;
+      // Reopen the STT turn even when its resumed fragment is empty or filtered.
+      // Speech filters still decide whether to pause playback or classification.
+      if (resumesFinal && this.assembler.current(human)) {
+        this.resumedFinals.set(human, { turn: event.turn_index, text: this.assembler.current(human)!.text });
+        this.turnIndices.delete(human);
+      }
       if (event.event === 'TurnResumed' || event.event === 'StartOfTurn') this.cancelEager(human);
       if (event.event === 'EndOfTurn') this.humanQuiet(human);
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
@@ -399,10 +405,6 @@ export class VoiceRoomRuntime {
         this.task(() => this.prepareEager(human, event), human); return;
       }
       this.markCallActivity();
-      if (resumesFinal && this.assembler.current(human)) {
-        this.resumedFinals.set(human, { turn: event.turn_index, text: this.assembler.current(human)!.text });
-        this.turnIndices.delete(human);
-      }
       if (event.event !== 'EndOfTurn') this.humanSpeaking.add(human);
       this.assembler.speaking(human);
       // Recognized speech fences classification even when it is too short to barge in.
@@ -859,12 +861,13 @@ export class VoiceRoomRuntime {
             let recorded = false;
             try {
               await this.safeSignal({ type: 'speaker', agentId: agent.id });
+              // A lookup acknowledgement leaves the caller's request editable.
               await this.play(text, agent, controller.signal, () => {
                 if (!recorded) { recorded = true; recordSpoken(agent.id, text); }
                 if (firstAudio) return;
                 firstAudio = true; timing('first_voiced_audio_published');
                 this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-              }, () => { this.assembler.finish(human, request); }, timing, members, undefined, speakingSpeed);
+              }, () => { generation.signal.throwIfAborted(); }, timing, members, undefined, speakingSpeed);
             } finally {
               if (this.speaking === controller) {
                 this.speaking = undefined;

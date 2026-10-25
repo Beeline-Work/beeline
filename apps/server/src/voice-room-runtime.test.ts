@@ -2952,3 +2952,59 @@ it.each([1.15, 1.3, 1.5])('SPEAKING-SPEED-1: input loads %sx once; next reply us
     await play(1.15);
   } finally { await runtime.close(); }
 });
+
+it('SPEEDY-SEARCH-1: resuming during search acknowledgement revises the original request', async () => {
+  const {service} = conversationService(1);
+  let receive: any;
+  service.config.stt.mockImplementation(async callback => { receive = callback; return {send() {}, close() {}}; });
+  const gate = deferred<void>();
+  service.config.brain.answer.mockImplementation(async (...args: any[]) => {
+    if (service.config.brain.answer.mock.calls.length === 1) {
+      await args[4].announce('Let me look.');
+      await gate.promise;
+    }
+    return {text:'Here is the result.', order:false};
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  let work: Promise<void> | undefined;
+  try {
+    state.room.emit('track', {kind:1}, {}, {identity:'human'});
+    await vi.waitFor(() => expect(receive).toBeDefined());
+    work = runtime.utterance('human', 'Ruby search the weather').catch(() => {});
+    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledOnce());
+    receive({event:'StartOfTurn', transcript:'in Istanbul', turn_index:1, sequence_id:1,
+      words:[{word:'in',confidence:.99,start:0,end:.2},{word:'Istanbul',confidence:.99,start:.2,end:.5}]});
+    await new Promise(resolve => setTimeout(resolve, 10));
+    receive({event:'EndOfTurn', transcript:'in Istanbul', turn_index:1, sequence_id:2});
+    await vi.waitFor(() => expect(service.config.brain.answer).toHaveBeenCalledTimes(2));
+    expect(service.recordHuman).toHaveBeenCalledOnce();
+    expect(service.config.brain.answer.mock.calls[0]![3].aborted).toBe(true);
+    expect(service.reviseHuman.mock.calls.at(-1)?.[5]).toBe('Ruby search the weather in Istanbul');
+  } finally {gate.resolve(); await work; await runtime.close();}
+});
+
+it.each(['to', ''])('SPEEDY-RESUME-1: same-turn final after filtered resume %s completes the joined request', async word => {
+  const {service} = conversationService(1);
+  let receive: any;
+  service.config.stt.mockImplementation(async callback => {receive=callback;return {send(){},close(){}};});
+  const gate=deferred<void>();
+  service.config.brain.answer.mockImplementation(async (...args:any[]) => {
+    if(service.config.brain.answer.mock.calls.length===1) await gate.promise;
+    return {text:'Fine.',order:false};
+  });
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  state.streams=[new ReadableStream()];
+  try {
+    state.room.emit('track',{kind:1},{},{identity:'human'});
+    await vi.waitFor(()=>expect(receive).toBeDefined());
+    receive({event:'EndOfTurn',transcript:'Ruby send a message',turn_index:0,sequence_id:0});
+    await vi.waitFor(()=>expect(service.config.brain.answer).toHaveBeenCalledOnce());
+    receive({event:'TurnResumed',transcript:word,turn_index:0,sequence_id:1,words:word ? [{word,confidence:.99,start:0,end:.2}] : []});
+    receive({event:'EndOfTurn',transcript:'Ruby send a message to Grok Bot',turn_index:0,sequence_id:2});
+    await new Promise(resolve=>setTimeout(resolve,20));
+    expect(service.config.brain.answer).toHaveBeenCalledTimes(2);
+    expect(service.config.brain.answer.mock.calls[0]![3].aborted).toBe(true);
+    expect(service.reviseHuman.mock.calls.at(-1)?.[5]).toBe('Ruby send a message to Grok Bot');
+  } finally {gate.resolve();await runtime.close();}
+});

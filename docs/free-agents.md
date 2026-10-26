@@ -108,7 +108,7 @@ and a 65,536-token output ceiling.
 
 The Machine never holds a provider key. Pi's `beeline` provider points at
 `POST /v1/free-agents/model/chat/completions` with the agent's model token. The
-proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash`). It
+proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash-1017`). It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
 reserves an estimated prompt plus a capped reply against the

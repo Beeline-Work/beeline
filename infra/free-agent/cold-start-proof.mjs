@@ -96,7 +96,7 @@ try {
       id: 'proof',
       object: 'chat.completion.chunk',
       created: Math.floor(Date.now() / 1000),
-      model: 'deepseek/deepseek-v4.1-flash',
+      model: 'deepseek/deepseek-v4.1-flash-1017',
     };
     res.write(
       `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: { role: 'assistant', content: 'Cold start proof reply.' }, finish_reason: null }] })}\n\n`,

@@ -66,8 +66,7 @@ SQL pages attach `authorId`, `authorKind` and agent `ownerId` to message activit
 Distinct human authors establish observed participation; ownership alone does
 not establish that a person wrote or visited.
 
-Run `npm run build -w @beeline/server`, then
-`node --import tsx scripts/prove-workspace-walk-history.mjs`. This synthetic
+Run `npm run prove:workspace-walk-history`. This synthetic
 stand-in exercises the built reservation, SQL-page and receipt path: historical
 messages excluded from a first daily read appear across two bounded weekly
 pages; human and agent authors remain distinct; ownership is verified; complete

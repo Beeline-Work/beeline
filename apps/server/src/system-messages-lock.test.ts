@@ -836,93 +836,99 @@ function scan(files: Map<string, string>): Entry[] {
       )
         scope.unshift(parent.name.getText());
     const location = `${file}:${scope.join('.') || 'module'}:${kind}`;
-    const literals = new Set<string>(writes.get(node)?.literals);
-    const seen = new Set<ts.Node>();
+    // Hash the complete ordered stream; keep the lock's phrase inventory compact below.
+    const literals: string[] = [...(writes.get(node)?.literals ?? [])];
+    // Guard only the active dependency path: a second use contributes words again.
+    const active = new Set<ts.Node>();
     const collect = (part: ts.Node) => {
-      if (seen.has(part)) return;
-      seen.add(part);
-      if (ts.isObjectLiteralExpression(part)) {
-        wordingParts(part).forEach(collect);
-        return;
-      }
-      // The private command transport contributes its returned command values,
-      // not unrelated wake-bookkeeping statements in its transaction callback.
-      // Explicit mutations of returned locals are still followed below.
-      let producer: ts.Node | undefined = part.parent;
-      while (producer && !ts.isFunctionDeclaration(producer)) producer = producer.parent;
-      if (
-        (ts.isArrowFunction(part) || ts.isFunctionExpression(part)) &&
-        producer &&
-        ts.isFunctionDeclaration(producer) &&
-        producer.name?.text === 'createAgentCommand' &&
-        producer.getSourceFile().fileName === resolve(server, 'src/agent-command.ts')
-      ) {
-        if (!ts.isBlock(part.body)) collect(part.body);
-        else {
-          const returned = (statement: ts.Node) => {
-            if (ts.isReturnStatement(statement) && statement.expression)
-              collect(statement.expression);
-            else if (!ts.isFunctionLike(statement)) ts.forEachChild(statement, returned);
-          };
-          ts.forEachChild(part.body, returned);
+      if (active.has(part)) return;
+      active.add(part);
+      try {
+        if (ts.isObjectLiteralExpression(part)) {
+          wordingParts(part).forEach(collect);
+          return;
         }
-        return;
-      }
-      // Returned SQL expressions may supply words; access clauses do not.
-      if (queryResult(part)) {
-        const selected = queryWording(part);
-        selected.literals.forEach((literal) => literals.add(literal));
-        selected.parts.forEach(collect);
-        return;
-      }
-      // Member/callee identities choose what people see, even without fixed words.
-      // Omit the root local name so person.name and recipient.name stay equivalent.
-      if (ts.isPropertyAccessExpression(part)) literals.add(`.${part.name.text}`);
-      if (ts.isCallExpression(part)) {
-        const callee = part.expression;
-        if (ts.isIdentifier(callee)) literals.add(`${callee.text}()`);
-        else if (ts.isPropertyAccessExpression(callee)) literals.add(`.${callee.name.text}()`);
-      }
-      if (ts.isStringLiteralLike(part)) literals.add(JSON.stringify(part.text));
-      if (ts.isTemplateExpression(part)) {
-        literals.add(JSON.stringify([part.head.text, ...part.templateSpans.map((span) => span.literal.text)]));
-      }
-      if (
-        (ts.isIdentifier(part) || ts.isPropertyAccessExpression(part)) &&
-        !(ts.isPropertyAccessExpression(part.parent) && part.parent.name === part) &&
-        !(ts.isPropertyAssignment(part.parent) && part.parent.name === part)
-      ) {
-        for (const declaration of declarations(part)) {
-          if (!files.has(declaration.getSourceFile().fileName)) continue;
-          if (ts.isVariableDeclaration(declaration) && declaration.initializer)
-            collect(declaration.initializer);
-          if (ts.isVariableDeclaration(declaration))
-            (symbol(declaration.name)
-              ? (mutations.get(symbol(declaration.name)!) ?? [])
-              : []
-            ).forEach(collect);
-          if (ts.isBindingElement(declaration)) {
-            let parent: ts.Node = declaration;
-            while (parent.parent && !ts.isVariableDeclaration(parent)) parent = parent.parent;
-            if (ts.isVariableDeclaration(parent) && parent.initializer) collect(parent.initializer);
-          }
-          if (ts.isPropertyAssignment(declaration)) collect(declaration.initializer);
-          // Formatting helpers carry literal phrases in their bodies, including imported helpers.
-          if (
-            (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) &&
-            declaration.body &&
-            !wrappers.has(declaration)
-          ) {
+        // The private command transport contributes its returned command values,
+        // not unrelated wake-bookkeeping statements in its transaction callback.
+        // Explicit mutations of returned locals are still followed below.
+        let producer: ts.Node | undefined = part.parent;
+        while (producer && !ts.isFunctionDeclaration(producer)) producer = producer.parent;
+        if (
+          (ts.isArrowFunction(part) || ts.isFunctionExpression(part)) &&
+          producer &&
+          ts.isFunctionDeclaration(producer) &&
+          producer.name?.text === 'createAgentCommand' &&
+          producer.getSourceFile().fileName === resolve(server, 'src/agent-command.ts')
+        ) {
+          if (!ts.isBlock(part.body)) collect(part.body);
+          else {
             const returned = (statement: ts.Node) => {
               if (ts.isReturnStatement(statement) && statement.expression)
                 collect(statement.expression);
               else if (!ts.isFunctionLike(statement)) ts.forEachChild(statement, returned);
             };
-            ts.forEachChild(declaration.body, returned);
+            ts.forEachChild(part.body, returned);
+          }
+          return;
+        }
+        // Returned SQL expressions may supply words; access clauses do not.
+        if (queryResult(part)) {
+          const selected = queryWording(part);
+          selected.literals.forEach((literal) => literals.push(literal));
+          selected.parts.forEach(collect);
+          return;
+        }
+        // Member/callee identities choose what people see, even without fixed words.
+        // Omit the root local name so person.name and recipient.name stay equivalent.
+        if (ts.isPropertyAccessExpression(part)) literals.push(`.${part.name.text}`);
+        if (ts.isCallExpression(part)) {
+          const callee = part.expression;
+          if (ts.isIdentifier(callee)) literals.push(`${callee.text}()`);
+          else if (ts.isPropertyAccessExpression(callee)) literals.push(`.${callee.name.text}()`);
+        }
+        if (ts.isStringLiteralLike(part)) literals.push(JSON.stringify(part.text));
+        if (ts.isTemplateExpression(part)) {
+          literals.push(JSON.stringify([part.head.text, ...part.templateSpans.map((span) => span.literal.text)]));
+        }
+        if (
+          (ts.isIdentifier(part) || ts.isPropertyAccessExpression(part)) &&
+          !(ts.isPropertyAccessExpression(part.parent) && part.parent.name === part) &&
+          !(ts.isPropertyAssignment(part.parent) && part.parent.name === part)
+        ) {
+          for (const declaration of declarations(part)) {
+            if (!files.has(declaration.getSourceFile().fileName)) continue;
+            if (ts.isVariableDeclaration(declaration) && declaration.initializer)
+              collect(declaration.initializer);
+            if (ts.isVariableDeclaration(declaration))
+              (symbol(declaration.name)
+                ? (mutations.get(symbol(declaration.name)!) ?? [])
+                : []
+              ).forEach(collect);
+            if (ts.isBindingElement(declaration)) {
+              let parent: ts.Node = declaration;
+              while (parent.parent && !ts.isVariableDeclaration(parent)) parent = parent.parent;
+              if (ts.isVariableDeclaration(parent) && parent.initializer) collect(parent.initializer);
+            }
+            if (ts.isPropertyAssignment(declaration)) collect(declaration.initializer);
+            // Formatting helpers carry literal phrases in their bodies, including imported helpers.
+            if (
+              (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) &&
+              declaration.body &&
+              !wrappers.has(declaration)
+            ) {
+              const returned = (statement: ts.Node) => {
+                if (ts.isReturnStatement(statement) && statement.expression)
+                  collect(statement.expression);
+                else if (!ts.isFunctionLike(statement)) ts.forEachChild(statement, returned);
+              };
+              ts.forEachChild(declaration.body, returned);
+            }
           }
         }
+        ts.forEachChild(part, collect);
+      } finally {
+        active.delete(part);
       }
-      ts.forEachChild(part, collect);
     };
     const args = ts.isCallExpression(node) ? invocationArguments(node) : [];
     // The database argument is transport, not a phrase dependency.
@@ -939,7 +945,7 @@ function scan(files: Map<string, string>): Entry[] {
         if (args[index]) collect(args[index]!);
       });
     } else collect(node);
-    const id = `${location}:${createHash('sha256').update(JSON.stringify([...literals].sort())).digest('hex').slice(0, 16)}`;
+    const id = `${location}:${createHash('sha256').update(JSON.stringify(literals)).digest('hex').slice(0, 16)}`;
     const prior = entries.get(id);
     if (prior) prior.occurrences++;
     else
@@ -948,7 +954,7 @@ function scan(files: Map<string, string>): Entry[] {
         file: `apps/server/${file}`,
         kind,
         template,
-        literals: [...literals].sort(),
+        literals: [...new Set(literals)].sort(),
         occurrences: 1,
       });
   }
@@ -1554,6 +1560,19 @@ it.each([
 });
 
 // Reproduction SYSTEM-WORDING-1 exercises the same scanner/enforcer used by CI.
+it.each([
+  ["'hello ' + 'world'", "'world' + 'hello '"],
+  ["'hello ' + 'world'", "'hello ' + 'world' + 'world'"],
+  ["word + 'world'", "word + word + 'world'"],
+])('SYSTEM-WORDING-1: rejects reordered or repeated visible words: %s → %s', (before, after) => {
+  const base = fixture(`const word='hello '; line(db,{verb:${before}});`);
+  const changed = new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  const baseline = scan(base);
+  const current = scan(changed);
+  expect(current.map((entry) => entry.id)).not.toEqual(baseline.map((entry) => entry.id));
+  expect(() => enforce(current, baseline)).toThrow(failure);
+});
+
 it('SYSTEM-WORDING-1: accepts hidden sign-in card fields and code refactors', () => {
   const base = fixture("line(db,{verb:'requested sign-in',cardType:'app-sign-in',card:{name:'Gmail'}});");
   for (const replacement of [

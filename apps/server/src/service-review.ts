@@ -24,7 +24,10 @@ BEGIN
       SELECT m.id,m.room_id,m.text,
         (CASE WHEN jsonb_typeof(m.activity)='object' THEN m.activity
           ELSE jsonb_build_object('activity',m.activity) END)
-          || jsonb_build_object('createdAt',m.created_at,'rowKind','message') activity FROM messages m
+          || jsonb_build_object('createdAt',m.created_at,'rowKind','message',
+            'authorId',i.id,'authorKind',i.kind,
+            'ownerId',CASE WHEN i.kind='agent' THEN a.owner_id END) activity FROM messages m
+      JOIN identities i ON i.id=m.author_id LEFT JOIN agents a ON a.agent_id=i.id
       JOIN target_rooms r ON r.id=m.room_id WHERE m.deleted_at IS NULL
         AND EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=review_workspace
           AND v.agent_id=review_agent AND v.run_id=review_run
@@ -41,7 +44,7 @@ END $$;
 `;
 
 /** Reserve opted-in workspaces. */
-export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string, daily = false): Promise<string[]> {
+export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string, daily = false, windowDays: 1 | 14 = 1): Promise<string[]> {
   return database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
     if (daily) {
@@ -50,9 +53,10 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
         SELECT w.id,$1,$2,
           bounds.read_from,now()
         FROM workspaces w CROSS JOIN LATERAL (
-          SELECT coalesce((SELECT max(v.read_through) FROM service_review_visits v
+          SELECT least(CASE WHEN $3::int=14 THEN now()-interval '14 days' END,
+            coalesce((SELECT max(v.read_through) FROM service_review_visits v
             WHERE v.workspace_id=w.id AND v.completed_at IS NOT NULL),
-            (SELECT min(v.read_from) FROM service_review_visits v WHERE v.workspace_id=w.id),now()-interval '24 hours') AS read_from
+            (SELECT min(v.read_from) FROM service_review_visits v WHERE v.workspace_id=w.id),now()-interval '24 hours')) AS read_from
         ) bounds WHERE w.allow_fix_sweep=true AND NOT w.internal
           AND EXISTS(SELECT 1 FROM messages m JOIN rooms r ON r.id=m.room_id
             WHERE r.workspace_id=w.id AND m.deleted_at IS NULL
@@ -61,7 +65,7 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
             SELECT 1 FROM agent_turns t JOIN rooms r ON r.id=t.room_id
             WHERE r.workspace_id=w.id AND t.started_at>bounds.read_from AND t.started_at<=now())
           AND NOT EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=w.id AND v.run_id=$2)
-        RETURNING workspace_id`,[agentId,runId]);
+        RETURNING workspace_id`,[agentId,runId,windowDays]);
       return result.rows.map(row => row.workspace_id);
     }
     const result = await db.query<{ workspace_id: string }>(`

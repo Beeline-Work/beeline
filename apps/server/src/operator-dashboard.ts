@@ -1,4 +1,6 @@
 import { dashboardXAds } from './x-ads.js';
+import { dashboardFinances } from './operator-finances.js';
+import { unavailableFinances } from './operator-finances-wire.js';
 import { dashboardSigninFunnel } from './signin-funnel.js';
 import { dashboardDownloads } from './operator-dashboard-downloads.js';
 import type { SqlDatabase } from './database.js';
@@ -595,6 +597,7 @@ export async function readOperatorDashboard(
   };
   return {
     schemaVersion: 1,
+    finances: await dashboardFinances(database).catch(unavailableFinances),
     xAds,
     periods,
     platformBreakdown,

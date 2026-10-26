@@ -1,0 +1,1887 @@
+{
+  "schemaVersion": 1,
+  "finances": {
+    "month": "2026-10",
+    "measuredAt": "2026-10-25T12:00:00Z",
+    "totals": {
+      "mtd": {
+        "value": 94,
+        "source": "metered"
+      },
+      "projected": {
+        "value": 116.48,
+        "source": "metered"
+      },
+      "lastMonth": {
+        "value": 99,
+        "source": "metered"
+      },
+      "perActiveUser": {
+        "value": null,
+        "source": "unknown"
+      }
+    },
+    "services": [
+      {
+        "id": "openrouter",
+        "name": "OpenRouter",
+        "powers": "Agent models and memory",
+        "billing": "credits",
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 42,
+          "source": "api"
+        },
+        "projected": {
+          "value": 52,
+          "source": "api"
+        },
+        "lastMonth": {
+          "value": 40,
+          "source": "api"
+        },
+        "balance": {
+          "value": 3,
+          "source": "api",
+          "measuredAt": "2026-10-25T12:00:00Z",
+          "low": true
+        }
+      },
+      {
+        "id": "cloudflare",
+        "name": "Cloudflare",
+        "powers": "Voice, web hosting and DNS",
+        "billing": "pay-as-you-go card",
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 18,
+          "source": "metered"
+        },
+        "projected": {
+          "value": 22.32,
+          "source": "metered"
+        },
+        "lastMonth": {
+          "value": 20,
+          "source": "api"
+        },
+        "balance": null
+      },
+      {
+        "id": "fly.io",
+        "name": "Fly.io",
+        "powers": "Server and free-agent machines",
+        "billing": "pay-as-you-go card",
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 30,
+          "source": "metered"
+        },
+        "projected": {
+          "value": 37.2,
+          "source": "metered"
+        },
+        "lastMonth": {
+          "value": 35,
+          "source": "api"
+        },
+        "balance": null
+      },
+      {
+        "id": "github",
+        "name": "GitHub",
+        "powers": "Repositories and checks",
+        "billing": "fixed plan",
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 4,
+          "source": "entered"
+        },
+        "projected": {
+          "value": 4.96,
+          "source": "entered"
+        },
+        "lastMonth": {
+          "value": 4,
+          "source": "api"
+        },
+        "balance": null
+      },
+      {
+        "id": "voice-provider",
+        "name": "Voice provider",
+        "powers": "Speech generation",
+        "billing": "credits",
+        "billingUrl": "https://example.com/billing",
+        "state": "unavailable",
+        "mtd": {
+          "value": null,
+          "source": "unknown"
+        },
+        "projected": {
+          "value": null,
+          "source": "unknown"
+        },
+        "lastMonth": {
+          "value": null,
+          "source": "unknown"
+        },
+        "balance": null
+      }
+    ],
+    "daily": [
+      {
+        "date": "2026-07-26",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-27",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-28",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-29",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-30",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-31",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-01",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-02",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-03",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-04",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-05",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-06",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-07",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-08",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-09",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-10",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-11",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-12",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-13",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-14",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-15",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-16",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-17",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-18",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-19",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-20",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-21",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-22",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-23",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-24",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-25",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-26",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-27",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-28",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-29",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-30",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-08-31",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-01",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-02",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-03",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-04",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-05",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-06",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-07",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-08",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-09",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-10",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-11",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-12",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-13",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-14",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-15",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-16",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-17",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-18",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-19",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-20",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-21",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-22",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-23",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-24",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-25",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-26",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-27",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-28",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-29",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-09-30",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-01",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-02",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-03",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-04",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-05",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-06",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-07",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-08",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-09",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-10",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-11",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-12",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-13",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-14",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-15",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-16",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-17",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-18",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-19",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-20",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-21",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-22",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-23",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-24",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-25",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      }
+    ]
+  }
+}

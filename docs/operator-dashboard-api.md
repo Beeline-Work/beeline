@@ -5,6 +5,10 @@ The private frontend and same-origin Cloudflare Pages proxy live in
 `Beeline-Work/beeline-dashboard`. The browser never holds the bearer secret.
 Existing Cloudflare Access protects `dashboard.usebeeline.app`.
 
+The additive `finances` block provides service dependencies, provider balances,
+sourced spending, projections and durable daily snapshots. See the
+[finances contract, inventory and credential gaps](operator-services.md).
+
 `apps/server/src/operator-dashboard.ts` owns the aggregate queries;
 `operator-dashboard.test.ts` covers authentication, cohort counts, platform
 selection, fixture exclusion, and partial failures. No content or identity IDs

@@ -1,5 +1,6 @@
 import { backfillCornerHoldMessages } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
+import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
@@ -3181,6 +3182,12 @@ export async function migrate(
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
   await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);
+  await ddlScript('operator finances snapshots', OPERATOR_FINANCES_SCHEMA);
+  await retryMigrationStep('operator model cost history index', () => createIndexConcurrently(
+    database, 'free_agent_events_model_cost_at',
+    `CREATE INDEX CONCURRENTLY free_agent_events_model_cost_at ON free_agent_events(at)
+     WHERE kind='model_usage'`,
+  ));
   await ddl('retire room webhooks', `
     DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
       room_webhook_deliveries, room_webhook_requests, room_webhooks;

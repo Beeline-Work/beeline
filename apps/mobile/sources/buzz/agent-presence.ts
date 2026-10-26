@@ -82,7 +82,7 @@ export function nextAgentTurnExpiryAt(
   return next;
 }
 
-/** A working turn belongs only to the currently online daemon generation. */
+/** Dispatch receipts precede claim; claimed turns belong to the current daemon generation. */
 export function isAgentTurnActive(
   turn: RoomViewAgentTurn,
   presence: RoomAgentPresence | undefined,
@@ -97,9 +97,11 @@ export function isAgentTurnActive(
   // Turn lifecycle and availability are independent relay streams. A signed
   // working event is enough to render the Room progress row while the durable
   // availability record is still loading.
-  // An explicit offline marker, or a different current daemon generation,
-  // is the only evidence that may close it before complete/failed arrives.
+  // An explicit offline marker closes either kind of receipt. A dispatched
+  // pending receipt has no helper generation yet; only claimed receipts can
+  // be vetoed by a different current daemon generation.
   if (presence?.status === 'offline') return false;
+  if (turn.generationId?.startsWith('pending:')) return true;
   if (presence?.generationId) return turn.generationId === presence.generationId;
   return true;
 }

@@ -20,7 +20,7 @@ globalThis.fetch = async (input) => {
   if (url === 'https://openrouter.ai/api/v1/key')
     return Response.json({ data: { usage_monthly: 12, usage_daily: 0.75, limit: 20, limit_remaining: 3 } });
   if (url === 'https://openrouter.ai/api/v1/credits')
-    return Response.json({ error: 'fixture-private-key must never be returned' }, { status: 403 });
+    return Response.json({ data: { total_credits: 15, total_usage: 12 } });
   throw new Error('External calls disabled in this proof');
 };
 const server = createBeelineServer({ database: db, dashboardSecret: 'fixture-dashboard-secret',
@@ -35,34 +35,23 @@ try {
   const body = await response.json();
   const finances = body.finances;
   const model = finances.services.find(s => s.id === 'openrouter');
-  assert.equal(model.spend.monthToDate.usd, 12);
-  assert.equal(model.spend.monthToDate.source, 'API');
-  assert.equal(model.spend.monthToDate.state, 'partial');
-  assert.equal(model.readings[0].state, 'unavailable');
-  assert.equal(model.readings[1].low, true);
-  assert.equal(finances.summary.monthToDate.usd, null);
-  assert.equal(finances.summary.monthToDate.knownUsd, 12);
-  assert.equal(finances.snapshotState, 'saved');
-  assert.equal(finances.services.find(s => s.id === 'groq').spend.monthToDate.usd, null);
-  assert.equal(finances.services.find(s => s.id === 'groq').spend.monthToDate.source, 'unknown');
-  assert.equal(typeof finances.services.find(s => s.id === 'groq').error, 'string');
-  assert.deepEqual(finances.perUser, { state: 'pending', delivery: 'PR B', activeUsers: null,
-    attributedShare: null, attributedUsd: null, unattributedUsd: null, fixedCostPerActiveUserUsd: null, users: [],
-    note: 'Per-user attribution follows in PR B' });
-  assert.equal(finances.services.find(s => s.id === 'cloudflare').spend.monthToDate.usd, null);
-  assert.equal(finances.daily[0].services.find(s => s.serviceId === 'openrouter').usd, null);
-  assert.equal(finances.headline.activeUsers, null);
-  assert.equal(model.monthToDateUsd, 12);
-  assert.equal(model.sources.monthToDateUsd, 'api');
-  assert.equal(model.category, 'models');
-  assert.equal(model.billingType, 'credits');
-  assert.equal(finances.daily[0].hosting, null);
+  assert.deepEqual(Object.keys(finances).sort(), ['daily','measuredAt','month','services','totals']);
+  assert.deepEqual(model.mtd, { value: 12, source: 'api' });
+  assert.equal(model.state, 'ready');
+  assert.deepEqual(model.balance, { value: 3, source: 'api', measuredAt: '2026-10-15T12:00:00.000Z', low: true });
+  assert.deepEqual(finances.totals.mtd, { value: null, source: 'unknown' });
+  assert.deepEqual(finances.totals.perActiveUser, { value: null, source: 'unknown' });
+  const groq = finances.services.find(s => s.id === 'groq');
+  assert.deepEqual(groq.mtd, { value: null, source: 'unknown' });
+  assert.equal(groq.state, 'unavailable');
+  assert.equal(groq.balance, null);
+  assert.deepEqual(finances.daily[0].hosting, { value: null, source: 'unknown' });
   assert.ok(!JSON.stringify(body).includes('fixture-private-key'));
   const snapshots = await db.query('SELECT count(*) AS count FROM operator_finance_snapshots');
   assert.ok(Number(snapshots.rows[0].count) > 0);
   await mkdir('docs/fixtures', { recursive: true });
   await writeFile('docs/fixtures/operator-finances.json', JSON.stringify({ finances }) + '\n');
-  console.log('FINANCES-A: unauthenticated dashboard hidden; authenticated built HTTP returns sourced spend, low allowance, isolated billing failures, unknown costs and persistent daily snapshots. Fixture saved.');
+  console.log('FINANCES-A: unauthenticated dashboard hidden; authenticated built HTTP returns sourced spend, low account credit, isolated billing failures, unknown costs and persistent daily snapshots. Fixture saved.');
 } finally {
   globalThis.fetch = request;
   Date.now = realNow;

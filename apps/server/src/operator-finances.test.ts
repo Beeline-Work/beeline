@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
 import { createOperatorFinances, OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { createDashboardServices } from './operator-dashboard-services.js';
+import { financesWire } from './operator-finances-wire.js';
+import { readFile } from 'node:fs/promises';
 
 const databases: PgliteDatabase[] = [];
 afterEach(async () => { await Promise.all(databases.splice(0).map(db => db.close())); });
@@ -39,6 +41,21 @@ function providers() {
 }
 
 describe('operator finances', () => {
+  it('emits exactly the dashboard PR 13 wire shape with nullable sourced money', async () => {
+    const db = await database();
+    const result = financesWire(await createOperatorFinances(db, env, providers(), () => timestamp)());
+    const fixture = JSON.parse(await readFile(new URL('./operator-finances-contract.fixture.json', import.meta.url), 'utf8')).finances;
+    expect(Object.keys(result).sort()).toEqual(Object.keys(fixture).sort());
+    expect(Object.keys(result.totals).sort()).toEqual(Object.keys(fixture.totals).sort());
+    expect(Object.keys(result.services[0]!).sort()).toEqual(Object.keys(fixture.services[0]).sort());
+    expect(Object.keys(result.daily[0]!).sort()).toEqual(Object.keys(fixture.daily[0]).sort());
+    expect(result.services.find(s => s.id === 'openrouter')!.mtd).toEqual({ value: 29, source: 'api' });
+    expect(result.totals.mtd).toEqual({ value: null, source: 'unknown' });
+    expect(result.totals.perActiveUser).toEqual({ value: null, source: 'unknown' });
+    expect(result.daily[0]!.models).toEqual({ value: null, source: 'unknown' });
+    expect(result.services.find(s => s.id === 'groq')!.state).toBe('unavailable');
+    expect(result.services.find(s => s.id === 'groq')!.balance).toBeNull();
+  });
   it('projects sourced spend, deduplicates keys and stores daily readings without counting monthly charges as a day', async () => {
     const db = await database(), fetcher = providers();
     const result = await createOperatorFinances(db, env, fetcher, () => timestamp)();

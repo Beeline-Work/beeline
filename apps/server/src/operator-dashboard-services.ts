@@ -1,5 +1,5 @@
 /** Operator-only dependency inventory. Evidence and exclusions: docs/operator-services.md. */
-import type { OperatorFinances } from './operator-finances-contract.js';
+import type { OperatorFinancesDetails } from './operator-finances-details.js';
 type Environment = Record<string, string | undefined>;
 type Billing = 'credits' | 'pay-as-you-go card' | 'fixed plan' | 'free';
 type Service = {
@@ -69,8 +69,8 @@ const inventory: Service[] = [
     'free', 'https://link.com/', 'No operating credit balance API; user payment sources are private'),
 ];
 
-type Reading = OperatorFinances['services'][number]['readings'][number];
-type ServiceRow = Pick<OperatorFinances['services'][number],
+type Reading = OperatorFinancesDetails['services'][number]['readings'][number];
+type ServiceRow = Pick<OperatorFinancesDetails['services'][number],
   'id' | 'name' | 'powers' | 'envVars' | 'billing' | 'billingUrl' | 'balanceNote' | 'state' | 'balanceHealth' | 'readings'>;
 const CACHE_MS = 10 * 60 * 1000;
 const TIMEOUT_MS = 5000;

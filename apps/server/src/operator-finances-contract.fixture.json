@@ -1,3362 +1,1887 @@
 {
+  "schemaVersion": 1,
   "finances": {
-    "schemaVersion": 1,
-    "timeZone": "UTC",
-    "currency": "USD",
-    "measuredAt": "2026-10-15T12:00:00.000Z",
-    "cacheSeconds": 600,
-    "headline": {
-      "monthToDateUsd": null,
-      "projectedMonthUsd": null,
-      "lastMonthUsd": null,
-      "avgCostPerActiveUserUsd": null,
-      "activeUsers": null,
-      "asOf": "2026-10-15T12:00:00.000Z"
-    },
     "month": "2026-10",
-    "previousMonth": "2026-09",
-    "snapshotState": "saved",
-    "summary": {
-      "monthToDate": {
-        "usd": null,
-        "knownUsd": 70.214839,
-        "measuredServices": 4,
-        "totalServices": 5,
-        "state": "partial"
+    "measuredAt": "2026-10-25T12:00:00Z",
+    "totals": {
+      "mtd": {
+        "value": 94,
+        "source": "metered"
       },
-      "projectedMonth": {
-        "usd": null,
-        "knownUsd": 150.114483,
-        "measuredServices": 4,
-        "totalServices": 5,
-        "state": "partial"
+      "projected": {
+        "value": 116.48,
+        "source": "metered"
       },
       "lastMonth": {
-        "usd": null,
-        "knownUsd": 137.4,
-        "measuredServices": 4,
-        "totalServices": 5,
-        "state": "partial"
+        "value": 99,
+        "source": "metered"
       },
-      "averageCostPerActiveUser": {
-        "usd": null,
-        "source": "unknown",
-        "state": "unknown",
-        "measuredAt": null,
-        "note": "Per-user attribution follows in PR B"
+      "perActiveUser": {
+        "value": null,
+        "source": "unknown"
       }
     },
     "services": [
       {
         "id": "openrouter",
         "name": "OpenRouter",
-        "powers": "Agent models, voice replies and memory embeddings",
-        "envVars": [
-          "BEELINE_FREE_AGENT_MODEL_KEY",
-          "BEELINE_VOICE_OPENROUTER_API_KEY",
-          "OPENROUTER_EMBEDDING_API_KEY"
-        ],
+        "powers": "Agent models and memory",
         "billing": "credits",
-        "billingUrl": "https://openrouter.ai/settings/credits",
-        "balanceNote": "Account credits and per-key spending allowance",
-        "state": "measured",
-        "balanceHealth": "low",
-        "readings": [
-          {
-            "label": "BEELINE_FREE_AGENT_MODEL_KEY: account credits",
-            "source": "https://openrouter.ai/api/v1/credits",
-            "state": "unavailable",
-            "value": null,
-            "unit": "USD",
-            "measuredAt": null,
-            "low": null,
-            "note": "Provider refused billing access; a billing or management key may be required"
-          },
-          {
-            "label": "BEELINE_FREE_AGENT_MODEL_KEY: key allowance",
-            "source": "https://openrouter.ai/api/v1/key",
-            "state": "measured",
-            "value": 3,
-            "unit": "USD",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "low": true,
-            "note": null
-          },
-          {
-            "label": "BEELINE_VOICE_OPENROUTER_API_KEY: account credits",
-            "source": "https://openrouter.ai/api/v1/credits",
-            "state": "unavailable",
-            "value": null,
-            "unit": "USD",
-            "measuredAt": null,
-            "low": null,
-            "note": "Provider refused billing access; a billing or management key may be required"
-          },
-          {
-            "label": "BEELINE_VOICE_OPENROUTER_API_KEY: key allowance",
-            "source": "https://openrouter.ai/api/v1/key",
-            "state": "measured",
-            "value": 3,
-            "unit": "USD",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "low": true,
-            "note": null
-          },
-          {
-            "label": "OPENROUTER_EMBEDDING_API_KEY: account credits",
-            "source": "https://openrouter.ai/api/v1/credits",
-            "state": "unavailable",
-            "value": null,
-            "unit": "USD",
-            "measuredAt": null,
-            "low": null,
-            "note": "Provider refused billing access; a billing or management key may be required"
-          },
-          {
-            "label": "OPENROUTER_EMBEDDING_API_KEY: key allowance",
-            "source": "https://openrouter.ai/api/v1/key",
-            "state": "measured",
-            "value": 3,
-            "unit": "USD",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "low": true,
-            "note": null
-          }
-        ],
-        "spend": {
-          "monthToDate": {
-            "usd": 42,
-            "source": "API",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "projectedMonth": {
-            "usd": 89.793103,
-            "source": "API",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "lastMonth": {
-            "usd": 84,
-            "source": "API",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          }
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 42,
+          "source": "api"
         },
-        "category": "models",
-        "billingType": "credits",
-        "monthToDateUsd": 42,
-        "projectedMonthUsd": 89.793103,
-        "lastMonthUsd": 84,
-        "balanceUsd": null,
-        "sources": {
-          "monthToDateUsd": "api",
-          "projectedMonthUsd": "api",
-          "lastMonthUsd": "api",
-          "balanceUsd": "unknown"
+        "projected": {
+          "value": 52,
+          "source": "api"
         },
-        "readAt": "2026-10-15T12:00:00.000Z",
-        "error": null
+        "lastMonth": {
+          "value": 40,
+          "source": "api"
+        },
+        "balance": {
+          "value": 3,
+          "source": "api",
+          "measuredAt": "2026-10-25T12:00:00Z",
+          "low": true
+        }
       },
       {
         "id": "cloudflare",
         "name": "Cloudflare",
-        "powers": "Voice: speech in and out through Workers AI; web hosting and DNS",
-        "envVars": [
-          "CLOUDFLARE_WORKERS_AI_TOKEN",
-          "CLOUDFLARE_API_TOKEN",
-          "CLOUDFLARE_ACCOUNT_ID"
-        ],
+        "powers": "Voice, web hosting and DNS",
         "billing": "pay-as-you-go card",
-        "billingUrl": "https://dash.cloudflare.com/",
-        "balanceNote": "No balance API; billable usage is cost already incurred, not remaining credit",
-        "state": "no_balance_api",
-        "balanceHealth": "not_applicable",
-        "readings": [],
-        "spend": {
-          "monthToDate": {
-            "usd": 18,
-            "source": "API",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "projectedMonth": {
-            "usd": 38.482759,
-            "source": "API",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "lastMonth": {
-            "usd": 32,
-            "source": "API",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          }
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 18,
+          "source": "metered"
         },
-        "category": "voice",
-        "billingType": "card_monthly",
-        "monthToDateUsd": 18,
-        "projectedMonthUsd": 38.482759,
-        "lastMonthUsd": 32,
-        "balanceUsd": null,
-        "sources": {
-          "monthToDateUsd": "api",
-          "projectedMonthUsd": "api",
-          "lastMonthUsd": "api",
-          "balanceUsd": "unknown"
+        "projected": {
+          "value": 22.32,
+          "source": "metered"
         },
-        "readAt": "2026-10-15T12:00:00.000Z",
-        "error": null
+        "lastMonth": {
+          "value": 20,
+          "source": "api"
+        },
+        "balance": null
       },
       {
-        "id": "groq",
-        "name": "Groq",
-        "powers": "Dictation: transcribe recorded speech",
-        "envVars": [
-          "GROQ_API_KEY"
-        ],
-        "billing": "pay-as-you-go card",
-        "billingUrl": "https://console.groq.com/settings/billing",
-        "balanceNote": "No balance API",
-        "state": "no_balance_api",
-        "balanceHealth": "not_applicable",
-        "readings": [],
-        "spend": {
-          "monthToDate": {
-            "usd": 0.86,
-            "source": "metered",
-            "state": "partial",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "projectedMonth": {
-            "usd": 1.838621,
-            "source": "metered",
-            "state": "partial",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "lastMonth": {
-            "usd": 1.4,
-            "source": "metered",
-            "state": "partial",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          }
-        },
-        "category": "voice",
-        "billingType": "card_monthly",
-        "monthToDateUsd": 0.86,
-        "projectedMonthUsd": 1.838621,
-        "lastMonthUsd": 1.4,
-        "balanceUsd": null,
-        "sources": {
-          "monthToDateUsd": "metered",
-          "projectedMonthUsd": "metered",
-          "lastMonthUsd": "metered",
-          "balanceUsd": "unknown"
-        },
-        "readAt": "2026-10-15T12:00:00.000Z",
-        "error": null
-      },
-      {
-        "id": "fly",
+        "id": "fly.io",
         "name": "Fly.io",
-        "powers": "Server hosting, free agents and voice transport hosting",
-        "envVars": [
-          "FLY_API_TOKEN",
-          "FLY_FREE_AGENT_API_TOKEN"
-        ],
+        "powers": "Server and free-agent machines",
         "billing": "pay-as-you-go card",
-        "billingUrl": "https://fly.io/dashboard",
-        "balanceNote": "Organization prepaid credit; zero does not imply service is stopped on monthly billing",
-        "state": "unavailable",
-        "balanceHealth": "unreadable",
-        "readings": [
-          {
-            "label": "Organization prepaid credit",
-            "source": "https://api.fly.io/graphql",
-            "state": "unavailable",
-            "value": null,
-            "unit": "USD",
-            "measuredAt": null,
-            "low": null,
-            "note": "Server has no Fly billing-capable token"
-          }
-        ],
-        "spend": {
-          "monthToDate": {
-            "usd": null,
-            "source": "unknown",
-            "state": "unknown",
-            "measuredAt": null,
-            "note": "No verified spend source with the credentials available to the server"
-          },
-          "projectedMonth": {
-            "usd": null,
-            "source": "unknown",
-            "state": "unknown",
-            "measuredAt": null,
-            "note": "No verified spend source with the credentials available to the server"
-          },
-          "lastMonth": {
-            "usd": null,
-            "source": "unknown",
-            "state": "unknown",
-            "measuredAt": null,
-            "note": "Daily history does not cover this entire period"
-          }
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 30,
+          "source": "metered"
         },
-        "category": "hosting",
-        "billingType": "card_monthly",
-        "monthToDateUsd": null,
-        "projectedMonthUsd": null,
-        "lastMonthUsd": null,
-        "balanceUsd": null,
-        "sources": {
-          "monthToDateUsd": "unknown",
-          "projectedMonthUsd": "unknown",
-          "lastMonthUsd": "unknown",
-          "balanceUsd": "unknown"
+        "projected": {
+          "value": 37.2,
+          "source": "metered"
         },
-        "readAt": null,
-        "error": "Example provider billing request failed; refresh unavailable"
+        "lastMonth": {
+          "value": 35,
+          "source": "api"
+        },
+        "balance": null
       },
       {
-        "id": "expo",
-        "name": "Expo EAS",
-        "powers": "Mobile builds and over-the-air app updates",
-        "envVars": [
-          "EXPO_TOKEN"
-        ],
-        "billing": "pay-as-you-go card",
-        "billingUrl": "https://expo.dev/accounts",
-        "balanceNote": "No balance API available to the server; release token lives in CI",
-        "state": "no_balance_api",
-        "balanceHealth": "not_applicable",
-        "readings": [],
-        "spend": {
-          "monthToDate": {
-            "usd": 9.354839,
-            "source": "entered",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "projectedMonth": {
-            "usd": 20.0,
-            "source": "entered",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          },
-          "lastMonth": {
-            "usd": 20,
-            "source": "entered",
-            "state": "measured",
-            "measuredAt": "2026-10-15T12:00:00.000Z",
-            "note": "Synthetic UI example; not an actual invoice"
-          }
+        "id": "github",
+        "name": "GitHub",
+        "powers": "Repositories and checks",
+        "billing": "fixed plan",
+        "billingUrl": "https://example.com/billing",
+        "state": "ready",
+        "mtd": {
+          "value": 4,
+          "source": "entered"
         },
-        "category": "other",
-        "billingType": "card_monthly",
-        "monthToDateUsd": 9.354839,
-        "projectedMonthUsd": 20.0,
-        "lastMonthUsd": 20,
-        "balanceUsd": null,
-        "sources": {
-          "monthToDateUsd": "entered",
-          "projectedMonthUsd": "entered",
-          "lastMonthUsd": "entered",
-          "balanceUsd": "unknown"
+        "projected": {
+          "value": 4.96,
+          "source": "entered"
         },
-        "readAt": "2026-10-15T12:00:00.000Z",
-        "error": null
+        "lastMonth": {
+          "value": 4,
+          "source": "api"
+        },
+        "balance": null
+      },
+      {
+        "id": "voice-provider",
+        "name": "Voice provider",
+        "powers": "Speech generation",
+        "billing": "credits",
+        "billingUrl": "https://example.com/billing",
+        "state": "unavailable",
+        "mtd": {
+          "value": null,
+          "source": "unknown"
+        },
+        "projected": {
+          "value": null,
+          "source": "unknown"
+        },
+        "lastMonth": {
+          "value": null,
+          "source": "unknown"
+        },
+        "balance": null
       }
     ],
     "daily": [
       {
+        "date": "2026-07-26",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-27",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-28",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-29",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-30",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-07-31",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
         "date": "2026-08-01",
-        "models": 1.8629032258064517,
-        "voice": 0.7407258064516129,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 1.8629032258064517,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7096774193548387,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.031048387096774193,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-02",
-        "models": 1.9193548387096775,
-        "voice": 0.7631720430107527,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 1.9193548387096775,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7311827956989247,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03198924731182796,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-03",
-        "models": 1.9758064516129032,
-        "voice": 0.7856182795698925,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 1.9758064516129032,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7526881720430108,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03293010752688172,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-04",
-        "models": 2.032258064516129,
-        "voice": 0.8080645161290322,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.032258064516129,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7741935483870968,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03387096774193548,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-05",
-        "models": 2.0887096774193545,
-        "voice": 0.830510752688172,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.0887096774193545,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7956989247311828,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03481182795698924,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-06",
-        "models": 2.1451612903225805,
-        "voice": 0.8529569892473118,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.1451612903225805,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8172043010752688,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.035752688172043,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-07",
-        "models": 2.2016129032258065,
-        "voice": 0.8754032258064517,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.2016129032258065,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8387096774193549,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03669354838709677,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-08",
-        "models": 2.258064516129032,
-        "voice": 0.8978494623655913,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.258064516129032,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8602150537634408,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03763440860215053,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-09",
-        "models": 2.314516129032258,
-        "voice": 0.9202956989247312,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.314516129032258,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8817204301075269,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.0385752688172043,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-10",
-        "models": 2.370967741935484,
-        "voice": 0.942741935483871,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.370967741935484,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.9032258064516129,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03951612903225806,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-11",
-        "models": 2.42741935483871,
-        "voice": 0.9651881720430108,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.42741935483871,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.924731182795699,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04045698924731183,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-12",
-        "models": 2.4838709677419355,
-        "voice": 0.9876344086021506,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.4838709677419355,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.946236559139785,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04139784946236559,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-13",
-        "models": 2.540322580645161,
-        "voice": 1.0100806451612903,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.540322580645161,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.9677419354838709,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04233870967741935,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-14",
-        "models": 2.596774193548387,
-        "voice": 1.03252688172043,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.596774193548387,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.989247311827957,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04327956989247311,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-15",
-        "models": 2.653225806451613,
-        "voice": 1.0549731182795699,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.653225806451613,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.010752688172043,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04422043010752688,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-16",
-        "models": 2.7096774193548385,
-        "voice": 1.0774193548387097,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.7096774193548385,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.032258064516129,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04516129032258064,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-17",
-        "models": 2.7661290322580645,
-        "voice": 1.0998655913978495,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.7661290322580645,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.053763440860215,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.046102150537634404,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-18",
-        "models": 2.82258064516129,
-        "voice": 1.1223118279569892,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.82258064516129,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.075268817204301,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.047043010752688165,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-19",
-        "models": 2.8790322580645165,
-        "voice": 1.1447580645161293,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.8790322580645165,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.0967741935483872,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04798387096774194,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-20",
-        "models": 2.9354838709677415,
-        "voice": 1.1672043010752686,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.9354838709677415,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.118279569892473,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.048924731182795694,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-21",
-        "models": 2.991935483870968,
-        "voice": 1.1896505376344086,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.991935483870968,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1397849462365592,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04986559139784946,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-22",
-        "models": 3.048387096774194,
-        "voice": 1.2120967741935484,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.048387096774194,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1612903225806452,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.050806451612903224,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-23",
-        "models": 3.104838709677419,
-        "voice": 1.234543010752688,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.104838709677419,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.182795698924731,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05174731182795698,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-24",
-        "models": 3.1612903225806455,
-        "voice": 1.256989247311828,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.1612903225806455,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2043010752688172,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05268817204301075,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-25",
-        "models": 3.217741935483871,
-        "voice": 1.2794354838709678,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.217741935483871,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2258064516129032,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.053629032258064514,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-26",
-        "models": 3.274193548387097,
-        "voice": 1.3018817204301074,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.274193548387097,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2473118279569892,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.054569892473118276,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-27",
-        "models": 3.3306451612903225,
-        "voice": 1.3243279569892472,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.3306451612903225,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2688172043010753,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05551075268817204,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-28",
-        "models": 3.3870967741935485,
-        "voice": 1.346774193548387,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.3870967741935485,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2903225806451613,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.0564516129032258,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-29",
-        "models": 3.443548387096774,
-        "voice": 1.3692204301075268,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.443548387096774,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3118279569892473,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.057392473118279566,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-30",
-        "models": 3.5,
-        "voice": 1.3916666666666666,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.5,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3333333333333333,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05833333333333333,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-08-31",
-        "models": 3.556451612903226,
-        "voice": 1.4141129032258066,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.556451612903226,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3548387096774195,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.059274193548387095,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-01",
-        "models": 1.945263157894737,
-        "voice": 0.7734736842105263,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 1.945263157894737,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7410526315789474,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03242105263157895,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-02",
-        "models": 2.0042105263157897,
-        "voice": 0.7969122807017546,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.0042105263157897,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7635087719298247,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03340350877192983,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-03",
-        "models": 2.0631578947368423,
-        "voice": 0.8203508771929825,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.0631578947368423,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7859649122807018,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.0343859649122807,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-04",
-        "models": 2.1221052631578945,
-        "voice": 0.8437894736842105,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.1221052631578945,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8084210526315789,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03536842105263158,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-05",
-        "models": 2.1810526315789476,
-        "voice": 0.8672280701754387,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.1810526315789476,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8308771929824562,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03635087719298246,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-06",
-        "models": 2.24,
-        "voice": 0.8906666666666667,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.24,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8533333333333334,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.037333333333333336,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-07",
-        "models": 2.298947368421053,
-        "voice": 0.9141052631578948,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.298947368421053,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8757894736842106,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03831578947368421,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-08",
-        "models": 2.3578947368421055,
-        "voice": 0.9375438596491228,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.3578947368421055,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.8982456140350877,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03929824561403509,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-09",
-        "models": 2.416842105263158,
-        "voice": 0.9609824561403509,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.416842105263158,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.920701754385965,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.040280701754385966,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-10",
-        "models": 2.4757894736842108,
-        "voice": 0.9844210526315791,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.4757894736842108,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.9431578947368422,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04126315789473684,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-11",
-        "models": 2.534736842105264,
-        "voice": 1.0078596491228071,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.534736842105264,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.9656140350877195,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.042245614035087725,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-12",
-        "models": 2.593684210526316,
-        "voice": 1.0312982456140352,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.593684210526316,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.9880701754385965,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.043228070175438595,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-13",
-        "models": 2.6526315789473687,
-        "voice": 1.0547368421052632,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.6526315789473687,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.0105263157894737,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04421052631578947,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-14",
-        "models": 2.7115789473684213,
-        "voice": 1.0781754385964912,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.7115789473684213,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.032982456140351,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04519298245614035,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-15",
-        "models": 2.7705263157894735,
-        "voice": 1.1016140350877193,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.7705263157894735,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.055438596491228,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.046175438596491224,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-16",
-        "models": 2.829473684210527,
-        "voice": 1.1250526315789475,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.829473684210527,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.0778947368421055,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.047157894736842114,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-17",
-        "models": 2.8884210526315792,
-        "voice": 1.1484912280701756,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.8884210526315792,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1003508771929826,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04814035087719299,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-18",
-        "models": 2.9473684210526314,
-        "voice": 1.1719298245614034,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.9473684210526314,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1228070175438596,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04912280701754385,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-19",
-        "models": 3.0063157894736845,
-        "voice": 1.1953684210526316,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.0063157894736845,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.145263157894737,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05010526315789474,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-20",
-        "models": 3.065263157894737,
-        "voice": 1.2188070175438597,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.065263157894737,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1677192982456142,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05108771929824562,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-21",
-        "models": 3.1242105263157898,
-        "voice": 1.242245614035088,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.1242105263157898,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1901754385964913,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.052070175438596496,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-22",
-        "models": 3.1831578947368424,
-        "voice": 1.265684210526316,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.1831578947368424,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2126315789473685,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05305263157894737,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-23",
-        "models": 3.242105263157895,
-        "voice": 1.289122807017544,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.242105263157895,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2350877192982457,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05403508771929825,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-24",
-        "models": 3.3010526315789477,
-        "voice": 1.312561403508772,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.3010526315789477,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2575438596491229,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05501754385964912,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-25",
-        "models": 3.36,
-        "voice": 1.336,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.36,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.28,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.055999999999999994,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-26",
-        "models": 3.4189473684210534,
-        "voice": 1.3594385964912283,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.4189473684210534,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3024561403508774,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.056982456140350884,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-27",
-        "models": 3.477894736842105,
-        "voice": 1.3828771929824561,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.477894736842105,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3249122807017544,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05796491228070175,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-28",
-        "models": 3.536842105263158,
-        "voice": 1.4063157894736842,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.536842105263158,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3473684210526315,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05894736842105262,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-29",
-        "models": 3.595789473684211,
-        "voice": 1.4297543859649124,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.595789473684211,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.369824561403509,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.059929824561403514,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-09-30",
-        "models": 3.654736842105263,
-        "voice": 1.4531929824561403,
-        "hosting": null,
-        "other": 0.6666666666666666,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.654736842105263,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.392280701754386,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.060912280701754376,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6666666666666666,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-01",
-        "models": 2.404163052905464,
-        "voice": 1.0795836947094535,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.404163052905464,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.0303555941023417,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.04922810060711188,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-02",
-        "models": 2.4770164787510844,
-        "voice": 1.1122983521248917,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.4770164787510844,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.061578490893322,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05071986123156982,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-03",
-        "models": 2.549869904596704,
-        "voice": 1.1450130095403295,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.549869904596704,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.0928013876843017,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05221162185602775,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-04",
-        "models": 2.6227233304423243,
-        "voice": 1.1777276669557675,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.6227233304423243,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.1240242844752817,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05370338248048568,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-05",
-        "models": 2.6955767562879442,
-        "voice": 1.2104423243712055,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.6955767562879442,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.155247181266262,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.055195143104943625,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-06",
-        "models": 2.7684301821335646,
-        "voice": 1.2431569817866435,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.7684301821335646,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.186470078057242,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05668690372940156,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-07",
-        "models": 2.8412836079791846,
-        "voice": 1.2758716392020815,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.8412836079791846,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.217692974848222,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.058178664353859495,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-08",
-        "models": 2.9141370338248045,
-        "voice": 1.3085862966175195,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.9141370338248045,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.248915871639202,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.05967042497831743,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-09",
-        "models": 2.9869904596704253,
-        "voice": 1.3413009540329577,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 2.9869904596704253,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.2801387684301824,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.06116218560277537,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-10",
-        "models": 3.059843885516045,
-        "voice": 1.3740156114483955,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.059843885516045,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3113616652211622,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.0626539462272333,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-11",
-        "models": 3.1326973113616656,
-        "voice": 1.4067302688638337,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.1326973113616656,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3425845620121424,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.06414570685169124,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-12",
-        "models": 3.2055507372072856,
-        "voice": 1.4394449262792715,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.2055507372072856,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.3738074588031224,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.06563746747614918,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-13",
-        "models": 3.278404163052905,
-        "voice": 1.4721595836947092,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.278404163052905,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.4050303555941022,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.0671292281006071,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-14",
-        "models": 3.351257588898526,
-        "voice": 1.5048742411101474,
-        "hosting": null,
-        "other": 0.6451612903225806,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 3.351257588898526,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 1.4362532523850824,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.06862098872506504,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.6451612903225806,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       },
       {
         "date": "2026-10-15",
-        "models": 1.712055507372073,
-        "voice": 0.7687944492627927,
-        "hosting": null,
-        "other": 0.3225806451612903,
-        "services": [
-          {
-            "serviceId": "openrouter",
-            "usd": 1.712055507372073,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "cloudflare",
-            "usd": 0.7337380745880312,
-            "source": "API",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "groq",
-            "usd": 0.03505637467476149,
-            "source": "metered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          },
-          {
-            "serviceId": "fly",
-            "usd": null,
-            "source": "unknown",
-            "measuredAt": null
-          },
-          {
-            "serviceId": "expo",
-            "usd": 0.3225806451612903,
-            "source": "entered",
-            "measuredAt": "2026-10-15T12:00:00.000Z"
-          }
-        ]
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-16",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-17",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-18",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-19",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": null,
+          "source": "unknown"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-20",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-21",
+        "models": {
+          "value": 1.4,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-22",
+        "models": {
+          "value": 1.6,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-23",
+        "models": {
+          "value": 1.8,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-24",
+        "models": {
+          "value": 1.0,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
+      },
+      {
+        "date": "2026-10-25",
+        "models": {
+          "value": 1.2,
+          "source": "api"
+        },
+        "voice": {
+          "value": 0.3,
+          "source": "metered"
+        },
+        "hosting": {
+          "value": 0.8,
+          "source": "metered"
+        },
+        "other": {
+          "value": 0.13,
+          "source": "entered"
+        }
       }
-    ],
-    "perUser": {
-      "state": "pending",
-      "delivery": "PR B",
-      "activeUsers": null,
-      "attributedShare": null,
-      "attributedUsd": null,
-      "unattributedUsd": null,
-      "fixedCostPerActiveUserUsd": null,
-      "users": [],
-      "note": "Per-user attribution follows in PR B"
-    },
-    "note": "Synthetic UI contract fixture: illustrative sources, costs and trend only. Missing Fly billing makes full totals unknown; knownUsd is a subtotal. Not production data."
+    ]
   }
 }

@@ -1,7 +1,8 @@
 import type { SqlDatabase } from './database.js';
 import { createDashboardServices } from './operator-dashboard-services.js';
 import { fixedMonthlyCosts } from './operator-finances-config.js';
-import type { OperatorFinances } from './operator-finances-contract.js';
+import type { OperatorFinancesDetails } from './operator-finances-details.js';
+import { financesWire } from './operator-finances-wire.js';
 
 export const OPERATOR_FINANCES_SCHEMA = `
 CREATE TABLE IF NOT EXISTS operator_finance_snapshots (
@@ -17,7 +18,7 @@ CREATE TABLE IF NOT EXISTS operator_finance_snapshots (
 `;
 
 type Source = 'API' | 'metered' | 'entered';
-type Money = OperatorFinances['services'][number]['spend']['monthToDate'];
+type Money = OperatorFinancesDetails['services'][number]['spend']['monthToDate'];
 type Sample = {
   day: string; service_id: string; scope: string; source: Source;
   daily_usd: number | null; month_to_date_usd: number | null; measured_at: string;
@@ -62,7 +63,7 @@ export function createOperatorFinances(
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   }
-  async function collect(): Promise<OperatorFinances> {
+  async function collect(): Promise<OperatorFinancesDetails> {
     const time = now(), today = isoDay(time), measuredAt = new Date(time).toISOString();
     const start = monthStart(time), priorStart = monthStart(time, -1), trendStart = monthStart(time, -2);
     const elapsedDays = (time - start) / DAY;
@@ -221,7 +222,7 @@ export function createOperatorFinances(
       return money(rows.reduce((sum, s) => sum + s.daily_usd!, 0), source, latest,
         partial ? 'Observed daily usage only; provider and workload coverage may be partial' : 'Entered fixed monthly plan, allocated evenly across UTC days', partial);
     };
-    const services = balanceRows.map((row): OperatorFinances['services'][number] => {
+    const services = balanceRows.map((row): OperatorFinancesDetails['services'][number] => {
       const spend = spends.get(row.id)!;
       if (row.billing === 'free' || fixedCosts.some(c => c.serviceId === row.id && c.monthlyUsd !== null)) {
         // Fixed costs are accrued through the same fractional UTC day used for the projection.
@@ -257,7 +258,7 @@ export function createOperatorFinances(
         ? spend.monthToDate.note : row.readings.some(r => r.state === 'unavailable')
           ? 'Some provider balance reads are unavailable; see individual readings' : null };
     });
-    const total = (field: keyof Spend): OperatorFinances['summary']['monthToDate'] => {
+    const total = (field: keyof Spend): OperatorFinancesDetails['summary']['monthToDate'] => {
       const values = services.map(s => s.spend[field]);
       const known = values.filter(v => v.usd !== null);
       return { usd: values.every(v => v.state === 'measured') ? known.reduce((n, v) => n + v.usd!, 0) : null,
@@ -273,7 +274,7 @@ export function createOperatorFinances(
         averageCostPerActiveUser: unknown('Per-user attribution follows in PR B') },
       services,
       daily: days.map(day => {
-        const categoryCost = (category: OperatorFinances['services'][number]['category']) => {
+        const categoryCost = (category: OperatorFinancesDetails['services'][number]['category']) => {
           const members = services.filter(s => s.category === category);
           const readings = members.map(s => historyFor(s.id, day));
           return !members.length || readings.some(r => !r) || members.some(s => s.spend.monthToDate.state !== 'measured')
@@ -303,5 +304,5 @@ const readers = new WeakMap<SqlDatabase, ReturnType<typeof createOperatorFinance
 export function dashboardFinances(database: SqlDatabase) {
   let read = readers.get(database);
   if (!read) { read = createOperatorFinances(database); readers.set(database, read); }
-  return read();
+  return read().then(financesWire);
 }

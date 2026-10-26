@@ -8,67 +8,59 @@ The dashboard-secret-only `GET /v1/admin/dashboard` adds `finances`.
 owns the inventory and balance reads. Provider failures stay on the affected row.
 The existing dashboard sections and authentication are unchanged.
 
-## Contract (PR A)
+## Fixed dashboard contract (PR A)
 
-The authoritative typed contract is `apps/server/src/operator-finances-contract.ts`.
-The collector return annotation enforces it. `docs/fixtures/operator-finances.json`
-is exported by the built HTTP proof. Notify the frontend owner before any shape change.
+The wire shape exactly matches `Beeline-Work/beeline-dashboard` commit `bafb528`,
+`public/finances-data.js` and `test/fixtures/finances/dashboard.json`.
+Authoritative TypeScript: `apps/server/src/operator-finances-contract.ts`.
+The dashboard example fixture is copied alongside it as
+`apps/server/src/operator-finances-contract.fixture.json`. All amounts in that
+fixture are synthetic UI examples, never verified invoices.
 
-`perUser` is `{state: pending, delivery: PR B, users: [], note}` until attribution ships.
+`finances = {month, measuredAt, totals, daily, services}`. No additional fields
+are emitted. `month` is YYYY-MM; `measuredAt` is an ISO timestamp.
+`Money = {value: number|null, source: api|metered|entered|unknown}`.
+Null means unknown; never turn it into zero. `unknown` always has a null value.
 
+`totals = {mtd, projected, lastMonth, perActiveUser}` uses Money for every field.
+A full total stays unknown until all service costs are complete. This contract
+has no subtotal slot, so partial known spend is shown only on its service row.
+`perActiveUser` is unknown until PR B; there is no separate per-user block in this
+fixed first-release contract.
 
-`finances` has `schemaVersion: 1`, `timeZone: UTC`, `currency: USD`, `measuredAt`,
-`cacheSeconds: 600`, `month` and `previousMonth` (YYYY-MM), `snapshotState`
-(`saved` / `unavailable`), `summary`, `services`, `daily`, `perUser`, and `note`.
-If collection as a whole fails, it uses the existing section-unavailable shape.
+`daily = [{date, models, voice, hosting, other}]` covers this UTC month through
+today and the previous two calendar months. Each category uses Money. Missing
+or incomplete category observations remain unknown, never a zero-filled line.
+OpenRouter is models (including reply generation for voice); Cloudflare and Groq
+are voice; Fly, Neon and Tigris are hosting; remaining services are other.
 
-A money metric is `{usd: number|null, source: API|metered|entered|unknown,
-state: measured|partial|stale|unknown, measuredAt: string|null, note: string}`.
-Never render null as zero. Every source must remain visible beside its amount. Unknown sources use the explicit `unknown` tag.
-`partial` is a known subset, not a service invoice. `stale` preserves a previously
-saved observation with its original timestamp after a failed refresh. Estimates
-and projections retain their source and explanatory note.
+Each service is `{id, name, powers, billing, billingUrl, state, mtd, projected,
+lastMonth, balance}`. Billing is `credits|pay-as-you-go card|fixed plan|free`.
+State is `ready|unavailable`; unavailable means no usable financial reading.
+The three spending fields use Money. Partial scope is stated in `powers`.
+Projections are calculated estimates, tagged `metered`.
 
-`summary.monthToDate`, `summary.projectedMonth`, `summary.lastMonth` each have
-`{usd, knownUsd, measuredServices, totalServices, state}`. `usd` is null unless
-all services have complete measured amounts; `knownUsd` is the sum of available
-subsets, labelled **Known spend**, never total burn. Both can be null.
-`averageCostPerActiveUser` is an unknown money metric until PR B.
+For credit services, `balance` is `{value, source, measuredAt, low}`; account
+balances at or below USD 5 are low. A denied or ambiguous multi-account balance
+has unknown Money, null measurement time and low false. For other services,
+`balance` is null. A key allowance is not an account credit balance. Fly prepaid
+credit remains internal because the fixed UI contract only shows credit-service
+balances. Provider responses, key names/values/prefixes and errors are not emitted.
+No field differs from the dashboard shape.
 
-Every `services` row has `id`, `name`, `powers`, `envVars` (names only), `billing`
-(`credits` / `pay-as-you-go card` / `fixed plan` / `free`), `billingUrl`,
-`balanceNote`, `state` (`measured` / `unavailable` / `no_balance_api`), `readings`,
-and `spend: {monthToDate, projectedMonth, lastMonth}` (money metrics). Each row has
-`error: string|null`, a sanitized explanation of missing spend or failed balance reads.
-`balanceHealth` is `low`, `unreadable`, `ok`, or `not_applicable`; low takes
-precedence over unreadable. Keep each reading's error visible even when another
-reading in the same row succeeds.
-
-A balance reading has `{label, source, state, value, unit: USD, measuredAt, low,
-note}`. `source` is the fixed provider endpoint (never contains an account ID,
-key, prefix or query token). `low` is true at or below USD 5 for OpenRouter.
-Fly credit has `low: null`: zero prepaid credit does not mean a card-billed account
-is unhealthy. Each workload key has a separate account-credit and key-allowance
-reading. Never sum account balances: multiple keys can share the same account.
-
-`daily` is an array of `{date: YYYY-MM-DD, services: [{serviceId, usd, source,
-measuredAt}]}` covering the current UTC month to date and the previous two calendar
-months. Missing days remain null. Never draw null gaps as measured zero.
-Use service IDs to join the daily points to names. API history wins over the
-free-agent model subset on overlapping days, never sum both sources.
-
-Projection uses MTD / fractional elapsed UTC days * calendar days in month.
-Fixed recurring costs accrue evenly over each calendar month; their projection
-is the configured monthly cost. The trend uses entered daily amortization, not
-an assertion about the invoice payment date. At the exact start of a month the
-projection is unknown until there is elapsed time.
+`operator-finances-wire.ts` is the single adaptation from private collection
+metadata in `operator-finances-details.ts`. The typed return and focused contract
+test prevent accidental wire fields. `npm run prove:operator-finances` builds the
+server and requests the actual authenticated HTTP route in isolation, exporting
+`docs/fixtures/operator-finances.json` from that response. Notify the UI corner
+before any later wire-shape change.
 
 ## Collection and durability
 
 The leader collects hourly without blocking other background jobs; reads also
 refresh on demand. Each process coalesces concurrent reads and caches successful
 or failed provider results for ten minutes. Each provider HTTP call has a five
-second timeout and refuses redirects. Balance reads and spend reads are independent.
+second timeout and refuses redirects. Balance reads and spend reads are independent. Internal failure details never cross the fixed wire boundary.
 
 `operator_finance_snapshots` persists date/service/scope/source, observed daily
 cost, observed MTD cost and read time. It stores no provider response or identity.
@@ -131,39 +123,3 @@ Arbitrum, Optimism, Zora and Avalanche (evm-chain.ts). Their public endpoints ha
 no operating credit account; rows show entered zero for the public service only,
 not user gas or token costs. These are separate rows so wallet outages have a
 named dependency. Google billing for other Cloud products is not included.
-
-## Frontend field names frozen for the priority contract handoff
-
-`headline` exposes nullable `monthToDateUsd`, `projectedMonthUsd`, `lastMonthUsd`,
-`avgCostPerActiveUserUsd`, `activeUsers`, and timestamp `asOf`.
-The first three mirror complete `summary` totals. When incomplete, use the
-explicitly labelled `summary.*.knownUsd` subtotal. Attribution counts stay null
-until PR B, rather than reporting a fictitious empty population.
-
-Service rows additionally expose `category` (`models|voice|hosting|other`),
-`billingType` (`credits|card_monthly|fixed_plan|free`), flat nullable
-`monthToDateUsd`, `projectedMonthUsd`, `lastMonthUsd`, `balanceUsd`, and `readAt`.
-`sources` has one tag per flat amount (`api|metered|entered|unknown`). Flat fields
-mirror the detailed spending metrics. `balanceUsd` is only for an unambiguous
-single account-credit observation, never a key allowance or a sum across accounts.
-Multiple account readings remain separate under `readings`. Each has its own
-measurement time. Rows retain sanitized `error` and provider `billingUrl`.
-
-Each `daily` point also has nullable `models`, `voice`, `hosting`, `other` amounts.
-A category stays null if its services lack complete observations; the detailed
-per-service series retains known subsets. OpenRouter is categorized as models,
-including voice reply generation; Cloudflare and Groq are categorized as voice;
-Fly/Neon/Tigris as hosting. This is service categorization, not token attribution.
-
-The fixed `perUser` shape now includes `state`, `delivery`, nullable `activeUsers`,
-`attributedShare`, `attributedUsd`, `unattributedUsd`, `fixedCostPerActiveUserUsd`,
-and `users` with `{handle,modelsUsd,voiceUsd,machineUsd,variableUsd,fixedUsd,totalUsd}`.
-All user amounts are nullable. In PR A it is pending with no users and all numbers
-null; `delivery` says PR B. Earlier nested `summary`/`spend` fields remain available.
-
-`apps/server/src/operator-finances-contract.fixture.json` is a synthetic UI fixture
-beside the types: mixed API, metered and entered sources, failed Fly billing,
-unknown totals, realistic daily category points, and explicit per-user unknowns.
-It is example data, never production costs or recurring invoice configuration.
-The independent `docs/fixtures/operator-finances.json` is still exported from
-the built HTTP path with provider fixtures for integration verification.

@@ -75,6 +75,23 @@ describe('mobile live presence overlay', () => {
     ).toBe(false);
   });
 
+  it('R1: shows dispatch before an online helper claims, with the same safety bounds', () => {
+    const now = 100_000;
+    const online = { ...presence, generationId: 'gen-1', observedAt: 100 };
+    const turn = {
+      requestId: 'request-1', agentPubkey: agent, status: 'working' as const,
+      generationId: 'pending:abc', createdAt: 100,
+    };
+    expect(isAgentTurnActive(turn, online, now)).toBe(true);
+    expect(isAgentTurnActive(turn, { ...online, status: 'offline' }, now)).toBe(false);
+    expect(isAgentTurnActive(turn, online, now + AGENT_TURN_FRESHNESS_MS - 1)).toBe(true);
+    expect(isAgentTurnActive(turn, online, now + AGENT_TURN_FRESHNESS_MS)).toBe(false);
+    expect(isAgentTurnActive({ ...turn, generationId: 'old' }, online, now)).toBe(false);
+    expect(isAgentTurnActive({ ...turn, generationId: 'gen-1' }, online, now)).toBe(true);
+    expect(isAgentTurnActive({ ...turn, status: 'complete' }, online, now)).toBe(false);
+    expect(isAgentTurnActive({ ...turn, status: 'failed' }, online, now)).toBe(false);
+  });
+
   it('expires an abandoned working receipt after 90 seconds and schedules that repaint', () => {
     const turn = {
       requestId: '1'.repeat(64),

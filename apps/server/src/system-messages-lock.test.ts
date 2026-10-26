@@ -682,7 +682,40 @@ function scan(files: Map<string, string>): Entry[] {
   // Proven non-text metadata. Unknown keys remain wording dependencies.
   const hiddenField = (name: ts.PropertyName) =>
     (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
-    /^(domain|appId|ownerId|roomId|messageId|id|kind|cardType|card_type|presentation)$/.test(name.text);
+    /^(domain|logo|appId|ownerId|roomId|messageId|id|kind|cardType|card_type|presentation)$/.test(name.text);
+  const metadataOnly = (node: ts.Node, active = new Set<ts.Node>()): boolean => {
+    if (active.has(node)) return false;
+    active.add(node);
+    try {
+      if (ts.isParenthesizedExpression(node) || ts.isAwaitExpression(node))
+        return metadataOnly(node.expression, active);
+      if (ts.isConditionalExpression(node))
+        return metadataOnly(node.whenTrue, active) && metadataOnly(node.whenFalse, active);
+      if (ts.isObjectLiteralExpression(node))
+        return node.properties.every((property) => ts.isSpreadAssignment(property)
+          ? metadataOnly(property.expression, active)
+          : (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) && hiddenField(property.name));
+      if (ts.isCallExpression(node)) {
+        const targets = callableDeclarations(node.expression).map((declaration) => functions.get(declaration) ?? declaration);
+        return targets.length > 0 && targets.every((target) => metadataOnly(target, active));
+      }
+      if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+        if (!node.body) return false;
+        if (!ts.isBlock(node.body)) return metadataOnly(node.body, active);
+        const returns: ts.Expression[] = [];
+        let bareReturn = false;
+        const visit = (part: ts.Node) => {
+          if (ts.isReturnStatement(part)) {
+            if (part.expression) returns.push(part.expression);
+            else bareReturn = true;
+          } else if (!ts.isFunctionLike(part)) ts.forEachChild(part, visit);
+        };
+        ts.forEachChild(node.body, visit);
+        return !bareReturn && returns.length > 0 && returns.every((value) => metadataOnly(value, active));
+      }
+      return false;
+    } finally { active.delete(node); }
+  };
   const wordingParts = (node: ts.Node): ts.Node[] =>
     ts.isObjectLiteralExpression(node)
       ? node.properties.flatMap((property) =>
@@ -844,6 +877,14 @@ function scan(files: Map<string, string>): Entry[] {
       if (active.has(part)) return;
       active.add(part);
       try {
+        // This server helper returns only the sign-in card's logo/domain metadata.
+        // Its network lookup and provider metadata cannot supply displayed wording.
+        if (ts.isCallExpression(part) && callableDeclarations(part.expression).some(
+          (declaration) => ts.isMethodDeclaration(declaration) &&
+            declaration.name.getText() === 'appCardMark' &&
+            declaration.getSourceFile().fileName === resolve(server, 'src/daemon-service.ts') &&
+            metadataOnly(declaration),
+        )) return;
         if (ts.isObjectLiteralExpression(part)) {
           wordingParts(part).forEach(collect);
           return;
@@ -1584,6 +1625,23 @@ it('SYSTEM-WORDING-1: accepts hidden sign-in card fields and code refactors', ()
   }
   const renamed = new Map([...base].map(([path, text]) => [path, text.replaceAll('phrase', 'wording').replaceAll('line(db,', 'line( db ,')]));
   expect(() => enforce(scan(renamed), scan(base))).not.toThrow();
+
+  // The real server spreads this helper's result into the card after #2977.
+  const helper = resolve(server, 'src/daemon-service.ts');
+  const metadata = new Map([
+    [resolve(server, 'src/system-line.ts'), 'export function systemLine(db: unknown, input: unknown) {}'],
+    [helper, `import {systemLine} from './system-line.js';
+      class Service {
+        appCardMark() { const mark=()=>({logo:'https://app.test/logo',domain:'app.test'}); return mark(); }
+        notice() { const mark=this.appCardMark(); systemLine(db,{verb:'sign in',card:{name:'App',...mark}}); }
+      }`],
+  ]);
+  const baseline = scan(metadata);
+  const changed = new Map(metadata);
+  changed.set(helper, metadata.get(helper)!.replaceAll('app.test', 'other.test'));
+  expect(() => enforce(scan(changed), baseline)).not.toThrow();
+  changed.set(helper, metadata.get(helper)!.replace("domain:'app.test'", "domain:'app.test',custom:'visible words'"));
+  expect(() => enforce(scan(changed), baseline)).toThrow(failure);
 });
 
 it.each(['Gmail', 'requested sign-in'])('SYSTEM-WORDING-1: rejects visible card wording changes: %s', (word) => {

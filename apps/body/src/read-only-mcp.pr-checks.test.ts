@@ -81,6 +81,15 @@ describe('pr_checks_status PR selection and reviewer gate', () => {
     expect(JSON.parse(await prChecksStatus())).toMatchObject({ checks: 'passed', reason: 'all recorded checks passed', mergeAllowed: true });
   });
 
+  it('PR-2960-draft: exposes the server draft blocker with green checks', async () => {
+    restore = { lifecycle: { pr: { url } } };
+    mergeAllowed = false;
+    checkTally = { blockedReason: 'PR is a draft' };
+    expect(JSON.parse(await prChecksStatus())).toMatchObject({
+      checks: 'passed', approved: true, held: false, mergeAllowed: false, blockedReason: 'PR is a draft',
+    });
+  });
+
   it('Reproduction R-NOPR: continues work when no PR exists without adding a hold', async () => {
     restore = { objective: 'Investigate' };
     const status = JSON.parse(await callAgentTool('read', { facet: 'checks' }, 'r-nopr'));

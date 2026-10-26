@@ -24,7 +24,7 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
-import { advanceCorner, blockingReview, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, blockingReview, cornerMergeGate, lockCornerLifecycle } from './corner-lifecycle.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   hasSystemReportMention,
@@ -1985,7 +1985,9 @@ export async function reconcileCornerMergeBlockers(
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
        AND (fact.lifecycle->>'checks'='failing'
-            OR fact.lifecycle->'pr'->>'mergeability'='dirty')`,
+            OR fact.lifecycle->'pr'->>'mergeability'='dirty'
+            OR (fact.lifecycle->'pr'->>'mergeability'='draft'
+              AND fact.lifecycle->'draftReadyFailure'->>'headSha'=fact.lifecycle->'pr'->>'headSha'))`,
     [cornerId ?? null],
   );
   let commands = 0;
@@ -2034,6 +2036,19 @@ export async function reconcileCornerMergeBlockers(
           );
           if (routed.rowCount) routedCommands += 1;
         }
+      }
+      if (row.mergeability === 'draft' && row.checks === 'passing') {
+        const current = await db.query(`SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+          WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
+            AND fact.lifecycle->'pr'->>'headSha'=$2
+            AND fact.lifecycle->'draftReadyFailure'->>'headSha'=$2
+            AND fact.lifecycle->'pr'->>'mergeability'='draft' AND fact.lifecycle->>'checks'='passing'`,
+          [row.corner_id, row.head_sha]);
+        if (!current.rowCount) return routedCommands;
+        const gate = await cornerMergeGate(db, row.corner_id, { number: row.number, headSha: row.head_sha });
+        if (gate.open) await reportToCommander(db, row.corner_id, row.owner_agent_id,
+          'blocked: PR is a draft; marking it ready for review failed', undefined,
+          createHash('sha256').update(`draft-blocked:${row.corner_id}:${row.head_sha}`).digest('hex'));
       }
       if (row.mergeability === 'dirty') {
         // Keyed on the head only, matching mergeConflictKey: a moved base must

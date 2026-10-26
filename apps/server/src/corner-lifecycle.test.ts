@@ -80,6 +80,7 @@ let githubApp: {
   branchDeletionSafety: ReturnType<typeof vi.fn>;
   openPullRequestsForBranch: ReturnType<typeof vi.fn>;
   deleteBranch: ReturnType<typeof vi.fn>;
+  markPullRequestReadyForReview: ReturnType<typeof vi.fn>;
   mergePullRequest: ReturnType<typeof vi.fn>;
   readPullRequestQueue: ReturnType<typeof vi.fn>;
   dequeuePullRequest: ReturnType<typeof vi.fn>;
@@ -131,6 +132,7 @@ beforeAll(async () => {
     branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false })),
     openPullRequestsForBranch: vi.fn(async () => []),
     deleteBranch: vi.fn(async () => undefined),
+    markPullRequestReadyForReview: vi.fn(async () => undefined),
     mergePullRequest: vi.fn(async () => undefined),
     readPullRequestQueue: vi.fn(async () => ({ id: 'PR_7', headSha: SHA, entry: null })),
     dequeuePullRequest: vi.fn(async () => undefined),
@@ -214,6 +216,7 @@ beforeEach(async () => {
   githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: null });
   githubApp.dequeuePullRequest.mockReset();
   githubApp.dequeuePullRequest.mockResolvedValue(undefined);
+  githubApp.markPullRequestReadyForReview.mockReset();
   githubApp.mergePullRequest.mockReset();
   githubApp.mergePullRequest.mockResolvedValue(undefined);
   githubApp.deleteBranch.mockReset();
@@ -2848,6 +2851,77 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       stage: 'waiting_for_yes', approved: false, mergeAllowed: false,
     });
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('Reproduction PR-2960-draft', () => {
+  function mergeDaemon(operations = github) {
+    return new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input, confirmZeroChecks) => operations.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id, onBlocked) => operations.landCornerOutcome(id, onBlocked));
+  }
+  it('reports a passed green draft as blocked, marks it ready and merges through mergeCorner', async () => {
+    const cornerId = await approved();
+    let draft = true;
+    githubApp.readPullRequest.mockImplementation(async () => ({ number: 7,
+      url: 'https://github.com/owner/widgets/pull/7', headSha: SHA,
+      mergeability: draft ? 'draft' : 'clean' }));
+    githubApp.markPullRequestReadyForReview.mockImplementation(async () => { draft = false; });
+    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ mergeAllowed: false, blockedReason: 'PR is a draft' });
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'merge-started' });
+    expect(githubApp.markPullRequestReadyForReview).toHaveBeenCalledWith('tok', 'owner/widgets', 7, SHA);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(githubApp.markPullRequestReadyForReview.mock.invocationCallOrder[0]).toBeLessThan(githubApp.mergePullRequest.mock.invocationCallOrder[0]!);
+  });
+
+  it('waits for checks restarted by marking ready, then merges after they pass', async () => {
+    const cornerId = await approved();
+    let draft = true;
+    githubApp.readPullRequest.mockImplementation(async () => ({ number: 7,
+      url: 'https://github.com/owner/widgets/pull/7', headSha: SHA,
+      mergeability: draft ? 'draft' : 'clean' }));
+    githubApp.markPullRequestReadyForReview.mockImplementation(async () => { draft = false; githubRollupState = 'pending'; });
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: 'checks are pending' });
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    githubRollupState = 'passed';
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'merge-started' });
+    expect(githubApp.markPullRequestReadyForReview).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['held', 'stale-pass', 'person-yes'])('leaves a draft alone with %s', async condition => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'draft' });
+    if (condition === 'held') await phone.execute('setCornerHold', { cornerId }, H);
+    if (condition === 'stale-pass') await db.query(`UPDATE corner_merge_approvals SET head_sha=$2 WHERE corner_id=$1`, [cornerId, 'b'.repeat(40)]);
+    if (condition === 'person-yes') await db.query(`UPDATE corner_merge_approvals SET approved_by=$2 WHERE corner_id=$1`, [cornerId, H]);
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked' });
+    expect(githubApp.markPullRequestReadyForReview).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unpassed draft alone', async () => {
+    const cornerId = await inReview();
+    githubHead = SHA;
+    githubRollupState = 'passed';
+    githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'draft' });
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('PR is a draft') });
+    expect(githubApp.markPullRequestReadyForReview).not.toHaveBeenCalled();
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed ready-mark once to the commander and keeps the draft blocked', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'draft' });
+    githubApp.markPullRequestReadyForReview.mockRejectedValue(new Error('HTTP 403'));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked', blocker: 'PR is a draft: HTTP 403' });
+    }
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    const reports = await db.query(`SELECT 1 FROM messages WHERE text LIKE 'blocked: PR is a draft%'`);
+    const privateReports = await db.query(`SELECT 1 FROM agent_commands WHERE private_payload->>'text' LIKE 'blocked: PR is a draft%'`);
+    expect(reports.rowCount + privateReports.rowCount).toBe(1);
+    await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ state: 'waiting' });
   });
 });
 

@@ -1,3 +1,4 @@
+// Draft readiness failure report approved by lunchboxfortwo in DM message 2ba8abca (Oct 26), relayed by Ruby; exact wording and this reconcileCornerMergeBlockers wrapper only.
 // False idle corners brief revision 4 (owner approval 15e88632b7dc84d655ba4202a69f8680ed378e1e52ab6adba17f5fc84971bf8f): remove obsolete timed/stall alert branches; retain the existing idle wording.
 // Current review and repair handoff target line and transitive wrappers approved by lunchboxfortwo, message 70add57a7141d4a4a811a3d9e81d02788a973d2377287c39d6bdaff758dade77; these five wrapper literal snapshots only.
 // Red-check repair wakes and cause-named idle alerts approved by lunchboxfortwo in brief revision 1 (message 7547104df3860284d19c5bec939a9a5e1647e3b56a3d5dd7493b30353a9b56f1); corner-attention idle wrapper and GitHub check-rollup wrapper only.
@@ -154,6 +155,19 @@
       "`${row.number}:${row.head_sha}`",
       "`beeline:${row.corner_id}:github:merge-conflict:${generation}`",
       "`pull request #${row.number}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/agent-command.ts:reconcileCornerMergeBlockers:wrapper:62a50a43d6584ed6",
+    "file": "apps/server/src/agent-command.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, row.corner_id, row.owner_agent_id, 'blocked: PR is a draft; marking it ready for review failed', undefined, createHash('sha256').update(`draft-blocked:${row.corner_id}:${row.head_sha}`).digest('hex'))",
+    "literals": [
+      "'blocked: PR is a draft; marking it ready for review failed'",
+      "'hex'",
+      "'sha256'",
+      "`draft-blocked:${row.corner_id}:${row.head_sha}`"
     ],
     "occurrences": 1
   },

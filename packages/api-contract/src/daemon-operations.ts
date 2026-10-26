@@ -419,6 +419,7 @@ export type DaemonOperationMap = {
       holds: CornerMergeHold[];
       /** The merge gate: checks passed, `approved`, and not `held`. */
       mergeAllowed: boolean;
+      blockedReason?: string;
     }
   >;
   approveCornerMerge: Operation<
@@ -2159,7 +2160,7 @@ export type DaemonPullRequestFact = {
   readonly title: string;
   readonly targetBranch: string;
   readonly headSha: string;
-  readonly mergeability?: 'clean' | 'dirty' | 'unknown' | 'other';
+  readonly mergeability?: 'clean' | 'dirty' | 'draft' | 'unknown' | 'other';
 };
 
 /** Shape validation only. Target matching and claiming happen before execution. */

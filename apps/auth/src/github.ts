@@ -7,8 +7,8 @@ export const GITHUB_IDENTITY_AUDIENCE = 'github';
 const DEFAULT_API = 'https://api.github.com';
 
 /** Only GitHub's unresolved answer should be retried as mergeability unknown. */
-export function githubMergeability(value: unknown): 'clean' | 'dirty' | 'unknown' | 'other' {
-  if (value === 'clean' || value === 'dirty') return value;
+export function githubMergeability(value: unknown): 'clean' | 'dirty' | 'draft' | 'unknown' | 'other' {
+  if (value === 'clean' || value === 'dirty' || value === 'draft') return value;
   if (typeof value === 'string' && value !== 'unknown') return 'other';
   return 'unknown';
 }
@@ -774,8 +774,22 @@ export class GitHubAppClient {
       ...(typeof base?.sha === 'string' && /^[a-f0-9]{40,64}$/i.test(base.sha)
         ? { baseSha: base.sha }
         : {}),
-      mergeability: githubMergeability(mergeableState),
+      mergeability: body.draft === true ? 'draft' as const : githubMergeability(mergeableState),
     };
+  }
+
+  async markPullRequestReadyForReview(token: string, fullName: string, number: number, headSha: string): Promise<void> {
+    const [owner, name] = fullName.split('/');
+    const data = await this.queueGraphql(token, `query($owner:String!,$name:String!,$number:Int!){
+      repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid}}
+    }`, { owner, name, number }, 'GitHub draft readiness');
+    const pr = (data.repository as { pullRequest?: { id: string; headRefOid: string } })?.pullRequest;
+    if (!pr?.id || pr.headRefOid !== headSha) throw new Error('PR head changed before marking ready');
+    const result = await this.queueGraphql(token, `mutation($id:ID!){
+      markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}
+    }`, { id: pr.id }, 'GitHub draft readiness');
+    const ready = result.markPullRequestReadyForReview as { pullRequest?: { isDraft: boolean } } | undefined;
+    if (ready?.pullRequest?.isDraft !== false) throw new Error('PR is still a draft');
   }
 
   /** A PR's changed files, reviews, inline review comments and conversation comments. */
@@ -1196,14 +1210,14 @@ export class GitHubAppClient {
     return { id: pr.id, headSha: pr.headRefOid, entry: pr.mergeQueueEntry ?? null };
   }
 
-  private async queueGraphql(token: string, query: string, variables: Record<string, unknown>) {
+  private async queueGraphql(token: string, query: string, variables: Record<string, unknown>, label = 'GitHub merge queue') {
     const response = await githubFetch(`${this.#config.apiBaseUrl}/graphql`, {
       method: 'POST', headers: { ...githubHeaders(token), 'content-type': 'application/json' },
       signal: AbortSignal.timeout(15_000), body: JSON.stringify({ query, variables }),
     });
-    const body = await jsonObject(response, 'GitHub merge queue');
-    if (Array.isArray(body.errors) && body.errors.length) throw new Error('GitHub merge queue returned errors');
-    if (!body.data || typeof body.data !== 'object') throw new Error('GitHub merge queue returned no data');
+    const body = await jsonObject(response, label);
+    if (Array.isArray(body.errors) && body.errors.length) throw new Error(`${label} returned errors`);
+    if (!body.data || typeof body.data !== 'object') throw new Error(`${label} returned no data`);
     return body.data as Record<string, unknown>;
   }
 

@@ -1443,7 +1443,7 @@ function readCornerLifecycle(value: unknown): CornerLifecycleView | null {
           title: pr.title,
           targetBranch: pr.targetBranch,
           headSha: pr.headSha,
-          ...field('mergeability', oneOf(pr.mergeability, ['clean', 'dirty', 'unknown', 'other'])),
+          ...field('mergeability', oneOf(pr.mergeability, ['clean', 'dirty', 'draft', 'unknown', 'other'])),
           ...field('baseSha', typeof pr.baseSha === 'string' ? pr.baseSha : undefined),
           ...field('mergedAt', typeof pr.mergedAt === 'string' ? pr.mergedAt : undefined),
           ...field('mergedBy', typeof pr.mergedBy === 'string' ? pr.mergedBy : undefined),

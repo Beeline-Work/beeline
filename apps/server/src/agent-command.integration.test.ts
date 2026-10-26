@@ -742,19 +742,24 @@ describe.each([R, C])('server command authority in %s', (room) => {
     );
     expect(received).toMatchObject({ messageId: steerId, activeSteerAgentIds: [A],
       message: { id: steerId, text: '@hoots change course' } });
-    expect((await commands(A, room)).map((command) => command.sourceMessageId)).toContain(steerId);
+    const steered = await commands(A, room);
+    expect(steered.some(command => command.action === 'stop')).toBe(true);
+    const replacement = steered.find(command => command.action === 'input')!;
+    expect(replacement.sourceMessageId).toBe(steerId);
 
-    // A retried write reads the same committed routing result instead of
-    // falling back to a client-side guess.
+    // The committed route stays the same; the active-turn observation now
+    // reflects the server's interruption of the previous turn.
     await expect(
       phone.execute(
         'sendRoomMessage',
         { roomId: room, messageId: steerId, text: '@hoots change course' },
         H,
       ),
-    ).resolves.toEqual(received);
+    ).resolves.toEqual({ ...received, activeSteerAgentIds: [] });
 
-    await result(active!, 'Finished');
+    await expect(result(active!, 'Stale output')).rejects.toThrow();
+    await claim(replacement);
+    await result(replacement, 'Followed the steer');
     const idleId = id();
     await expect(
       phone.execute(

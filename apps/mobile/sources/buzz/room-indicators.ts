@@ -9,8 +9,8 @@ import type { Agent, RoomViewAgentTurn, RoomViewIdentity } from '@beeline/buzz-c
  * derived from one another again.
  *
  *   **A turn is in progress.** The agent is composing a reply in this Room.
- *   Wire signal: a `#t=agent-turn` `working` event published on the Room's own
- *   channel (`postAgentTurnStatus`, `apps/body/src/body.ts`). It is transient,
+ *   Wire signal: a server-indexed WORKING receipt committed at dispatch and
+ *   replaced by the helper at claim. It is transient,
  *   it names no corner, and it is nothing to tap.
  *
  *   **A corner is open.** A non-terminal child edit channel exists. Its
@@ -46,9 +46,9 @@ export type TurnProgressInput = {
  * The server-indexed latest WORKING receipt is the only proof, and the only
  * vetoes are the receipt's own: the 90-second freshness horizon and — applied
  * upstream, in `isAgentTurnActive` — an explicit offline marker or a different
- * daemon generation. A missing availability record is never one of them
- * (C77): a helper that claimed the message has stronger evidence in its claim
- * receipt than an unavailable presence read. Draft
+ * daemon generation for claimed receipts. Dispatch receipts have a reserved
+ * `pending:` generation and remain visible before claim. A missing availability
+ * record is never a veto (C77). Draft
  * streams are content overlays, not lifecycle: they can start late and a lost
  * retract can leave one open forever.
  */
@@ -162,9 +162,9 @@ export function hasComposerAckReceipt(
  * honest stages. While the send round trip is in the air there is nothing to
  * show but the local bridge (`pendingAckSentAt` → `buzzing`, "sending…").
  * Once the server accepts the write the bridge retires — the message is
- * stored, and silence is now the truth between "sent" and "claimed". When the
- * daemon CLAIMS the message it writes a WORKING receipt, which reaches the
- * phone as `activeTurnPubkey` and lights `thinking` — long before the model's
+ * stored. The server commits a WORKING receipt at dispatch, which reaches the
+ * phone as `activeTurnPubkey` and lights `thinking` before helper claim. The
+ * helper replaces that receipt at claim — long before the model's
  * first token streams, which on a real host can be tens of seconds later.
  * `thinking` always wins once `selectTurnProgressAgentPubkey` has an answer;
  * past `COMPOSER_ACK_BOUND_MS` with still no receipt and no claim, the local

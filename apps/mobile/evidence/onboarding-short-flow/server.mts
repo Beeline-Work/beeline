@@ -12,7 +12,7 @@ await migrate(db);
 const auth = new TokenAuth(db, async () => ({ subject: randomUUID(), login: 'octocat', name: 'Octo Cat', issuer: 'proof', audience: 'proof' }), undefined,
   async () => ({ subject: randomUUID(), email: 'newperson@example.test', name: 'New Person', audience: 'proof' }));
 const phone = new PhoneService(db, 'http://127.0.0.1:45921');
-phone.setFreeAgents(new FreeAgentService(db, { model: 'proof', idleSeconds: 60, maxPerOwner: 3, dailyTokenCap: 1000000, lifetimeTokenCap: 3000000, sealSecret: 'isolated-proof-secret', publicOrigin: 'http://127.0.0.1:45921', image: 'proof', region: 'iad', cpus: 1, memoryMb: 1024, reapIdleMs: 300000, deleteAfterMs: 86400000 }, {} as any, async () => { throw new Error('No Machine boot in this proof'); }, () => undefined));
+phone.setFreeAgents(new FreeAgentService(db, { model: 'proof', idleSeconds: 60, maxPerOwner: 3, dailyTokenCap: 1000000, firstDayTokenCap: 1000000, lifetimeTokenCap: 3000000, sealSecret: 'isolated-proof-secret', publicOrigin: 'http://127.0.0.1:45921', image: 'proof', region: 'iad', cpus: 1, memoryMb: 1024, reapIdleMs: 300000, deleteAfterMs: 86400000 }, {} as any, async () => { throw new Error('No Machine boot in this proof'); }, () => undefined));
 createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', 'content-type,x-proof-identity');

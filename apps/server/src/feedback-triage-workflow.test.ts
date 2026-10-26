@@ -9,6 +9,8 @@ import {
   FEEDBACK_TRIAGE_CONTRACT,
   WORKSPACE_WALK_CONTRACT,
   backfillFeedbackSignalWalk,
+  backfillWorkspaceWalkHistory,
+  WORKSPACE_WALK_STEPS,
   FEEDBACK_TRIAGE_SCHEDULE_PROMPT,
   FEEDBACK_TRIAGE_STEPS,
   backfillFeedbackTriageWorkflow,
@@ -126,6 +128,44 @@ function cornerTurn(messageId: string): CommandRow {
 }
 
 describe('feedback-triage workflow', () => {
+  it.each([1,14] as const)('walk-history: scheduled kickoff selects a %s-day window and SQL pages expose authors', async (days) => {
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES('historical-person',$1,$2,'Synthetic history',now()-interval '10 days'),
+            ('historical-agent',$1,$3,'Synthetic reply',now()-interval '10 days')`,[OTHER_ROOM,CREATOR,TRIAGER]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('history-start',$1,$2,'Start walk')`,[TRIAGE_CORNER,CREATOR]);
+    // Keep PostgreSQL's real clock for the history bounds; choose only the weekday branch.
+    const clocked = (db: SqlDatabase): SqlDatabase => ({
+      query: (sql,values) => db.query(sql.includes('extract(isodow FROM now()') ? `SELECT ${days} AS days` : sql,values),
+      transaction: work => db.transaction(tx => work(clocked(tx))),
+    });
+    const turn=cornerTurn('history-start');
+    await saveWorkflow(database,turn,{contract:WORKSPACE_WALK_CONTRACT});
+    const {runId}=await startWorkflow(database,turn,{name:'workspace-walk',roleBindings:{triager:TRIAGER}});
+    await handoff(clocked(database),turn,{runId,outcome:'started',contents:{}});
+    const page=await readServiceReviewPage(database,TRIAGER,runId,OTHER_WORKSPACE);
+    expect(page.rows).toHaveLength(days===14 ? 2 : 0);
+    if (days===14) {
+      expect(page.rows.find(row=>row.id==='historical-person')!.activity).toMatchObject({authorId:CREATOR,authorKind:'human',ownerId:null});
+      expect(page.rows.find(row=>row.id==='historical-agent')!.activity).toMatchObject({authorId:TRIAGER,authorKind:'agent',ownerId:CREATOR});
+    }
+  });
+
+  it('refreshes old server-seeded walk procedures once and preserves team edits', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await backfillFeedbackSignalWalk(database);
+    await database.query(`UPDATE workspace_skill_versions SET markdown='Old seed',content_hash=repeat('0',64)
+      WHERE skill_id IN(SELECT id FROM workspace_skills WHERE slug='workspace-browse-sweep')`);
+    await backfillWorkspaceWalkHistory(database);
+    const current = async () => (await database.query<{markdown:string}>(`SELECT v.markdown FROM workspace_skills s
+      JOIN workspace_skill_versions v ON v.skill_id=s.id AND v.version=s.current_version
+      WHERE s.workspace_id=$1 AND s.slug='workspace-browse-sweep'`,[WORKSPACE])).rows[0]!.markdown;
+    expect(await current()).toBe(WORKSPACE_WALK_STEPS);
+    await database.query(`UPDATE workspace_skill_versions SET markdown='Team procedure',extractor_version='team'
+      WHERE skill_id IN(SELECT id FROM workspace_skills WHERE slug='workspace-browse-sweep')`);
+    await backfillWorkspaceWalkHistory(database);
+    expect(await current()).toBe('Team procedure');
+  });
+
   it('has no approval gate or dispatch state in the seeded contract', () => {
     expect(Object.values(FEEDBACK_TRIAGE_CONTRACT.handoffs).some(step => step.kind === 'gate')).toBe(false);
     expect(FEEDBACK_TRIAGE_CONTRACT.handoffs).not.toHaveProperty('approve');

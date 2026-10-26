@@ -108,3 +108,42 @@ it('walk-scope: legacy reservations remain visible but cannot read unbounded his
   expect((await db.query('SELECT * FROM service_review_targets($1,$2)',[agent,'legacy'])).rows).toHaveLength(1);
   expect((await readServiceReviewPage(db,agent,'legacy',workspaces[0]!)).rows).toEqual([]);
 });
+
+it('walk-authors: SQL pages identify people and agent owners without conflating them', async () => {
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic agent')`,[agent]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,human]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('agent-reply',$1,$2,'Synthetic reply')`,[rooms[0],agent]);
+  await reserveServiceReviewWorkspaces(db,agent,'authors',true);
+  const page = await readServiceReviewPage(db,agent,'authors',workspaces[0]!);
+  expect(page.rows.find(row=>row.id==='message-0')!.activity).toMatchObject({authorId:human,authorKind:'human',ownerId:null});
+  expect(page.rows.find(row=>row.id==='agent-reply')!.activity).toMatchObject({authorId:agent,authorKind:'agent',ownerId:human});
+});
+
+it('walk-fortnight: weekly reads reopen completed history, page it, and recheck consent', async () => {
+  await db.query(`UPDATE messages SET created_at=now()-interval '5 days'`);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'daily-empty',true)).toEqual([]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+    SELECT 'history-'||n,$1,$2,'Synthetic history',now()-interval '13 days' FROM generate_series(1,205) n`,[rooms[0],human]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+    VALUES('outside',$1,$2,'Outside window',now()-interval '15 days')`,[rooms[0],human]);
+  await db.query(`UPDATE workspaces SET internal=true WHERE id=$1`,[workspaces[1]]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'weekly',true,14)).toEqual([workspaces[0]]);
+  let after='',count=0;
+  const times:string[]=[];
+  for (;;) {
+    const page=await readServiceReviewPage(db,agent,'weekly',workspaces[0]!,after);
+    if (!page.rows.length) break;
+    expect(page.rows.length).toBeLessThanOrEqual(200);
+    expect(page.rows.map(row=>row.id)).not.toContain('outside');
+    count+=page.rows.length;
+    times.push(...page.rows.map(row=>new Date((row.activity as {createdAt:string}).createdAt).toISOString()));
+    after=page.rows.at(-1)!.id;
+  }
+  expect(count).toBe(206);
+  times.sort();
+  await completeServiceReview(db,agent,'weekly',[{workspace:workspaces[0],rowsRead:count,firstMessageTime:times[0],lastMessageTime:times.at(-1),findings:'none'}]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'daily-after-weekly',true)).toEqual([]);
+  expect(await reserveServiceReviewWorkspaces(db,agent,'weekly-again',true,14)).toEqual([workspaces[0]]);
+  await db.query(`UPDATE workspaces SET allow_fix_sweep=false WHERE id=$1`,[workspaces[0]]);
+  expect((await readServiceReviewPage(db,agent,'weekly-again',workspaces[0]!)).rows).toEqual([]);
+});

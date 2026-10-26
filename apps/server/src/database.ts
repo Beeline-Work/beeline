@@ -42,7 +42,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
-import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk } from './feedback-triage-workflow.js';
+import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
 import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
@@ -2541,6 +2541,7 @@ CREATE TABLE IF NOT EXISTS agent_grants (
 );
 -- C94: an interpreter command grant is bound to the script the card showed.
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS script jsonb;
+ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS superseded_at timestamptz;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS purpose text;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS touches text;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS capabilities text;
@@ -3463,6 +3464,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'feedback-triage-prompt-cases-v1', backfillFeedbackTriageWorkflow));
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
+  await dataStep('workspace walk history', () =>
+    workflowBackfillOnce(database, 'workspace-walk-history-v1', backfillWorkspaceWalkHistory));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('repair workflow step descriptions', () =>

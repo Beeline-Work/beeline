@@ -695,6 +695,27 @@ What are you working on? Tell me, and I'll take the first step with you. If you'
       expect(sentryCaptures).toHaveLength(1);
     });
 
+    it('keeps the stop when a person joins or leaves the Workspace', async () => {
+      const { id } = await createWorkspace();
+      const workspaceId = id;
+      await settle();
+      const agent = await freeAgentOf(id);
+      for (let start = 0; start < 5; start++) expect(await startOnce(agent.agent_id)).toBe(true);
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      machines.calls.length = 0;
+      // Join and leave post System lines with a human author; neither is a retry.
+      await phone.execute('addWorkspaceMember', { workspaceId, memberId: FRIEND, role: 'member' }, OWNER);
+      await settle();
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      await phone.execute('removeWorkspaceMember', { workspaceId, memberId: FRIEND }, OWNER);
+      await settle();
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      await passFence(agent.agent_id);
+      await freeAgents.sweep();
+      expect(machines.calls).toEqual([]);
+      expect(sentryCaptures).toHaveLength(1);
+    });
+
     it('lets a new human message open one fresh episode after the stop', async () => {
       const { id, roomId } = await createWorkspace();
       await settle();

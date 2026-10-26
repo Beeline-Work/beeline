@@ -507,7 +507,8 @@ const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
 /**
  * The start limit for one agent. A `connected` event ends an episode. A
  * `start_limit_reached` event stops starts until a person sends a new message
- * that queues a command; that message opens a fresh episode.
+ * that queues a command; that message opens a fresh episode. Join, leave and
+ * other System lines carry a human author but never clear the stop.
  */
 const START_LIMIT_SQL = `WITH last_connect AS (
     SELECT max(at) at FROM free_agent_events WHERE agent_id=$1 AND kind='connected'),
@@ -517,6 +518,7 @@ const START_LIMIT_SQL = `WITH last_connect AS (
     (last_stop.at IS NOT NULL AND (last_connect.at IS NULL OR last_stop.at>last_connect.at)
       AND NOT EXISTS (SELECT 1 FROM agent_commands command
         JOIN messages source ON source.id=command.source_message_id
+          AND source.presentation='message' AND source.system_event IS NULL
         JOIN identities author ON author.id=source.author_id AND author.kind='human'
         WHERE command.agent_id=$1 AND command.state='pending' AND command.created_at>last_stop.at)) stopped,
     (SELECT count(*)::int FROM free_agent_events started

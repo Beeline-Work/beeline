@@ -25,7 +25,7 @@ const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const TOKEN = `bfm_${'x'.repeat(43)}`;
 const ENABLED_ENV = { BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' };
-const CONFIG = { model: 'deepseek/deepseek-v4-flash', dailyTokenCap: 1_000, lifetimeTokenCap: 5_000 };
+const CONFIG = { model: 'deepseek/deepseek-v4-flash', dailyTokenCap: 1_000, firstDayTokenCap: 1_000, lifetimeTokenCap: 5_000 };
 
 describe('free agent model proxy', () => {
   let db: PgliteDatabase;
@@ -326,19 +326,51 @@ describe('free agent model proxy', () => {
     expect(upstream).toEqual([]);
   });
 
-  it('settles a real model request and exposes the 80% warning only in the owner DM', async () => {
-    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`, [WORKSPACE, OWNER, AGENT]);
+  it('settles a real model request and posts the 80% warning in the working room', async () => {
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+    [WORKSPACE, ROOM, OWNER, AGENT]);
     reply = () => Response.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 500, completion_tokens: 300 } });
     expect((await call({ messages: [{ role: 'user', content: 'hi' }] })).status).toBe(200);
     const warning = (await db.query<{ room_id: string }>(`SELECT room_id FROM messages WHERE author_id=$1`, [AGENT])).rows;
     expect(warning).toHaveLength(1);
-    expect(warning[0]!.room_id).not.toBe(ROOM);
+    expect(warning[0]!.room_id).toBe(ROOM);
     const phone = new PhoneService(db, 'https://server.test');
-    const view = await phone.readRoom(warning[0]!.room_id, OWNER);
+    const view = await phone.readRoom(ROOM, OWNER);
     expect(view?.messages.map(message => message.text).join(' ')).toContain("I've used 80%");
     expect(upstream).toHaveLength(1);
     await call({ messages: [{ role: 'user', content: 'more' }] });
     expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='allowance_warning'`)).rowCount).toBe(1);
+  });
+
+  it('delivers the near-cap notice in the working room after the first-day threshold, once, and still reads it after refusal', async () => {
+    config = { ...CONFIG, dailyTokenCap: 3_000_000, firstDayTokenCap: 10_000_000, lifetimeTokenCap: 0 };
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+    [WORKSPACE, ROOM, OWNER, AGENT]);
+    // The first-day allowance is live, and settled usage sits just below its 80% mark.
+    const today = new Date().toISOString().slice(0, 10);
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,7500000)`, [OWNER]);
+    await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage',$2::jsonb,now())`,
+      [AGENT, JSON.stringify({ day: today, tokens: 7_500_000 })]);
+    reply = () => Response.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 600_000, completion_tokens: 300_000 } });
+    expect((await call({ messages: [{ role: 'user', content: 'build the game' }] })).status).toBe(200);
+    const phone = new PhoneService(db, 'https://server.test');
+    const crossed = await phone.readRoom(ROOM, OWNER);
+    expect(crossed?.messages.map(message => message.text).join(' ')).toContain("I've used 80%");
+    expect(crossed?.messages.map(message => message.text).join(' ')).toContain('midnight UTC');
+    // Within the same UTC day the notice is deduplicated, even through another call.
+    reply = () => Response.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 100, completion_tokens: 100 } });
+    await call({ messages: [{ role: 'user', content: 'again' }] });
+    expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='allowance_warning'`)).rowCount).toBe(1);
+    // Past the first-day cap the owner is refused; the room still reads the one notice.
+    await db.query(`UPDATE free_agent_usage SET tokens=10000000 WHERE owner_id=$1`, [OWNER]);
+    expect((await (await call({ messages: [{ role: 'user', content: 'more' }] })).json()).choices[0].message.content)
+      .toBe(allowanceMessage('daily', { ...config, dailyTokenCap: 10_000_000 }));
+    const refused = await phone.readRoom(ROOM, OWNER);
+    expect(refused?.messages.map(message => message.text).join(' ')).toContain("I've used 80%");
+    expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='allowance_warning'`)).rowCount).toBe(1);
+    console.log('Demonstrated working-room near-cap notice: first-day threshold crossed, one deduplicated notice, still readable after refusal.');
   });
 
   it('pins the default October model, adds the server key and charges uncached prompt plus completion tokens', async () => {
@@ -500,6 +532,34 @@ describe('free agent model proxy', () => {
     expect(allowanceMessage('daily', defaults)).toContain('(3M tokens)');
   });
 
+  it('Reproduction R-FIRSTDAY: an owner in their first 24 hours passes the daily cap and is refused past the first-day cap', async () => {
+    config = { ...CONFIG, dailyTokenCap: 3_000_000, firstDayTokenCap: 10_000_000, lifetimeTokenCap: 0 };
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,3500000)`, [OWNER]);
+    // No model_usage event yet: the owner is in their first day.
+    expect((await (await call({ messages: [{ role: 'user', content: 'hi' }] })).json()).choices[0].message.content).toBe('done');
+    expect(upstream).toHaveLength(1);
+    // Past the first-day cap the owner is refused, naming the first-day size.
+    await db.query(`UPDATE free_agent_usage SET tokens=9999999 WHERE owner_id=$1`, [OWNER]);
+    expect((await (await call({ messages: [{ role: 'user', content: 'more' }] })).json()).choices[0].message.content)
+      .toBe(allowanceMessage('daily', { ...config, dailyTokenCap: 10_000_000 }));
+    // A model call from 25 hours ago ends the window; the daily cap applies again.
+    await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage','{"day":"x","tokens":0}'::jsonb, now()-interval '25 hours')`, [AGENT]);
+    expect((await (await call({ messages: [{ role: 'user', content: 'more' }] })).json()).choices[0].message.content)
+      .toBe(allowanceMessage('daily', { ...config, dailyTokenCap: 3_000_000 }));
+    console.log('Demonstrated R-FIRSTDAY: 3.5M passed on day one, refused past 10M, refused past 3M once 24h elapsed.');
+  });
+
+  it('shows the first-day limit in the owner meter until 24 hours after the first model call', () => {
+    vi.stubEnv('BEELINE_FREE_AGENT_DAILY_TOKENS', '3000000');
+    vi.stubEnv('BEELINE_FREE_AGENT_FIRST_DAY_TOKENS', '10000000');
+    try {
+      expect(projectAgentUsage({ usage_free: true, usage_free_first_day: true })?.free?.limit).toBe(10_000_000);
+      expect(projectAgentUsage({ usage_free: true, usage_free_first_day: false })?.free?.limit).toBe(3_000_000);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each(['750000', 'invalid', '0', '-1', 'Infinity', ''])('keeps configured cap and meter aligned for %s', (value) => {
     vi.stubEnv('BEELINE_FREE_AGENT_DAILY_TOKENS', value);
     try {
@@ -513,6 +573,8 @@ describe('free agent model proxy', () => {
 
   it('serves requests past 1M and returns the 3M cap message at the default limit', async () => {
     config = freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')!;
+    // A past model call keeps this a steady-state owner under the daily cap.
+    await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage','{"tokens":0}'::jsonb,'2026-01-01T00:00:00Z'::timestamptz)`, [AGENT]);
     await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,1000000)`, [OWNER]);
     expect((await (await call({ messages: [{ role: 'user', content: 'hi' }] })).json()).choices[0].message.content).toBe('done');
     await db.query(`UPDATE free_agent_usage SET tokens=3000000 WHERE owner_id=$1`, [OWNER]);

@@ -227,7 +227,6 @@ async function loadFonts() {
     if (loaded) {
       return;
     }
-    loaded = true;
     // Check if running in Tauri
     const isTauri =
       Platform.OS === 'web' &&
@@ -249,6 +248,7 @@ async function loadFonts() {
 
         ...FontAwesome.font,
       });
+      loaded = true;
     } else {
       // For Tauri, skip Font Face Observer as fonts are loaded via CSS
       console.log('Do not wait for fonts to load');
@@ -267,6 +267,7 @@ async function loadFonts() {
 
             ...FontAwesome.font,
           });
+          loaded = true;
         } catch (e) {
           // Ignore
         }

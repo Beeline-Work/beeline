@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { isAgentTurnActive } from './agent-presence';
+import { offerRoomTurns, roomTurns } from './room-message-records';
 import type { RoomViewAgentTurn } from '@beeline/buzz-client';
 import {
   COMPOSER_ACK_BOUND_MS,
@@ -12,6 +14,40 @@ import {
   selectTurnProgressAgentPubkey,
   selectWorkingAgents,
 } from './room-indicators';
+
+describe('R1 dispatch receipt to composer presentation', () => {
+  it('shows the online agent before claim and replaces old pending work with the latest receipt', () => {
+    const now = 100_000;
+    const presence = { agentPubkey: 'ruby', status: 'online' as const, generationId: 'gen-1', observedAt: 100 };
+    const pending: RoomViewAgentTurn = {
+      agentPubkey: 'ruby', requestId: 'message-1', generationId: 'pending:abc',
+      status: 'working', createdAt: 100,
+    };
+    const scope = 'R1-dispatch-proof';
+    const room = 'dm-ruby';
+    const presentation = () => {
+      const active = roomTurns(scope, room).filter((turn) => isAgentTurnActive(turn, presence, now));
+      const turn = active[0];
+      return {
+        line: selectComposerAckPresentation({
+          isCorner: false, now, activeTurnPubkey: turn?.agentPubkey,
+          agentsByPubkey: new Map([['ruby', { pubkey: 'ruby', displayName: 'Ruby' }]]),
+          activeTurnAgentPubkey: turn?.agentPubkey, activeTurnRequestId: turn?.requestId,
+          activeTurnStartedAt: turn?.createdAt,
+        }),
+        ring: selectWorkingAgents({ activeTurnPubkeys: active.map((turn) => turn.agentPubkey) }),
+      };
+    };
+    offerRoomTurns(scope, room, [pending], 1);
+    expect(presentation()).toMatchObject({ line: { turnKey: 'ruby:message-1', startedAt: 100 }, ring: { ruby: true } });
+    expect(presentation().line?.label).toBe('Ruby Thinking…');
+    offerRoomTurns(scope, room, [{ ...pending, generationId: 'gen-1' }], 2);
+    expect(presentation().line?.turnKey).toBe('ruby:message-1');
+    offerRoomTurns(scope, room, [{ ...pending, requestId: 'message-2', generationId: 'gen-1', status: 'complete', createdAt: 101 }], 3);
+    offerRoomTurns(scope, room, [pending], 1);
+    expect(presentation()).toEqual({ line: null, ring: {} });
+  });
+});
 
 describe('queued messages leave the working presentation alone', () => {
   it('keeps the first turn and its clock while a second message is being sent', () => {

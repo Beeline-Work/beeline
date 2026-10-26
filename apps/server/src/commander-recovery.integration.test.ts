@@ -19,6 +19,8 @@ import { PushDeliveryLoop } from './background.js';
 import { createAgentCommand, noteBlockedCornerChecks, readAgentCommands } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
+import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/server-command-intake.js';
+import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
 
 const HUMAN = 'a'.repeat(64),
   RUBY = 'b'.repeat(64),
@@ -46,6 +48,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db.close());
 beforeEach(async () => {
+  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);
@@ -99,14 +102,15 @@ const commands = async (roomId: string, agentId: string) => {
   await flushDueCommanderWakes(db);
   return (await readAgentCommands(db, roomId, agentId)).commands;
 };
-async function open() {
+async function open(name = 'Widget') {
   return daemon.execute(
     'createCorner',
     {
       ...authority(order),
       requestId: order.turnRequestId,
       targetRoomId: ROOM,
-      name: 'Widget',
+      name,
+      ...(name !== 'Widget' ? { idempotencyKey: name } : {}),
       objective: 'Build the widget',
       implementer: 'worker',
       brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
@@ -119,6 +123,89 @@ async function worker(cornerId: string) {
   await claim(command);
   return command;
 }
+
+it.each(['report', 'postRoomMessage'] as const)('Reproduction FILE-HANDOFF: batched reports retain every file through %s', async (delivery) => {
+  await daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  const attachments = [];
+  const turns = [];
+  // Both workers finish before the commander consumes the batched wake.
+  for (const name of ['first.txt', 'second.txt']) {
+    const opened = await open(name);
+    const turn = await worker(opened.cornerId);
+    const bytes = Buffer.from(`${delivery}:${name}`);
+    const uploaded = await objects.uploadArtifact(WORKER, bytes, 'text/plain', name);
+    const attachment = { url: uploaded.url, name, mimeType: 'text/plain', size: bytes.length };
+    attachments.push(attachment);
+    await daemon.execute('postAgentAttachment', { ...authority(turn), attachment }, WORKER);
+    turns.push(turn);
+  }
+  for (const [index, turn] of turns.entries()) {
+    await daemon.execute('report', { ...authority(turn), status: 'done', text: `done: attached ${attachments[index]!.name}` }, WORKER);
+  }
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports).toHaveLength(1);
+  const report = reports[0]!;
+  expect(report.source.attachments).toEqual(attachments);
+  await claim(report);
+  if (delivery === 'report') {
+    await daemon.execute('report', { ...authority(report), status: 'done', text: 'done: first.txt and second.txt attached' }, RUBY);
+  } else {
+    await daemon.execute('postRoomMessage', { ...authority(report), text: 'first.txt and second.txt attached' }, RUBY);
+  }
+  const visible = (await phone.readRoom(DM, HUMAN))!.messages.filter(message => message.attachments?.length);
+  expect(visible).toHaveLength(1);
+  expect(visible[0]!.attachments).toEqual(attachments.map(attachment => expect.objectContaining(attachment)));
+  const readable = await daemon.execute('getRoomMessage', { roomId: DM, messageId: visible[0]!.id }, RUBY);
+  expect(readable.attachments).toEqual(attachments.map(attachment => expect.objectContaining(attachment)));
+  for (const attachment of readable.attachments) {
+    const mediaId = attachment.url.split('/').at(-1)!;
+    expect(Buffer.from((await objects.readOwnedBytes(WORKER, mediaId))!).toString()).toBe(`${delivery}:${attachment.name}`);
+  }
+});
+
+it.each(['report', 'postRoomMessage'] as const)('Reproduction FILE-HANDOFF: %s keeps batched files on their own commander route', async delivery => {
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  const commanders = ['12'.repeat(32), '13'.repeat(32)];
+  const incoming = [];
+  for (const commander of commanders) {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Commander') ON CONFLICT DO NOTHING`, [commander]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [commander, HUMAN]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, commander]);
+    const parent = (await createAgentCommand(db, {
+      roomId: ROOM, agentId: RUBY, sourceMessageId: null, reason: 'order',
+      privatePayload: { kind: 'order', authorId: commander, fromRoomId: ROOM, text: 'Prepare my file' },
+    }))!;
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [parent.id]);
+    const name = `${commander.slice(0, 2)}.txt`;
+    // Distinct objects with identical bytes also exercise deduplication after routing.
+    const uploaded = await objects.uploadArtifact(commander, Buffer.from(`private-${delivery}`), 'text/plain', name);
+    incoming.push({ parent, attachment: { url: uploaded.url, name, mimeType: 'text/plain', size: Buffer.byteLength(`private-${delivery}`) } });
+  }
+  await daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
+  for (const { parent, attachment } of incoming) {
+    await createAgentCommand(db, {
+      roomId: ROOM, agentId: RUBY, sourceMessageId: null, reason: 'report', parent, retainDepth: true,
+      privatePayload: { kind: 'report', authorId: WORKER, fromRoomId: ROOM, text: 'done: file ready', attachments: [attachment] },
+    });
+  }
+  const batched = (await commands(ROOM, RUBY)).find(command => command.reason === 'report')!;
+  expect(batched.source.attachments).toHaveLength(2);
+  await claim(batched);
+  if (delivery === 'report') {
+    await daemon.execute('report', { ...authority(batched), status: 'done', text: 'done: files attached' }, RUBY);
+  } else {
+    await daemon.execute('postRoomMessage', { ...authority(batched), text: 'Files attached' }, RUBY);
+  }
+  for (const [index, commander] of commanders.entries()) {
+    const delivered = (await commands(ROOM, commander)).find(command => command.reason === 'report')!;
+    expect(delivered.source.attachments).toEqual([incoming[index]!.attachment]);
+    const read = await daemon.execute('getRoomMessage', { roomId: ROOM, messageId: delivered.id }, commander);
+    expect(read.attachments).toEqual([expect.objectContaining(incoming[index]!.attachment)]);
+    await expect(daemon.execute('getRoomMessage', { roomId: ROOM, messageId: delivered.id }, commanders[1 - index]!))
+      .rejects.toThrow('message access denied');
+  }
+});
 
 it('reports a later corner order to its actual orderer', async () => {
   const opened = await open();
@@ -1294,4 +1381,105 @@ it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits
     await new Promise<void>(resolve => bridge.close(() => resolve()));
     await rm(scratch, { recursive: true, force: true });
   }
+});
+
+for (const kind of ['order', 'brief', 'human'] as const) {
+  it(`STEER-1: ${kind} cancels a running daemon turn and reaches the replacement prompt`, async () => {
+    const opened = await open();
+    await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
+    const root = await mkdtemp(join(tmpdir(), 'steer-proof-'));
+    const abort = new AbortController();
+    const ctx = new CommandExecutionContext(root);
+    const prompts: AgentCommand[] = [];
+    const promptBodies: string[] = [];
+    const stops: string[] = [];
+    const errors: unknown[] = [];
+    let pushed: ((rows: readonly AgentCommand[]) => void) | undefined;
+    let finishOld!: () => void;
+    const oldRun = new Promise<void>((resolve) => { finishOld = resolve; });
+    const api = {
+      execute: (name: string, input: object) => daemon.execute(name as never, input as never, WORKER),
+      liveSubscribe: (_room: unknown, _cursor: unknown, _items: unknown, _state: unknown,
+        _presence: unknown, onCommands: typeof pushed) => { pushed = onCommands; return () => {}; },
+    } as unknown as DaemonApiClient;
+    const running = runServerCommandIntake({ api, roomId: opened.cornerId, agentId: WORKER,
+      context: ctx, signal: abort.signal, onError: (error) => errors.push(error),
+      stop: (id) => { stops.push(id); finishOld(); },
+      run: async (command) => {
+        const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER);
+        promptBodies.push((restored.brief?.spec ?? '') + '\n' + command.source.body);
+        prompts.push(command);
+        if (prompts.length === 1) await oldRun;
+        else abort.abort();
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(prompts).toHaveLength(1));
+      const old = prompts[0]!;
+      // Replayed snapshots and routine observations carry no new instructions.
+      pushed?.([old]);
+      await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+        sourceMessageId: null, reason: 'computer_activity',
+        privatePayload: { text: 'Browser observation', authorId: RUBY, fromRoomId: DM, kind: 'lifecycle' } });
+      pushed?.((await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER)).commands);
+      expect(stops).toEqual([]);
+      const steer = 'Use the newly approved blue widget';
+      if (kind === 'order') {
+        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: steer }, RUBY);
+      } else if (kind === 'brief') {
+        await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+          expectedRevision: 1, brief: { spec: steer, repositoryWork: false,
+            approval: { sourceMessageId: order.sourceMessageId }, change: steer } }, RUBY);
+      } else {
+        await phone.execute('sendRoomMessage', { roomId: opened.cornerId,
+          messageId: randomBytes(32).toString('hex'), text: `@worker ${steer}` }, HUMAN);
+      }
+      let delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
+      if (kind === 'order') {
+        // More instructions arrive while the stop is still in flight. They
+        // must join the same replacement, preserving order provenance.
+        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Also use rounded edges' }, RUBY);
+        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Keep the approved width' }, RUBY);
+        delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
+        expect(delivered.commands.filter(command => command.action === 'stop')).toHaveLength(1);
+      }
+      expect(delivered.commands.some((command) => command.action === 'stop')).toBe(true);
+      pushed?.(delivered.commands);
+      await vi.waitFor(() => expect(prompts).toHaveLength(2));
+      await running;
+      expect(stops).toContain(old.turnRequestId);
+      expect(promptBodies[1]).toContain(steer);
+      if (kind === 'order') {
+        expect(promptBodies[1]).toContain('Also use rounded edges');
+        expect(promptBodies[1]).toContain('Keep the approved width');
+      }
+      expect(prompts[1]!.source.body).toContain('interrupted');
+      expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+        [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('cancelled');
+      expect(errors).toEqual([]);
+      console.log(`STEER-1 ${kind}: old turn cancelled; replacement prompt contains steer and interruption context`);
+    } finally {
+      abort.abort(); finishOld(); await running; await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+it('STEER-1: a repeated wake for the running brief revision does not interrupt it', async () => {
+  const opened = await open();
+  // Retire the initial assignment before starting the revision under test.
+  const initial = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+    VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
+  await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'Use blue', repositoryWork: false,
+      approval: { sourceMessageId: order.sourceMessageId }, change: 'Use blue' } }, RUBY);
+  const current = await worker(opened.cornerId);
+  const line = await systemLine(db, { roomId: opened.cornerId,
+    subject: { kind: 'agent', id: RUBY, name: 'Ruby' }, verb: 'revised the corner brief', object: { text: 'Revision 2', id: opened.cornerId } });
+  await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+    sourceMessageId: line.id, reason: 'corner_brief_revision' });
+  expect((await commands(opened.cornerId, WORKER)).some(command => command.action === 'stop')).toBe(false);
+  expect((await db.query('SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2',
+    [opened.cornerId, current.turnRequestId])).rows[0]?.status).toBe('working');
 });

@@ -42,6 +42,7 @@ const TEST_FREE_AGENT_CONFIG: FreeAgentConfig = {
   idleSeconds: 60,
   maxPerOwner: 3,
   dailyTokenCap: 1_000_000,
+  firstDayTokenCap: 1_000_000,
   lifetimeTokenCap: 3_000_000,
   sealSecret: 'test-seal-secret',
   publicOrigin: 'https://server.test',

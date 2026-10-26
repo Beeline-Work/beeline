@@ -116,4 +116,28 @@ describe('listAgentGrantRequests', () => {
     expect(first.grants.map((grant) => grant.target)).not.toContain('npm publish');
     expect(second.grants.map((grant) => grant.target)).toEqual(['npm publish']);
   });
+  it('shows the implementer grants only to reviewers of that exact corner', async () => {
+    const corner = '44444444-4444-4444-8444-444444444444';
+    const grantId = '10000000-0000-4000-8000-000000000005';
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$2,'member')`, [WORKSPACE, OTHER_AGENT]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [WORKSPACE, ROOM, OTHER_AGENT]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
+      VALUES($1,$2,$3,'Review grants',$4)`, [corner, WORKSPACE, ROOM, AGENT]);
+    await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,reviewer_agent_id)
+      VALUES($1,$2,$3)`, [corner, AGENT, OTHER_AGENT]);
+    await db.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status)
+      VALUES($1,$2,$3,'command','python3 check.py','check this corner',$4,$5,'pending')`,
+      [grantId, AGENT, WORKSPACE, OWNER, corner]);
+    const reviewed = await daemon.execute('listAgentGrantRequests', { roomId: corner }, OTHER_AGENT);
+    expect(reviewed.grants).toContainEqual(expect.objectContaining({ grantId, agentId: AGENT }));
+    expect(reviewed.grants.some(row => row.target.includes('fly deploy'))).toBe(false);
+    const outside = await daemon.execute('listAgentGrantRequests', { roomId: ROOM }, OTHER_AGENT);
+    expect(outside.grants.some(row => row.grantId === grantId)).toBe(false);
+    await db.query(`UPDATE corner_facts SET reviewer_agent_id=NULL WHERE corner_id=$1`, [corner]);
+    const former = await daemon.execute('listAgentGrantRequests', { roomId: corner }, OTHER_AGENT);
+    expect(former.grants.some(row => row.grantId === grantId)).toBe(false);
+  });
+
 });

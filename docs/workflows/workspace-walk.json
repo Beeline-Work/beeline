@@ -10,7 +10,7 @@
   "deadlineSeconds": 14400,
   "handoffs": {
     "kickoff": {
-      "does": "Reserve every eligible workspace with human activity in the last 24 hours.",
+      "does": "Reserve eligible workspaces with new activity; on Monday reopen at least the last 14 days.",
       "role": "triager",
       "requires": [],
       "on": {

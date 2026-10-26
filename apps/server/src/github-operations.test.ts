@@ -1727,6 +1727,73 @@ describe('GitHub phone operations', () => {
     }
   });
 
+  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: recovers a deadlock at %s and completes repository access sync', async boundary => {
+    await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+      VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
+    await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+      VALUES(102,77,'owner/removed','main')`);
+    const app = {
+      installationAccount: vi.fn(async () => ({ id: '42', login: 'owner', type: 'User', repositorySelection: 'selected' })),
+      listRepositories: vi.fn(async () => [{ id: 101, installationId: 77, fullName: 'owner/widgets', defaultBranch: 'main', private: false, allowAutoMerge: false }]),
+    };
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const query = database.query.bind(database);
+    let attempts = 0;
+    vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      const target = boundary === 'installation' ? sql.startsWith('INSERT INTO github_installations(')
+        : boundary === 'repository' ? sql.startsWith('INSERT INTO github_repositories(')
+        : sql.includes('NOT (repository_id=ANY');
+      if (target && ++attempts === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+      return query(sql, values);
+    });
+    await operations.processWebhook('installation', { action: 'created', installation: { id: 77 } });
+    expect(attempts).toBe(2);
+    expect(app.listRepositories).toHaveBeenCalledTimes(1);
+    expect((await query(`SELECT repository_id,active FROM github_repositories ORDER BY repository_id`)).rows)
+      .toEqual([{ repository_id: 101, active: true }, { repository_id: 102, active: false }]);
+  });
+
+  it.each([['40P01', 3], ['23505', 1]] as const)('INSTALL-SYNC-1: surfaces %s after bounded attempts', async (code, expected) => {
+    await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+      VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
+    const app = { installationAccount: async () => ({ id: '42', login: 'owner', type: 'User', repositorySelection: 'selected' }), listRepositories: vi.fn() };
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const query = database.query.bind(database);
+    const failure = Object.assign(new Error('database failure'), { code });
+    let attempts = 0;
+    vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
+      if (sql.startsWith('INSERT INTO github_installations(')) { attempts++; throw failure; }
+      return query(sql, values);
+    });
+    await expect(operations.processWebhook('installation', { action: 'created', installation: { id: 77 } })).rejects.toBe(failure);
+    expect(attempts).toBe(expected);
+    expect(app.listRepositories).not.toHaveBeenCalled();
+  });
+
+  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: propagates %s deadlock out of the installation callback transaction', async boundary => {
+    const { operations, installState } = await boundInstallationOperations(orgInstallationApp('allow'));
+    const transaction = database.transaction.bind(database);
+    const failure = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    let attempts = 0;
+    vi.spyOn(database, 'transaction').mockImplementation(work => transaction(async tx => {
+      const query = tx.query.bind(tx);
+      tx.query = async (sql, values) => {
+        const target = boundary === 'installation' ? sql.startsWith('INSERT INTO github_installations(')
+          : boundary === 'repository' ? sql.startsWith('INSERT INTO github_repositories(')
+          : sql.includes('NOT (repository_id=ANY');
+        if (target) { attempts++; throw failure; }
+        return query(sql, values);
+      };
+      return work(tx);
+    }));
+    await expect(operations.completeInstallation(installState, 78)).rejects.toBe(failure);
+    expect(attempts).toBe(1);
+    expect((await database.query(`SELECT * FROM github_installations`)).rows).toEqual([]);
+    expect((await database.query(`SELECT * FROM github_repositories`)).rows).toEqual([]);
+    expect((await database.query(`SELECT consumed_at FROM github_auth_flows WHERE purpose='installation'`)).rows)
+      .toEqual([{ consumed_at: null }]);
+  });
+
   it('keeps a listed repository token available while its installation sync is in progress', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

@@ -36,7 +36,7 @@ async function postStarterNextStep(database: SqlDatabase, roomId: string, agentI
   const choice = await postRoomChoice(database, {
     roomId, agentId, mode: 'question', prompt: 'After your game, what next?', options: [
       { label: 'Invite a friend to play', consequence: 'Opens your share sheet with a link to this chat' },
-      { label: 'Give us a real task', consequence: 'Your team answers, then checks the work' },
+      { label: 'Give us a real task', consequence: 'Beebee answers, then Luna checks the work' },
     ],
   });
   await database.query(`UPDATE messages SET created_at=clock_timestamp(),card=card || '{"starterOnboarding":"next"}'::jsonb WHERE id=$1`, [choice.messageId]);

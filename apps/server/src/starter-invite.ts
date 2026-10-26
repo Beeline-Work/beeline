@@ -19,7 +19,7 @@ export async function postStarterInviteOffer(database: SqlDatabase, roomId: stri
   }
   const choice = await postRoomChoice(database, { roomId, agentId, mode: 'question', prompt: 'Invite friends to this chat', options: [
     { label: 'Share this chat', consequence: 'Opens your share sheet with an invite link' },
-    { label: 'Give us a real task', consequence: 'Your team answers, then checks the work' },
+    { label: 'Give us a real task', consequence: 'Beebee answers, then Luna checks the work' },
   ] });
   await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
     [choice.messageId, JSON.stringify({ starterOnboarding: 'next', starterShare: share })]);

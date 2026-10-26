@@ -963,6 +963,7 @@ export class MediaExpiryLoop {
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
   const expired = [
+    ['agent_turn_traces', "created_at<now()-interval '30 days'"],
     ['room_push_views', 'expires_at<now()'],
     ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'"],
     ['phone_access_tokens', 'expires_at<now()'],

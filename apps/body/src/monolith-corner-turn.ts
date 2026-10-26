@@ -1644,6 +1644,7 @@ export class MonolithCornerTurnLoop {
       : undefined;
     this.currentTurn = { requestId, ...(requester ? { requester } : {}) };
     const trace = this.beginTurnTrace(requestId);
+    const traceGenerationId = this.commandContext.generationId;
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
     const institutionalContextFetch = startInstitutionalContextFetch(api, cornerId);
@@ -1677,6 +1678,12 @@ export class MonolithCornerTurnLoop {
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.
+      }
+      if (outcome === 'cancelled') {
+        await api.execute('postAgentTurnReceipt', {
+          agentId: this.agent.publicKey, roomId: cornerId, requestId: requestId,
+          generationId: traceGenerationId, status: 'cancelled', trace: trace.replay(),
+        }).catch(() => console.warn('[turn-trace] trace dropped'));
       }
       await trace.finish(outcome, reason);
     };
@@ -2453,6 +2460,7 @@ export class MonolithCornerTurnLoop {
         ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
+        trace: trace.replay(),
         ...this.turnMetrics,
       });
       this.warmTranscript.complete(this.sessionId, [requestId]);
@@ -2480,6 +2488,7 @@ export class MonolithCornerTurnLoop {
         reason: reason.text,
         ...(reason.kind ? { reasonKind: reason.kind } : {}),
         toolCalls: trace.toolCallsTotal,
+        trace: trace.replay(),
         ...this.turnMetrics,
       });
       void finishTrace('failed', reason.text).catch(() => undefined);

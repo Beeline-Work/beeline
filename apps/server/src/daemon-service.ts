@@ -16,7 +16,20 @@ import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
-import { isNoReplyDeclaration } from './no-reply.js';
+import { isNoReplyDeclaration, isPostedWaitingNarration, isReportStatusPrefixed } from './no-reply.js';
+
+/** Wakes no person authored: on these, a report-status final text is worker
+ * status for the commander path, never a stranger's room reply. Human message
+ * wakes ('direct_message', 'human_tag') keep their replies. */
+const NONHUMAN_WAKE_REASONS = new Set([
+  'report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
+  'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
+  'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
+  'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
+  'corner_background_tool', 'corner_brief_revision', 'tagged_lifecycle_stop',
+  'tagged_lifecycle_retry', 'tagged_lifecycle_restart',
+]);
+
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -599,8 +612,24 @@ export class DaemonService {
     // Final text is normally published unconditionally by the helper's stream
     // settle. Older harnesses express silence as prose instead of the no-reply
     // tool. Settle that outcome before either public insertion or private routing.
+    // On a nonhuman wake a report-status final text ("blocked: …") is worker
+    // status for the commander path, never a stranger's room reply, and any
+    // public wake's "Posted … Waiting for …" note is narration about work done
+    // somewhere else. Private routes (orders, corners) keep their own routing.
+    const finalText = String(candidate.text ?? '');
+    let statusSilence = false;
+    if (name === 'postRoomMessage' && candidate.presentation !== 'card' && scopedRoom &&
+      isReportStatusPrefixed(finalText) && !isNoReplyDeclaration(finalText) &&
+      !isPostedWaitingNarration(finalText)) {
+      const wake = (await this.database.query<{ reason: string; private_payload: unknown }>(
+        `SELECT c.reason,c.private_payload FROM agent_commands c WHERE c.room_id=$1 AND c.agent_id=$2
+           AND c.turn_request_id=$3 ORDER BY c.created_at DESC,c.id DESC LIMIT 1`,
+        [scopedRoom, authenticatedAgentId, String(candidate.requestId ?? candidate.turnId ?? '')],
+      )).rows[0];
+      statusSilence = !wake?.private_payload && NONHUMAN_WAKE_REASONS.has(String(wake?.reason ?? ''));
+    }
     const silentFinal = name === 'postRoomMessage' && candidate.presentation !== 'card' &&
-      isNoReplyDeclaration(String(candidate.text ?? ''));
+      (isNoReplyDeclaration(finalText) || isPostedWaitingNarration(finalText) || statusSilence);
     if (
       !this.commandTransaction &&
       scopedRoom &&

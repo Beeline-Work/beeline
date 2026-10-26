@@ -76,7 +76,11 @@ it.each(['ordinary', 'tagged', 'threaded', 'private', 'private-agent', 'corner',
 );
 
 
-it.each(['I posted nothing.', 'Nothing to post.', "I won't post to the Room.", 'NO_REPLY', 'No reply needed.'])(
+it.each(['I posted nothing.', 'Nothing to post.', "I won't post to the Room.", 'NO_REPLY', 'No reply needed.',
+  'Nonhuman wake only … Ending silently',
+  'Posted a concise Arabic list … Waiting for Mohammed',
+  'blocked: Corner release is idle with no worker schedule or event subscription',
+])(
   'WAKE-STORM: a final silence declaration publishes nothing: %s', async text => {
     for (const roomId of [R, C]) {
       const queued = await createAgentCommand(db, { roomId, agentId: A, sourceMessageId: null, reason: 'system' });
@@ -89,6 +93,18 @@ it.each(['I posted nothing.', 'Nothing to post.', "I won't post to the Room.", '
       await expect(result(command, text, 'wrong-generation')).rejects.toThrow('authority rejected');
     }
   });
+
+it('WAKE-STORM: a human wake keeps its report-status reply', async () => {
+  const queued = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null, reason: 'human_tag' });
+  const command = (await commands(A, R)).find(c => c.id === queued!.id)!;
+  await claim(command);
+  const text = 'blocked: Corner release is idle with no worker schedule or event subscription';
+  await result(command, text);
+  expect((await db.query('SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2 AND text=$3',
+    [command.turnRequestId, A, text])).rowCount).toBe(1);
+  expect((await db.query('SELECT completion_kind FROM agent_turns WHERE request_id=$1 AND agent_id=$2',
+    [command.turnRequestId, A])).rows[0]?.completion_kind).toBeFalsy();
+});
 
 it('Reproduction cold-beebee-first-reply: paints every mentioned agent before helper pickup', async () => {
   await send('@hoots @goosy Hello');

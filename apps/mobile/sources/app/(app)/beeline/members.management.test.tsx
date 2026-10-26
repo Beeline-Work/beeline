@@ -1405,7 +1405,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-model-config` })).toHaveLength(0);
   });
 
-  it('sends the edited soul through the target agent DM and keeps retry local on failure', async () => {
+  it('saves the edited soul server-side first and keeps retry local on failure', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
     await act(async () =>
@@ -1415,18 +1415,22 @@ describe('Members workspace management', () => {
     );
     client.publishPreparedMessage.mockRejectedValueOnce(new Error('offline'));
     await press(renderer, 'generate-avatar-from-soul');
+    expect(client.setAgentSoul).toHaveBeenCalledWith(
+      WORKSPACE,
+      AGENT,
+      expect.objectContaining({ soul: 'A deity of faraway stars' }),
+    );
     expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
     expect(client.composeMessage).toHaveBeenCalledWith(
       {
         sessionId: 'dm-room',
-        text: '/draw-avatar Generate and save my avatar from this current soul input: "A deity of faraway stars"',
+        text: '/draw-avatar',
       },
       { mentionAgent: AGENT },
     );
     expect(client.publishPreparedMessage).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'avatar-request' }),
     );
-    expect(client.setAgentSoul).not.toHaveBeenCalled();
     expect(renderer.root.findAllByProps({ testID: 'avatar-refinement-hint' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'generate-avatar-from-soul' }).props.title).toBe(
       'Retry avatar generation',
@@ -1436,7 +1440,7 @@ describe('Members workspace management', () => {
     ).toContain('offline');
   });
 
-  it('omits avatar direction and sends only the current soul', async () => {
+  it('saves the soul server-side and sends only the short draw request', async () => {
     const renderer = await render();
     await openAgentManagement(renderer);
     expect(renderer.root.findAllByProps({ testID: 'avatar-direction' })).toHaveLength(0);
@@ -1447,10 +1451,11 @@ describe('Members workspace management', () => {
     );
     client.publishPreparedMessage.mockRejectedValueOnce(new Error('offline'));
     await press(renderer, 'generate-avatar-from-soul');
+    expect(client.setAgentSoul).toHaveBeenCalledOnce();
     expect(client.composeMessage).toHaveBeenCalledWith(
       {
         sessionId: 'dm-room',
-        text: '/draw-avatar Generate and save my avatar from this current soul input: "A deity of faraway stars"',
+        text: '/draw-avatar',
       },
       { mentionAgent: AGENT },
     );

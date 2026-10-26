@@ -921,6 +921,15 @@ function scan(files: Map<string, string>): Entry[] {
         }
         // Member/callee identities choose what people see, even without fixed words.
         // Omit the root local name so person.name and recipient.name stay equivalent.
+        if (ts.isBinaryExpression(part))
+          literals.push(`binary:${ts.tokenToString(part.operatorToken.kind)}`);
+        if (ts.isPrefixUnaryExpression(part) || ts.isPostfixUnaryExpression(part))
+          literals.push(`${ts.isPrefixUnaryExpression(part) ? 'prefix' : 'postfix'}:${ts.tokenToString(part.operator)}`);
+        if (ts.isConditionalExpression(part)) literals.push('conditional:?:');
+        if (ts.isNumericLiteral(part) || ts.isBigIntLiteral(part) || ts.isRegularExpressionLiteral(part))
+          literals.push(`${ts.SyntaxKind[part.kind]}:${part.text}`);
+        if (part.kind === ts.SyntaxKind.TrueKeyword || part.kind === ts.SyntaxKind.FalseKeyword || part.kind === ts.SyntaxKind.NullKeyword)
+          literals.push(ts.SyntaxKind[part.kind]);
         if (ts.isPropertyAccessExpression(part)) literals.push(`.${part.name.text}`);
         if (ts.isCallExpression(part)) {
           const callee = part.expression;
@@ -968,6 +977,9 @@ function scan(files: Map<string, string>): Entry[] {
         }
         ts.forEachChild(part, collect);
       } finally {
+        if (ts.isBinaryExpression(part) || ts.isPrefixUnaryExpression(part) ||
+          ts.isPostfixUnaryExpression(part) || ts.isConditionalExpression(part))
+          literals.push('end:expression');
         active.delete(part);
       }
     };
@@ -1601,6 +1613,25 @@ it.each([
 });
 
 // Reproduction SYSTEM-WORDING-1 exercises the same scanner/enforcer used by CI.
+it.each([
+  ["'hello ' + 'world'", "'hello ' || 'world'"],
+  ["'hello ' + 'world'", "'hello ' && 'world'"],
+  ["'hello ' + 'world'", "'hello ' ?? 'world'"],
+  ["('hello ' + 'world') || '!'", "'hello ' + ('world' || '!')"],
+  ["(left + right) + '!'", "left + (right + '!')"],
+  ["flag ? 'hello ' : 'world'", "!flag ? 'hello ' : 'world'"],
+  ["true ? 'hello ' : 'world'", "false ? 'hello ' : 'world'"],
+  ["0 ? 'hello ' : 'world'", "1 ? 'hello ' : 'world'"],
+  ["'hello world'.replace(/world/, '!')", "'hello world'.replace(/hello/, '!')"],
+])('SYSTEM-WORDING-1: rejects changed visible expression operators: %s → %s', (before, after) => {
+  const base = fixture(`line(db,{verb:${before}});`);
+  const changed = new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  const baseline = scan(base);
+  const current = scan(changed);
+  expect(() => enforce(current, baseline)).toThrow(failure);
+  expect(current.map((entry) => entry.id)).not.toEqual(baseline.map((entry) => entry.id));
+});
+
 it.each([
   ["'hello ' + 'world'", "'world' + 'hello '"],
   ["'hello ' + 'world'", "'hello ' + 'world' + 'world'"],

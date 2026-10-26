@@ -164,6 +164,12 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
     `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'fixture')`,
     [agent, workspace, owner],
   );
+  // A model call far in the past makes this a steady-state owner, not a first-day one,
+  // independent of any frozen clock.
+  await db.query(
+    `INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage','{"tokens":0}'::jsonb, '2026-01-01T00:00:00Z'::timestamptz)`,
+    [agent],
+  );
   await db.query(
     `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,123000)`,
     [owner],

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { grantScriptEnvironment, isNativeGrantExecutable, resolveGrantExecutable } from './grant-script.js';
+import { isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
@@ -1999,10 +1999,10 @@ export function readGrantScript(
   if (!argument) return undefined;
   const roots = deps.scriptRoots ?? [];
   if (!roots.length) return undefined;
-  const scriptEnv = grantScriptEnvironment(rule.argv, argument.index, deps.scriptEnv ?? process.env);
-  const executable = argument.direct
-    ? resolveGrantExecutable(argument.path, roots[0]!, scriptEnv)
-    : undefined;
+  const candidatePath = resolveGrantScriptExecutable(
+    rule.argv, argument, roots[0]!, deps.scriptEnv ?? process.env, deps.readScript ?? readFileSync,
+  );
+  const executable = argument.direct ? candidatePath : undefined;
   if (argument.direct && !executable) return undefined;
   if (argument.direct) {
     // Native executable paths do not need a script card, including binaries

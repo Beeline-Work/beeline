@@ -32,6 +32,18 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
+  it('requests a native env -i command without a script binding', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await requestGrant({ kind: 'command', target: 'env -i /bin/echo approved',
+      purpose: 'Print approved', reason: 'Native command regression' }, {
+      ...deps({ grantId: 'native', status: 'pending', auto: false }, ops),
+      scriptRoots: [tmpdir()],
+    });
+    expect(ops).toHaveLength(1);
+    expect(ops[0]!.name).toBe('requestAgentGrant');
+    expect(ops[0]!.input.script).toBeUndefined();
+  });
+
   it.each([undefined, '', '   ', 'x'.repeat(241)])('rejects invalid purpose %s before requesting approval', async (purpose) => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await expect(requestGrant({ kind: 'command', target: 'git status', reason: 'inspect', purpose }, deps({}, ops))).rejects.toThrow('purpose is required');

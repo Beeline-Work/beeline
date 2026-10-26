@@ -1,4 +1,4 @@
-import { grantScriptEnvironment, isNativeGrantExecutable, resolveGrantExecutable } from './grant-script.js';
+import { isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 /**
  * The command-kind grant runner (Agent Grants, slice 2).
  *
@@ -638,8 +638,7 @@ function scriptCandidates(
 ): string[] {
   const argument = interpreterScriptArgument(argv, true);
   if (!argument) return [];
-  const scriptEnv = grantScriptEnvironment(argv, argument.index, env);
-  const path = argument.direct ? resolveGrantExecutable(argument.path, cwd, scriptEnv) : resolve(cwd, argument.path);
+  const path = resolveGrantScriptExecutable(argv, argument, cwd, env);
   return path ? [path] : [];
 }
 

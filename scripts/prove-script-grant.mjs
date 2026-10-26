@@ -63,7 +63,7 @@ try {
     }), /Cannot safely resolve env wrapper options/);
     console.log(`R-SCRIPT-HASH ${target}: unsupported wrapper refused before approval`);
   }
-  for (const command of ['/bin/echo', 'echo']) {
+  for (const command of ['env -i /bin/echo', 'env -i echo', '/bin/echo', 'echo']) {
   await requestGrant({ kind: 'command', target: `${command} approved`, purpose: 'Prove native execution', reason: 'Isolated proof' }, {
     roomId, scriptRoots: [cwd], scriptEnv: { PATH: `${cwd}:${process.env.PATH}` }, execute: async (_name, input) => {
       assert.equal(input.script, undefined, 'native executable must retain ordinary grant behavior');
@@ -71,7 +71,7 @@ try {
       return { grantId: 'native-proof', status: 'approved', auto: false };
     },
   });
-  const native = await run([command, 'approved']);
+  const native = await run([...command.split(' '), 'approved']);
   assert.equal(native.ok, true, native.text);
   assert.match(native.text, /approved/);
   console.log(`R-SCRIPT-HASH ${command}: ordinary native grant still runs`);

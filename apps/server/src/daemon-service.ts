@@ -6111,25 +6111,11 @@ export class DaemonService {
     // unless tools queued more files after that report.
     if (automatic && command.private_payload?.reportedGenerationId === command.generation_id && !pending.length)
       return this.writeResult();
-    const attachments = [...(command.private_payload?.attachments ?? []),
+    const attachments = [...(command.coalesced_attachments ?? command.private_payload?.attachments ?? []),
       ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
       .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
-    // DM final replies to private wakes also reach this report path.
-    // Prefer the carried attachment when an upload repeats the same bytes.
-    const ids = attachments.flatMap(attachment => mediaIdFromUrl(attachment.url) ?? []);
-    const hashes = new Map((ids.length ? (await database.query<{ id: string; sha256: string }>(
-      `SELECT id::text id,sha256 FROM objects WHERE id=ANY($1::uuid[])`, [ids],
-    )).rows : []).map(object => [object.id, object.sha256]));
-    const seen = new Set<string>();
-    const uniqueAttachments = attachments.filter(attachment => {
-      const hash = hashes.get(mediaIdFromUrl(attachment.url) ?? '');
-      if (!hash) return true;
-      if (seen.has(hash)) return false;
-      seen.add(hash);
-      return true;
-    });
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
-      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask });
+      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic, ask });
     if (result.skipped || ('delivered' in result && !result.delivered)) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,

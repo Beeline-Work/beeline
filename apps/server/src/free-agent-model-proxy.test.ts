@@ -90,6 +90,28 @@ describe('free agent model proxy', () => {
       body: JSON.stringify(body),
     });
 
+  it('pins each teammate to its stored model and charges the same owner allowance', async () => {
+    const luna = 'c'.repeat(64);
+    const lunaToken = `bfm_${'y'.repeat(43)}`;
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Luna')`, [luna]);
+    await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,model_token_hash,state,model)
+      VALUES($1,$2,$3,'sealed',$4,'running','openai/gpt-6-luna')`, [luna, WORKSPACE, OWNER, tokenHash(lunaToken)]);
+    await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,
+      root_command_id,root_source_message_id,agent_depth,state,claimed_at,lease_expires_at)
+      VALUES('luna-turn',$1,$2,'luna-request','input','human_tag','luna-turn','source',0,'claimed',now(),now()+interval '90 seconds')`, [ROOM, luna]);
+    config = { ...CONFIG, dailyTokenCap: 10_000, firstDayTokenCap: 10_000 };
+    for (const token of [TOKEN, lunaToken]) {
+      const response = await call({ model: 'attacker/model', messages: [{ role: 'user', content: 'Hello' }], max_tokens: 50 }, token);
+      expect(response.status).toBe(200);
+      await response.text();
+    }
+    expect(upstream.map(request => request.body.model)).toEqual([CONFIG.model, 'openai/gpt-6-luna']);
+    const usage = (await db.query(`SELECT owner_id,tokens FROM free_agent_usage`)).rows;
+    expect(usage).toHaveLength(1);
+    expect(usage[0]).toMatchObject({ owner_id: OWNER });
+    expect(Number(usage[0]!.tokens)).toBe(2 * (200 + 40 + 75));
+  });
+
   it.each([false, true])('R-REASONING-POST: preserves separate reasoning and tool arguments (stream=%s)', async (stream) => {
     const args = JSON.stringify({ text: 'Final **reply** stays unchanged.' });
     const message = { role: 'assistant', content: null, reasoning_content: 'PRIVATE_SENTINEL',

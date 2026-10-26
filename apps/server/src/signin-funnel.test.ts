@@ -9,6 +9,8 @@ import {
   FunnelRateLimit,
   dashboardSigninFunnel,
   compactSigninFunnel,
+  recordOnboardingEvent,
+  dashboardOnboarding,
 } from './signin-funnel.js';
 let db: PgliteDatabase;
 const make = (patch: Partial<SigninFunnelEvent> = {}): SigninFunnelEvent => ({
@@ -27,6 +29,29 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 const today = () => new Date().toISOString().slice(0, 10);
+it('joins onboarding to the authenticated signup attempt, excludes team accounts, and measures option intervals', async () => {
+  for (const [identity, handle] of [['d'.repeat(64), 'customer'], ['e'.repeat(64), 'lunchboxfortwo']]) {
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Person',$2)`, [identity, handle]);
+    const attempt = make({ event: 'signed_in', provider: 'google' });
+    await recordSigninFunnelEvent(db, attempt, 'server', identity);
+    await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+      VALUES($1,$2,'signup','android','0.2.22','server',now())`, [attempt.installId, attempt.attemptId]);
+    await recordOnboardingEvent(db, identity!, 'welcome_shown');
+    await recordOnboardingEvent(db, identity!, 'option_picked', { option: 'D' });
+    await recordOnboardingEvent(db, identity!, 'option_picked', { option: 'B' });
+    if (handle === 'customer') {
+      await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '2 seconds' WHERE event='welcome_shown'`);
+      await recordOnboardingEvent(db, identity!, 'game_posted');
+    }
+  }
+  const dashboard = await dashboardOnboarding(db, ['android'], today(), today());
+  const all = dashboard.splits.find(split => split.option === 'all')!;
+  expect(all.steps.find(step => step.event === 'welcome_shown')?.count).toBe(1);
+  expect(all.steps.find(step => step.event === 'option_picked')?.medianTimeMs).toBeGreaterThanOrEqual(1900);
+  expect(dashboard.splits.find(split => split.option === 'D')!.steps.find(step => step.event === 'game_posted')?.count).toBe(1);
+  expect(dashboard.splits.find(split => split.option === 'B')!.steps.find(step => step.event === 'game_posted')?.count).toBe(0);
+  expect(JSON.stringify(dashboard)).not.toContain('d'.repeat(64));
+});
 it('derives anonymous Signup only from an authenticated matching new-account attempt, for either provider', async () => {
   // Upgrade an already-created funnel ledger, rather than only testing a fresh schema.
   await db.query(

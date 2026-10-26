@@ -1,3 +1,4 @@
+import { funnelOnboarding } from '@/auth/signin-funnel';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -15,6 +16,11 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   const loaded = useRef(false);
   const WebView = useSandboxWebView();
   const status = useSandboxWebViewStatus();
+  useEffect(() => {
+    const started = Date.now();
+    void funnelOnboarding('game_viewer_opened');
+    return () => { void funnelOnboarding('game_viewer_closed', Math.min(86_400_000, Date.now() - started)); };
+  }, [attachment.url]);
   useEffect(() => {
     let live = true;
     setUrl(undefined);

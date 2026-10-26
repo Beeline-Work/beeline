@@ -21,6 +21,17 @@ it('accepts only the fixed event schema and enums', () => {
   ])
     expect(parseSigninFunnelEvent({ ...valid, ...patch })).toBeNull();
 });
+it('bounds onboarding options and viewer durations without accepting free text', () => {
+  expect(parseSigninFunnelEvent({ ...valid, event: 'option_picked', option: 'D' })).not.toBeNull();
+  expect(parseSigninFunnelEvent({ ...valid, event: 'game_viewer_closed', durationMs: 1234 })).not.toBeNull();
+  for (const patch of [
+    { event: 'option_picked', option: 'custom task' },
+    { event: 'app_opened', option: 'A' },
+    { event: 'option_picked', durationMs: 12 },
+    { event: 'game_viewer_closed', durationMs: -1 },
+    { event: 'game_viewer_closed', durationMs: 86_400_001 },
+  ]) expect(parseSigninFunnelEvent({ ...valid, ...patch })).toBeNull();
+});
 it.each([
   'email',
   'name',

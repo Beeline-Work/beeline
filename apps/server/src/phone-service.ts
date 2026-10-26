@@ -1,4 +1,7 @@
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
+import { postStarterExplanation, postStarterGame } from './starter-onboarding.js';
+import { createStarterInvite } from './starter-invite.js';
+import { recordOnboardingEvent, observeOnboardingMessage, observeOnboardingInvite } from './signin-funnel.js';
 import { waitForConnection } from './connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from './company-mcp-discovery.js';
@@ -4232,11 +4235,13 @@ export class PhoneService {
       case 'sendRoomMessage': {
         const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId);
         this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
+        await observeOnboardingMessage(this.database, (input as Input<'sendRoomMessage'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
         const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
+        await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
         return sent as Output<Name>;
       }
       case 'reactToMessage':
@@ -6406,6 +6411,7 @@ export class PhoneService {
           workspaceId: id,
           creatorId: viewerId,
           roomId: generalId,
+          team: true,
         });
       return generalId;
     });
@@ -7263,7 +7269,15 @@ export class PhoneService {
       );
       if (!current.rows[0]) throw new Error('invite not found');
       if (current.rows[0].already_joined) {
-        const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+        const invitedRoom = (await database.query<{ onboarding_room_id: string | null }>(`SELECT onboarding_room_id FROM invites WHERE token_hash=$1`, [hash(input.token)])).rows[0]?.onboarding_room_id;
+        if (invitedRoom && !current.rows[0].consumed_at) {
+          await joinRooms(database, { workspaceId: row.workspace_id, identityId: viewerId, invitedById: row.created_by,
+            rooms: { type: 'rooms', roomIds: [invitedRoom] }, workspaceJoined: false });
+          await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [hash(input.token)]);
+          await observeOnboardingInvite(database, hash(input.token), viewerId, true);
+        }
+        const accessible = invitedRoom && (await database.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`, [invitedRoom, viewerId])).rowCount > 0;
+        const roomId = accessible ? invitedRoom : await firstAccessibleRoomId(database, row.workspace_id, viewerId);
         return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
       }
       if (current.rows[0].consumed_at) throw new Error('invite not found');
@@ -7293,7 +7307,11 @@ export class PhoneService {
         rooms: { type: 'all-live-top-level' },
         workspaceJoined: joined.rowCount > 0,
       });
-      const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+      const invitedRoom = (await database.query<{ onboarding_room_id: string | null }>(`SELECT onboarding_room_id FROM invites WHERE token_hash=$1`, [hash(input.token)])).rows[0]?.onboarding_room_id;
+      if (invitedRoom) await joinRooms(database, { workspaceId: row.workspace_id, identityId: viewerId, invitedById: row.created_by,
+        rooms: { type: 'rooms', roomIds: [invitedRoom] }, workspaceJoined: false });
+      const roomId = invitedRoom ?? await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+      await observeOnboardingInvite(database, hash(input.token), viewerId, joined.rowCount > 0);
       if (roomId && joined.rowCount > 0) {
         if (this.freeAgents && !(await database.query(
           `SELECT 1 FROM free_agents WHERE workspace_id=$1`, [row.workspace_id])).rowCount) {
@@ -7719,27 +7737,48 @@ export class PhoneService {
   }
 
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
-    return this.database.transaction(
-      async (database) =>
-        (await settleWorkflowGate(database, {
-          choiceId: input.choiceId,
-          optionId: input.optionId,
-          viewerId,
-          note: input.note,
-        })) ??
-        answerRoomChoice(database, {
-          choiceId: input.choiceId,
-          optionId: input.optionId,
-          viewerId,
-          note: input.note,
-        }),
-    );
+    return this.database.transaction(async database => {
+      const starter = (await database.query<{ room_id: string; agent_id: string; stage: string; share: { url: string; message: string } | null }>(
+        `SELECT c.room_id,c.agent_id,m.card->>'starterOnboarding' stage,m.card->'starterShare' share
+         FROM room_choices c JOIN messages m ON m.id=c.message_id
+         WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
+      )).rows[0];
+      if (starter) {
+        const game = starter.stage === 'welcome' && input.optionId === 'B';
+        const explanation = starter.stage === 'welcome' && input.optionId === 'D';
+        const invite = (starter.stage === 'welcome' && input.optionId === 'C') || (starter.stage === 'next' && input.optionId === 'A');
+        const result = await answerRoomChoice(database, {
+          choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
+        }, { wake: !(game || explanation || invite) });
+        if (starter.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C' | 'D' });
+        if (explanation) await postStarterExplanation(database, starter.room_id, starter.agent_id);
+        if (game) await postStarterGame(database, this.objects, starter.room_id, viewerId);
+        if (invite) {
+          const share = starter.share ?? await createStarterInvite(database, starter.room_id, viewerId, this.publicOrigin);
+          await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
+            [randomBytes(32).toString('hex'), starter.room_id, starter.agent_id, share.message]);
+          return { ...result, share };
+        }
+        return result;
+      }
+      return (await settleWorkflowGate(database, {
+        choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
+      })) ?? answerRoomChoice(database, { choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note });
+    });
   }
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
     return this.database.transaction(
-      async (database) =>
+      async (database) => {
+        const starter = (await database.query<{ stage: string }>(
+          `SELECT m.card->>'starterOnboarding' stage FROM room_choices c JOIN messages m ON m.id=c.message_id
+           WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
+        )).rows[0];
+        const result = await (
         (await settleWorkflowGate(database, { choiceId: input.choiceId, viewerId, skip: true })) ??
-        skipRoomChoice(database, { choiceId: input.choiceId, viewerId }),
+        skipRoomChoice(database, { choiceId: input.choiceId, viewerId }, { wake: !starter }));
+        if (starter?.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'welcome_skipped');
+        return result;
+      },
     );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {

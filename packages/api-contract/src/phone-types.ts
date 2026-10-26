@@ -580,6 +580,7 @@ export type SquireApprovalCardView = SquireApprovalDetails & {
 
 /** One lettered question or Room poll. Options are plates, never ledger rows. */
 export type ChoiceCardView = {
+  readonly starterOnboarding?: 'welcome' | 'next';
   readonly ask?: string;
   readonly choiceId: string;
   readonly mode: ChoiceMode;

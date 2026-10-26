@@ -9,6 +9,7 @@ import { joinRooms } from './membership-join.js';
 import { captureServerError } from './sentry.js';
 import { systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
+import { postStarterWelcome } from './starter-onboarding.js';
 
 /**
  * Free starter agents: every new Workspace gets one agent, owned by its
@@ -41,6 +42,8 @@ CREATE TABLE IF NOT EXISTS free_agents (
 );
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removed_at timestamptz;
 ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removal_cleaned_at timestamptz;
+ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS model text;
+ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS starter_role text;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_bootstrap_hash ON free_agents(bootstrap_hash)
   WHERE bootstrap_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_model_token_hash ON free_agents(model_token_hash)
@@ -82,6 +85,7 @@ export interface FreeAgentConfig {
   limits?: FreeAgentLimits;
   /** Upstream OpenRouter model every proxied request is pinned to. */
   model: string;
+  lunaModel?: string;
   /** Seconds without work before the helper asks to sleep. */
   idleSeconds: number;
   /** Free agents one person may own; later Workspaces get none. */
@@ -121,6 +125,7 @@ export function freeAgentConfigFromEnv(
   return {
     limits: freeAgentLimitsFromEnv(env),
     model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4.1-flash-1017',
+    lunaModel: env.BEELINE_FREE_AGENT_LUNA_MODEL || 'openai/gpt-6-luna',
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
     dailyTokenCap: freeAgentDailyTokenCapFromEnv(env),
@@ -224,6 +229,8 @@ export const FREE_AGENT_REPOSITORY_GUIDE = `Post the repository card only when t
 
 export const FREE_AGENT_TURN_GUIDE = `Before long work, call read(facet:"usage") to check your remaining allowance. If the job will not fit, deliver a smaller useful version or explain the limit up front. End every turn with the deliverable or a clear status explaining what is finished, what stopped, and the next step. Never end on a promise of more work: once your turn ends, no work continues until another message wakes you.`;
 
+const FREE_AGENT_TEAM_GUIDE = `You and the other free starter agent are a team: Beebee and Luna. Either may lead. For the person's first three substantive questions in this Room, the lead posts a draft and tags the other agent once for a second opinion. The reviewer replies once, tags the lead to deliver that review, identifies a concrete correction or confirms the draft, and never asks the lead or another agent for another review. The lead then posts the final answer, saying what changed and who caught it. Credit the reviewer by plain name in the final answer; do not tag them again. Count completed substantive answers from the conversation, excluding greetings, game moves and onboarding choices. After those first three answers, ask for a second opinion only when stakes are high or you are unsure. Never start a second review round for the same answer. A review request makes you the reviewer, not a new lead. Use the other agent's exact current handle from the Room roster. After the first reviewed final answer, offer to invite a friend using app_tool(app:"beeline:onboarding",tool:"invite",args:{}). Use this tool whenever the person asks to invite someone to their own Room; the card opens their phone share sheet.`;
+
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
 
@@ -260,13 +267,14 @@ ${FREE_AGENT_CONNECT_GUIDE}`;
 export async function createFreeAgentInWorkspace(
   database: SqlDatabase,
   config: FreeAgentConfig,
-  input: { workspaceId: string; creatorId: string; roomId: string },
+  input: { workspaceId: string; creatorId: string; roomId: string; name?: 'Beebee' | 'Luna'; silent?: boolean; team?: boolean },
 ): Promise<string | undefined> {
   const owned = await database.query<{ count: number }>(
     `SELECT count(*)::int count FROM free_agents WHERE owner_id=$1`,
     [input.creatorId],
   );
   if ((owned.rows[0]?.count ?? 0) >= config.maxPerOwner) return undefined;
+  const name = input.name ?? 'Beebee';
   const agent = generateAgentKeypair();
   const body = generateAgentKeypair();
   const lockedWorkspaces = await lockIdentityHandleWorkspaces(database, agent.publicKey, [
@@ -284,12 +292,12 @@ export async function createFreeAgentInWorkspace(
     takenNames: roster.rows.map((row) => row.name),
   });
   const handle = uniqueAgentHandle(
-    'Beebee',
+    name,
     roster.rows.flatMap((row) => (row.handle ? [row.handle] : [])),
   );
   await database.query(
     `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,$3,$4)`,
-    [agent.publicKey, 'Beebee', handle, seeded.face],
+    [agent.publicKey, name, handle, seeded.face],
   );
   await database.query(
     `INSERT INTO agents(agent_id,owner_id,soul,selected_model,machine_id,machine_name,harness)
@@ -298,8 +306,8 @@ export async function createFreeAgentInWorkspace(
       agent.publicKey,
       input.creatorId,
       JSON.stringify({
-        name: 'Beebee',
-        instructions: freeAgentInstructions(seeded.soul, 'Beebee', config),
+        name,
+        instructions: freeAgentInstructions(seeded.soul, name, config) + (input.team ? `\n\n${FREE_AGENT_TEAM_GUIDE}` : ''),
         avatarSeed: agent.publicKey,
       }),
       freeAgentHarnessModel(config),
@@ -313,13 +321,15 @@ export async function createFreeAgentInWorkspace(
     [input.workspaceId, agent.publicKey, input.creatorId],
   );
   await database.query(
-    `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys)
-     VALUES($1,$2,$3,$4)`,
+    `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,model,starter_role)
+     VALUES($1,$2,$3,$4,$5,$6)`,
     [
       agent.publicKey,
       input.workspaceId,
       input.creatorId,
       sealSecrets(config.sealSecret, { agent: agent.secretKey, body: body.secretKey }),
+      config.model,
+      input.team ? name.toLowerCase() : null,
     ],
   );
   await joinRooms(database, {
@@ -330,7 +340,7 @@ export async function createFreeAgentInWorkspace(
     workspaceJoined: true,
   });
   // Subscribed after its own arrival, so only later joins and leaves wake it.
-  await database.query(
+  if (!input.team) await database.query(
     `UPDATE memberships SET event_subscriptions=$3::jsonb
      WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL`,
     [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)],
@@ -358,7 +368,7 @@ export async function createFreeAgentInWorkspace(
   const hello = FREE_AGENT_HELLO.replace('<owner>', owner.handle).replace('<handle>', handle);
   const helloId = createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex');
   // An ordinary agent-authored message: the existing mention/push path notifies the owner.
-  await database.query(
+  if (!input.silent) await database.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
     [helloId, input.roomId, agent.publicKey, hello],
   );
@@ -551,11 +561,32 @@ export class FreeAgentService {
     private readonly log: (line: string) => void = (line) => console.log(`[free-agents] ${line}`),
   ) {}
 
-  createInWorkspace(
+  async createInWorkspace(
     database: SqlDatabase,
-    input: { workspaceId: string; creatorId: string; roomId: string },
+    input: { workspaceId: string; creatorId: string; roomId: string; team?: boolean },
   ): Promise<string | undefined> {
-    return createFreeAgentInWorkspace(database, this.config, input);
+    // Serialize owner creation so simultaneous Workspaces cannot exceed the cap.
+    await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-create:${input.creatorId}`]);
+    if (!input.team) return createFreeAgentInWorkspace(database, this.config, input);
+    const owned = (await database.query<{ count: number }>(
+      `SELECT count(*)::int count FROM free_agents WHERE owner_id=$1`, [input.creatorId],
+    )).rows[0]?.count ?? 0;
+    if (owned + 2 > this.config.maxPerOwner) return undefined;
+    const beebee = await createFreeAgentInWorkspace(database, this.config, { ...input, silent: true, team: true });
+    const luna = await createFreeAgentInWorkspace(database, {
+      ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
+    }, { ...input, name: 'Luna', silent: true, team: true });
+    if (!beebee || !luna) throw new Error('starter team provisioning failed');
+    await database.query(`UPDATE memberships SET event_subscriptions=$3::jsonb
+      WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`,
+      [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
+    const owner = (await database.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [input.creatorId])).rows[0]!;
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,clock_timestamp())`, [
+      createHash('sha256').update(`starter-team-hello:${beebee}`).digest('hex'), input.roomId, beebee,
+      `Hi ${owner.name}, I'm Beebee. Luna is on your team too. We run on different AI models and check each other's work. What should we do first?`,
+    ]);
+    await postStarterWelcome(database, { roomId: input.roomId, agentId: beebee });
+    return beebee;
   }
 
   /** Fire-and-forget entry for a committed create or a pending wake. */
@@ -827,9 +858,10 @@ export class FreeAgentService {
           sealed_keys: string;
           name: string;
           soul: { instructions?: string } | null;
+          model: string | null;
         }>(
           `SELECT f.agent_id,f.owner_id,f.workspace_id,w.name workspace_name,f.sealed_keys,
-                  i.name,a.soul
+                  i.name,a.soul,f.model
            FROM free_agents f JOIN workspaces w ON w.id=f.workspace_id
            JOIN identities i ON i.id=f.agent_id JOIN agents a ON a.agent_id=f.agent_id
            WHERE f.bootstrap_hash=$1 AND f.removed_at IS NULL AND f.state NOT IN ('failed','destroyed')
@@ -852,7 +884,7 @@ export class FreeAgentService {
         bodySecretKey: keys.body,
         agentName: row.name,
         harness: FREE_AGENT_HARNESS,
-        model: freeAgentHarnessModel(this.config),
+        model: freeAgentHarnessModel({ model: row.model ?? this.config.model }),
         soul: row.soul?.instructions ?? '',
         workspaceId: row.workspace_id,
         workspaceName: row.workspace_name,
@@ -861,7 +893,7 @@ export class FreeAgentService {
         daemonExchangeToken: exchange.exchangeToken,
         modelToken,
         modelBaseUrl: `${new URL(this.config.publicOrigin).origin}/v1/free-agents/model`,
-        upstreamModel: this.config.model,
+        upstreamModel: row.model ?? this.config.model,
         maxTurnSeconds: (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs / 1000,
         idleSeconds: this.config.idleSeconds,
       };

@@ -728,6 +728,7 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     return { identityId: response.identityId, optionId: response.optionId };
   });
   return {
+    ...field('starterOnboarding', oneOf(item.starterOnboarding, ['welcome', 'next'] as const)),
     choiceId: item.choiceId,
     mode: item.mode,
     status: item.status,

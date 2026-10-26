@@ -1,3 +1,4 @@
+vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 import { ledgerStamp } from '@/buzz/relative-time';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';

@@ -105,3 +105,14 @@ export async function funnelSuccessfulOperation(name: string) {
   const { monolithSession } = await import('./monolith-session');
   await funnel.activation(event, await monolithSession.authorization());
 }
+
+export async function funnelOnboarding(event: 'welcome_shown' | 'game_viewer_opened' | 'game_viewer_closed' | 'invite_shared', durationMs?: number) {
+  try {
+    const funnel = await getClient();
+    if (!funnel) return;
+    const { monolithSession } = await import('./monolith-session');
+    await funnel.onboarding(event, await monolithSession.authorization(), durationMs);
+  } catch {
+    // Measurement must not interrupt a card, viewer or share sheet.
+  }
+}

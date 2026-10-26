@@ -210,8 +210,7 @@ recovery. Its existing preview and account-linking gates remain in force.
 Authenticated events mark an install internal if its identity is hidden, fixture
 only, the fixed Play reviewer, or one of the explicitly confirmed operator
 handles (`lunchboxfortwo`, `bananaman614305`, `moonscannerai`). All earlier events
-for that install are excluded retroactively. The account identifier is used only
-for this check and transient new-account classification and is not saved in either funnel table. Review launch links and
+for that install are excluded retroactively. The raw account identifier is not saved in either funnel table. Authenticated sign-in now stores a domain-separated SHA-256 account hash on the install row so server-observed onboarding steps can find the same attempt. This is pseudonymous correlation, not unlinkable anonymous data; the mapping expires with the raw install ledger. Review launch links and
 review sessions are suppressed on the client as well. Ordinary customer Workspace
 owners are not classified as staff.
 
@@ -232,6 +231,18 @@ the full seven-day bucket. Outcome branches can overlap if one install retries.
 A zero start denominator yields a null completion rate. If the window predates
 collection, `state` is `not_measured` and stage counts are null. Consult
 `coverageStart`; this release cannot reconstruct earlier sign-in attempts.
+
+`signinFunnel.onboarding` extends the same raw event ledger with welcome, option,
+task, game, invitation and return steps. It uses the selected platform and
+welcome-cohort date window. `splits` contains `all`, `A`–`D` and `unpicked`,
+classified by the first selected option; viewing D and later playing the game
+stays in D. Each step supplies its attempt count, `previousEvent`,
+`medianTimeMs` from that event and `medianDurationMs` where supplied by the
+viewer. Missing intervals are null. Final-answer timing starts at the question;
+viewer-close timing starts at viewer-open. Team installs remain excluded by the
+existing cohort rules. Client onboarding observations require authentication
+and an install bound to that account; server-only milestones cannot be claimed
+by the client. Only aggregate counts and timings appear in dashboard output.
 
 Downloads-to-open comparisons are available per measured mobile platform and for
 an exclusively mobile selection. An all-platform selection also contains web and

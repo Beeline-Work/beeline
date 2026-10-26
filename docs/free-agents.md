@@ -1,14 +1,16 @@
 # Free starter agents
 
-Every newly created Workspace gets one free agent, owned by its creator. It runs
-on its own small Fly Machine in the `beeline-free-agents` app, which sleeps after
+Every newly created Workspace gets a free starter team, Beebee and Luna, owned
+by its creator, when the owner has room for both under the free-agent limit.
+Existing Workspaces and the operator single-agent addition keep their existing
+behavior. Each agent runs on its own small Fly Machine in the `beeline-free-agents` app, which sleeps after
 a minute without work. People who only join an existing Workspace by invite get
 none. Code: `apps/server/src/free-agents.ts`, `free-agent-model-proxy.ts`,
 `fly-machines.ts`; helper `apps/body/src/free-agent-vm.ts`, `free-agent-idle.ts`;
 image `infra/free-agent/`.
 
-New free agents are named **Beebee** and use `@beebee`, with the existing numeric
-suffix rule when that handle is already taken. They keep their seeded face and
+New starter teammates are named **Beebee** and **Luna**, using `@beebee` and
+`@luna` with the existing numeric suffix rule when a handle is taken. They keep their seeded face and
 soul. Existing free agents keep their names.
 
 ## Lifecycle
@@ -18,7 +20,11 @@ soul. Existing free agents keep their names.
   row (harness `pi`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
   presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
-  The first hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
+  New-workspace creation provisions the pair atomically, then posts the approved
+  welcome choice card. D posts the fixed explanation and A–C; B posts the stored
+  tic-tac-toe game as Luna and a next-step card as Beebee. Those paths use no
+  model turn. The single-agent operator path retains the legacy hello.
+  The legacy hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
   The hello tags the owner through the normal mention/push path and uses the
   agent's actual handle. It creates no model turn or Machine. The first real
   queued work provisions the Machine through `FreeAgentService.kick` or the sweep.
@@ -108,7 +114,7 @@ and a 65,536-token output ceiling.
 
 The Machine never holds a provider key. Pi's `beeline` provider points at
 `POST /v1/free-agents/model/chat/completions` with the agent's model token. The
-proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash-1017`). It
+proxy pins each new agent's stored model. Beebee uses `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash-1017`); Luna uses `BEELINE_FREE_AGENT_LUNA_MODEL` (default `openai/gpt-6-luna`). Existing rows without a stored model keep the configured legacy model. Both teammates reserve and settle against the same owner's allowance and shared dollar budget. It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
 reserves an estimated prompt plus a capped reply against the

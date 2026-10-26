@@ -76,3 +76,6 @@ agent-home/
 # Isolated voice proof output (including local session tokens), never ship it.
 /.voice-proof/
 /.beeline-proof/
+
+# Native component proof adapters share the mobile dependency install.
+/apps/mobile/surface-proof/node_modules

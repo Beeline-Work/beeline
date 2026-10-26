@@ -1,2 +1,2 @@
 export const proofTheme: 'bone' | 'obsidian' = 'bone';
-export const proofSurface: string = 'sheet';
+export const proofSurface: string = 'onboarding';

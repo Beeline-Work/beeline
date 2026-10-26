@@ -47,3 +47,6 @@ export const connectionViewState = () => 'connected';
 export const openCompanyItem = () => {};
 export const appNeedsSquire = () => false;
 export const reconnectWorkbenchApp = async () => {};
+
+export const funnelOnboarding = async () => {};
+export const runnableArtifactUrl = async () => 'http://127.0.0.1:8127/game.html';

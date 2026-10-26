@@ -26,10 +26,12 @@ const resolveAliased = (base) => {
   return base;
 };
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === 'react-native-webview' || moduleName.includes('node_modules/react-native-webview/src/index'))
+    return { type: 'sourceFile', filePath: path.resolve(__dirname, '../node_modules/react-native-webview/src/index.ts') };
   if (moduleName === 'react-native-svg' && platform !== 'web')
     return {
       type: 'sourceFile',
-      filePath: path.resolve(__dirname, 'node_modules/react-native-svg/src/index.ts'),
+      filePath: path.resolve(__dirname, '../node_modules/react-native-svg/src/index.ts'),
     };
 
   if (
@@ -46,6 +48,8 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   }
   if (
     [
+      '@/auth/signin-funnel',
+      '@/buzz/artifact-link',
       '@/buzz/app-reconnect',
       '@/buzz/use-active-community',
       '@/buzz/use-text-draft',

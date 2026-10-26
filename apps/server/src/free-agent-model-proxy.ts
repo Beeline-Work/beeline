@@ -380,8 +380,8 @@ export async function handleFreeAgentModelRequest(
   const token = typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : '';
   const agent = token.startsWith('bfm_')
     ? (
-        await options.database.query<{ agent_id: string; owner_id: string }>(
-          `SELECT agent_id,owner_id FROM free_agents
+        await options.database.query<{ agent_id: string; owner_id: string; model: string | null }>(
+          `SELECT agent_id,owner_id,model FROM free_agents
            WHERE model_token_hash=$1 AND removed_at IS NULL AND state NOT IN ('failed','destroyed')`,
           [tokenHash(token)],
         )
@@ -391,6 +391,8 @@ export async function handleFreeAgentModelRequest(
     sendJson(response, 401, { error: { message: 'invalid free agent model token' } });
     return true;
   }
+  // Only the server-stored choice can select a model; request bodies cannot.
+  options = { ...options, config: { ...options.config, model: agent.model ?? options.config.model } };
   let body: Record<string, unknown>;
   try {
     body = JSON.parse((await readBody(request)).toString('utf8')) as Record<string, unknown>;

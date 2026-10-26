@@ -579,6 +579,14 @@ export async function createAgentCommand(
   const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
     ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;
+  if (input.reason === 'agent_tag' && parent && depth > 2 && (await db.query(
+    `SELECT 1 FROM free_agents lead JOIN free_agents peer ON peer.owner_id=lead.owner_id
+       AND peer.workspace_id=lead.workspace_id
+     JOIN rooms room ON room.id=$3 AND room.parent_id IS NULL
+     WHERE lead.agent_id=$1 AND peer.agent_id=$2 AND lead.starter_role IS NOT NULL
+       AND peer.starter_role IS NOT NULL AND lead.removed_at IS NULL AND peer.removed_at IS NULL`,
+    [parent.agent_id, input.agentId, input.roomId],
+  )).rowCount) return undefined;
   const id = input.id ?? randomBytes(32).toString('hex');
   const minutes = member.rows[0]!.wake_batch_minutes;
   // Stop/restart are helper controls, not model turns. Human-authored scheduler
@@ -961,12 +969,19 @@ async function routeTaggedLifecycleCommand(
 
 /** The sole agent in a top-level Room with exactly one current human member. */
 export function soloRoomAgentSql(room: string, author: string): string {
-  return `(SELECT min(member.identity_id) FILTER (WHERE identity.kind='agent')
-    FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+  return `(SELECT CASE WHEN count(*) FILTER (WHERE solo_identity.kind='agent')=1
+      THEN min(member.identity_id) FILTER (WHERE solo_identity.kind='agent')
+      ELSE min(member.identity_id) FILTER (WHERE starter.starter_role='beebee') END
+    FROM memberships member JOIN identities solo_identity ON solo_identity.id=member.identity_id
+    LEFT JOIN free_agents starter ON starter.agent_id=member.identity_id AND starter.owner_id=${author}
+      AND starter.removed_at IS NULL
     WHERE member.room_id=${room}.id AND member.removed_at IS NULL
       AND ${room}.parent_id IS NULL AND ${room}.direct_participants IS NULL
-    HAVING count(*) FILTER (WHERE identity.kind='human')=1
-       AND count(*) FILTER (WHERE identity.kind='agent')=1
+    HAVING count(*) FILTER (WHERE solo_identity.kind='human')=1
+       AND (count(*) FILTER (WHERE solo_identity.kind='agent')=1 OR
+         (count(*) FILTER (WHERE solo_identity.kind='agent')=2
+          AND count(*) FILTER (WHERE starter.starter_role IN ('beebee','luna'))=2
+          AND count(*) FILTER (WHERE starter.starter_role='beebee')=1))
        AND bool_or(member.identity_id=${author}))`;
 }
 

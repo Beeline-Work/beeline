@@ -1,4 +1,12 @@
 /** Anonymous, allowlisted sign-in measurement. Never add identity or free-text fields. */
+export const ONBOARDING_EVENTS = [
+  'welcome_shown', 'welcome_skipped', 'option_picked', 'user_answered',
+  'task_question', 'task_first_answer', 'task_review_requested', 'task_final_answer',
+  'game_posted', 'game_viewer_opened', 'game_viewer_closed',
+  'invite_created', 'invite_shared', 'invite_opened', 'invite_friend_signed_up', 'invite_friend_messaged',
+  'returned_day_1', 'returned_day_7',
+] as const;
+export type OnboardingEvent = (typeof ONBOARDING_EVENTS)[number];
 export const FUNNEL_EVENTS = [
   'app_opened',
   'signin_screen_shown',
@@ -8,6 +16,7 @@ export const FUNNEL_EVENTS = [
   'workspace_created',
   'first_message_sent',
   'screen_shown',
+  ...ONBOARDING_EVENTS,
 ] as const;
 /**
  * Route patterns a first-session screen event may name. Patterns only, with
@@ -92,6 +101,8 @@ export interface SigninFunnelEvent {
   outcome?: 'success' | 'cancelled' | 'error';
   errorCode?: (typeof FUNNEL_ERRORS)[number];
   screen?: FunnelScreen;
+  option?: 'A' | 'B' | 'C' | 'D';
+  durationMs?: number;
   timestamp: string;
 }
 export const FUNNEL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -107,6 +118,8 @@ const KEYS = [
   'errorCode',
   'screen',
   'timestamp',
+  'option',
+  'durationMs',
 ];
 export function parseSigninFunnelEvent(value: unknown, now = Date.now()): SigninFunnelEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -131,6 +144,8 @@ export function parseSigninFunnelEvent(value: unknown, now = Date.now()): Signin
   const providerStep = ['provider_tapped', 'callback_result', 'signed_in'].includes(
     v.event as string,
   );
+  if (v.option !== undefined && (!ONBOARDING_EVENTS.includes(v.event as never) || !['A', 'B', 'C', 'D'].includes(v.option as string))) return null;
+  if (v.durationMs !== undefined && (v.event !== 'game_viewer_closed' || !Number.isSafeInteger(v.durationMs) || Number(v.durationMs) < 0 || Number(v.durationMs) > 86_400_000)) return null;
   if (
     providerStep ? !['github', 'google'].includes(v.provider as string) : v.provider !== undefined
   )

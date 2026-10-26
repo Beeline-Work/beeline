@@ -1,3 +1,4 @@
+vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -34,6 +35,7 @@ vi.mock('./sandbox-webview', () => ({
   useSandboxWebViewStatus: () => 'ready',
 }));
 import { RunnableArtifact } from './RunnableArtifact';
+import { funnelOnboarding } from '@/auth/signin-funnel';
 const attachment = {
   kind: 'artifact' as const,
   url: '/v1/media/11111111-1111-4111-8111-111111111111',
@@ -45,6 +47,15 @@ const attachment = {
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 describe('runnable viewer boundary', () => {
+  it('records viewer lifecycle in the trusted shell without a game message bridge', async () => {
+    state.os = 'android';
+    let tree: any;
+    vi.mocked(funnelOnboarding).mockClear();
+    await act(async () => { tree = create(<RunnableArtifact attachment={attachment} />); });
+    expect(funnelOnboarding).toHaveBeenCalledWith('game_viewer_opened');
+    await act(async () => { tree.unmount(); });
+    expect(funnelOnboarding).toHaveBeenCalledWith('game_viewer_closed', expect.any(Number));
+  });
   it('has no bridge, bearer, injected script, or file/permission access; rejects external navigation', async () => {
     state.os = 'android';
     let tree: any;

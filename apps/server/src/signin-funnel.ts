@@ -4,7 +4,10 @@ import {
   parseSigninFunnelEvent,
   type SigninFunnelEvent,
   type FunnelAuthObservation,
+  ONBOARDING_EVENTS,
+  type OnboardingEvent,
 } from '@beeline/api-contract/signin-funnel';
+import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
 
@@ -12,6 +15,76 @@ const lastCompaction = new WeakMap<SqlDatabase, string>();
 
 // Only these confirmed operator accounts are excluded; customer Workspace owners are not internal.
 const TEAM_HANDLES = ['lunchboxfortwo', 'bananaman614305', 'moonscannerai'];
+function funnelAccountHash(identityId: string) {
+  return createHash('sha256').update(`beeline-onboarding:${identityId}`).digest('hex');
+}
+
+export async function recordOnboardingEvent(database: SqlDatabase, identityId: string, event: OnboardingEvent,
+  detail: { option?: 'A' | 'B' | 'C' | 'D'; durationMs?: number } = {}) {
+  const context = (await database.query<{ install_id: string; attempt_id: string; platform: SigninFunnelEvent['platform']; version: string }>(
+    `SELECT e.install_id,e.attempt_id,e.platform,e.version FROM signin_funnel_installs i
+     JOIN signin_funnel_events e ON e.install_id=i.install_id
+     WHERE i.account_hash=$1 AND NOT i.internal AND e.event='signed_in'
+       AND EXISTS(SELECT 1 FROM signin_funnel_events signup WHERE signup.install_id=e.install_id
+         AND signup.attempt_id=e.attempt_id AND signup.event='signup')
+     ORDER BY EXISTS(SELECT 1 FROM signin_funnel_events welcome WHERE welcome.install_id=e.install_id
+       AND welcome.attempt_id=e.attempt_id AND welcome.event='welcome_shown') DESC,e.occurred_at DESC LIMIT 1`, [funnelAccountHash(identityId)],
+  )).rows[0];
+  if (!context) return;
+  await recordSigninFunnelEvent(database, {
+    event, installId: context.install_id, attemptId: context.attempt_id,
+    platform: context.platform, version: context.version, environment: 'production',
+    timestamp: new Date().toISOString(), ...detail,
+  }, 'server', identityId);
+}
+
+export async function observeOnboardingMessage(database: SqlDatabase, roomId: string, identityId: string, depth?: number, text = '') {
+  const team = (await database.query<{ owner_id: string; agent_id: string; handle: string | null }>(
+    `SELECT f.owner_id,f.agent_id,i.handle FROM free_agents f JOIN identities i ON i.id=f.agent_id
+     JOIN memberships m ON m.identity_id=f.agent_id AND m.room_id=$1 AND m.removed_at IS NULL
+     WHERE f.starter_role IS NOT NULL AND f.removed_at IS NULL
+       AND (f.owner_id=$2 OR EXISTS(SELECT 1 FROM free_agents self WHERE self.agent_id=$2 AND self.owner_id=f.owner_id))`,
+    [roomId, identityId],
+  )).rows;
+  const owner = team[0]?.owner_id;
+  if (owner && identityId === owner) {
+    await recordOnboardingEvent(database, owner, 'user_answered');
+    await recordOnboardingEvent(database, owner, 'task_question');
+    const welcome = (await database.query<{ age: string }>(
+      `SELECT EXTRACT(epoch FROM now()-min(e.occurred_at)) age FROM signin_funnel_events e
+       JOIN signin_funnel_installs i ON i.install_id=e.install_id WHERE i.account_hash=$1 AND e.event='user_answered'`,
+      [funnelAccountHash(owner)],
+    )).rows[0];
+    if (Number(welcome?.age) >= 86_400) await recordOnboardingEvent(database, owner, 'returned_day_1');
+    if (Number(welcome?.age) >= 7 * 86_400) await recordOnboardingEvent(database, owner, 'returned_day_7');
+  } else if (owner && depth !== undefined) {
+    if (depth === 0) {
+      await recordOnboardingEvent(database, owner, 'task_first_answer');
+      if (team.some(member => member.agent_id !== identityId && member.handle && text.includes(`@${member.handle}`)))
+        await recordOnboardingEvent(database, owner, 'task_review_requested');
+    }
+    if (depth === 2) await recordOnboardingEvent(database, owner, 'task_final_answer');
+  }
+  const inviter = (await database.query<{ created_by: string }>(
+    `SELECT created_by FROM invites WHERE onboarding_room_id=$1 AND onboarding_friend_id=$2 LIMIT 1`, [roomId, identityId],
+  )).rows[0];
+  if (inviter) await recordOnboardingEvent(database, inviter.created_by, 'invite_friend_messaged');
+}
+
+export async function observeOnboardingInvite(database: SqlDatabase, tokenHash: string, viewerId?: string, joined = false) {
+  const invite = (await database.query<{ created_by: string; onboarding_created_at: string | Date }>(
+    `SELECT created_by,onboarding_created_at FROM invites WHERE token_hash=$1 AND onboarding_room_id IS NOT NULL`, [tokenHash],
+  )).rows[0];
+  if (!invite || invite.created_by === viewerId) return;
+  await recordOnboardingEvent(database, invite.created_by, 'invite_opened');
+  if (joined && viewerId) {
+    await database.query(`UPDATE invites SET onboarding_friend_id=$2 WHERE token_hash=$1`, [tokenHash, viewerId]);
+    if ((await database.query(`SELECT 1 FROM signin_funnel_installs i JOIN signin_funnel_events e ON e.install_id=i.install_id
+      JOIN identities person ON person.id=$3 WHERE i.account_hash=$1 AND e.event='signup'
+        AND person.created_at >= $2::timestamptz`, [funnelAccountHash(viewerId), invite.onboarding_created_at, viewerId])).rowCount)
+      await recordOnboardingEvent(database, invite.created_by, 'invite_friend_signed_up');
+  }
+}
 export class FunnelRateLimit {
   private readonly clients = new Map<string, { start: number; count: number }>();
   allow(ip: string, now = Date.now()): boolean {
@@ -50,7 +123,17 @@ export async function recordSigninFunnelEvent(
       throw error;
     }
   }
-  if (source === 'client' && ['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event) && !identityId) return;
+  if (source === 'client' && (['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event) || ONBOARDING_EVENTS.includes(event.event as never)) && !identityId) return;
+  if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !['welcome_shown', 'game_viewer_opened', 'game_viewer_closed', 'invite_shared'].includes(event.event)) return;
+  if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !(await database.query(
+    `SELECT 1 FROM signin_funnel_installs WHERE install_id=$1 AND account_hash=$2`,
+    [event.installId, funnelAccountHash(identityId!)],
+  )).rowCount) return;
+  if (source === 'client' && ['game_viewer_opened', 'game_viewer_closed', 'invite_shared'].includes(event.event)) {
+    const prerequisite = event.event === 'invite_shared' ? 'invite_created' : 'game_posted';
+    if (!(await database.query(`SELECT 1 FROM signin_funnel_events WHERE install_id=$1 AND attempt_id=$2 AND event=$3`,
+      [event.installId, event.attemptId, prerequisite])).rowCount) return;
+  }
   if (event.event === 'screen_shown') {
     // Keep screens only for a new-account signup on this attempt, within its first session,
     // and stop at the send cap.
@@ -83,9 +166,12 @@ export async function recordSigninFunnelEvent(
       ON CONFLICT(install_id) DO UPDATE SET internal=signin_funnel_installs.internal OR EXCLUDED.internal,seen_at=now()`,
       [event.installId, internal],
     );
+    if (identityId && event.event === 'signed_in') await tx.query(
+      `UPDATE signin_funnel_installs SET account_hash=$2 WHERE install_id=$1`, [event.installId, funnelAccountHash(identityId)],
+    );
     await tx.query(
-      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now()) ON CONFLICT(install_id,attempt_id,event,provider,screen)
+      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at,onboarding_option,duration_ms)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $3='welcome_shown' THEN $14::timestamptz ELSE now() END,$12,$13) ON CONFLICT(install_id,attempt_id,event,provider,screen)
       DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source,
         last_seen_at=GREATEST(signin_funnel_events.last_seen_at,EXCLUDED.last_seen_at),
         visits=signin_funnel_events.visits+CASE WHEN EXCLUDED.event='screen_shown' THEN 1 ELSE 0 END
@@ -103,6 +189,9 @@ export async function recordSigninFunnelEvent(
         event.screen ?? '',
         // Screen order comes from the device's time, not arrival order.
         event.event === 'screen_shown' ? event.timestamp : null,
+        event.option ?? null,
+        event.durationMs ?? null,
+        event.timestamp,
       ],
     );
     if (event.event === 'signed_in' && identityId && !internal) {
@@ -358,6 +447,7 @@ export async function dashboardSigninFunnel(
     signupCounts.set(selection, Number(row?.count ?? 0));
   }
   const firstSession = await dashboardFirstSessionScreens(database, platforms, measuredAt);
+  const onboarding = await dashboardOnboarding(database, platforms, from, through);
   return {
     state: coverageStart && through >= coverageStart ? 'measured' : 'not_measured',
     measuredAt,
@@ -392,7 +482,68 @@ export async function dashboardSigninFunnel(
       })),
     })),
     firstSession,
+    onboarding,
     dailyAggregatesRetainedAfterDays: 90,
+  };
+}
+
+export async function dashboardOnboarding(database: SqlDatabase, platforms: readonly string[], from: string, through: string) {
+  const rows = (await database.query<{
+    install_id: string; attempt_id: string; event: OnboardingEvent; occurred_at: string | Date;
+    onboarding_option: 'A' | 'B' | 'C' | 'D' | null; duration_ms: number | string | null;
+  }>(`SELECT e.install_id,e.attempt_id,e.event,e.occurred_at,e.onboarding_option,e.duration_ms
+      FROM signin_funnel_events e JOIN signin_funnel_installs i ON i.install_id=e.install_id
+      WHERE NOT i.internal AND e.platform=ANY($1::text[]) AND e.event=ANY($2::text[])
+        AND EXISTS(SELECT 1 FROM signin_funnel_events welcome
+          WHERE welcome.install_id=e.install_id AND welcome.attempt_id=e.attempt_id AND welcome.event='welcome_shown'
+            AND welcome.occurred_at>=($3::date::timestamp AT TIME ZONE 'UTC')
+            AND welcome.occurred_at<(($4::date+1)::timestamp AT TIME ZONE 'UTC'))`,
+    [[...platforms], [...ONBOARDING_EVENTS], from, through],
+  )).rows;
+  const attempts = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const key = `${row.install_id}:${row.attempt_id}`;
+    const entries = attempts.get(key) ?? [];
+    entries.push(row);
+    attempts.set(key, entries);
+  }
+  const previous: Partial<Record<OnboardingEvent, OnboardingEvent>> = {
+    option_picked: 'welcome_shown', welcome_skipped: 'welcome_shown', user_answered: 'option_picked',
+    task_question: 'option_picked', task_first_answer: 'task_question', task_review_requested: 'task_first_answer',
+    task_final_answer: 'task_question', game_posted: 'option_picked', game_viewer_opened: 'game_posted',
+    game_viewer_closed: 'game_viewer_opened', invite_created: 'option_picked', invite_shared: 'invite_created',
+    invite_opened: 'invite_shared', invite_friend_signed_up: 'invite_opened', invite_friend_messaged: 'invite_friend_signed_up',
+    returned_day_1: 'user_answered', returned_day_7: 'user_answered',
+  };
+  const median = (values: number[]) => {
+    if (!values.length) return null;
+    values.sort((a, b) => a - b);
+    const middle = Math.floor(values.length / 2);
+    return values.length % 2 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
+  };
+  return {
+    unit: 'signup attempts', from, through,
+    splits: ['all', 'A', 'B', 'C', 'D', 'unpicked'].map(option => {
+      const selected = [...attempts.values()].filter(events => option === 'all' ||
+        (events.find(event => event.event === 'option_picked')?.onboarding_option ?? 'unpicked') === option);
+      return { option, steps: ONBOARDING_EVENTS.map(event => {
+        let count = 0;
+        const intervals: number[] = [];
+        const durations: number[] = [];
+        for (const events of selected) {
+          const current = events.find(entry => entry.event === event);
+          if (!current) continue;
+          count++;
+          const prior = events.find(entry => entry.event === previous[event]);
+          if (prior) {
+            const interval = new Date(current.occurred_at).getTime() - new Date(prior.occurred_at).getTime();
+            if (interval >= 0) intervals.push(interval);
+          }
+          if (current.duration_ms !== null) durations.push(Number(current.duration_ms));
+        }
+        return { event, count, previousEvent: previous[event] ?? null, medianTimeMs: median(intervals), medianDurationMs: median(durations) };
+      }) };
+    }),
   };
 }
 /**

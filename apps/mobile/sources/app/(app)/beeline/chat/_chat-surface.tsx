@@ -1,3 +1,4 @@
+import { funnelOnboarding } from '@/auth/signin-funnel';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
@@ -4522,11 +4523,15 @@ export function BuzzChatSurface({
       if (viewerIsAgent || choiceActionId) return;
       setChoiceActionId(choiceId);
       try {
-        await monolithPhoneOperation('answerChoice', {
+        const decision = await monolithPhoneOperation('answerChoice', {
           choiceId,
           optionId,
           ...(note ? { note } : {}),
         });
+        if (decision.share) {
+          const shared = await Share.share({ message: decision.share.message });
+          if (shared.action === Share.sharedAction) void funnelOnboarding('invite_shared');
+        }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         refreshSignal.force();

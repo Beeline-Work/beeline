@@ -2132,6 +2132,11 @@ CREATE INDEX IF NOT EXISTS invites_workspace_idx ON invites(workspace_id);
 -- A public token is recoverable for managers, reusable, and has no expiry.
 ALTER TABLE invites ALTER COLUMN expires_at DROP NOT NULL;
 ALTER TABLE invites ADD COLUMN IF NOT EXISTS public_token text;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS onboarding_room_id uuid REFERENCES rooms(id) ON DELETE CASCADE;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS onboarding_created_at timestamptz;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS onboarding_friend_id text REFERENCES identities(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS invites_onboarding_friend ON invites(onboarding_friend_id) WHERE onboarding_friend_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS invites_onboarding_room ON invites(onboarding_room_id) WHERE onboarding_room_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS invites_public_workspace_idx ON invites(workspace_id)
   WHERE public_token IS NOT NULL;
 -- Publish the existing support Workspace's first link with the website release.
@@ -2438,7 +2443,7 @@ CREATE TABLE IF NOT EXISTS signin_funnel_installs (
 CREATE TABLE IF NOT EXISTS signin_funnel_events (
   install_id uuid NOT NULL,
   attempt_id uuid NOT NULL,
-  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown')),
+  event text NOT NULL CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown','welcome_shown','welcome_skipped','option_picked','user_answered','task_question','task_first_answer','task_review_requested','task_final_answer','game_posted','game_viewer_opened','game_viewer_closed','invite_created','invite_shared','invite_opened','invite_friend_signed_up','invite_friend_messaged','returned_day_1','returned_day_7')),
   platform text NOT NULL CHECK (platform IN ('ios','android','web','macos','windows','linux')),
   version text NOT NULL,
   provider text NOT NULL DEFAULT '' CHECK (provider IN ('','github','google')),
@@ -2451,6 +2456,10 @@ CREATE TABLE IF NOT EXISTS signin_funnel_events (
   screen text NOT NULL DEFAULT '',
   PRIMARY KEY(install_id,attempt_id,event,provider,screen)
 );
+ALTER TABLE signin_funnel_installs ADD COLUMN IF NOT EXISTS account_hash text;
+CREATE INDEX IF NOT EXISTS signin_funnel_installs_account ON signin_funnel_installs(account_hash) WHERE account_hash IS NOT NULL;
+ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS onboarding_option text CHECK(onboarding_option IN ('A','B','C','D'));
+ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS duration_ms bigint;
 CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS screen text NOT NULL DEFAULT '';
 -- Device time of the latest visit for a screen_shown row; NULL otherwise.
@@ -2467,7 +2476,7 @@ DO $$ BEGIN
 END $$;
 ALTER TABLE signin_funnel_events DROP CONSTRAINT IF EXISTS signin_funnel_events_event_check;
 ALTER TABLE signin_funnel_events ADD CONSTRAINT signin_funnel_events_event_check
-  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown'));
+  CHECK (event IN ('app_opened','signin_screen_shown','provider_tapped','callback_result','signed_in','signup','workspace_created','first_message_sent','screen_shown','welcome_shown','welcome_skipped','option_picked','user_answered','task_question','task_first_answer','task_review_requested','task_final_answer','game_posted','game_viewer_opened','game_viewer_closed','invite_created','invite_shared','invite_opened','invite_friend_signed_up','invite_friend_messaged','returned_day_1','returned_day_7'));
 CREATE TABLE IF NOT EXISTS signin_funnel_auth_flows (
   flow_hash text PRIMARY KEY,
   context jsonb NOT NULL,

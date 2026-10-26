@@ -144,13 +144,14 @@ export class ObjectService {
     bytes: Uint8Array,
     mimeType: string,
     title: string,
+    database: SqlDatabase = this.database,
   ): Promise<UploadArtifactResult> {
     if (!isArtifactMimeType(mimeType))
       throw new Error(`artifact mime must be one of ${ARTIFACT_MIME_TYPES.join(', ')}`);
     if (!bytes.length || bytes.length > ARTIFACT_MAXIMUM_BYTES)
       throw new Error(`artifact size must be between 1 and ${ARTIFACT_MAXIMUM_BYTES} bytes`);
     if (!title.trim()) throw new Error('artifact title is required');
-    return this.#putReadyObject(agentId, bytes, mimeType, title.slice(0, 200), 'artifact');
+    return this.#putReadyObject(agentId, bytes, mimeType, title.slice(0, 200), 'artifact', database);
   }
 
   /**
@@ -235,10 +236,11 @@ export class ObjectService {
     mimeType: string,
     title: string,
     kind: 'media' | 'artifact',
+    database: SqlDatabase = this.database,
   ): Promise<UploadArtifactResult> {
     const retentionHours = this.#retentionHours(kind);
     const digest = createHash('sha256').update(bytes).digest('hex');
-    const existing = await this.database.query<{
+    const existing = await database.query<{
       id: string;
       kind: string;
       mime: string;
@@ -251,13 +253,13 @@ export class ObjectService {
     if (existing.rows[0]) {
       // Same bytes again is an upload: restart the TTL window and clear any
       // tombstone so the read path's invariant holds.
-      await this.database.query(
+      await database.query(
         `UPDATE objects
          SET expires_at=now()+($2 || ' hours')::interval,title=$3,mime=$4,kind=$5
          WHERE id=$1`,
         [existing.rows[0].id, String(retentionHours), title, mimeType, kind],
       );
-      await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [
+      await database.query(`DELETE FROM object_expirations WHERE id=$1`, [
         existing.rows[0].id,
       ]);
       return this.#result({ ...existing.rows[0], title, mime: mimeType }, ownerId, digest);
@@ -266,7 +268,7 @@ export class ObjectService {
     const key = `${kind}/${ownerId}/${digest}`;
     await storage.putObject(key, bytes, mimeType);
     const id = randomUUID();
-    const stored = await this.database.query<{
+    const stored = await database.query<{
       id: string;
       kind: string;
       mime: string;
@@ -280,7 +282,7 @@ export class ObjectService {
        RETURNING id,kind,mime,title,size`,
       [id, ownerId, kind, key, mimeType, title, bytes.length, digest, String(retentionHours)],
     );
-    await this.database.query(`DELETE FROM object_expirations WHERE id=$1`, [stored.rows[0]!.id]);
+    await database.query(`DELETE FROM object_expirations WHERE id=$1`, [stored.rows[0]!.id]);
     return this.#result(stored.rows[0]!, ownerId, digest);
   }
 

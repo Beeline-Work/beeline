@@ -1,3 +1,4 @@
+import { observeOnboardingInvite } from './signin-funnel.js';
 import { createHash } from 'node:crypto';
 import { isCommunityInviteToken } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -77,6 +78,7 @@ export class InvitePreviewAccess {
     );
     const row = result.rows[0];
     if (!row) return { status: 'not_found' };
+    await observeOnboardingInvite(this.database, createHash('sha256').update(rawToken).digest('hex')).catch(error => this.log('[onboarding]', error));
     return {
       status: 'found',
       preview: {

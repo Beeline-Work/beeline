@@ -1,6 +1,6 @@
 // Isolated approval-byte binding proof; no production daemon or grants are used.
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, symlink, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requestGrant } from '../apps/body/dist/read-only-mcp.js';
@@ -26,10 +26,15 @@ try {
     });
     return { ok: response.ok, text: await response.text() };
   };
-  for (const argv of [['no-shebang'], ['approved'], ['./approved'], ['./no-shebang'], ['bash', 'approved'], ['python3', 'approved.py'], ['bash', 'linked']]) {
+  const alternate = join(cwd, 'alternate');
+  await mkdir(alternate);
+  const wrapper = ['env', `PATH=${alternate}:/usr/bin:/bin`, 'chosen'];
+  await writeFile(join(cwd, 'chosen'), '#!/bin/sh\nprintf approved\n', { mode: 0o700 });
+  await writeFile(join(alternate, 'chosen'), '#!/bin/sh\nprintf approved\n', { mode: 0o700 });
+  for (const argv of [wrapper, ['no-shebang'], ['approved'], ['./approved'], ['./no-shebang'], ['bash', 'approved'], ['python3', 'approved.py'], ['bash', 'linked']]) {
     const python = argv[0] === 'python3';
     const bare = argv[0].endsWith('no-shebang');
-    const path = bare ? 'no-shebang' : python ? 'approved.py' : 'approved';
+    const path = argv === wrapper ? 'alternate/chosen' : bare ? 'no-shebang' : python ? 'approved.py' : 'approved';
     const original = python ? "print('approved')\n" : `${bare ? '' : '#!/bin/sh\n'}printf approved\n`;
     const replacement = python ? "print('changed')\n" : `${bare ? '' : '#!/bin/sh\n'}printf changed\n`;
     await writeFile(join(cwd, path), original, { mode: 0o700 });
@@ -50,6 +55,13 @@ try {
     assert.equal(changed.ok, false, changed.text);
     assert.match(changed.text, /changed after it was approved/);
     console.log(`R-SCRIPT-HASH ${argv.join(' ')}: unchanged runs; changed bytes refused with new approval requested`);
+  }
+  for (const target of ['env -i chosen', 'env -u PATH chosen', `env -C ${alternate} ./chosen`, 'env -S chosen']) {
+    await assert.rejects(requestGrant({ kind: 'command', target, purpose: 'Prove wrapper refusal', reason: 'Isolated proof' }, {
+      roomId, scriptRoots: [cwd], scriptEnv: { PATH: `${cwd}:${process.env.PATH}` },
+      execute: async () => { assert.fail('unsupported wrapper must not request approval'); },
+    }), /Cannot safely resolve env wrapper options/);
+    console.log(`R-SCRIPT-HASH ${target}: unsupported wrapper refused before approval`);
   }
   for (const command of ['/bin/echo', 'echo']) {
   await requestGrant({ kind: 'command', target: `${command} approved`, purpose: 'Prove native execution', reason: 'Isolated proof' }, {

@@ -82,6 +82,7 @@ it('includes a known free token allowance without inventing billing', async () =
   await database.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'fixture')`, [NEW, WORKSPACE, OWNER]);
   await database.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,123000)`, [OWNER]);
   const result = await service.execute('listRoomMembers', { roomId: ROOM }, JELLYBEAN);
-  expect(result.members.find(m => m.id === NEW)).toMatchObject({ remainingAllowance: { tokens: { remaining: 2877000 } } });
+  // A free agent with no settled model call yet is in its owner's first-day allowance.
+  expect(result.members.find(m => m.id === NEW)).toMatchObject({ remainingAllowance: { tokens: { remaining: 9877000 } } });
   expect(result.members.find(m => m.id === NEW)).not.toHaveProperty('billing');
 });

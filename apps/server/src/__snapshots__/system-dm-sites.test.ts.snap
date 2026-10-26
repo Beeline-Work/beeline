@@ -13,7 +13,6 @@ exports[`requires review for every new System DM destination producer 1`] = `
   "daemon-service.ts:squireApproval:ensureSystemDirectMessageRoom",
   "feedback.ts:notifyFeedbackFixed:sendFixedMessage",
   "feedback.ts:sendFixedMessage:ensureSystemDirectMessageRoom",
-  "free-agent-warning.ts:warnFreeAgentOwner:directMessageRoomId",
   "grant-policy-upgrade.ts:upgradeGrantPolicy:ensureSystemDirectMessageRoom",
   "phone-service.ts:armConnectorPairing:ensureSystemDirectMessageRoom",
   "phone-service.ts:resolveDirectMessage:directMessageRoomId",

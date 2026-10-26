@@ -88,7 +88,7 @@ jobs:
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ${{ vars.BEELINE_CI_SHARDS == 'enabled' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","beeline-ci-shard"]') || 'ubuntu-latest' }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
     timeout-minutes: 5
     outputs:
       code: ${{ steps.decide.outputs.code }}
@@ -387,7 +387,7 @@ jobs:
   shared-package-tests:
     name: SHARED PACKAGE TESTS
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: ${{ vars.BEELINE_CI_SHARDS == 'enabled' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","beeline-ci-shard"]') || 'ubuntu-latest' }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -547,7 +547,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ${{ vars.BEELINE_CI_SHARDS == 'enabled' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","beeline-ci-shard"]') || 'ubuntu-latest' }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -578,7 +578,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ${{ vars.BEELINE_CI_SHARDS == 'enabled' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","beeline-ci-shard"]') || 'ubuntu-latest' }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
     timeout-minutes: 20
     services:
       postgres:
@@ -618,7 +618,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ${{ vars.BEELINE_CI_SHARDS == 'enabled' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","beeline-ci-shard"]') || 'ubuntu-latest' }}
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
     timeout-minutes: 5
     steps:
       - name: Require every hosted shard and the claim latency budget to pass

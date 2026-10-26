@@ -1748,6 +1748,7 @@ export class MonolithRoomTurnLoop {
     this.turnMetrics = {};
     this.turnUsage = new TurnUsageAccumulator();
     const trace = this.beginTurnTrace(item.id);
+    const traceGenerationId = this.commandContext.generationId;
     // Kicked off now, alongside activation rather than after it, so its own
     // network round trip has somewhere to hide (see institutional-context.ts).
     const institutionalContextFetch = startInstitutionalContextFetch(api, this.options.roomId);
@@ -1781,6 +1782,12 @@ export class MonolithRoomTurnLoop {
         if (stats) trace.noteSearchMemoryStats(stats.searchCalls, stats.searchMisses);
       } catch {
         // Losing this measurement must never affect the turn.
+      }
+      if (outcome === 'cancelled') {
+        await api.execute('postAgentTurnReceipt', {
+          agentId: this.agent.publicKey, roomId: this.options.roomId, requestId: item.id,
+          generationId: traceGenerationId, status: 'cancelled', trace: trace.replay(),
+        }).catch(() => console.warn('[turn-trace] trace dropped'));
       }
       await trace.finish(outcome, reason);
     };
@@ -2262,6 +2269,7 @@ export class MonolithRoomTurnLoop {
         ...(deliberateNoReply ? { completionKind: 'no-reply' as const } : {}),
         generationId: this.commandContext.generationId,
         toolCalls: trace.toolCallsTotal,
+        trace: trace.replay(),
         ...this.turnMetrics,
       });
       this.warmTranscript.complete(this.sessionId, [item.id, ...active.steers.map((steer) => steer.id)]);
@@ -2327,6 +2335,7 @@ export class MonolithRoomTurnLoop {
             status: 'complete',
             generationId: this.commandContext.generationId,
             toolCalls: trace.toolCallsTotal,
+        trace: trace.replay(),
             ...this.turnMetrics,
           });
           void finishTrace('complete').catch(() => undefined);
@@ -2358,6 +2367,7 @@ export class MonolithRoomTurnLoop {
         reason: reason.text,
         ...(reason.kind ? { reasonKind: reason.kind } : {}),
         toolCalls: trace.toolCallsTotal,
+        trace: trace.replay(),
         ...this.turnMetrics,
       });
       void finishTrace('failed', reason.text).catch(() => undefined);

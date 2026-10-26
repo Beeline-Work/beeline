@@ -1,3 +1,5 @@
+import { visibleMessageSql } from './read-cursor.js';
+import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cleanVoiceReply } from './voice-reply.js';
@@ -708,6 +710,17 @@ export class DaemonService {
               String(candidate.generationId ?? ''),
             );
         }
+        // A stopped generation may upload diagnostics only. It cannot publish,
+        // renew its lease, or change the requester's terminal cancellation.
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'cancelled' && candidate.trace) {
+          const stopped = await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND request_id=$2
+            AND agent_id=$3 AND status='cancelled' AND generation_id=$4`,
+            [scopedRoom, requestId, authenticatedAgentId, candidate.generationId]);
+          if (stopped.rowCount) {
+            await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
+            return this.writeResult() as Output<Name>;
+          }
+        }
         const allowCompleted =
           (name === 'postRoomMessage' && candidate.relay === undefined) ||
           name === 'retractAgentLiveOutput' ||
@@ -735,8 +748,10 @@ export class DaemonService {
         }
         // A lost receipt response may be replayed after the fallback consumed
         // this generation. Never replace its stored failed outcome with success.
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete') {
+          await this.persistTurnTrace(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId);
           return this.writeResult() as Output<Name>;
+        }
         // Silence is a server-owned terminal outcome, including private return
         // routes. Older helpers may still submit final text after the tool.
         if (name === 'postRoomMessage' && (await db.query(
@@ -4657,6 +4672,38 @@ export class DaemonService {
     });
     return this.writeResult();
   }
+  private async persistTurnTrace(database: SqlDatabase, input: Input<'postAgentTurnReceipt'>, agentId: string): Promise<void> {
+    // Diagnostics share the receipt transaction, but cannot fail the receipt.
+    // IDs come from committed server rows, never a helper's claimed reply.
+    if (!input.heartbeat && input.status !== 'working' && input.trace) {
+      await database.query('SAVEPOINT turn_trace');
+      try {
+        const trace = sanitizeTurnReplay(input.trace);
+        if (trace) await database.query(
+          `INSERT INTO agent_turn_traces(room_id,request_id,agent_id,trigger_message_id,
+                                        reply_message_ids,outcome,trace)
+           SELECT turn.room_id,turn.request_id,turn.agent_id,
+             (SELECT id FROM messages WHERE id=${turnRootMessageSql('turn')}),
+             COALESCE((SELECT jsonb_agg(reply.id ORDER BY reply.created_at,reply.id) FROM messages reply
+               WHERE reply.room_id=turn.room_id AND reply.author_id=turn.agent_id
+                 AND reply.request_id=turn.request_id AND reply.presentation IN ('message','card')
+                 AND ${visibleMessageSql('reply')}),'[]'::jsonb),turn.status,$4::jsonb
+           FROM agent_turns turn WHERE room_id=$1 AND request_id=$2 AND agent_id=$3
+           ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+             trigger_message_id=EXCLUDED.trigger_message_id,
+             reply_message_ids=EXCLUDED.reply_message_ids,outcome=EXCLUDED.outcome,
+             trace=EXCLUDED.trace,created_at=now()`,
+          [input.roomId,input.requestId,agentId,JSON.stringify(trace)],
+        );
+        await database.query('RELEASE SAVEPOINT turn_trace');
+      } catch {
+        await database.query('ROLLBACK TO SAVEPOINT turn_trace');
+        await database.query('RELEASE SAVEPOINT turn_trace');
+        console.warn('[turn-trace] trace dropped');
+      }
+    }
+  }
+
   private async turnReceipt(input: Input<'postAgentTurnReceipt'>, agentId: string) {
     await this.access(input.roomId, agentId);
     if (input.heartbeat && input.status !== 'working') {
@@ -4750,6 +4797,7 @@ export class DaemonService {
           ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
         });
       }
+      await this.persistTurnTrace(database, input, agentId);
       if (input.status === 'failed') {
         silence = await this.inscribeTurnFailure(
           database,

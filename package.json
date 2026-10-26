@@ -48,6 +48,7 @@
     "prove:done-report-before-pr": "npm run build -w @beeline/server && node --import tsx scripts/prove-done-report-before-pr.mjs",
     "prove:report-files": "npm run build -w @beeline/server && node --import tsx scripts/prove-report-files.mjs",
     "prove:closed-corner": "npm run build -w @beeline/server && node --import tsx scripts/prove-closed-corner.mjs",
+    "prove:installation-sync": "npm run build -w @beeline/server && node --import tsx scripts/prove-installation-sync.mjs",
     "prove:corner-check-header": "npm run build -w @beeline/server && node --import tsx scripts/prove-corner-check-header.mjs",
     "prove:feedback-overflow": "npm run build -w @beeline/server && node --import tsx scripts/prove-feedback-overflow.mjs",
     "prove:corner-refusals": "npm run build -w @beeline/server && node --import tsx scripts/prove-corner-refusals.mjs",

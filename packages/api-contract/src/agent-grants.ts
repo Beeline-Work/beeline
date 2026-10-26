@@ -492,14 +492,15 @@ export function grantScriptTooLongMessage(path: string, bytes: number, lines: nu
 }
 
 /**
- * The file an interpreter command will run: the first argument that is not a
- * flag. Undefined when the head is not an interpreter, or when the line carries
+ * The file an interpreter command will run, or an explicit executable path.
+ * Direct executable candidates must be checked for a shebang by the reader.
+ * Undefined when the command has neither candidate, or when the line carries
  * no such argument (`python3 -V`) — that still asks a human, it just has no
  * body to show.
  */
 export function interpreterScriptArgument(
   argv: readonly string[],
-): { index: number; path: string } | undefined {
+): { index: number; path: string; direct?: true } | undefined {
   // Step over `env FOO=1 …`, `sudo …`, `timeout 30 …`: the interpreter is what
   // matters, and a wrapper must not be a way around the binding.
   const skippable = (word: string) =>
@@ -509,7 +510,12 @@ export function interpreterScriptArgument(
     head += 1;
     while (head < argv.length - 1 && skippable(argv[head]!)) head += 1;
   }
-  if (!INTERPRETER_COMMANDS.has(commandBasename(argv[head] ?? ''))) return undefined;
+  if (!INTERPRETER_COMMANDS.has(commandBasename(argv[head] ?? ''))) {
+    // Explicit executable paths may be scripts too. Callers inspect the bytes
+    // for a shebang before treating a direct executable as a script.
+    const path = argv[head];
+    return path?.includes('/') ? { index: head, path, direct: true } : undefined;
+  }
   for (let index = head + 1; index < argv.length; index += 1) {
     const word = argv[index]!;
     if (word.startsWith('-')) continue;

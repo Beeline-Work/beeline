@@ -1996,6 +1996,15 @@ export function readGrantScript(
   if (!argument) return undefined;
   const roots = deps.scriptRoots ?? [];
   if (!roots.length) return undefined;
+  if (argument.direct) {
+    // Native executable paths do not need a script card, including binaries
+    // outside the attachment roots. Script paths still meet the root check below.
+    let candidate: Buffer;
+    try {
+      candidate = (deps.readScript ?? readFileSync)(resolve(roots[0]!, argument.path));
+    } catch { return undefined; }
+    if (!candidate.subarray(0, 2).equals(Buffer.from('#!'))) return undefined;
+  }
   let resolved: string;
   try {
     resolved = resolveAttachPath(roots, argument.path);
@@ -2013,6 +2022,8 @@ export function readGrantScript(
     return undefined;
   }
   const bytes = (deps.readScript ?? readFileSync)(resolved);
+  // Direct native executables retain ordinary command grant behavior.
+  if (argument.direct && !bytes.subarray(0, 2).equals(Buffer.from('#!'))) return undefined;
   const contents = bytes.toString('utf8');
   const lines = contents.split('\n').length;
   if (bytes.byteLength > GRANT_SCRIPT_MAX_BYTES || lines > GRANT_SCRIPT_MAX_LINES) {

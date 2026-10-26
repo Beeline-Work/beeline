@@ -464,6 +464,28 @@ describe('request_grant carries the script an interpreter will run', () => {
     expect(reply).toContain('the approval is bound to those bytes');
   });
 
+  it('binds a directly executed script to its shebang file bytes', async () => {
+    const body = '#!/bin/sh\nprintf approved\n';
+    const root = checkout(body, 'approved');
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await requestGrant(
+      { kind: 'command', target: './approved', purpose: 'run approved script', reason: 'run approved script' },
+      { ...deps({ grantId: 'g', status: 'pending', auto: false }, ops), scriptRoots: [root] },
+    );
+    expect(ops[0]!.input.script).toMatchObject({ path: './approved', contents: body,
+      sha256: createHash('sha256').update(body).digest('hex') });
+  });
+
+  it('keeps native executable grants outside script roots unchanged', async () => {
+    const root = checkout('unused');
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await requestGrant(
+      { kind: 'command', target: '/bin/true', purpose: 'check execution', reason: 'check execution' },
+      { ...deps({ grantId: 'g', status: 'approved', auto: true }, ops), scriptRoots: [root] },
+    );
+    expect(ops[0]!.input.script).toBeUndefined();
+  });
+
   it('refuses a script too long to read honestly instead of truncating it', async () => {
     const root = checkout(`${Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n')}\n`);
     await expect(

@@ -22,6 +22,7 @@ import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { explainAgentProgramFailure } from './agent-command.js';
 import { piStartupEnvironment } from './pi-startup.js';
 import { PiSessionInstructions } from './pi-session-instructions.js';
+import { McpLaunchFiles } from './mcp-launch-files.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
 import {
@@ -834,6 +835,7 @@ export class AcpClient extends EventEmitter {
   private resourceScopeUnavailable = false;
   /** A deliberate stop owns its SIGKILL; that exit is never labelled OOM. */
   private stopping = false;
+  private readonly mcpLaunchFiles = new McpLaunchFiles();
 
   constructor(opts: {
     /** Legacy bare-binary option. Prefer agentCommand + agentArgs. */
@@ -1133,7 +1135,7 @@ export class AcpClient extends EventEmitter {
   async stop(): Promise<void> {
     const child = this.child;
     const scope = this.resourceScope;
-    if (!child && !scope) return;
+    if (!child && !scope) { this.mcpLaunchFiles.clear(); return; }
     this.stopping = true;
     try {
       // Send shutdown if child is still alive.
@@ -1154,6 +1156,7 @@ export class AcpClient extends EventEmitter {
       await new Promise<void>((r) => setTimeout(r, 500));
       try { killChildProcessGroup(child, 'SIGKILL'); } catch { /* ignore */ }
     }
+    this.mcpLaunchFiles.clear();
     this.child = null;
     this.alive = false;
     this.activeRunIds.clear();
@@ -1197,7 +1200,7 @@ export class AcpClient extends EventEmitter {
   }): Promise<{ sessionId: string; raw: unknown }> {
     const params: Record<string, unknown> = {
       cwd: opts.cwd,
-      mcpServers: (opts.mcpServers ?? []).map((s) => ({
+      mcpServers: this.mcpLaunchFiles.prepare(opts.mcpServers ?? [], this.agentEnv.HOME).map((s) => ({
         name: s.name,
         command: s.command,
         args: s.args ?? [],
@@ -1253,7 +1256,7 @@ export class AcpClient extends EventEmitter {
     const params: Record<string, unknown> = {
       sessionId: opts.sessionId,
       cwd: opts.cwd,
-      mcpServers: (opts.mcpServers ?? []).map((server) => ({
+      mcpServers: this.mcpLaunchFiles.prepare(opts.mcpServers ?? [], this.agentEnv.HOME).map((server) => ({
         name: server.name,
         command: server.command,
         args: server.args ?? [],

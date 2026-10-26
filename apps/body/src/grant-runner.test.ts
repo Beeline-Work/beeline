@@ -719,16 +719,16 @@ describe('the two hard stops', () => {
     );
   });
 
-  it('R-SCRIPT-HASH refuses changed directly executed script bytes', async () => {
+  it.each(['#!/bin/sh\n', ''])('R-SCRIPT-HASH refuses changed direct script bytes with prefix %j', async (prefix) => {
     const { runner, cwd, live } = await harness([grant({ target: './approved' })]);
-    const original = '#!/bin/sh\nprintf approved\n';
+    const original = `${prefix}printf approved\n`;
     await writeFile(join(cwd, 'approved'), original, { mode: 0o700 });
     live[0] = { ...live[0]!, script: {
       path: './approved', contents: original, bytes: Buffer.byteLength(original),
       sha256: createHash('sha256').update(original).digest('hex'),
     } };
     expect((await runner.run({ roomId: ROOM, argv: ['./approved'] })).output).toBe('approved');
-    await writeFile(join(cwd, 'approved'), '#!/bin/sh\nprintf changed\n');
+    await writeFile(join(cwd, 'approved'), `${prefix}printf changed\n`);
     await expect(runner.run({ roomId: ROOM, argv: ['./approved'] })).rejects.toThrow('changed after it was approved');
   });
 
@@ -751,9 +751,9 @@ describe('the two hard stops', () => {
     await expect(runner.run({ roomId: ROOM, argv: ['bash', 'one.mjs'] })).rejects.toThrow('changed after it was approved');
   });
 
-  it('requires reapproval for a legacy direct script grant without bytes', async () => {
+  it.each(['#!/bin/sh\n', ''])('requires reapproval for a legacy direct script with prefix %j', async (prefix) => {
     const { runner, cwd } = await harness([grant({ target: './legacy' })]);
-    await writeFile(join(cwd, 'legacy'), '#!/bin/sh\nprintf unapproved\n', { mode: 0o700 });
+    await writeFile(join(cwd, 'legacy'), `${prefix}printf unapproved\n`, { mode: 0o700 });
     await expect(runner.run({ roomId: ROOM, argv: ['./legacy'] })).rejects.toThrow('no human has read');
   });
 

@@ -26,11 +26,12 @@ try {
     });
     return { ok: response.ok, text: await response.text() };
   };
-  for (const argv of [['./approved'], ['bash', 'approved'], ['python3', 'approved.py'], ['bash', 'linked']]) {
+  for (const argv of [['./approved'], ['./no-shebang'], ['bash', 'approved'], ['python3', 'approved.py'], ['bash', 'linked']]) {
     const python = argv[0] === 'python3';
-    const path = python ? 'approved.py' : 'approved';
-    const original = python ? "print('approved')\n" : '#!/bin/sh\nprintf approved\n';
-    const replacement = python ? "print('changed')\n" : '#!/bin/sh\nprintf changed\n';
+    const bare = argv[0] === './no-shebang';
+    const path = bare ? 'no-shebang' : python ? 'approved.py' : 'approved';
+    const original = python ? "print('approved')\n" : `${bare ? '' : '#!/bin/sh\n'}printf approved\n`;
+    const replacement = python ? "print('changed')\n" : `${bare ? '' : '#!/bin/sh\n'}printf changed\n`;
     await writeFile(join(cwd, path), original, { mode: 0o700 });
     if (argv[1] === 'linked') await symlink('approved', join(cwd, 'linked'));
     await requestGrant({ kind: 'command', target: argv.join(' '), purpose: 'Prove approved bytes run', reason: 'Isolated proof' }, {
@@ -50,6 +51,17 @@ try {
     assert.match(changed.text, /changed after it was approved/);
     console.log(`R-SCRIPT-HASH ${argv.join(' ')}: unchanged runs; changed bytes refused with new approval requested`);
   }
+  await requestGrant({ kind: 'command', target: '/bin/echo approved', purpose: 'Prove native execution', reason: 'Isolated proof' }, {
+    roomId, scriptRoots: [cwd], execute: async (_name, input) => {
+      assert.equal(input.script, undefined, 'native executable must retain ordinary grant behavior');
+      approved = { ...input, grantId: 'native-proof', workspaceId, status: 'approved', requestedBy: 'c'.repeat(64) };
+      return { grantId: 'native-proof', status: 'approved', auto: false };
+    },
+  });
+  const native = await run(['/bin/echo', 'approved']);
+  assert.equal(native.ok, true, native.text);
+  assert.match(native.text, /approved/);
+  console.log('R-SCRIPT-HASH native executable: ordinary grant still runs');
 } finally {
   await server.close();
   await rm(cwd, { recursive: true, force: true });

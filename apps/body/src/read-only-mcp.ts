@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isNativeGrantExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
@@ -2003,7 +2004,7 @@ export function readGrantScript(
     try {
       candidate = (deps.readScript ?? readFileSync)(resolve(roots[0]!, argument.path));
     } catch { return undefined; }
-    if (!candidate.subarray(0, 2).equals(Buffer.from('#!'))) return undefined;
+    if (isNativeGrantExecutable(candidate)) return undefined;
   }
   let resolved: string;
   try {
@@ -2023,7 +2024,7 @@ export function readGrantScript(
   }
   const bytes = (deps.readScript ?? readFileSync)(resolved);
   // Direct native executables retain ordinary command grant behavior.
-  if (argument.direct && !bytes.subarray(0, 2).equals(Buffer.from('#!'))) return undefined;
+  if (argument.direct && isNativeGrantExecutable(bytes)) return undefined;
   const contents = bytes.toString('utf8');
   const lines = contents.split('\n').length;
   if (bytes.byteLength > GRANT_SCRIPT_MAX_BYTES || lines > GRANT_SCRIPT_MAX_LINES) {

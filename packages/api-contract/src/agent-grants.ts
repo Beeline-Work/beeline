@@ -493,7 +493,7 @@ export function grantScriptTooLongMessage(path: string, bytes: number, lines: nu
 
 /**
  * The file an interpreter command will run, or an explicit executable path.
- * Direct executable candidates must be checked for a shebang by the reader.
+ * Readers distinguish native executables from scripts, including ENOEXEC shell text.
  * Undefined when the command has neither candidate, or when the line carries
  * no such argument (`python3 -V`) — that still asks a human, it just has no
  * body to show.
@@ -512,7 +512,7 @@ export function interpreterScriptArgument(
   }
   if (!INTERPRETER_COMMANDS.has(commandBasename(argv[head] ?? ''))) {
     // Explicit executable paths may be scripts too. Callers inspect the bytes
-    // for a shebang before treating a direct executable as a script.
+    // to distinguish native executables from scripts and ENOEXEC shell text.
     const path = argv[head];
     return path?.includes('/') ? { index: head, path, direct: true } : undefined;
   }

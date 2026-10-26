@@ -464,8 +464,8 @@ describe('request_grant carries the script an interpreter will run', () => {
     expect(reply).toContain('the approval is bound to those bytes');
   });
 
-  it('binds a directly executed script to its shebang file bytes', async () => {
-    const body = '#!/bin/sh\nprintf approved\n';
+  it.each(['#!/bin/sh\n', ''])('binds a direct script with prefix %j to its bytes', async (prefix) => {
+    const body = `${prefix}printf approved\n`;
     const root = checkout(body, 'approved');
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await requestGrant(

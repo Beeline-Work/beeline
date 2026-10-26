@@ -1,3 +1,4 @@
+import { isNativeGrantExecutable } from './grant-script.js';
 /**
  * The command-kind grant runner (Agent Grants, slice 2).
  *
@@ -611,7 +612,7 @@ export class GrantCommandRunner {
       if (script) throw new Error(`${argument.path} cannot be read. Ask with request_grant kind=command again.`);
       return;
     }
-    if (!script && argument.direct && !bytes.subarray(0, 2).equals(Buffer.from('#!'))) return;
+    if (!script && argument.direct && isNativeGrantExecutable(bytes)) return;
     if (!script || script.path !== argument.path) {
       throw new Error(
         `${argument.path} is a script no human has read: this grant was approved without it. ` +

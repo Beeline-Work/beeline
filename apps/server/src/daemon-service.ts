@@ -6114,8 +6114,18 @@ export class DaemonService {
     const attachments = [...(command.coalesced_attachments ?? command.private_payload?.attachments ?? []),
       ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
       .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
+    // Collapse alternate URLs for the same object; content deduplication waits
+    // until reportToCommander has selected the recipient.
+    const seen = new Set<string>();
+    const uniqueAttachments = attachments.filter(attachment => {
+      const id = mediaIdFromUrl(attachment.url) ?? '';
+      if (!id) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
-      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic, ask });
+      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask });
     if (result.skipped || ('delivered' in result && !result.delivered)) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,

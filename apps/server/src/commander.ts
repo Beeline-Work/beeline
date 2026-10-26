@@ -259,14 +259,16 @@ export async function reportToCommander(
     if (routes.size) {
       let first: Awaited<ReturnType<typeof reportToCommander>> | undefined;
       let delivered = true;
-      for (const [route, target] of routes) {
+      const reportOptions = options;
+      for (const [route, { source, urls }] of routes) {
         // Files carried by a batched source follow that source's return route.
         // Files uploaded in the current turn retain their normal delivery.
-        const attachments = options.attachments?.filter(attachment =>
-          !carriedUrls.has(attachment.url) || target.urls.has(attachment.url));
-        const result = await reportToCommander(db, roomId, agentId, text, target.source,
+        const attachments = reportOptions.attachments?.filter(attachment =>
+          !carriedUrls.has(attachment.url) || urls.has(attachment.url));
+        const options = { ...reportOptions, attachments };
+        const result = await reportToCommander(db, roomId, agentId, text, source,
           first ? createHash('sha256').update(`${reportId}:${route}`).digest('hex') : reportId,
-          { ...options, attachments, digestSource: true });
+          { ...options, digestSource: true });
         first ??= result;
         delivered &&= result.delivered !== false;
       }

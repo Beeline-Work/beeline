@@ -5,13 +5,13 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
-test('only the five server critical-path jobs use the squire runner label', () => {
+test('server critical-path jobs use GitHub-hosted runners', () => {
   const critical = ['changes', 'shared-package-tests', 'server-suite-shard', 'server-claim-latency', 'server-suite'];
   for (const name of critical) {
-    assert.deepEqual(jobs[name]['runs-on'], ['self-hosted', 'Linux', 'X64', 'beeline-ci-shard']);
+    assert.equal(jobs[name]['runs-on'], 'ubuntu-latest');
   }
   for (const [name, job] of Object.entries(jobs)) {
-    if (!critical.includes(name)) assert.ok(!JSON.stringify(job['runs-on']).includes('beeline-ci-shard'), name);
+    assert.ok(!JSON.stringify(job['runs-on']).includes('beeline-ci-shard'), name);
   }
 });
 

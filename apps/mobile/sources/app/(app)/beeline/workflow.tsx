@@ -61,7 +61,7 @@ export default function Workflow() {
         testID="workflow-header"
       />
       {error ? (
-        <SettingsRow title={appErrorCopy(error)} description={connectionErrorDescription} action="Retry" onPress={() => void reload()} />
+        <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={() => void reload()} />
       ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (

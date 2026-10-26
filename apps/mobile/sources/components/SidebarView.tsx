@@ -1,4 +1,4 @@
-import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
@@ -544,7 +544,7 @@ export const SidebarView = React.memo(function SidebarView() {
           )}
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {navigationError ? (
-              <SettingsRow title={appErrorCopy(navigationError)} description={connectionErrorDescription} action="Retry" onPress={() => setRefreshNonce((value) => value + 1)} />
+              <SettingsRow title={navigationError} description={connectionErrorDescription} action="Retry" onPress={() => setRefreshNonce((value) => value + 1)} />
             ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (

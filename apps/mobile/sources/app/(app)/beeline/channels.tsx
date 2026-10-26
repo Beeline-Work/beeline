@@ -850,7 +850,7 @@ export default function BuzzChannels() {
   if (landing.kind === 'error') {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow title={appErrorCopy(error)} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }
@@ -951,7 +951,7 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && <View style={styles.failureInset}><IndexRow inset="flush" title={appErrorCopy(error)} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
+        {!!error && <View style={styles.failureInset}><IndexRow inset="flush" title={error!} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions

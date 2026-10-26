@@ -1318,7 +1318,7 @@ export default function BuzzMembers({
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <SettingsRow title={appErrorCopy(displayedError)} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }
@@ -1394,7 +1394,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <SettingsRow title={appErrorCopy(displayedError!)} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); schedulerRef.current?.force(); }} />
+          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); schedulerRef.current?.force(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}

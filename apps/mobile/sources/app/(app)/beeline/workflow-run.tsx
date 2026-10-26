@@ -1,4 +1,4 @@
-import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { connectionErrorDescription } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
@@ -92,7 +92,7 @@ export default function WorkflowRun() {
         title={run ? workflowDisplayName(run.workflowSlug) : 'Workflow'}
 
       />
-      {error && <SettingsRow title={appErrorCopy(error)} description={connectionErrorDescription} action="Retry" onPress={retry}
+      {error && <SettingsRow title={error} description={connectionErrorDescription} action="Retry" onPress={retry}
           />}
       {loading && !detail ? (
         <View style={styles.loading}>

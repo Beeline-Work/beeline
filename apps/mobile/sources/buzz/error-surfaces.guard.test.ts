@@ -15,6 +15,8 @@ it('keeps page failures in standard rows with one trailing retry word', () => {
   for (const file of ['app/(app)/beeline/channels.tsx', 'app/(app)/beeline/members.tsx', 'app/(app)/beeline/corners/[roomId].tsx', 'app/(app)/beeline/workflow.tsx', 'app/(app)/beeline/workflow-run.tsx', 'components/SidebarView.tsx', 'components/DesktopRoomInspector.tsx']) {
     const source = fs.readFileSync(path.resolve('sources', file), 'utf8');
     expect(source).not.toContain('<ErrorBanner');
+    // These states are formatted at their catch or observed-resource boundary.
+    expect(source).not.toMatch(/title=\{appErrorCopy\(/);
     expect(source).not.toMatch(/<Button[^>]*label="Retry"/);
     expect(source).toMatch(/<(?:SettingsRow|IndexRow)[^>]*action="Retry"/);
   }

@@ -240,7 +240,7 @@ export function DesktopRoomInspector({
       ) : (
         <>
           {observed.error ? (
-            <SettingsRow title={appErrorCopy(observed.error)} description={connectionErrorDescription} action="Retry" onPress={observed.retry} testID="desktop-corner-retry" />
+            <SettingsRow title={observed.error} description={connectionErrorDescription} action="Retry" onPress={observed.retry} testID="desktop-corner-retry" />
           ) : null}
           <CornerCockpit
             client={client}

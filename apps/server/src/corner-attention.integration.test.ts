@@ -290,6 +290,22 @@ it('failing checks alone are idle immediately with one alert and no repair deadl
   expect(await commanderFlags()).toHaveLength(1);
   expect((await commanderFlags())[0]!.source.body).toBe('blocked: Corner Corner is idle. Resume it, set a hold, or close it.');
 });
+it('an agent commander that belongs to the corner wakes inside it, not the parent Room', async () => {
+  await ci('failing');
+  expect(await state()).toBe('idle');
+  await db.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+    [WS, C, COMMANDER],
+  );
+  await refreshCornerAttention(db, C);
+  const inCorner = (await readAgentCommands(db, C, COMMANDER)).commands
+    .filter(command => command.source.body.includes('is idle. Resume it'));
+  const inRoom = (await readAgentCommands(db, ROOM, COMMANDER)).commands
+    .filter(command => command.source.body.includes('is idle. Resume it'));
+  expect(inCorner).toHaveLength(1);
+  expect(inRoom).toHaveLength(0);
+});
+
 it('pending CI past 30 minutes schedules no expiry, including after a new head', async () => {
   await ci('pending');
   await db.query(

@@ -347,9 +347,19 @@ export async function reportToCommander(
     return true;
   });
   if (member.kind === 'agent') {
+    // Automatic agent-only system status is private coordination. Wake the
+    // commander inside its corner when it belongs there, so its reply stays
+    // with the corner's members instead of a parent Room strangers read.
+    const wakeRoom = options.automatic && options.agentOnly && origin &&
+      (await db.query(
+        'SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
+        [origin, recipient],
+      )).rowCount
+      ? origin
+      : returnRoom;
     const queued = await createAgentCommand(db, {
       id: reportId,
-      roomId: returnRoom,
+      roomId: wakeRoom,
       agentId: recipient,
       sourceMessageId: null,
       privatePayload: {

@@ -10,6 +10,7 @@ import { PhoneService } from './phone-service.js';
 
 const OWNER = 'a'.repeat(64), AGENT = 'b'.repeat(64), OTHER = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
+const ROOM = '22222222-2222-4222-8222-222222222222';
 const DAY = '2026-10-16';
 
 describe('free agent owner warning', () => {
@@ -22,6 +23,10 @@ describe('free agent owner warning', () => {
     for (const member of [OWNER, AGENT, OTHER]) await db.query(
       `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`, [WORKSPACE, member]);
     await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,state) VALUES($1,$2,$3,'sealed','running')`, [AGENT, WORKSPACE, OWNER]);
+    // The person's working room: OWNER and AGENT in, OTHER out.
+    await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name,visibility) VALUES($1,$2,$3,'General','public')`, [ROOM, WORKSPACE, OWNER]);
+    for (const member of [OWNER, AGENT]) await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, ROOM, member]);
   });
   afterEach(async () => { await db.close(); });
   const usage = async (day: string, tokens: number) => {
@@ -29,9 +34,9 @@ describe('free agent owner warning', () => {
     await db.query(`DELETE FROM free_agent_events WHERE kind='model_usage' AND detail->>'day'=$1`, [day]);
     await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage',$2::jsonb,($3::date::timestamp AT TIME ZONE 'UTC'))`, [AGENT, JSON.stringify({ day, tokens }), day]);
   };
-  const warn = (day = DAY) => warnFreeAgentOwner(db, AGENT, OWNER, day, 1000);
+  const warn = (day = DAY) => warnFreeAgentOwner(db, AGENT, OWNER, day, 1000, ROOM);
 
-  it('delivers once per UTC day at 80%, privately, through the owner Room read', async () => {
+  it('delivers once per UTC day at 80% into the working room, readable by the owner', async () => {
     await usage(DAY, 799);
     await db.query(`UPDATE free_agent_usage SET tokens=1000`);
     await warn();
@@ -43,12 +48,11 @@ describe('free agent owner warning', () => {
     expect(messages.rowCount).toBe(1);
     expect(messages.rows[0]!.text).toContain('midnight UTC');
     expect(messages.rows[0]!.text).toContain(`members?communityId=${WORKSPACE}&action=add-agent`);
-    const roomId = messages.rows[0]!.room_id;
+    expect(messages.rows[0]!.room_id).toBe(ROOM);
     const phone = new PhoneService(db, 'https://server.test');
-    const view = await phone.readRoom(roomId, OWNER);
+    const view = await phone.readRoom(ROOM, OWNER);
     expect(JSON.stringify(view)).toContain("I've used 80%");
-    expect(await phone.readRoom(roomId, OTHER)).toBeNull();
-    expect((await db.query(`SELECT identity_id FROM memberships WHERE room_id=$1`, [roomId])).rows.map(r => r.identity_id).sort()).toEqual([OWNER, AGENT].sort());
+    expect(await phone.readRoom(ROOM, OTHER)).toBeNull();
     await usage('2026-10-17', 801);
     await warn('2026-10-17');
     expect((await db.query(`SELECT * FROM messages`)).rowCount).toBe(2);
@@ -60,10 +64,10 @@ describe('free agent owner warning', () => {
       BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image',
     }, 'https://server.test')!;
     await usage(DAY, 2_399_999);
-    await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap);
+    await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap, ROOM);
     expect((await db.query(`SELECT * FROM messages`)).rowCount).toBe(0);
     await usage(DAY, 2_400_000);
-    await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap);
+    await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap, ROOM);
     const phone = new PhoneService(db, 'https://server.test');
     const room = (await db.query<{ room_id: string }>(`SELECT room_id FROM messages`)).rows[0]!;
     expect(JSON.stringify(await phone.readRoom(room.room_id, OWNER))).toContain("I've used 80%");

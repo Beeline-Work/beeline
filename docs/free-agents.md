@@ -204,9 +204,8 @@ discards the session. The leader reaper cancels overdue claimed commands after
 the cap plus 60 seconds of grace and stops their Machine even if it is still
 reporting activity. The existing idle, reaper and deletion intervals are unchanged.
 
-At 80% of whichever allowance applies (2.4M of the default 3M daily cap, or 8M of the 10M first-day cap), settlement writes one private owner/free-agent
-DM warning per owner per UTC day, with the midnight UTC reset and a Members ->
-Add agent link. Delivery does not call a model. The warning records
+At 80% of whichever allowance applies (2.4M of the default 3M daily cap, or 8M of the 10M first-day cap), settlement posts one plain allowance notice per owner per UTC day into the room where the person is working, with the midnight UTC reset and a Members ->
+Add agent link. The owner must be a room member; otherwise nothing is posted. Delivery does not call a model. The warning records
 `allowance_warning` and `nudge_shown`; pairing a non-free agent in the same
 Workspace within 24 hours records `agent_connected_after_nudge` once per agent.
 Reaching the Add agent command within 24 hours of a warning records `guide_started`

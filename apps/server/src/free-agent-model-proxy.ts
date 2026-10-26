@@ -481,7 +481,7 @@ export async function handleFreeAgentModelRequest(
         [day, usd - reservation.reservedUsd]);
       await recordFreeAgentEvent(db, agent.agent_id, 'model_usage', { day, tokens: spent, usd });
     }).then(async () => {
-      if (spent > 0) await warnFreeAgentOwner(options.database, agent.agent_id, agent.owner_id, day, config.dailyTokenCap);
+      if (spent > 0) await warnFreeAgentOwner(options.database, agent.agent_id, agent.owner_id, day, config.dailyTokenCap, turn.room_id);
     }).catch(error => console.error('[free-agents] usage charge or warning failed', error));
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');

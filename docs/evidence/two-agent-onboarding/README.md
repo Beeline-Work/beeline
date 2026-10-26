@@ -1,6 +1,6 @@
 # Two-agent onboarding evidence
 
-This is a feature, not a defect report. The governing assignment is brief revision 2.
+This is a feature, not a defect report. The governing assignment is brief revision 3.
 
 ## Demonstrated: ONBOARDING-2
 
@@ -48,26 +48,18 @@ are adapters; it does not send fixture data to production.
 - [Opened game](android-game-viewer.png)
 - [Game move and coaching](android-game-playing.png)
 - [Native share sheet](android-share-sheet.png)
-- [Dashboard companion preview](android-dashboard-preview.png)
 
 The local proof rerolls agent identities on each execution. Capture a screenshot
 set from one proof run; do not rerun the service proof between captures.
 
-## Dashboard companion
+## Dashboard integration
 
-The frontend lives in `Beeline-Work/beeline-dashboard`, not this repository.
-The corner's GitHub App cannot access that repository (404); the connected
-GitHub repository search also returned none. The owner's vaulted dashboard
-credential successfully read its current source. No personal-route repository
-writes were performed.
-
-[dashboard-onboarding.patch](dashboard-onboarding.patch) is a concrete companion
-change against the current frontend. It appends the new aggregate view to the
-existing period view, reuses its classes, escapes output, and includes a Node
-renderer test. It passes `git apply --check` against the fetched source and its
-renderer test passes. It needs the dashboard repository's own App-backed corner
-to apply, validate and publish. A local rendering preview is not proof that the
-live dashboard has changed.
+The dashboard frontend is assigned to corner `6d0af568`. This repository exposes
+`periods["24h"|"7d"|"28d"|"all"].onboardingFunnel` using the pinned
+[API contract](api-contract.md). Counts deduplicate authenticated humans, use
+first welcome and first choice, exclude team installs, and suppress medians below
+five samples. Return eligibility starts at welcome. The Android screenshots here
+cover the app surfaces; the dashboard corner owns its view and proof.
 
 ## Validation
 

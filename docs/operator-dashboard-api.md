@@ -210,7 +210,7 @@ recovery. Its existing preview and account-linking gates remain in force.
 Authenticated events mark an install internal if its identity is hidden, fixture
 only, the fixed Play reviewer, or one of the explicitly confirmed operator
 handles (`lunchboxfortwo`, `bananaman614305`, `moonscannerai`). All earlier events
-for that install are excluded retroactively. The raw account identifier is not saved in either funnel table. Authenticated sign-in now stores a domain-separated SHA-256 account hash on the install row so server-observed onboarding steps can find the same attempt. This is pseudonymous correlation, not unlinkable anonymous data; the mapping expires with the raw install ledger. Review launch links and
+for that install are excluded retroactively. The raw account identifier is not saved in either funnel table. Authenticated sign-in now stores a domain-separated SHA-256 account hash on the install row so server-observed onboarding steps can find the same attempt. This is pseudonymous correlation, not unlinkable anonymous data; the mapping follows the raw install ledger; onboarding milestones and their sign-in context remain for the all-time cohort. Review launch links and
 review sessions are suppressed on the client as well. Ordinary customer Workspace
 owners are not classified as staff.
 
@@ -232,17 +232,47 @@ A zero start denominator yields a null completion rate. If the window predates
 collection, `state` is `not_measured` and stage counts are null. Consult
 `coverageStart`; this release cannot reconstruct earlier sign-in attempts.
 
-`signinFunnel.onboarding` extends the same raw event ledger with welcome, option,
-task, game, invitation and return steps. It uses the selected platform and
-welcome-cohort date window. `splits` contains `all`, `A`–`D` and `unpicked`,
-classified by the first selected option; viewing D and later playing the game
-stays in D. Each step supplies its attempt count, `previousEvent`,
-`medianTimeMs` from that event and `medianDurationMs` where supplied by the
-viewer. Missing intervals are null. Final-answer timing starts at the question;
-viewer-close timing starts at viewer-open. Team installs remain excluded by the
-existing cohort rules. Client onboarding observations require authentication
-and an install bound to that account; server-only milestones cannot be claimed
-by the client. Only aggregate counts and timings appear in dashboard output.
+Onboarding extends the existing ledger. Its milestone rows and minimal signup /
+signed-in context survive the ordinary 90-day sign-in-detail compaction so the
+`all` cohort does not shrink and repeat installs do not become new people.
+Other sign-in detail keeps the existing retention policy. No raw identity IDs
+appear in the funnel tables or dashboard response.
+
+### Pinned API contract: `onboardingFunnel`
+Both PRs must state this contract verbatim. Any change needs a brief revision in both corners.
+
+**Placement.** Additive key on each existing period entry: `periods["24h"|"7d"|"28d"|"all"].onboardingFunnel`. Same window rules as the period object (end exclusive at `measuredAt`).
+
+**Cohort.** Eligible humans (team accounts excluded, as today) whose welcome card was first shown inside the window. Every later step counts only those people, at any time up to `measuredAt`.
+
+**Shape.**
+```json
+{
+  "cohort": "welcome_shown_in_window",
+  "steps": [Step],
+  "paths": {"task": [Step], "game": [Step], "invite": [Step]},
+  "byOption": {"task": {"steps": [Step]}, "game": {...}, "invite": {...}, "special": {...}},
+  "biggestDrop": "step_key" | null
+}
+```
+`Step = {"key": string, "count": int, "eligible": int|null, "medianSecondsFromPrevious": int|null, "samples": int}`
+
+**Step keys, in order.**
+- `steps` (all users): `welcome_shown`, `option_picked`, `answered_after_pick`, `return_1d`, `return_7d`.
+- `paths.task`: `task_first_answer`, `task_second_opinion`, `task_final_answer`. Previous step for the first entry is `option_picked`.
+- `paths.game`: `game_posted`, `game_viewer_opened`, `game_closed`. The `game_closed` median is time in viewer.
+- `paths.invite`: `invite_link_created`, `invite_shared`, `invite_opened`, `invite_friend_signed_up`, `invite_friend_messaged`.
+- `byOption.<option>.steps`: the five `steps` keys, limited to users whose first pick was that option. Options: `task`=A, `game`=B, `invite`=C, `special`=D.
+
+**Rules.**
+- `option_picked` uses the first pick only. Its median is time to first tap.
+- `return_1d`: a retained message 24h or more after `welcome_shown`. `return_7d`: 168h or more. `eligible` = cohort users whose welcome is at least 24h / 168h before `measuredAt`. `eligible` is null on all other steps.
+- Medians: integer seconds, from the previous step in the same list, over users who reached both. `samples` = that user count. Fewer than 5 samples gives `medianSecondsFromPrevious: null`.
+- First entry of each list has `medianSecondsFromPrevious: null`.
+- `biggestDrop`: over `steps` only, same rule as the people funnel.
+- Empty cohort: every key present, counts 0, medians null. Failed read: the existing unavailable-section shape, never zeros.
+
+
 
 Downloads-to-open comparisons are available per measured mobile platform and for
 an exclusively mobile selection. An all-platform selection also contains web and
@@ -268,8 +298,8 @@ legacy download comparison still supplies its original dated account signups; do
 not silently use either as an install count.
 
 On dashboard reads and the first event of each UTC day, request-triggered
-compaction replaces raw events older than the 90-calendar-day window with daily
-anonymous counts and removes expired auth correlations. No timer runs. If there
+compaction replaces ordinary sign-in detail older than the 90-calendar-day window with daily
+anonymous counts and removes expired auth correlations. Onboarding milestones and their minimal authenticated context are retained as described above. No timer runs. If there
 is no activity, compaction resumes on the next request. The current dashboard
 window uses raw distinct install counts; retained older daily aggregates contain
 no install IDs and cannot reconstruct cross-day unique installs. Internal status

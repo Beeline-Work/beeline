@@ -33,7 +33,7 @@ import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
 import { PgliteDatabase, MemoryObjectStorage } from './test-support.js';
 import { ObjectService } from './object-service.js';
-import { recordSigninFunnelEvent } from './signin-funnel.js';
+import { recordSigninFunnelEvent, recordOnboardingEvent } from './signin-funnel.js';
 
 const sentryCaptures = vi.hoisted(() => [] as { error: unknown; tags: Record<string, string> | undefined }[]);
 vi.mock('./sentry.js', async (importOriginal) => ({
@@ -228,7 +228,7 @@ describe('free starter agents', () => {
     }
   });
 
-  it('records return milestones only after an earlier message, using the existing signup funnel', async () => {
+  it('records return milestones after the welcome, using the existing signup funnel', async () => {
     const installId = '11111111-1111-4111-8111-111111111111';
     const attemptId = '22222222-2222-4222-8222-222222222222';
     await recordSigninFunnelEvent(db, { event: 'signed_in', installId, attemptId, provider: 'google',
@@ -236,9 +236,10 @@ describe('free starter agents', () => {
     await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
       VALUES($1,$2,'signup','android','0.2.22','server',now())`, [installId, attemptId]);
     const workspace = await phone.execute('createWorkspace', { name: 'Return' }, FRIEND);
+    await recordOnboardingEvent(db, FRIEND, 'welcome_shown');
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'My first task' }, FRIEND);
     expect((await db.query(`SELECT 1 FROM signin_funnel_events WHERE event LIKE 'returned_%'`)).rowCount).toBe(0);
-    await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '8 days' WHERE event='user_answered'`);
+    await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '8 days' WHERE event='welcome_shown'`);
     await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'I am back' }, FRIEND);
     expect((await db.query(`SELECT event FROM signin_funnel_events WHERE event LIKE 'returned_%' ORDER BY event`)).rows)
       .toEqual([{ event: 'returned_day_1' }, { event: 'returned_day_7' }]);
@@ -795,7 +796,12 @@ describe('free starter agents', () => {
       expect(await startOnce(agent.agent_id)).toBe(false);
       await passFence(agent.agent_id);
       await freeAgents.sweep();
-      expect(machines.calls).toEqual([]);
+      // The other teammate may handle the leave; this helper must stay stopped.
+      const teammate = (await db.query<{ agent_id: string }>(
+        `SELECT agent_id FROM free_agents WHERE workspace_id=$1 AND agent_id<>$2`, [id, agent.agent_id])).rows[0]!;
+      expect(machines.calls.filter(call => call !== `create ${teammate.agent_id.slice(0, 4)}`)).toEqual([]);
+      expect(machines.specs.filter(spec => spec.agentId === agent.agent_id)).toHaveLength(1);
+      expect((await freeAgentOf(id)).state).toBe('stopped');
       expect(sentryCaptures).toHaveLength(1);
     });
 

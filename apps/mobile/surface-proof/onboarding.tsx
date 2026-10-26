@@ -14,14 +14,13 @@ export default function OnboardingProof() {
   const [faces, setFaces] = React.useState<Record<string,string>>({});
   React.useEffect(() => { fetch('http://127.0.0.1:8127/faces.json').then(r => r.json()).then(setFaces); }, []);
   const IdentityMark = ({ seed, size }: {seed: string; size: number; [key:string]: any}) => <Image source={{uri: faces[seed]}} style={{width:size,height:size}} />;
-  React.useEffect(() => { if (stage === 'dashboard') return; fetch(`http://127.0.0.1:8127/${stage}.json`).then(r => r.json()).then(setRoom); }, [stage]);
+  React.useEffect(() => { fetch(`http://127.0.0.1:8127/${stage}.json`).then(r => r.json()).then(setRoom); }, [stage]);
   const allMessages = room?.messages ?? [];
   const messages = stage === 'game' ? allMessages.filter((message: any) => message.attachments?.length || message.choice?.status === 'open') : stage === 'explanation' ? allMessages.filter((message: any) => message.text.startsWith('Most AI apps') || message.choice?.status === 'open') : allMessages;
   const attachment = messages.flatMap((message: any) => message.attachments ?? [])[0];
-  if (stage === 'dashboard' && WebView) return <View style={{flex:1,paddingTop:30}}><Pressable onPress={() => setStage('welcome')}><Text style={{padding:14}}>Dashboard companion preview · Close</Text></Pressable><WebView source={{uri:'http://127.0.0.1:8127/dashboard.html'}} /></View>;
   if (viewer && attachment) return <View style={{ flex: 1, paddingTop: 28 }}><Pressable onPress={() => setViewer(false)}><Text style={{ padding: 16 }}>Close game</Text></Pressable><RunnableArtifact attachment={attachment} /></View>;
   return <View style={{ flex: 1, paddingTop: 30, backgroundColor: theme.appCanvas }}>
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{['welcome','explanation','game','invite','dashboard'].map(name => <Pressable key={name} onPress={() => setStage(name)}><Text style={{ color: theme.textPrimary, padding: 10 }}>{name}</Text></Pressable>)}</View>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>{['welcome','explanation','game','invite'].map(name => <Pressable key={name} onPress={() => setStage(name)}><Text style={{ color: theme.textPrimary, padding: 10 }}>{name}</Text></Pressable>)}</View>
     <ScrollView key={stage} contentContainerStyle={{ padding: 18, gap: 18 }}>
       <Text style={{ ...theme.type.hero, color: theme.textPrimary }}>#general</Text>
       {stage === 'invite' ? <Pressable onPress={async () => { const share = await fetch('http://127.0.0.1:8127/share.json').then(r => r.json()); await Share.share({message:share.message}); }}><Text style={{...theme.type.body,color:theme.accent}}>Share this chat</Text></Pressable> : null}

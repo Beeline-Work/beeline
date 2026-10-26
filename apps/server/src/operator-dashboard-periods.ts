@@ -1,4 +1,5 @@
 import type { SqlDatabase } from './database.js';
+import { dashboardOnboarding } from './signin-funnel.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
 
 // Materialize human activity once, then aggregate the four windows. Never rescan
@@ -100,7 +101,7 @@ const stages = [
 export async function dashboardPeriods(database: SqlDatabase, measuredAt: string) {
   const rows = (await database.query(PERIOD_SQL, [measuredAt])).rows;
   return Object.fromEntries(
-    rows.map((row) => {
+    await Promise.all(rows.map(async (row) => {
       const steps = stages.map(([key, label, column]) => ({
         key,
         label,
@@ -112,6 +113,10 @@ export async function dashboardPeriods(database: SqlDatabase, measuredAt: string
         if (lost > 0 && (!biggestDrop || lost >= biggestDrop.lost))
           biggestDrop = { key: steps[i]!.key, lost };
       }
+      const hours = { '24h': 24, '7d': 168, '28d': 672 }[String(row.key)];
+      const since = hours ? new Date(Date.parse(measuredAt) - hours * 3_600_000).toISOString() : null;
+      const onboardingFunnel = await dashboardOnboarding(database, since, measuredAt)
+        .catch(() => ({ state: 'unavailable' as const, measuredAt: null }));
       return [
         String(row.key),
         {
@@ -127,9 +132,10 @@ export async function dashboardPeriods(database: SqlDatabase, measuredAt: string
             series: row.growth_series,
           },
           funnel: { steps, biggestDrop },
+          onboardingFunnel,
         },
       ];
-    }),
+    })),
   );
 }
 

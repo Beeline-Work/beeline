@@ -52,7 +52,7 @@ export async function observeOnboardingMessage(database: SqlDatabase, roomId: st
     await recordOnboardingEvent(database, owner, 'task_question');
     const welcome = (await database.query<{ age: string }>(
       `SELECT EXTRACT(epoch FROM now()-min(e.occurred_at)) age FROM signin_funnel_events e
-       JOIN signin_funnel_installs i ON i.install_id=e.install_id WHERE i.account_hash=$1 AND e.event='user_answered'`,
+       JOIN signin_funnel_installs i ON i.install_id=e.install_id WHERE i.account_hash=$1 AND e.event='welcome_shown'`,
       [funnelAccountHash(owner)],
     )).rows[0];
     if (Number(welcome?.age) >= 86_400) await recordOnboardingEvent(database, owner, 'returned_day_1');
@@ -249,16 +249,20 @@ export async function observeFunnelAuth(database: SqlDatabase, input: FunnelAuth
     );
   }
 }
-/** Request-triggered compaction. Only anonymous daily counts survive 90 days. */
+/** Sign-in detail compacts after 90 days; onboarding milestones retain the all-time cohort. */
 export async function compactSigninFunnel(database: SqlDatabase) {
   await database.transaction(async (tx) => {
     await tx.query(`WITH expired AS (
-      DELETE FROM signin_funnel_events WHERE occurred_at < (now() AT TIME ZONE 'UTC')::date-89 RETURNING *
+      DELETE FROM signin_funnel_events e WHERE occurred_at < (now() AT TIME ZONE 'UTC')::date-89
+        AND NOT e.event=ANY($1::text[])
+        AND NOT (e.event IN ('signup','signed_in') AND EXISTS(
+          SELECT 1 FROM signin_funnel_events welcome WHERE welcome.install_id=e.install_id AND welcome.event='welcome_shown'))
+      RETURNING *
     ), counts AS (
       SELECT (e.occurred_at AT TIME ZONE 'UTC')::date AS day,e.platform,e.event,e.provider,e.outcome,count(DISTINCT e.install_id) installs
       FROM expired e JOIN signin_funnel_installs i ON i.install_id=e.install_id WHERE NOT i.internal GROUP BY 1,2,3,4,5
     ) INSERT INTO signin_funnel_daily SELECT * FROM counts ON CONFLICT(day,platform,event,provider,outcome)
-      DO UPDATE SET installs=signin_funnel_daily.installs+EXCLUDED.installs`);
+      DO UPDATE SET installs=signin_funnel_daily.installs+EXCLUDED.installs`, [[...ONBOARDING_EVENTS]]);
     await tx.query(`DELETE FROM signin_funnel_auth_flows WHERE expires_at<=now()`);
     await tx.query(`DELETE FROM signin_funnel_installs WHERE seen_at < now()-interval '90 days'
       AND NOT EXISTS(SELECT 1 FROM signin_funnel_events e WHERE e.install_id=signin_funnel_installs.install_id)`);
@@ -447,7 +451,6 @@ export async function dashboardSigninFunnel(
     signupCounts.set(selection, Number(row?.count ?? 0));
   }
   const firstSession = await dashboardFirstSessionScreens(database, platforms, measuredAt);
-  const onboarding = await dashboardOnboarding(database, platforms, from, through);
   return {
     state: coverageStart && through >= coverageStart ? 'measured' : 'not_measured',
     measuredAt,
@@ -482,68 +485,94 @@ export async function dashboardSigninFunnel(
       })),
     })),
     firstSession,
-    onboarding,
     dailyAggregatesRetainedAfterDays: 90,
   };
 }
 
-export async function dashboardOnboarding(database: SqlDatabase, platforms: readonly string[], from: string, through: string) {
+// Read the existing event ledger once per period; account hashes deduplicate reinstalls.
+export async function dashboardOnboarding(database: SqlDatabase, from: string | null, measuredAt: string) {
   const rows = (await database.query<{
-    install_id: string; attempt_id: string; event: OnboardingEvent; occurred_at: string | Date;
+    account_hash: string; event: OnboardingEvent; occurred_at: string | Date;
     onboarding_option: 'A' | 'B' | 'C' | 'D' | null; duration_ms: number | string | null;
-  }>(`SELECT e.install_id,e.attempt_id,e.event,e.occurred_at,e.onboarding_option,e.duration_ms
+  }>(`SELECT i.account_hash,e.event,e.occurred_at,e.onboarding_option,e.duration_ms
       FROM signin_funnel_events e JOIN signin_funnel_installs i ON i.install_id=e.install_id
-      WHERE NOT i.internal AND e.platform=ANY($1::text[]) AND e.event=ANY($2::text[])
-        AND EXISTS(SELECT 1 FROM signin_funnel_events welcome
-          WHERE welcome.install_id=e.install_id AND welcome.attempt_id=e.attempt_id AND welcome.event='welcome_shown'
-            AND welcome.occurred_at>=($3::date::timestamp AT TIME ZONE 'UTC')
-            AND welcome.occurred_at<(($4::date+1)::timestamp AT TIME ZONE 'UTC'))`,
-    [[...platforms], [...ONBOARDING_EVENTS], from, through],
+      WHERE NOT i.internal AND i.account_hash IS NOT NULL AND e.event=ANY($1::text[])
+        AND e.occurred_at<$2::timestamptz ORDER BY e.occurred_at`,
+    [[...ONBOARDING_EVENTS], measuredAt],
   )).rows;
-  const attempts = new Map<string, typeof rows>();
+  const people = new Map<string, typeof rows>();
   for (const row of rows) {
-    const key = `${row.install_id}:${row.attempt_id}`;
-    const entries = attempts.get(key) ?? [];
+    const entries = people.get(row.account_hash) ?? [];
     entries.push(row);
-    attempts.set(key, entries);
+    people.set(row.account_hash, entries);
   }
-  const previous: Partial<Record<OnboardingEvent, OnboardingEvent>> = {
-    option_picked: 'welcome_shown', welcome_skipped: 'welcome_shown', user_answered: 'option_picked',
-    task_question: 'option_picked', task_first_answer: 'task_question', task_review_requested: 'task_first_answer',
-    task_final_answer: 'task_question', game_posted: 'option_picked', game_viewer_opened: 'game_posted',
-    game_viewer_closed: 'game_viewer_opened', invite_created: 'option_picked', invite_shared: 'invite_created',
-    invite_opened: 'invite_shared', invite_friend_signed_up: 'invite_opened', invite_friend_messaged: 'invite_friend_signed_up',
-    returned_day_1: 'user_answered', returned_day_7: 'user_answered',
+  const at = (row: typeof rows[number]) => new Date(row.occurred_at).getTime();
+  const end = Date.parse(measuredAt);
+  const cohort = [...people.values()].filter(events => {
+    const welcome = events.find(event => event.event === 'welcome_shown');
+    return welcome && (from === null || at(welcome) >= Date.parse(from));
+  });
+  const main = ['welcome_shown', 'option_picked', 'answered_after_pick', 'return_1d', 'return_7d'] as const;
+  const source: Record<string, OnboardingEvent> = {
+    welcome_shown: 'welcome_shown', option_picked: 'option_picked', answered_after_pick: 'user_answered',
+    return_1d: 'returned_day_1', return_7d: 'returned_day_7',
+    task_first_answer: 'task_first_answer', task_second_opinion: 'task_review_requested', task_final_answer: 'task_final_answer',
+    game_posted: 'game_posted', game_viewer_opened: 'game_viewer_opened', game_closed: 'game_viewer_closed',
+    invite_link_created: 'invite_created', invite_shared: 'invite_shared', invite_opened: 'invite_opened',
+    invite_friend_signed_up: 'invite_friend_signed_up', invite_friend_messaged: 'invite_friend_messaged',
   };
-  const median = (values: number[]) => {
-    if (!values.length) return null;
-    values.sort((a, b) => a - b);
-    const middle = Math.floor(values.length / 2);
-    return values.length % 2 ? values[middle]! : (values[middle - 1]! + values[middle]!) / 2;
+  const milestone = (events: typeof rows, key: string) => {
+    const pick = events.find(event => event.event === 'option_picked');
+    const welcome = events.find(event => event.event === 'welcome_shown')!;
+    return events.find(event => event.event === source[key] && at(event) >= at(welcome) &&
+      (key !== 'answered_after_pick' || (pick && at(event) >= at(pick))) &&
+      (key !== 'return_1d' || at(event) - at(welcome) >= 86_400_000) &&
+      (key !== 'return_7d' || at(event) - at(welcome) >= 7 * 86_400_000));
   };
+  const list = (selected: typeof cohort, keys: readonly string[], firstPrevious?: string) => keys.map((key, index) => {
+    const previous = index ? keys[index - 1] : firstPrevious;
+    let count = 0;
+    const seconds: number[] = [];
+    for (const events of selected) {
+      const current = milestone(events, key);
+      if (!current) continue;
+      count++;
+      const prior = previous ? milestone(events, previous) : undefined;
+      if (prior && at(current) >= at(prior)) {
+        const duration = key === 'game_closed' ? Number(current.duration_ms) : at(current) - at(prior);
+        if ((key !== 'game_closed' || current.duration_ms !== null) && Number.isFinite(duration) && duration >= 0)
+          seconds.push(duration / 1000);
+      }
+    }
+    seconds.sort((a, b) => a - b);
+    const middle = Math.floor(seconds.length / 2);
+    return { key, count,
+      eligible: key === 'return_1d' || key === 'return_7d'
+        ? selected.filter(events => end - at(events.find(event => event.event === 'welcome_shown')!) >=
+          (key === 'return_1d' ? 1 : 7) * 86_400_000).length : null,
+      medianSecondsFromPrevious: seconds.length < 5 ? null : Math.round(seconds.length % 2 ? seconds[middle]!
+        : (seconds[middle - 1]! + seconds[middle]!) / 2),
+      samples: seconds.length };
+  });
+  const steps = list(cohort, main);
+  let biggestDrop: string | null = null;
+  let lost = 0;
+  for (let i = 1; i < steps.length; i++) {
+    const drop = steps[i - 1]!.count - steps[i]!.count;
+    if (drop > 0 && drop >= lost) { biggestDrop = steps[i]!.key; lost = drop; }
+  }
   return {
-    unit: 'signup attempts', from, through,
-    splits: ['all', 'A', 'B', 'C', 'D', 'unpicked'].map(option => {
-      const selected = [...attempts.values()].filter(events => option === 'all' ||
-        (events.find(event => event.event === 'option_picked')?.onboarding_option ?? 'unpicked') === option);
-      return { option, steps: ONBOARDING_EVENTS.map(event => {
-        let count = 0;
-        const intervals: number[] = [];
-        const durations: number[] = [];
-        for (const events of selected) {
-          const current = events.find(entry => entry.event === event);
-          if (!current) continue;
-          count++;
-          const prior = events.find(entry => entry.event === previous[event]);
-          if (prior) {
-            const interval = new Date(current.occurred_at).getTime() - new Date(prior.occurred_at).getTime();
-            if (interval >= 0) intervals.push(interval);
-          }
-          if (current.duration_ms !== null) durations.push(Number(current.duration_ms));
-        }
-        return { event, count, previousEvent: previous[event] ?? null, medianTimeMs: median(intervals), medianDurationMs: median(durations) };
-      }) };
-    }),
+    cohort: 'welcome_shown_in_window' as const,
+    steps,
+    paths: {
+      task: list(cohort, ['task_first_answer', 'task_second_opinion', 'task_final_answer'], 'option_picked'),
+      game: list(cohort, ['game_posted', 'game_viewer_opened', 'game_closed']),
+      invite: list(cohort, ['invite_link_created', 'invite_shared', 'invite_opened', 'invite_friend_signed_up', 'invite_friend_messaged']),
+    },
+    byOption: Object.fromEntries(([['task', 'A'], ['game', 'B'], ['invite', 'C'], ['special', 'D']] as const)
+      .map(([name, option]) => [name, { steps: list(cohort.filter(events =>
+        events.find(event => event.event === 'option_picked')?.onboarding_option === option), main) }])),
+    biggestDrop,
   };
 }
 /**

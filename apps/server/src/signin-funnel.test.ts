@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, expect, it } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type { SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { PgliteDatabase } from './test-support.js';
@@ -44,12 +44,12 @@ it('joins onboarding to the authenticated signup attempt, excludes team accounts
       await recordOnboardingEvent(db, identity!, 'game_posted');
     }
   }
-  const dashboard = await dashboardOnboarding(db, ['android'], today(), today());
-  const all = dashboard.splits.find(split => split.option === 'all')!;
-  expect(all.steps.find(step => step.event === 'welcome_shown')?.count).toBe(1);
-  expect(all.steps.find(step => step.event === 'option_picked')?.medianTimeMs).toBeGreaterThanOrEqual(1900);
-  expect(dashboard.splits.find(split => split.option === 'D')!.steps.find(step => step.event === 'game_posted')?.count).toBe(1);
-  expect(dashboard.splits.find(split => split.option === 'B')!.steps.find(step => step.event === 'game_posted')?.count).toBe(0);
+  const dashboard = await dashboardOnboarding(db, `${today()}T00:00:00Z`, new Date().toISOString());
+  expect(dashboard.steps.find(step => step.key === 'welcome_shown')?.count).toBe(1);
+  expect(dashboard.steps.find(step => step.key === 'option_picked')).toMatchObject({ samples: 1, medianSecondsFromPrevious: null });
+  expect(dashboard.byOption.special!.steps.find(step => step.key === 'option_picked')?.count).toBe(1);
+  expect(dashboard.byOption.game!.steps.find(step => step.key === 'option_picked')?.count).toBe(0);
+  expect(dashboard.paths.game[0]?.count).toBe(1);
   expect(JSON.stringify(dashboard)).not.toContain('d'.repeat(64));
 });
 it('derives anonymous Signup only from an authenticated matching new-account attempt, for either provider', async () => {
@@ -430,4 +430,82 @@ it('orders screens by device time, so a late-arriving earlier screen does not be
     { screen: 'beeline/chat/[channelId]', reached: 1, last: 0 },
     { screen: 'beeline/tray', reached: 1, last: 1 },
   ]);
+});
+
+it('pins the empty period onboarding contract and distinguishes unavailable reads', async () => {
+  const { dashboardPeriods } = await import('./operator-dashboard-periods.js');
+  const periods = await dashboardPeriods(db, new Date().toISOString());
+  for (const key of ['24h', '7d', '28d', 'all']) {
+    const value = periods[key]!.onboardingFunnel;
+    expect(value).toMatchObject({ cohort: 'welcome_shown_in_window', biggestDrop: null });
+    if (!('steps' in value)) throw new Error('unexpected unavailable onboarding');
+    expect(value.steps.map(step => step.key)).toEqual(['welcome_shown', 'option_picked', 'answered_after_pick', 'return_1d', 'return_7d']);
+    expect(Object.keys(value.paths)).toEqual(['task', 'game', 'invite']);
+    expect(Object.keys(value.byOption)).toEqual(['task', 'game', 'invite', 'special']);
+    for (const step of [...value.steps, ...Object.values(value.paths).flat()]) {
+      expect(step).toMatchObject({ count: 0, medianSecondsFromPrevious: null, samples: 0 });
+    }
+  }
+  const failing = { query: async () => { throw new Error('ledger unavailable'); } };
+  await expect(dashboardOnboarding(failing as any, null, new Date().toISOString())).rejects.toThrow('ledger unavailable');
+  const query = db.query.bind(db);
+  const spy = vi.spyOn(db, 'query').mockImplementation((sql, parameters) => {
+    if (sql.includes('SELECT i.account_hash,e.event')) return Promise.reject(new Error('ledger unavailable'));
+    return query(sql, parameters);
+  });
+  try {
+    const unavailable = await dashboardPeriods(db, new Date().toISOString());
+    for (const period of Object.values(unavailable)) expect(period.onboardingFunnel)
+      .toEqual({ state: 'unavailable', measuredAt: null });
+  } finally { spy.mockRestore(); }
+
+});
+it('uses first welcome per person, exclusive period end, mature denominators and five-person integer medians', async () => {
+  const measuredAt = '2026-10-26T20:00:00Z';
+  for (let n = 0; n < 6; n++) {
+    const identity = String(n).repeat(64);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Person')`, [identity]);
+    const attempt = make({ event: 'signed_in', provider: 'google' });
+    await recordSigninFunnelEvent(db, attempt, 'server', identity);
+    const rows = [
+      ['welcome_shown', '2026-10-18T20:00:00Z', null, null],
+      ['option_picked', '2026-10-18T20:00:12Z', 'A', null],
+      ['user_answered', '2026-10-18T20:00:20Z', null, null],
+      ['task_first_answer', '2026-10-18T20:00:42Z', null, null],
+      ['task_review_requested', '2026-10-18T20:00:52Z', null, null],
+      ['task_final_answer', '2026-10-18T20:01:22Z', null, null],
+      ['game_posted', '2026-10-18T20:01:30Z', null, null],
+      ['game_viewer_opened', '2026-10-18T20:01:40Z', null, null],
+      ['game_viewer_closed', '2026-10-18T20:03:00Z', null, 45_000],
+      ['returned_day_1', '2026-10-20T20:00:00Z', null, null],
+      ['returned_day_7', '2026-10-26T19:00:00Z', null, null],
+      ['invite_created', measuredAt, null, null],
+    ];
+    for (const [event, at, option, duration] of rows) await db.query(
+      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at,onboarding_option,duration_ms)
+       VALUES($1,$2,$3,'android','0.2.22','server',$4,$5,$6)`, [attempt.installId, attempt.attemptId, event, at, option, duration]);
+    // A second installation of the same human is not a second cohort member.
+    if (n === 0) {
+      const duplicate = make({ event: 'signed_in', provider: 'google' });
+      await recordSigninFunnelEvent(db, duplicate, 'server', identity);
+      await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+        VALUES($1,$2,'welcome_shown','android','0.2.22','server','2026-10-26T19:00:00Z')`, [duplicate.installId, duplicate.attemptId]);
+    }
+  }
+  const value = await dashboardOnboarding(db, null, measuredAt);
+  expect(value.steps[0]).toMatchObject({ count: 6, samples: 0, medianSecondsFromPrevious: null });
+  expect(value.steps[1]).toMatchObject({ count: 6, samples: 6, medianSecondsFromPrevious: 12 });
+  expect(value.steps[3]).toMatchObject({ count: 6, eligible: 6 });
+  expect(value.steps[4]).toMatchObject({ count: 6, eligible: 6 });
+  expect(value.paths.task.map(step => step.medianSecondsFromPrevious)).toEqual([30, 10, 30]);
+  expect(value.paths.game.map(step => step.medianSecondsFromPrevious)).toEqual([null, 10, 45]);
+  expect(value.paths.invite[0]?.count).toBe(0);
+  expect(value.byOption.task!.steps[0]?.count).toBe(6);
+  expect((await dashboardOnboarding(db, '2026-10-25T20:00:00Z', measuredAt)).steps[0]?.count).toBe(0);
+  await db.query(`UPDATE signin_funnel_events SET occurred_at=occurred_at-interval '100 days'`);
+  await compactSigninFunnel(db);
+  const retained = await dashboardOnboarding(db, null, measuredAt);
+  expect(retained.steps[0]?.count).toBe(6);
+  expect(retained.paths.task[2]?.count).toBe(6);
+
 });

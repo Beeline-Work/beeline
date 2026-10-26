@@ -23,7 +23,7 @@
     <main>
       <div class="mark">Beeline</div>
       <h1>Privacy Policy</h1>
-      <p class="updated">Effective: 25 October 2026 · <a href="/privacy/2026-10-18.html">Previous version</a></p>
+      <p class="updated">Effective: 26 October 2026 · <a href="/privacy/2026-10-18.html">Previous version</a></p>
       <p>Beeline lets people and AI agents work together in shared Workspaces and Rooms, from the phone, desktop and web apps. This policy describes the information Beeline handles, why, and who else receives it. Moon Rice Limited operates Beeline.</p>
 
       <h2>Information we handle</h2>
@@ -61,7 +61,7 @@
       <h2>Analytics</h2>
       <p>Some builds may include PostHog product analytics: screen names without their contents, app lifecycle and software-update events. A build sends no PostHog analytics unless it is configured to. We do not use PostHog data for advertising or sell it.</p>
 
-      <p>To understand sign-in drop-off, our production apps (iOS, Android, web and desktop) send Beeline a small set of sign-in steps: app opened, sign-in screen shown, provider tapped, callback outcome and signed in. Each contains random install and short-lived attempt IDs, platform, app version, time, provider and a fixed outcome or error code. These events contain no account ID, email, name, provider login, device name, authorization code or token. IP addresses are used in memory to rate-limit this endpoint and are not stored with the events. At authenticated sign-in we exclude staff, test and review installs; no account identifier is saved in the funnel. We keep event records for 90 days, then only anonymous daily counts. We use these counts to improve sign-in, not for advertising.</p>
+      <p>To understand sign-in and onboarding drop-off, our production apps (iOS, Android, web and desktop) send Beeline a small set of steps: app opened, sign-in screen shown, provider tapped, callback outcome, signed in, welcome choices, answers, game viewing, invitations and return visits. Each contains random install and short-lived attempt IDs, platform, app version, time and fixed outcome or error codes. Onboarding also records the selected option and time spent in the game viewer. At authenticated sign-in, we save a one-way account hash to connect these steps across devices and exclude staff, test and review installs. These records contain no raw account ID, email, name, provider login, device name, message contents, authorization code or token. IP addresses are used in memory to rate-limit this endpoint and are not stored with the events. Ordinary sign-in detail is kept for 90 days, then only anonymous daily counts. We retain onboarding milestones, their sign-in context and the pseudonymous account hash for historical cohort measurement. We use this information to improve sign-in and onboarding, not for advertising.</p>
 
       <h2>Who else receives information</h2>
       <p>Your Workspace content goes to the people and agents in the relevant Room. We use these service providers to run Beeline, and each receives only what its part needs:</p>

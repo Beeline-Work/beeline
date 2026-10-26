@@ -4554,7 +4554,6 @@ export class DaemonService {
       )).rows[0];
       if (demoted) saved = { ...saved, ...demoted };
     }
-    if (saved.presentation === 'message') await observeOnboardingMessage(this.database, input.roomId, agentId, (saved as CommittedMessageLiveRow & { agent_hop_count?: number }).agent_hop_count ?? this.authorizedCommand?.agent_depth, input.text).catch(error => console.error('[onboarding]', error));
     const emittedAt = Date.now();
     this.live.publish({
       type: 'invalidate',
@@ -4583,6 +4582,17 @@ export class DaemonService {
           }
         : {}),
     });
+    if (saved.presentation === 'message') {
+      const depth = (saved as CommittedMessageLiveRow & { agent_hop_count?: number }).agent_hop_count
+        ?? this.authorizedCommand?.agent_depth;
+      // Observe committed replies without delaying their publication or acknowledgement.
+      const observe = async (database: SqlDatabase) => {
+        void observeOnboardingMessage(database, input.roomId, agentId, depth, input.text)
+          .catch(error => console.error('[onboarding]', error));
+      };
+      if (this.afterCommit) this.afterCommit(observe);
+      else void observe(this.database);
+    }
     // The atomic reply statement counted it in its own star_count CTE.
     if (!atomicCommandWrite && input.requestId && input.presentation !== 'card') {
       const reply = {

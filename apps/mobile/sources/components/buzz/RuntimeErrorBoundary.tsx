@@ -1,4 +1,3 @@
-import { appErrorCopy } from '@/buzz/app-error-copy';
 import { Button } from './Button';
 import * as React from 'react';
 import * as Native from 'react-native';
@@ -14,7 +13,7 @@ export function RuntimeErrorView({ error, retry, scope }: {
 }) {
   React.useEffect(() => { void reportClientError(scope, error); }, [scope, error]);
   const theme = Native.Appearance.getColorScheme() === 'dark' ? beelineThemes.obsidian : beelineThemes.bone;
-  const explanation = appErrorCopy(error, scope === 'app' ? 'Beeline could not display this screen' : 'Conversation mode could not start');
+  const explanation = scope === 'app' ? 'Beeline could not display this screen' : 'Conversation mode could not start';
   return (
     <View style={{ backgroundColor: theme.bgBase, padding: 16, gap: 8,
     ...(scope === 'app' ? { flex: 1, paddingTop: 48 } : {}) }} testID="runtime-error">

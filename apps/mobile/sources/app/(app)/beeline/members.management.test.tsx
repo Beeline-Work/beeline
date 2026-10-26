@@ -1160,7 +1160,7 @@ describe('Members workspace management', () => {
     expect(
       renderer.root
         .findAllByType('Text' as any)
-        .some((node: any) => String(node.props.children).includes('network unavailable')),
+        .some((node: any) => String(node.props.children).includes('Couldn’t reach Beeline')),
     ).toBe(true);
   });
 
@@ -1433,7 +1433,7 @@ describe('Members workspace management', () => {
     );
     expect(
       renderer.root.findByProps({ testID: 'avatar-generation-error' }).props.children,
-    ).toContain('offline');
+    ).toBe('Couldn’t reach Beeline');
   });
 
   it('omits avatar direction and sends only the current soul', async () => {

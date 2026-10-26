@@ -31,6 +31,9 @@ it('rejects raw exception serialization in user error setters', () => {
     }
   }
   visit(path.resolve('sources'));
+  // Observed resources publish error state directly rather than through a setter.
+  const observer = fs.readFileSync(path.resolve('sources/buzz/use-observed-resource.ts'), 'utf8');
+  expect(observer).not.toMatch(/String\(cause(?: instanceof Error)?/);
 });
 
 it('discovers newly added flush text and boxed banners instead of silently grandfathering them', () => {

@@ -94,7 +94,7 @@ class Resource<T> {
           installMissing: cause instanceof InstallMissingError,
           error:
             this.misses >= (this.options.missLimit ?? 1)
-              ? String(cause instanceof Error ? cause.message : cause)
+              ? appErrorCopy(cause)
               : null,
         });
       }

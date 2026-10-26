@@ -221,12 +221,12 @@ it.each([
   try {
     await act(async () => press(tree, stopId));
     await act(async () => press(tree, `${stopId}-confirm`));
-    const banner = tree.root.findAllByType('View').find((node: any) => node.props.testID === `${kind}-stop-error`)!;
-    expect(banner.props.accessibilityRole).toBe('alert');
-    expect(words(tree)).toContain(`Could not stop this ${kind}.`);
+    const row = tree.root.findByProps({ testID: `${kind}-stop-error` });
+    expect(row.props.title).toBe(`Could not stop this ${kind}.`);
+    expect(row.props.action).toBe('Retry');
     expect(words(tree)).not.toMatch(/MonolithPhoneOperationError|deleteRoom|\(\d{3}\)|not found/);
     expect(router.back).not.toHaveBeenCalled();
-    await act(async () => press(tree, `${kind}-stop-error-retry`));
+    await act(async () => press(tree, `${kind}-stop-error`));
     expect(operation.mock.calls.filter(([name]) => name === stopOperation)).toHaveLength(2);
   } finally { restore(); await act(async () => tree.unmount()); }
 });

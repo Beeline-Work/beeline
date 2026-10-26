@@ -32,9 +32,9 @@ function deps(
 }
 
 describe('beeline-agent request_grant', () => {
-  it('requests a native env -i command without a script binding', async () => {
+  it.each(['-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('requests a native env %s command without a script binding', async (option) => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
-    await requestGrant({ kind: 'command', target: 'env -i /bin/echo approved',
+    await requestGrant({ kind: 'command', target: `env ${option} /bin/echo approved`,
       purpose: 'Print approved', reason: 'Native command regression' }, {
       ...deps({ grantId: 'native', status: 'pending', auto: false }, ops),
       scriptRoots: [tmpdir()],

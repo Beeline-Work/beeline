@@ -166,9 +166,9 @@ describe('command grant matching', () => {
 });
 
 describe('GrantCommandRunner', () => {
-  it('runs an approved native env -i command without a script binding', async () => {
-    const { runner } = await harness([grant({ target: 'env -i /bin/echo approved', script: undefined })]);
-    const result = await runner.run({ roomId: ROOM, argv: ['env', '-i', '/bin/echo', 'approved'] });
+  it.each(['-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('runs an approved native env %s command without a script binding', async (option) => {
+    const { runner } = await harness([grant({ target: `env ${option} /bin/echo approved`, script: undefined })]);
+    const result = await runner.run({ roomId: ROOM, argv: ['env', ...option.split(' '), '/bin/echo', 'approved'] });
     expect(result.exitCode).toBe(0);
     expect(result.output).toBe('approved\n');
   });

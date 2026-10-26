@@ -509,8 +509,23 @@ export function interpreterScriptArgument(
     word.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || /^\d+$/.test(word);
   let head = 0;
   while (head < argv.length - 1 && COMMAND_WRAPPERS.has(commandBasename(argv[head]!))) {
+    const wrapper = commandBasename(argv[head]!);
     head += 1;
-    while (head < argv.length - 1 && skippable(argv[head]!)) head += 1;
+    if (wrapper === 'env') {
+      // These options consume a separate operand, which is never the executable.
+      while (head < argv.length - 1) {
+        const word = argv[head]!;
+        if (word === '--') { head += 1; break; }
+        if (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(word)) {
+          head += 2;
+        } else if (word.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
+          head += 1;
+        } else break;
+      }
+      while (head < argv.length - 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[head]!)) head += 1;
+    } else {
+      while (head < argv.length - 1 && skippable(argv[head]!)) head += 1;
+    }
   }
   if (!INTERPRETER_COMMANDS.has(commandBasename(argv[head] ?? ''))) {
     // Explicit executable paths may be scripts too. Callers inspect the bytes

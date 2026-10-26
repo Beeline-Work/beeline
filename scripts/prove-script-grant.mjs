@@ -56,14 +56,21 @@ try {
     assert.match(changed.text, /changed after it was approved/);
     console.log(`R-SCRIPT-HASH ${argv.join(' ')}: unchanged runs; changed bytes refused with new approval requested`);
   }
-  for (const target of ['env -i chosen', 'env -u PATH chosen', `env -C ${alternate} ./chosen`, 'env -S chosen']) {
+  await symlink('/bin/echo', join(cwd, 'native'));
+  await writeFile(join(alternate, 'native'), '#!/bin/sh\nprintf changed\n', { mode: 0o700 });
+  await symlink('/bin/echo', join(alternate, 'echo'));
+  for (const target of [`env -C ${alternate} ./native`, 'env -i chosen', 'env -u PATH chosen', `env -C ${alternate} ./chosen`, 'env -S chosen']) {
     await assert.rejects(requestGrant({ kind: 'command', target, purpose: 'Prove wrapper refusal', reason: 'Isolated proof' }, {
       roomId, scriptRoots: [cwd], scriptEnv: { PATH: `${cwd}:${process.env.PATH}` },
       execute: async () => { assert.fail('unsupported wrapper must not request approval'); },
     }), /Cannot safely resolve env wrapper options/);
-    console.log(`R-SCRIPT-HASH ${target}: unsupported wrapper refused before approval`);
+    approved = { ...approved, target, script: undefined };
+    const legacy = await run(target.split(' '));
+    assert.equal(legacy.ok, false, legacy.text);
+    assert.match(legacy.text, /Cannot safely resolve env wrapper options/);
+    console.log(`R-SCRIPT-HASH ${target}: script wrapper refused before approval and legacy execution`);
   }
-  for (const command of ['env -i /bin/echo', 'env -i echo', '/bin/echo', 'echo']) {
+  for (const command of [`env -C ${alternate} -C . ./native`, `env -C ${alternate} ./echo`, 'env -uPATH /bin/echo', 'env --unset PATH /bin/echo', `env --chdir=${cwd} /bin/echo`, `env --chdir ${cwd} /bin/echo`, `env -C${cwd} /bin/echo`, 'env -u PATH /bin/echo', 'env --unset=PATH /bin/echo', `env -C ${cwd} /bin/echo`, 'env -i /bin/echo', 'env -i echo', '/bin/echo', 'echo']) {
   await requestGrant({ kind: 'command', target: `${command} approved`, purpose: 'Prove native execution', reason: 'Isolated proof' }, {
     roomId, scriptRoots: [cwd], scriptEnv: { PATH: `${cwd}:${process.env.PATH}` }, execute: async (_name, input) => {
       assert.equal(input.script, undefined, 'native executable must retain ordinary grant behavior');

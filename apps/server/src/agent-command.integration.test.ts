@@ -76,25 +76,44 @@ it.each(['ordinary', 'tagged', 'threaded', 'private', 'private-agent', 'corner',
 );
 
 
+// R3: with text-pattern suppression removed, agent final text publishes as
+// written on any wake. The only silence path is the no_reply_needed tool
+// (a 'no-reply' completion receipt), which discards the turn's final text.
 it.each(['I posted nothing.', 'Nothing to post.', "I won't post to the Room.", 'NO_REPLY', 'No reply needed.',
   'Nonhuman wake only … Ending silently',
   'Posted a concise Arabic list … Waiting for Mohammed',
   'blocked: Corner release is idle with no worker schedule or event subscription',
 ])(
-  'WAKE-STORM: a final silence declaration publishes nothing: %s', async text => {
-    for (const roomId of [R, C]) {
-      const queued = await createAgentCommand(db, { roomId, agentId: A, sourceMessageId: null, reason: 'system' });
-      const command = (await commands(A, roomId)).find(c => c.id === queued!.id)!;
-      await claim(command);
-      await result(command, text);
-      await result(command, text);
-      expect((await db.query('SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2', [command.turnRequestId,A])).rowCount).toBe(0);
-      expect((await db.query('SELECT completion_kind FROM agent_turns WHERE request_id=$1 AND agent_id=$2', [command.turnRequestId,A])).rows[0]?.completion_kind).toBe('no-reply');
-      await expect(result(command, text, 'wrong-generation')).rejects.toThrow('authority rejected');
-    }
+  'WAKE-STORM: final text publishes as written on a system wake: %s', async text => {
+    const queued = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null, reason: 'system' });
+    const command = (await commands(A, R)).find(c => c.id === queued!.id)!;
+    await claim(command);
+    await result(command, text);
+    expect((await db.query('SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2 AND text=$3',
+      [command.turnRequestId, A, text])).rowCount).toBe(1);
+    expect((await db.query('SELECT completion_kind FROM agent_turns WHERE request_id=$1 AND agent_id=$2',
+      [command.turnRequestId, A])).rows[0]?.completion_kind).toBeFalsy();
   });
 
-it('WAKE-STORM: a human wake keeps its report-status reply', async () => {
+it('WAKE-STORM: a no_reply_needed receipt posts nothing on a system wake', async () => {
+  for (const roomId of [R, C]) {
+    const queued = await createAgentCommand(db, { roomId, agentId: A, sourceMessageId: null, reason: 'system' });
+    const command = (await commands(A, roomId)).find(c => c.id === queued!.id)!;
+    await claim(command);
+    await daemon.execute('postAgentTurnReceipt', {
+      roomId, requestId: command.turnRequestId, generationId: 'g1',
+      status: 'complete', completionKind: 'no-reply',
+    }, A);
+    const text = 'Nonhuman wake only … Ending silently';
+    await result(command, text);
+    await result(command, text);
+    expect((await db.query('SELECT 1 FROM messages WHERE request_id=$1 AND author_id=$2', [command.turnRequestId, A])).rowCount).toBe(0);
+    expect((await db.query('SELECT completion_kind FROM agent_turns WHERE request_id=$1 AND agent_id=$2', [command.turnRequestId, A])).rows[0]?.completion_kind).toBe('no-reply');
+    await expect(result(command, text, 'wrong-generation')).rejects.toThrow('authority rejected');
+  }
+});
+
+it('WAKE-STORM: a human wake publishes its report-status reply as written', async () => {
   const queued = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null, reason: 'human_tag' });
   const command = (await commands(A, R)).find(c => c.id === queued!.id)!;
   await claim(command);

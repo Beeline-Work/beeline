@@ -16,20 +16,6 @@ import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { assertCornerCommandTarget, commandAddress, commandOrder, sendOrder, reportToCommander, hasOrderContinuation, refuseTagPastCommander, CommandRefusalError } from './commander.js';
-import { isNoReplyDeclaration, isPostedWaitingNarration, isReportStatusPrefixed } from './no-reply.js';
-
-/** Wakes no person authored: on these, a report-status final text is worker
- * status for the commander path, never a stranger's room reply. Human message
- * wakes ('direct_message', 'human_tag') keep their replies. */
-const NONHUMAN_WAKE_REASONS = new Set([
-  'report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
-  'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
-  'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
-  'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
-  'corner_background_tool', 'corner_brief_revision', 'tagged_lifecycle_stop',
-  'tagged_lifecycle_retry', 'tagged_lifecycle_restart',
-]);
-
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -609,32 +595,10 @@ export class DaemonService {
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
     ]);
-    // Final text is normally published unconditionally by the helper's stream
-    // settle. Older harnesses express silence as prose instead of the no-reply
-    // tool. Settle that outcome before either public insertion or private routing.
-    // On a nonhuman wake a report-status final text ("blocked: …") is worker
-    // status for the commander path, never a stranger's room reply, and any
-    // public wake's "Posted … Waiting for …" note is narration about work done
-    // somewhere else. Private routes (orders, corners) keep their own routing.
-    const finalText = String(candidate.text ?? '');
-    let statusSilence = false;
-    if (name === 'postRoomMessage' && candidate.presentation !== 'card' && scopedRoom &&
-      isReportStatusPrefixed(finalText) && !isNoReplyDeclaration(finalText) &&
-      !isPostedWaitingNarration(finalText)) {
-      const wake = (await this.database.query<{ reason: string; private_payload: unknown }>(
-        `SELECT c.reason,c.private_payload FROM agent_commands c WHERE c.room_id=$1 AND c.agent_id=$2
-           AND c.turn_request_id=$3 ORDER BY c.created_at DESC,c.id DESC LIMIT 1`,
-        [scopedRoom, authenticatedAgentId, String(candidate.requestId ?? candidate.turnId ?? '')],
-      )).rows[0];
-      statusSilence = !wake?.private_payload && NONHUMAN_WAKE_REASONS.has(String(wake?.reason ?? ''));
-    }
-    const silentFinal = name === 'postRoomMessage' && candidate.presentation !== 'card' &&
-      (isNoReplyDeclaration(finalText) || isPostedWaitingNarration(finalText) || statusSilence);
     if (
       !this.commandTransaction &&
       scopedRoom &&
       name === 'postRoomMessage' &&
-      !silentFinal &&
       candidate.relay === undefined &&
       typedMentionHandles(String(candidate.text ?? '')).size === 0 &&
       typeof candidate.replyToMessageId !== 'string' &&
@@ -773,8 +737,6 @@ export class DaemonService {
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
           return this.writeResult() as Output<Name>;
-        if (silentFinal && command.state === 'complete')
-          return this.writeResult() as Output<Name>;
         // Silence is a server-owned terminal outcome, including private return
         // routes. Older helpers may still submit final text after the tool.
         if (name === 'postRoomMessage' && (await db.query(
@@ -797,7 +759,7 @@ export class DaemonService {
         // A corner is the ordered work's own address: its viewers watch the
         // turn's live work and progress there. Urgent terminal prose still
         // reports privately; done uses the explicit guarded report tool.
-        if (!silentFinal && command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
+        if (command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount)) || ([
           'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name) && !(await db.query(
@@ -863,19 +825,7 @@ export class DaemonService {
         scoped.afterCommit = (task) => {
           committedTasks.push(task);
         };
-        let result: Output<Name>;
-        if (silentFinal) {
-          // Settle through the authorized completion path below. A recursive
-          // execute call unnecessarily adds a generic System producer route.
-          await db.query(`UPDATE agent_turns SET status='complete',completion_kind='no-reply',created_at=now()
-            WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
-            [scopedRoom,authenticatedAgentId,requestId]);
-          await db.query(`DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2
-            AND turn_id=$3 AND kind IN ('draft','thought')`, [scopedRoom,authenticatedAgentId,requestId]);
-          await settleTurnFailureLine(db,buffered,scopedRoom, String(requestId),authenticatedAgentId);
-          candidate.status = 'complete';
-          result = this.writeResult() as Output<Name>;
-        } else result = await scoped.execute(name, input, authenticatedAgentId);
+        let result: Output<Name> = await scoped.execute(name, input, authenticatedAgentId);
         if (name === 'requestAgentGrant') {
           await db.query(
             `UPDATE agent_grants SET command_id=$2 WHERE id=$1 AND command_id IS NULL`,
@@ -920,12 +870,12 @@ export class DaemonService {
               [offerId, command.id],
             );
         }
-        if (name === 'postRoomMessage' && candidate.relay === undefined && !silentFinal) {
+        if (name === 'postRoomMessage' && candidate.relay === undefined) {
           // routeAgentResult reads the reply's own text for the agents it hands
           // work to, so there is nothing to pre-check here.
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
-        } else if (name === 'postAgentTurnReceipt' || silentFinal) {
+        } else if (name === 'postAgentTurnReceipt') {
           if (candidate.status === 'working')
             await db.query(
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
@@ -999,7 +949,7 @@ export class DaemonService {
           },
         });
       }
-      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner && !silentFinal) {
+      if (name === 'postRoomMessage' && candidate.relay === undefined && isCorner) {
         await this.reconcileZeroCheckWorkerCompletion(
           scopedRoom!,
           authenticatedAgentId,

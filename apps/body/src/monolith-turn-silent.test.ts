@@ -52,8 +52,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
           import { callAgentTool } from '${pathToFileURL(join(process.cwd(), 'src/read-only-mcp.ts')).href}';
           process.env.BEELINE_DAEMON_BASE_URL = 'http://fixture';
           process.env.BEELINE_DAEMON_TOKEN = 'fixture';
-          // The replayed tool is explicitly advertised even when the fixture binary is Node.
-          process.env.BEELINE_EXPLICIT_SILENT_RECEIPT = '1';
+          // The replayed tool is advertised on every harness now.
           globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
           if (await callAgentTool('no_reply_needed', {}, 'silent') !== JSON.stringify({ acknowledged: true })) throw new Error('Silence was not acknowledged');
         `)}], { env: { ...process.env, ...toolEnv }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch (error) { process.stderr.write(error.stderr); process.exit(1); }

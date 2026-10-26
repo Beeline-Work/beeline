@@ -154,14 +154,16 @@ export function agentToolsFor(
   repositoryCorner = false,
   commandRunnerAvailable = true,
   institutionalMemoryEnabled = true,
-  explicitSilentReceipt = false,
   nativeIoProven = false,
 ): ToolDefinition[] {
   if (!agentSurface) return repositoryTools();
   const tools = minimalTools(cornerTurn).filter(tool =>
     institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
   if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
-  if (explicitSilentReceipt) tools.push(SILENT_TOOL);
+  // no_reply_needed mounts on every harness: it is the only silence path, so a
+  // nonhuman wake must always be able to end without posting prose. The tool
+  // itself refuses human wakes.
+  tools.push(SILENT_TOOL);
   if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
   return tools;
 }
@@ -173,7 +175,6 @@ const TOOLS = agentToolsFor(
   process.env.BEELINE_CORNER_REPOSITORY === '1',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
   true,
-  process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1',
   process.env.BEELINE_NATIVE_IO_PROVEN === '1',
 );
 
@@ -2736,7 +2737,7 @@ async function daemonUploadArtifact(
 }
 
 function advertisedAgentTool(name: string): ToolDefinition {
-  const tool = agentToolsFor(true, process.env.BEELINE_AGENT_DM === '1', Boolean(process.env.BEELINE_DAEMON_CORNER_ID), process.env.BEELINE_CORNER_REPOSITORY === '1', Boolean(process.env.BEELINE_GRANT_RUNNER_URL), true, process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1', process.env.BEELINE_NATIVE_IO_PROVEN === '1').find(tool => tool.name === name);
+  const tool = agentToolsFor(true, process.env.BEELINE_AGENT_DM === '1', Boolean(process.env.BEELINE_DAEMON_CORNER_ID), process.env.BEELINE_CORNER_REPOSITORY === '1', Boolean(process.env.BEELINE_GRANT_RUNNER_URL), true, process.env.BEELINE_NATIVE_IO_PROVEN === '1').find(tool => tool.name === name);
   if (!tool) throw new Error(`unknown or unavailable tool: ${name}; use only advertised tools`);
   return tool;
 }

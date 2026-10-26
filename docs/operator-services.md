@@ -131,3 +131,39 @@ Arbitrum, Optimism, Zora and Avalanche (evm-chain.ts). Their public endpoints ha
 no operating credit account; rows show entered zero for the public service only,
 not user gas or token costs. These are separate rows so wallet outages have a
 named dependency. Google billing for other Cloud products is not included.
+
+## Frontend field names frozen for the priority contract handoff
+
+`headline` exposes nullable `monthToDateUsd`, `projectedMonthUsd`, `lastMonthUsd`,
+`avgCostPerActiveUserUsd`, `activeUsers`, and timestamp `asOf`.
+The first three mirror complete `summary` totals. When incomplete, use the
+explicitly labelled `summary.*.knownUsd` subtotal. Attribution counts stay null
+until PR B, rather than reporting a fictitious empty population.
+
+Service rows additionally expose `category` (`models|voice|hosting|other`),
+`billingType` (`credits|card_monthly|fixed_plan|free`), flat nullable
+`monthToDateUsd`, `projectedMonthUsd`, `lastMonthUsd`, `balanceUsd`, and `readAt`.
+`sources` has one tag per flat amount (`api|metered|entered|unknown`). Flat fields
+mirror the detailed spending metrics. `balanceUsd` is only for an unambiguous
+single account-credit observation, never a key allowance or a sum across accounts.
+Multiple account readings remain separate under `readings`. Each has its own
+measurement time. Rows retain sanitized `error` and provider `billingUrl`.
+
+Each `daily` point also has nullable `models`, `voice`, `hosting`, `other` amounts.
+A category stays null if its services lack complete observations; the detailed
+per-service series retains known subsets. OpenRouter is categorized as models,
+including voice reply generation; Cloudflare and Groq are categorized as voice;
+Fly/Neon/Tigris as hosting. This is service categorization, not token attribution.
+
+The fixed `perUser` shape now includes `state`, `delivery`, nullable `activeUsers`,
+`attributedShare`, `attributedUsd`, `unattributedUsd`, `fixedCostPerActiveUserUsd`,
+and `users` with `{handle,modelsUsd,voiceUsd,machineUsd,variableUsd,fixedUsd,totalUsd}`.
+All user amounts are nullable. In PR A it is pending with no users and all numbers
+null; `delivery` says PR B. Earlier nested `summary`/`spend` fields remain available.
+
+`apps/server/src/operator-finances-contract.fixture.json` is a synthetic UI fixture
+beside the types: mixed API, metered and entered sources, failed Fly billing,
+unknown totals, realistic daily category points, and explicit per-user unknowns.
+It is example data, never production costs or recurring invoice configuration.
+The independent `docs/fixtures/operator-finances.json` is still exported from
+the built HTTP path with provider fixtures for integration verification.

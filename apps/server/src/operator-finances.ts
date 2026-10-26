@@ -221,7 +221,7 @@ export function createOperatorFinances(
       return money(rows.reduce((sum, s) => sum + s.daily_usd!, 0), source, latest,
         partial ? 'Observed daily usage only; provider and workload coverage may be partial' : 'Entered fixed monthly plan, allocated evenly across UTC days', partial);
     };
-    const services = balanceRows.map(row => {
+    const services = balanceRows.map((row): OperatorFinances['services'][number] => {
       const spend = spends.get(row.id)!;
       if (row.billing === 'free' || fixedCosts.some(c => c.serviceId === row.id && c.monthlyUsd !== null)) {
         // Fixed costs are accrued through the same fractional UTC day used for the projection.
@@ -240,7 +240,20 @@ export function createOperatorFinances(
         if (last) spend.monthToDate = { usd: last.month_to_date_usd, source: last.source, state: 'stale',
           measuredAt: last.measured_at, note: 'Last saved month-to-date snapshot; refresh unavailable' };
       }
-      return { ...row, spend, error: spend.monthToDate.state === 'unknown' || spend.monthToDate.state === 'stale'
+      const category = row.id === 'openrouter' ? 'models' : ['cloudflare', 'groq'].includes(row.id) ? 'voice'
+        : ['fly', 'neon', 'tigris'].includes(row.id) ? 'hosting' : 'other';
+      const source = (value: Money): 'api' | 'metered' | 'entered' | 'unknown' => value.source === 'API' ? 'api' : value.source;
+      const accountCredits = row.readings.filter(r => r.label.endsWith(': account credits') && r.state === 'measured' && r.value !== null);
+      const uniqueKeys = new Set(row.envVars.map(name => env[name]?.trim()).filter(Boolean));
+      const credit = row.billing === 'credits' && (accountCredits.length === 1 || uniqueKeys.size === 1) ? accountCredits[0] : undefined;
+      return { ...row, spend, category,
+        billingType: row.billing === 'pay-as-you-go card' ? 'card_monthly' : row.billing === 'fixed plan' ? 'fixed_plan' : row.billing,
+        monthToDateUsd: spend.monthToDate.usd, projectedMonthUsd: spend.projectedMonth.usd,
+        lastMonthUsd: spend.lastMonth.usd, balanceUsd: credit?.value ?? null,
+        sources: { monthToDateUsd: source(spend.monthToDate), projectedMonthUsd: source(spend.projectedMonth),
+          lastMonthUsd: source(spend.lastMonth), balanceUsd: credit ? 'api' : 'unknown' },
+        readAt: credit?.measuredAt ?? spend.monthToDate.measuredAt,
+        error: spend.monthToDate.state === 'unknown' || spend.monthToDate.state === 'stale'
         ? spend.monthToDate.note : row.readings.some(r => r.state === 'unavailable')
           ? 'Some provider balance reads are unavailable; see individual readings' : null };
     });
@@ -253,16 +266,28 @@ export function createOperatorFinances(
         state: values.every(v => v.state === 'measured') ? 'measured' : 'partial' };
     };
     return { schemaVersion: 1, timeZone: 'UTC', currency: 'USD', measuredAt, cacheSeconds: CACHE_MS / 1000,
+      headline: { monthToDateUsd: total('monthToDate').usd, projectedMonthUsd: total('projectedMonth').usd,
+        lastMonthUsd: total('lastMonth').usd, avgCostPerActiveUserUsd: null, activeUsers: null, asOf: measuredAt },
       month: isoDay(start).slice(0, 7), previousMonth: isoDay(priorStart).slice(0, 7), snapshotState,
       summary: { monthToDate: total('monthToDate'), projectedMonth: total('projectedMonth'), lastMonth: total('lastMonth'),
         averageCostPerActiveUser: unknown('Per-user attribution follows in PR B') },
       services,
-      daily: days.map(day => ({ date: day, services: services.map(s => {
+      daily: days.map(day => {
+        const categoryCost = (category: OperatorFinances['services'][number]['category']) => {
+          const members = services.filter(s => s.category === category);
+          const readings = members.map(s => historyFor(s.id, day));
+          return !members.length || readings.some(r => !r) || members.some(s => s.spend.monthToDate.state !== 'measured')
+            ? null : readings.reduce((sum, r) => sum + r!.daily_usd!, 0);
+        };
+        return { date: day, models: categoryCost('models'), voice: categoryCost('voice'),
+          hosting: categoryCost('hosting'), other: categoryCost('other'), services: services.map(s => {
         const reading = historyFor(s.id, day);
         return { serviceId: s.id, usd: reading?.daily_usd ?? null, source: reading?.source ?? 'unknown',
           measuredAt: reading?.measured_at ?? null };
-      }) })),
-      perUser: { state: 'pending', delivery: 'PR B', users: [], note: 'Per-user attribution follows in PR B' },
+      }) }; }),
+      perUser: { state: 'pending', delivery: 'PR B', activeUsers: null, attributedShare: null,
+        attributedUsd: null, unattributedUsd: null, fixedCostPerActiveUserUsd: null,
+        users: [], note: 'Per-user attribution follows in PR B' },
       note: 'Known spend is a subtotal, not total operating cost. Missing history remains null. Snapshots refresh hourly and on dashboard reads.',
     };
   }

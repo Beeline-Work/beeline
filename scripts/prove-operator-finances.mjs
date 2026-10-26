@@ -46,10 +46,17 @@ try {
   assert.equal(finances.services.find(s => s.id === 'groq').spend.monthToDate.usd, null);
   assert.equal(finances.services.find(s => s.id === 'groq').spend.monthToDate.source, 'unknown');
   assert.equal(typeof finances.services.find(s => s.id === 'groq').error, 'string');
-  assert.deepEqual(finances.perUser, { state: 'pending', delivery: 'PR B', users: [],
+  assert.deepEqual(finances.perUser, { state: 'pending', delivery: 'PR B', activeUsers: null,
+    attributedShare: null, attributedUsd: null, unattributedUsd: null, fixedCostPerActiveUserUsd: null, users: [],
     note: 'Per-user attribution follows in PR B' });
   assert.equal(finances.services.find(s => s.id === 'cloudflare').spend.monthToDate.usd, null);
   assert.equal(finances.daily[0].services.find(s => s.serviceId === 'openrouter').usd, null);
+  assert.equal(finances.headline.activeUsers, null);
+  assert.equal(model.monthToDateUsd, 12);
+  assert.equal(model.sources.monthToDateUsd, 'api');
+  assert.equal(model.category, 'models');
+  assert.equal(model.billingType, 'credits');
+  assert.equal(finances.daily[0].hosting, null);
   assert.ok(!JSON.stringify(body).includes('fixture-private-key'));
   const snapshots = await db.query('SELECT count(*) AS count FROM operator_finance_snapshots');
   assert.ok(Number(snapshots.rows[0].count) > 0);

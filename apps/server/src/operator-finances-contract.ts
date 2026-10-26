@@ -1,5 +1,6 @@
 /** Frozen PR A dashboard contract. Notify the frontend owner before changing this shape. */
 type Source = 'API' | 'metered' | 'entered' | 'unknown';
+type NumberSource = 'api' | 'metered' | 'entered' | 'unknown';
 type Money = {
   usd: number | null;
   source: Source;
@@ -23,6 +24,14 @@ export type OperatorFinances = {
   month: string;
   previousMonth: string;
   snapshotState: 'saved' | 'unavailable';
+  headline: {
+    monthToDateUsd: number | null;
+    projectedMonthUsd: number | null;
+    lastMonthUsd: number | null;
+    avgCostPerActiveUserUsd: number | null;
+    activeUsers: number | null;
+    asOf: string | null;
+  };
   summary: {
     monthToDate: Total;
     projectedMonth: Total;
@@ -33,6 +42,20 @@ export type OperatorFinances = {
     id: string;
     name: string;
     powers: string;
+    category: 'models' | 'voice' | 'hosting' | 'other';
+    billingType: 'credits' | 'card_monthly' | 'fixed_plan' | 'free';
+    monthToDateUsd: number | null;
+    projectedMonthUsd: number | null;
+    lastMonthUsd: number | null;
+    /** Only a single unambiguous account-credit reading; never summed across keys. */
+    balanceUsd: number | null;
+    sources: {
+      monthToDateUsd: NumberSource;
+      projectedMonthUsd: NumberSource;
+      lastMonthUsd: NumberSource;
+      balanceUsd: NumberSource;
+    };
+    readAt: string | null;
     envVars: string[];
     billing: 'credits' | 'pay-as-you-go card' | 'fixed plan' | 'free';
     billingUrl: string;
@@ -57,12 +80,29 @@ export type OperatorFinances = {
   }[];
   daily: {
     date: string;
+    models: number | null;
+    voice: number | null;
+    hosting: number | null;
+    other: number | null;
     services: { serviceId: string; usd: number | null; source: Source; measuredAt: string | null }[];
   }[];
   perUser: {
-    state: 'pending';
+    state: 'pending' | 'measured' | 'partial' | 'unavailable';
     delivery: 'PR B';
-    users: [];
+    activeUsers: number | null;
+    attributedShare: number | null;
+    attributedUsd: number | null;
+    unattributedUsd: number | null;
+    fixedCostPerActiveUserUsd: number | null;
+    users: {
+      handle: string;
+      modelsUsd: number | null;
+      voiceUsd: number | null;
+      machineUsd: number | null;
+      variableUsd: number | null;
+      fixedUsd: number | null;
+      totalUsd: number | null;
+    }[];
     note: string;
   };
   note: string;

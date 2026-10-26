@@ -70,7 +70,8 @@ const inventory: Service[] = [
 ];
 
 type Reading = OperatorFinances['services'][number]['readings'][number];
-type ServiceRow = Omit<OperatorFinances['services'][number], 'spend' | 'error'>;
+type ServiceRow = Pick<OperatorFinances['services'][number],
+  'id' | 'name' | 'powers' | 'envVars' | 'billing' | 'billingUrl' | 'balanceNote' | 'state' | 'balanceHealth' | 'readings'>;
 const CACHE_MS = 10 * 60 * 1000;
 const TIMEOUT_MS = 5000;
 class BalanceReadError extends Error {}

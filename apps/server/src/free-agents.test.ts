@@ -867,8 +867,8 @@ What are you working on? Tell me, and I'll take the first step with you. If you'
   });
 });
 
-it('defaults free agents to V4.1 Flash and preserves an explicit model override', () => {
+it('defaults free agents to the October V4.1 Flash update and preserves an explicit model override', () => {
   const env = { BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' };
-  expect(freeAgentConfigFromEnv(env, 'https://server.test')?.model).toBe('deepseek/deepseek-v4.1-flash');
+  expect(freeAgentConfigFromEnv(env, 'https://server.test')?.model).toBe('deepseek/deepseek-v4.1-flash-1017');
   expect(freeAgentConfigFromEnv({ ...env, BEELINE_FREE_AGENT_MODEL: 'custom/model' }, 'https://server.test')?.model).toBe('custom/model');
 });

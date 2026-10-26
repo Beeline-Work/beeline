@@ -116,7 +116,7 @@ export function freeAgentConfigFromEnv(
   };
   return {
     limits: freeAgentLimitsFromEnv(env),
-    model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4.1-flash',
+    model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4.1-flash-1017',
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
     dailyTokenCap: freeAgentDailyTokenCapFromEnv(env),

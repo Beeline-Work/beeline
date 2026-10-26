@@ -341,14 +341,15 @@ describe('free agent model proxy', () => {
     expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='allowance_warning'`)).rowCount).toBe(1);
   });
 
-  it('pins the model, adds the server key and charges uncached prompt plus completion tokens', async () => {
+  it('pins the default October model, adds the server key and charges uncached prompt plus completion tokens', async () => {
+    config = { ...config, model: freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')!.model };
     const response = await call({ model: 'anthropic/claude-opus-5', messages: [{ role: 'user', content: 'hi' }] });
     expect(response.status).toBe(200);
     expect((await response.json()).choices[0].message.content).toBe('done');
     expect(upstream).toHaveLength(1);
     expect(upstream[0]!.url).toBe('https://openrouter.ai/api/v1/chat/completions');
     expect(upstream[0]!.authorization).toBe('Bearer sk-or-server-only');
-    expect(upstream[0]!.body).toMatchObject({ model: 'deepseek/deepseek-v4-flash', usage: { include: true } });
+    expect(upstream[0]!.body).toMatchObject({ model: 'deepseek/deepseek-v4.1-flash-1017', usage: { include: true } });
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 315, lifetime: 315 });
   });
 

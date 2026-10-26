@@ -27,6 +27,7 @@ const tool = (id: string, title: string): Update[] => [
 // boundary is recorded; the ACP parser, Room loop and publishing lane are real.
 const harnessSource = (updates: readonly Update[]) => `
 import { createInterface } from 'node:readline';
+import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 const updates = ${JSON.stringify(updates)};
 let toolEnv = {};
@@ -38,7 +39,9 @@ createInterface({ input: process.stdin }).on('line', async line => {
     params: { sessionId: params.sessionId, update } });
   if (message.method === 'initialize') reply({ protocolVersion: 1 });
   else if (message.method === 'session/new') {
-    const server = params.mcpServers.find(server => server.env?.some(value => value.name === 'BEELINE_TURN_CONTEXT_FILE'));
+    const servers = params.mcpServers.map(server => server.args?.[0]?.endsWith('/launch.cjs')
+      ? JSON.parse(readFileSync(server.args[1], 'utf8')) : server);
+    const server = servers.find(server => server.env?.some(value => value.name === 'BEELINE_TURN_CONTEXT_FILE'));
     toolEnv = Object.fromEntries(server.env.map(({ name, value }) => [name, value]));
     reply({ sessionId: 'r1-session' });
   }

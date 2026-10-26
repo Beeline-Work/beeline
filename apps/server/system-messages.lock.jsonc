@@ -1,4 +1,4 @@
-// App sign-in card stored domain approved by lunchboxfortwo, message 3d09e2b6b1e393a85ba499fd7d1bc4339fce9210a9ec5e01d9109b4cebace300 (PR #2977); this connectAppFrontDoor entry only.
+// App sign-in card stored domain and https logo approved by lunchboxfortwo, message 3d09e2b6b1e393a85ba499fd7d1bc4339fce9210a9ec5e01d9109b4cebace300 (PR #2977); hidden card fields only, visible text unchanged; this connectAppFrontDoor entry only.
 // Draft readiness failure report approved by lunchboxfortwo in DM message 2ba8abca (Oct 26), relayed by Ruby; exact wording and this reconcileCornerMergeBlockers wrapper only.
 // False idle corners brief revision 4 (owner approval 15e88632b7dc84d655ba4202a69f8680ed378e1e52ab6adba17f5fc84971bf8f): remove obsolete timed/stall alert branches; retain the existing idle wording.
 // Current review and repair handoff target line and transitive wrappers approved by lunchboxfortwo, message 70add57a7141d4a4a811a3d9e81d02788a973d2377287c39d6bdaff758dade77; these five wrapper literal snapshots only.
@@ -2227,10 +2227,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.connectAppFrontDoor:systemLine:aec98eb4ec47f306",
+    "id": "src/daemon-service.ts:DaemonService.connectAppFrontDoor:systemLine:2e46c1d7d13239bf",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: 'needs a connection to', object: outcome.name ?? app,\n    consequence: 'Sign in to continue the request.',\n    presentation: 'card', cardType: 'app-sign-in',\n    card: { appId: outcome.appId, appKey: outcome.appKey,\n        name: outcome.name ?? app, ...(domain ? { domain } : {}), ownerId: context.owner.pubkey,\n        agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,\n        ...(continuation ? { continuation } : {}) },\n})",
+    "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: 'needs a connection to', object: outcome.name ?? app,\n    consequence: 'Sign in to continue the request.',\n    presentation: 'card', cardType: 'app-sign-in',\n    card: { appId: outcome.appId, appKey: outcome.appKey,\n        name: outcome.name ?? app, ...mark, ownerId: context.owner.pubkey,\n        agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,\n        ...(continuation ? { continuation } : {}) },\n})",
     "literals": [
       "''",
       "'GET'",

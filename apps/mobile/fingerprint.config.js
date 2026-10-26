@@ -19,6 +19,9 @@
 
 /** @type {import('@expo/fingerprint').Config} */
 module.exports = {
+  // This patch catches a web-only font promise in JavaScript. It changes no
+  // native input; keep native patches (including expo-notifications) counted.
+  ignorePaths: ['patches/@expo+vector-icons+15.1.1.patch'],
   sourceSkips: [
     // The whole `scripts` section is JS/CI tooling. The library hashes it by
     // default only because `expo prebuild` rewrites the android/ios entries,

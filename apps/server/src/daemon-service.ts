@@ -7038,6 +7038,29 @@ export class DaemonService {
     };
   }
 
+  /**
+   * The web domain an app sign-in card stores so the card shows the app's
+   * mark instead of a letter. The app row's domain wins; otherwise the
+   * provider's (usually cached) toolkit metadata names it. A slow or failing
+   * lookup never delays or blocks the card.
+   */
+  private async appCardDomain(appKey: string, domain?: string): Promise<string | undefined> {
+    if (domain) return domain;
+    if (!this.composio) return undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const metadata = await Promise.race([
+        this.composio.toolkit(composioToolkitForApp(appKey)),
+        new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
+      ]);
+      return metadata?.appUrl ? registrableDomain(new URL(metadata.appUrl).hostname) : undefined;
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   // --- R5: connector offers -------------------------------------------------
 
   /**
@@ -7610,6 +7633,7 @@ export class DaemonService {
     });
     if (outcome.transport === 'composio' && outcome.status === 'needs_sign_in' &&
       outcome.appId && outcome.appKey) {
+      const domain = await this.appCardDomain(outcome.appKey, outcome.domain);
       await this.database.transaction(async (database) => {
         await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
           [`app-sign-in:${input.roomId}:${outcome.appId}`]);
@@ -7626,7 +7650,7 @@ export class DaemonService {
           consequence: 'Sign in to continue the request.',
           presentation: 'card', cardType: 'app-sign-in',
           card: { appId: outcome.appId, appKey: outcome.appKey,
-            name: outcome.name ?? app, ownerId: context.owner.pubkey,
+            name: outcome.name ?? app, ...(domain ? { domain } : {}), ownerId: context.owner.pubkey,
             agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,
             ...(continuation ? { continuation } : {}) },
         });

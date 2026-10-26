@@ -701,6 +701,43 @@ describe('connect_app', () => {
         roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
   });
 
+  it('RS-1: an unlisted app sign-in card stores its web domain so the card shows its mark', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'whatsapp');
+    provider.toolkit.mockImplementation(async (toolkit: string) => ({ slug: toolkit,
+      logo: `https://logos.composio.dev/api/${toolkit}`, appUrl: 'https://web.whatsapp.com' }));
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const result = await daemon.execute('connect',
+      { ...turn, service: 'WhatsApp', reason: 'message customers' }, HELPER);
+    expect(result).toMatchObject({ status: 'needs_sign_in', appKey: 'whatsapp' });
+    const stored = (await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM])).rows;
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.card).toMatchObject({ appKey: 'whatsapp', domain: 'whatsapp.com' });
+    expect(JSON.stringify(stored[0]!.card)).not.toContain('composio');
+    // The Room view keeps the stored domain even when the read-time logo lookup fails.
+    provider.toolkit.mockRejectedValue(new Error('App provider is unavailable'));
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const view = await phone.readRoom(ROOM, OWNER);
+    expect(view?.messages.find((message) => message.appSignIn)?.appSignIn)
+      .toMatchObject({ appKey: 'whatsapp', domain: 'whatsapp.com' });
+    console.info('Reproduction RS-1: connect WhatsApp -> card stores domain whatsapp.com -> Room view returns it');
+  });
+
+  it('RS-1: an app sign-in card still posts when the app metadata lookup fails', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'whatsapp');
+    provider.toolkit.mockRejectedValue(new Error('App provider is unavailable'));
+    const result = await daemonWith(fakeRegistry([]).client, provider).execute('connect',
+      { ...turn, service: 'WhatsApp', reason: 'message customers' }, HELPER);
+    expect(result).toMatchObject({ status: 'needs_sign_in' });
+    const stored = (await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM])).rows;
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.card).not.toHaveProperty('domain');
+  });
+
   it('WB-1: corner turn discovers X app ID and status, posts sign-in card, and wakes after connection', async () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)

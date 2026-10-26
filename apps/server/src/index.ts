@@ -30,6 +30,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
 import { BackgroundWork } from './background-work.js';
+import { dashboardFinances } from './operator-finances.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
@@ -477,6 +478,13 @@ async function main() {
   // Database claims fence retries across leaders; one local run per job bounds concurrency.
   let xConversionsRunning = false;
   let xReportsRunning = false;
+  let financesRunning = false;
+  work.add('operator-finances', 60 * 60_000, async () => {
+    if (financesRunning) return;
+    financesRunning = true;
+    void backgroundJobs.run('operator-finances', () => dashboardFinances(jobsDatabase))
+      .finally(() => { financesRunning = false; });
+  });
   work.add('x-conversions', reconciliationMs, async () => {
     if (xConversionsRunning) return;
     xConversionsRunning = true;

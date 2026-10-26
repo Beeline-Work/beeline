@@ -33,6 +33,14 @@ import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
 import { PgliteDatabase } from './test-support.js';
 
+const sentryCaptures = vi.hoisted(() => [] as { error: unknown; tags: Record<string, string> | undefined }[]);
+vi.mock('./sentry.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sentry.js')>()),
+  captureServerError: (error: unknown, tags?: Record<string, string>) => {
+    sentryCaptures.push({ error, tags });
+  },
+}));
+
 const OWNER = 'a'.repeat(64);
 const FRIEND = 'b'.repeat(64);
 const ORDINARY = 'c'.repeat(64);
@@ -122,6 +130,7 @@ describe('free starter agents', () => {
     await migrate(db);
     live = new LiveHub();
     machines = new FakeMachines();
+    sentryCaptures.length = 0;
     exchanges = [];
     freeAgents = new FreeAgentService(
       db,
@@ -617,6 +626,128 @@ What are you working on? Tell me, and I'll take the first step with you. If you'
     await freeAgents.sweep();
     expect(machines.calls).toEqual([`create ${agent.agent_id.slice(0, 4)}`]);
     expect(await freeAgentOf(id)).toMatchObject({ state: 'waking', fly_machine_id: 'm2' });
+  });
+
+  describe('start limit', () => {
+    const passFence = (agentId: string) =>
+      db.query(`UPDATE free_agents SET wake_requested_at=now()-interval '21 seconds' WHERE agent_id=$1`, [agentId]);
+    const startOnce = async (agentId: string) => {
+      await passFence(agentId);
+      return freeAgents.wake(agentId);
+    };
+    const startNotices = async (roomId: string) =>
+      (
+        await db.query<{ author_id: string; text: string }>(
+          `SELECT author_id,text FROM messages WHERE room_id=$1 AND text LIKE '%could not start%' ORDER BY created_at`,
+          [roomId],
+        )
+      ).rows;
+
+    it('FA-START-LIMIT-1: stops a Machine that never connects after 5 starts, tells the person once and alerts Sentry once', async () => {
+      const { id, roomId } = await createWorkspace();
+      await settle();
+      const agent = await freeAgentOf(id);
+      const handle = (await db.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [agent.agent_id]))
+        .rows[0]!.handle;
+      await db.query(`UPDATE agent_commands SET created_at=now()-interval '1 minute' WHERE agent_id=$1`, [agent.agent_id]);
+      machines.calls.length = 0;
+      // Start always succeeds and the helper never connects; the sweep runs past every 20-second fence.
+      for (let sweep = 0; sweep < 10; sweep++) {
+        await passFence(agent.agent_id);
+        await freeAgents.sweep();
+      }
+      expect(machines.calls).toEqual([...Array(5).fill('start m1'), 'stop m1']);
+      expect(await freeAgentOf(id)).toMatchObject({ state: 'stopped' });
+      expect(await startNotices(roomId)).toEqual([
+        {
+          author_id: agent.agent_id,
+          text: `@${handle} could not start for @lunchboxfortwo · the Beeline team has been told. Send a new message to try again`,
+        },
+      ]);
+      expect(sentryCaptures).toHaveLength(1);
+      expect(sentryCaptures[0]!.tags).toEqual({
+        area: 'free-agent-start-limit',
+        agentId: agent.agent_id,
+        machineId: 'm1',
+        starts: '5',
+      });
+      expect(String(sentryCaptures[0]!.error)).toContain('never connected after 5 starts in 10 minutes');
+      expect(
+        (await db.query(`SELECT 1 FROM free_agent_events WHERE agent_id=$1 AND kind='start_limit_reached'`, [agent.agent_id]))
+          .rowCount,
+      ).toBe(1);
+    });
+
+    it('resets the count when the helper connects', async () => {
+      const { id } = await createWorkspace();
+      await settle();
+      const agent = await freeAgentOf(id);
+      for (let start = 0; start < 4; start++) expect(await startOnce(agent.agent_id)).toBe(true);
+      await db.query(
+        `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('server-1',now()) ON CONFLICT DO NOTHING`,
+      );
+      await claimAgentConnection(db, live, agent.agent_id, { lifecycleId: 'life-1' }, {
+        connectionId: 'conn-1',
+        instanceId: 'server-1',
+      });
+      await releaseAgentConnection(db, live, agent.agent_id, 'conn-1');
+      for (let start = 0; start < 5; start++) expect(await startOnce(agent.agent_id)).toBe(true);
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      expect(sentryCaptures).toHaveLength(1);
+    });
+
+    it('keeps the stop when a person joins or leaves the Workspace', async () => {
+      const { id } = await createWorkspace();
+      const workspaceId = id;
+      await settle();
+      const agent = await freeAgentOf(id);
+      for (let start = 0; start < 5; start++) expect(await startOnce(agent.agent_id)).toBe(true);
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      machines.calls.length = 0;
+      // Join and leave post System lines with a human author; neither is a retry.
+      await phone.execute('addWorkspaceMember', { workspaceId, memberId: FRIEND, role: 'member' }, OWNER);
+      await settle();
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      await phone.execute('removeWorkspaceMember', { workspaceId, memberId: FRIEND }, OWNER);
+      await settle();
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      await passFence(agent.agent_id);
+      await freeAgents.sweep();
+      expect(machines.calls).toEqual([]);
+      expect(sentryCaptures).toHaveLength(1);
+    });
+
+    it('lets a new human message open one fresh episode after the stop', async () => {
+      const { id, roomId } = await createWorkspace();
+      await settle();
+      const agent = await freeAgentOf(id);
+      for (let start = 0; start < 5; start++) expect(await startOnce(agent.agent_id)).toBe(true);
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      // Repeated sweeps and wakes during the stop start nothing and post nothing.
+      machines.calls.length = 0;
+      for (let retry = 0; retry < 3; retry++) {
+        expect(await startOnce(agent.agent_id)).toBe(false);
+        await freeAgents.sweep();
+      }
+      expect(machines.calls).toEqual([]);
+      expect(await startNotices(roomId)).toHaveLength(1);
+      expect(sentryCaptures).toHaveLength(1);
+
+      const handle = (await db.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [agent.agent_id]))
+        .rows[0]!.handle;
+      await phone.execute(
+        'sendRoomMessage',
+        { roomId, messageId: '7'.repeat(64), text: `@${handle} try again`, mentions: [agent.agent_id] },
+        OWNER,
+      );
+      await settle();
+      const kicked = machines.calls.filter((call) => call === 'start m1').length;
+      for (let start = kicked; start < 5; start++) expect(await startOnce(agent.agent_id)).toBe(true);
+      expect(machines.calls.filter((call) => call === 'start m1')).toHaveLength(5);
+      expect(await startOnce(agent.agent_id)).toBe(false);
+      expect(await startNotices(roomId)).toHaveLength(2);
+      expect(sentryCaptures).toHaveLength(2);
+    });
   });
 
   it('does not start or provision Machines after the shared budget is reached', async () => {

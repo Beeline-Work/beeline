@@ -14,7 +14,7 @@ import { redactToolDetail } from './turn-failure-reason.js';
 const MAX_DETAIL = 300;
 
 /** Pull the readable text out of an ACP tool call's content, whatever shape it took. */
-function toolCallText(content: unknown): string {
+export function toolCallText(content: unknown): string {
   const parts: string[] = [];
   const walk = (value: unknown, depth: number): void => {
     if (depth > 4 || parts.length > 8) return;

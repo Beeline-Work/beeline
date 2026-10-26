@@ -25,7 +25,29 @@
 // Corner failure report wording approved by lunchboxfortwo (message 26355fa9), relayed by Ruby: failed: <corner name> (<corner id>): <reason>.
 // Corner reviewer-change System line and corner create, rename and revise producer snapshots approved for PR #2849 only, message 632164dcc66b9f3fb0597d531fa356276a8826b6588b79aacd90da9d5f4d8764 (yes to request e2fdf31e3ee5fb43b0486ad07c1304984dce2ac1c123a076eb9565a51e2b444c).
 // Workspace-wide permissions approved by lunchboxfortwo, message cdced5f2 (go, brief revision 3): lifecycle refusal lines removed because restart/stop/retry/debug are open to the Room; Squire spending card names its owner; run cancel opens to the Room. Wording unchanged elsewhere.
+// Free agent start-limit notice ("could not start") approved by lunchboxfortwo in brief revision 1 (message 3f079b490bc6649c3741482c3e59fb5f64b595f5e629a6a171adb6db2909c0cf): tell the person in their room; #stopStarts producer and its wake wrapper only.
 [
+  {
+    "id": "src/free-agents.ts:FreeAgentService.#stopStarts:systemLine:49b4dc9ff63c9cd3",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    roomId: target.room_id,\n    id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: target.agent_name },\n    verb: 'could not start',\n    ...(target.person_id && target.person_handle\n        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }\n        : {}),\n    consequence: 'the Beeline team has been told. Send a new message to try again',\n})",
+    "literals": [
+      "'agent'",
+      "'could not start'",
+      "'the Beeline team has been told. Send a new message to try again'",
+      "`for @${target.person_handle}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agents.ts:FreeAgentService.wake:wrapper:9af558c3dc784fe4",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "wrapper",
+    "template": "this.#stopStarts(db, agentId, due.fly_machine_id, limit.starts)",
+    "literals": [],
+    "occurrences": 1
+  },
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
     "file": "apps/server/src/agent-class-retirement.ts",

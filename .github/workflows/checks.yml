@@ -88,7 +88,9 @@ jobs:
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
+    env:
+      TAR_OPTIONS: --no-same-owner
     timeout-minutes: 5
     outputs:
       code: ${{ steps.decide.outputs.code }}
@@ -387,7 +389,9 @@ jobs:
   shared-package-tests:
     name: SHARED PACKAGE TESTS
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
+    env:
+      TAR_OPTIONS: --no-same-owner
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -547,7 +551,9 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
+    env:
+      TAR_OPTIONS: --no-same-owner
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -578,7 +584,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
+    env:
+      TAR_OPTIONS: --no-same-owner
     timeout-minutes: 20
     services:
       postgres:
@@ -618,7 +626,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, beeline-ci-shard]
+    env:
+      TAR_OPTIONS: --no-same-owner
     timeout-minutes: 5
     steps:
       - name: Require every hosted shard and the claim latency budget to pass

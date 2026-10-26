@@ -256,9 +256,13 @@ it('a human message bypasses the opted-in window without releasing queued comman
   await batch();
   await event('merge-1', 'Watched corner one: merged');
   await phone.execute('sendRoomMessage', { roomId: DM, messageId: randomBytes(32).toString('hex'), text: 'Change the endpoint' }, HUMAN);
-  const pending = (await commands(DM, RUBY)).filter(c => c.id !== order.id);
+  const delivered = (await commands(DM, RUBY)).filter(c => c.id !== order.id);
+  expect(delivered.filter(c => c.action === 'stop')).toMatchObject([
+    { reason: 'new_steer', turnRequestId: order.turnRequestId },
+  ]);
+  const pending = delivered.filter(c => c.action !== 'stop');
   expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe('Change the endpoint');
+  expect(pending[0]!.source.body).toMatch(/previous turn was interrupted[\s\S]*\nChange the endpoint$/);
   expect(pending[0]!.coalescedContext).toBeUndefined();
   await expireWindow();
   expect((await commands(DM, RUBY)).some(command => command.source.body.includes('corner one: merged'))).toBe(true);

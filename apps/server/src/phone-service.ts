@@ -885,6 +885,8 @@ function projectedMessage(
           appId: card.appId,
           appKey: card.appKey,
           name: card.name,
+          ...(card.logo && /^https:\/\//i.test(card.logo) ? { logo: card.logo } : {}),
+          ...(card.domain ? { domain: card.domain } : {}),
           ownerId: card.ownerId,
           agentId: card.agentId,
           status: card.status,

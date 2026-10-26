@@ -4587,11 +4587,14 @@ export class DaemonService {
         ?? this.authorizedCommand?.agent_depth;
       // Observe committed replies without delaying their publication or acknowledgement.
       const observe = async (database: SqlDatabase) => {
-        void observeOnboardingMessage(database, input.roomId, agentId, depth, input.text)
+        const work = () => observeOnboardingMessage(database, input.roomId, agentId, depth, input.text)
           .catch(error => console.error('[onboarding]', error));
+        const backgroundWork = CornerAccessDatabase.physical(database).backgroundWork;
+        if (backgroundWork) backgroundWork.run(work);
+        else await work();
       };
       if (this.afterCommit) this.afterCommit(observe);
-      else void observe(this.database);
+      else await observe(this.database);
     }
     // The atomic reply statement counted it in its own star_count CTE.
     if (!atomicCommandWrite && input.requestId && input.presentation !== 'card') {

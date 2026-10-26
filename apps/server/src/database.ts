@@ -58,6 +58,7 @@ import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.j
 import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
+import { DatabaseBackgroundWork } from './database-background-work.js';
 
 export const JOB_STATEMENT_TIMEOUT_MS = 2_000;
 export const JOB_LOCK_TIMEOUT_MS = 500;
@@ -165,6 +166,7 @@ export interface QueryResult<Row> {
 }
 
 export interface SqlDatabase {
+  backgroundWork?: DatabaseBackgroundWork;
   query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values?: unknown[],
@@ -258,6 +260,7 @@ export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = p
 }
 
 export class PostgresDatabase implements ClosableDatabase {
+  readonly backgroundWork = new DatabaseBackgroundWork();
   readonly #pool: Pool;
   #closePromise?: Promise<void>;
   readonly #profiler = new QueryProfiler();
@@ -557,7 +560,7 @@ export class PostgresDatabase implements ClosableDatabase {
   }
 
   close(): Promise<void> {
-    return this.#closePromise ??= this.#pool.end();
+    return this.#closePromise ??= this.backgroundWork.drain().then(() => this.#pool.end());
   }
 
   async #beginTransaction(): Promise<{

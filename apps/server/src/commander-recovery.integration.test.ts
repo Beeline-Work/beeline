@@ -19,6 +19,8 @@ import { PushDeliveryLoop } from './background.js';
 import { createAgentCommand, noteBlockedCornerChecks, readAgentCommands } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
+import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/server-command-intake.js';
+import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
 
 const HUMAN = 'a'.repeat(64),
   RUBY = 'b'.repeat(64),
@@ -1294,4 +1296,105 @@ it.each(['success', 'failure'])('Reproduction ARTIFACT-REPORT: shipped MCP waits
     await new Promise<void>(resolve => bridge.close(() => resolve()));
     await rm(scratch, { recursive: true, force: true });
   }
+});
+
+for (const kind of ['order', 'brief', 'human'] as const) {
+  it(`STEER-1: ${kind} cancels a running daemon turn and reaches the replacement prompt`, async () => {
+    const opened = await open();
+    await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
+    const root = await mkdtemp(join(tmpdir(), 'steer-proof-'));
+    const abort = new AbortController();
+    const ctx = new CommandExecutionContext(root);
+    const prompts: AgentCommand[] = [];
+    const promptBodies: string[] = [];
+    const stops: string[] = [];
+    const errors: unknown[] = [];
+    let pushed: ((rows: readonly AgentCommand[]) => void) | undefined;
+    let finishOld!: () => void;
+    const oldRun = new Promise<void>((resolve) => { finishOld = resolve; });
+    const api = {
+      execute: (name: string, input: object) => daemon.execute(name as never, input as never, WORKER),
+      liveSubscribe: (_room: unknown, _cursor: unknown, _items: unknown, _state: unknown,
+        _presence: unknown, onCommands: typeof pushed) => { pushed = onCommands; return () => {}; },
+    } as unknown as DaemonApiClient;
+    const running = runServerCommandIntake({ api, roomId: opened.cornerId, agentId: WORKER,
+      context: ctx, signal: abort.signal, onError: (error) => errors.push(error),
+      stop: (id) => { stops.push(id); finishOld(); },
+      run: async (command) => {
+        const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER);
+        promptBodies.push((restored.brief?.spec ?? '') + '\n' + command.source.body);
+        prompts.push(command);
+        if (prompts.length === 1) await oldRun;
+        else abort.abort();
+      },
+    });
+    try {
+      await vi.waitFor(() => expect(prompts).toHaveLength(1));
+      const old = prompts[0]!;
+      // Replayed snapshots and routine observations carry no new instructions.
+      pushed?.([old]);
+      await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+        sourceMessageId: null, reason: 'computer_activity',
+        privatePayload: { text: 'Browser observation', authorId: RUBY, fromRoomId: DM, kind: 'lifecycle' } });
+      pushed?.((await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER)).commands);
+      expect(stops).toEqual([]);
+      const steer = 'Use the newly approved blue widget';
+      if (kind === 'order') {
+        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: steer }, RUBY);
+      } else if (kind === 'brief') {
+        await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+          expectedRevision: 1, brief: { spec: steer, repositoryWork: false,
+            approval: { sourceMessageId: order.sourceMessageId }, change: steer } }, RUBY);
+      } else {
+        await phone.execute('sendRoomMessage', { roomId: opened.cornerId,
+          messageId: randomBytes(32).toString('hex'), text: `@worker ${steer}` }, HUMAN);
+      }
+      let delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
+      if (kind === 'order') {
+        // More instructions arrive while the stop is still in flight. They
+        // must join the same replacement, preserving order provenance.
+        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Also use rounded edges' }, RUBY);
+        await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Keep the approved width' }, RUBY);
+        delivered = await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, WORKER);
+        expect(delivered.commands.filter(command => command.action === 'stop')).toHaveLength(1);
+      }
+      expect(delivered.commands.some((command) => command.action === 'stop')).toBe(true);
+      pushed?.(delivered.commands);
+      await vi.waitFor(() => expect(prompts).toHaveLength(2));
+      await running;
+      expect(stops).toContain(old.turnRequestId);
+      expect(promptBodies[1]).toContain(steer);
+      if (kind === 'order') {
+        expect(promptBodies[1]).toContain('Also use rounded edges');
+        expect(promptBodies[1]).toContain('Keep the approved width');
+      }
+      expect(prompts[1]!.source.body).toContain('interrupted');
+      expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+        [opened.cornerId, old.turnRequestId])).rows[0]?.status).toBe('cancelled');
+      expect(errors).toEqual([]);
+      console.log(`STEER-1 ${kind}: old turn cancelled; replacement prompt contains steer and interruption context`);
+    } finally {
+      abort.abort(); finishOld(); await running; await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+it('STEER-1: a repeated wake for the running brief revision does not interrupt it', async () => {
+  const opened = await open();
+  // Retire the initial assignment before starting the revision under test.
+  const initial = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(initial), agentId: WORKER, status: 'complete' }, WORKER);
+  await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
+    VALUES($1,$2,'presence','presence','{"status":"online"}')`, [opened.cornerId, WORKER]);
+  await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'Use blue', repositoryWork: false,
+      approval: { sourceMessageId: order.sourceMessageId }, change: 'Use blue' } }, RUBY);
+  const current = await worker(opened.cornerId);
+  const line = await systemLine(db, { roomId: opened.cornerId,
+    subject: { kind: 'agent', id: RUBY, name: 'Ruby' }, verb: 'revised the corner brief', object: { text: 'Revision 2', id: opened.cornerId } });
+  await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+    sourceMessageId: line.id, reason: 'corner_brief_revision' });
+  expect((await commands(opened.cornerId, WORKER)).some(command => command.action === 'stop')).toBe(false);
+  expect((await db.query('SELECT status FROM agent_turns WHERE room_id=$1 AND request_id=$2',
+    [opened.cornerId, current.turnRequestId])).rows[0]?.status).toBe('working');
 });

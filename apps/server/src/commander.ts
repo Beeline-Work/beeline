@@ -13,6 +13,7 @@ import { resolveCurrentMemberMentions, tagsKnownIdentitySql } from './message-me
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { systemLine } from './system-line.js';
+import { mediaIdFromUrl } from './media-ttl.js';
 export { CommandRefusalError } from './command-refusal.js';
 
 /** A report/lifecycle wake resumes the recipient's original incoming order. */
@@ -238,7 +239,8 @@ export async function reportToCommander(
       `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
        AND (id=$3 OR cancellation_reason='coalesced_into:'||$3) ORDER BY inbox_sequence`,
       [roomId, agentId, command.id])).rows;
-    const routes = new Map<string, CommandRow>();
+    const routes = new Map<string, { source: CommandRow; urls: Set<string> }>();
+    const carriedUrls = new Set(sources.flatMap(source => (source.private_payload?.attachments ?? []).map(attachment => attachment.url)));
     for (const source of sources) {
       const order = await commandOrder(db, source);
       // Standalone system facts have no orderer. Explicit orders and incoming
@@ -246,12 +248,24 @@ export async function reportToCommander(
       if (order.private_payload?.kind !== 'order' && !(order.source_message_id &&
         (await db.query('SELECT 1 FROM messages WHERE id=$1 AND system_event IS NULL', [order.source_message_id])).rowCount)) continue;
       const route = await commanderReportAddress(db, roomId, source);
-      if (route.recipient && route.returnRoom) routes.set(`${route.returnRoom}:${route.recipient}`, source);
+      if (route.recipient && route.returnRoom) {
+        const key = `${route.returnRoom}:${route.recipient}`;
+        const target = routes.get(key) ?? { source, urls: new Set<string>() };
+        target.source = source;
+        for (const attachment of source.private_payload?.attachments ?? []) target.urls.add(attachment.url);
+        routes.set(key, target);
+      }
     }
     if (routes.size) {
       let first: Awaited<ReturnType<typeof reportToCommander>> | undefined;
       let delivered = true;
-      for (const [route, source] of routes) {
+      const reportOptions = options;
+      for (const [route, { source, urls }] of routes) {
+        // Files carried by a batched source follow that source's return route.
+        // Files uploaded in the current turn retain their normal delivery.
+        const attachments = reportOptions.attachments?.filter(attachment =>
+          !carriedUrls.has(attachment.url) || urls.has(attachment.url));
+        const options = { ...reportOptions, attachments };
         const result = await reportToCommander(db, roomId, agentId, text, source,
           first ? createHash('sha256').update(`${reportId}:${route}`).digest('hex') : reportId,
           { ...options, digestSource: true });
@@ -318,6 +332,20 @@ export async function reportToCommander(
   // Automatic attention must never become a transcript post to a person.
   if (options.agentOnly && member.kind !== 'agent')
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false, skipped: true };
+  // Deduplicate after selecting the recipient: another route's identical
+  // object must not displace this recipient's carried file.
+  const ids = (options.attachments ?? []).flatMap(attachment => mediaIdFromUrl(attachment.url) ?? []);
+  const hashes = new Map((ids.length ? (await db.query<{ id: string; sha256: string }>(
+    `SELECT id::text id,sha256 FROM objects WHERE id=ANY($1::uuid[])`, [ids],
+  )).rows : []).map(object => [object.id, object.sha256]));
+  const seen = new Set<string>();
+  const attachments = options.attachments?.filter(attachment => {
+    const hash = hashes.get(mediaIdFromUrl(attachment.url) ?? '');
+    if (!hash) return true;
+    if (seen.has(hash)) return false;
+    seen.add(hash);
+    return true;
+  });
   if (member.kind === 'agent') {
     const queued = await createAgentCommand(db, {
       id: reportId,
@@ -330,7 +358,7 @@ export async function reportToCommander(
         fromRoomId: roomId,
         kind: 'report',
         ask,
-        attachments: options.attachments,
+        attachments,
         originCornerId: origin,
       },
       parent,
@@ -355,7 +383,7 @@ export async function reportToCommander(
         returnRoom,
         agentId,
         text,
-        JSON.stringify(options.attachments ?? []),
+        JSON.stringify(attachments ?? []),
         incoming?.id ?? null,
         ask || /^(needs-decision|blocked):/.test(text)
           ? JSON.stringify({ ...(ask ? { ask } : {}), ...(/^(needs-decision|blocked):/.test(text) ? { reportToId: recipient } : {}) })

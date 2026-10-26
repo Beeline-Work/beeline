@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, type FreeAgentLimits } from './free-agent-limits.js';
+import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentTokenCapAt, type FreeAgentLimits } from './free-agent-limits.js';
 import type { SqlDatabase } from './database.js';
 import { warnFreeAgentOwner } from './free-agent-warning.js';
 import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-agents.js';
@@ -20,7 +20,7 @@ const MAX_RESERVATION_CREDIT = 32_768;
  */
 export interface FreeAgentModelProxyOptions {
   database: SqlDatabase;
-  config: Pick<FreeAgentConfig, 'model' | 'dailyTokenCap' | 'lifetimeTokenCap' | 'limits'>;
+  config: Pick<FreeAgentConfig, 'model' | 'dailyTokenCap' | 'firstDayTokenCap' | 'lifetimeTokenCap' | 'limits'>;
   upstreamKey: string;
   upstreamBaseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -413,6 +413,11 @@ export async function handleFreeAgentModelRequest(
   }
   const now = options.now?.() ?? new Date();
   const limits = options.config.limits ?? DEFAULT_FREE_AGENT_LIMITS;
+  // A first-day owner gets the larger allowance so a few hours of real work fits.
+  const config = {
+    ...options.config,
+    dailyTokenCap: await freeAgentTokenCapAt(options.database, agent.owner_id, now, options.config),
+  };
   const turn = (await options.database.query<{ started: Date | string; room_id: string; turn_request_id: string }>(
     `SELECT command.room_id,command.turn_request_id,COALESCE(turn.started_at,command.claimed_at) started FROM agent_commands command LEFT JOIN agent_turns turn
        ON turn.agent_id=command.agent_id AND turn.room_id=command.room_id
@@ -441,7 +446,7 @@ export async function handleFreeAgentModelRequest(
     options.database,
     agent.owner_id,
     now,
-    options.config,
+    config,
     estimated - cached + Math.ceil(cached * limits.cachedTokenWeight),
     requested.length ? Math.min(...requested) : undefined,
     limits,
@@ -462,7 +467,7 @@ export async function handleFreeAgentModelRequest(
     await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', {
       limit: reservation.limit, roomId: turn.room_id, requestId: turn.turn_request_id,
     });
-    sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, options.config));
+    sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, config));
     return true;
   }
   const day = now.toISOString().slice(0, 10);
@@ -476,7 +481,7 @@ export async function handleFreeAgentModelRequest(
         [day, usd - reservation.reservedUsd]);
       await recordFreeAgentEvent(db, agent.agent_id, 'model_usage', { day, tokens: spent, usd });
     }).then(async () => {
-      if (spent > 0) await warnFreeAgentOwner(options.database, agent.agent_id, agent.owner_id, day, options.config.dailyTokenCap);
+      if (spent > 0) await warnFreeAgentOwner(options.database, agent.agent_id, agent.owner_id, day, config.dailyTokenCap);
     }).catch(error => console.error('[free-agents] usage charge or warning failed', error));
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');

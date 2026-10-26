@@ -6662,23 +6662,18 @@ export class DaemonService {
         return { messageId: undefined, cardRoomId: resourceRoomId };
       }
       const dmRoomId = resourceRoomId;
-      if (superseded.rows.length) {
-        const ids = superseded.rows.map(row => row.id);
+      const supersededIds = superseded.rows.map(row => row.id);
+      let replacementCards: { id: string; card: { grants: (typeof grantView)[] } }[] = [];
+      if (supersededIds.length) {
         const cards = await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
           `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
            AND EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
              WHERE entry->>'grantId'=ANY($2::text[]))
-           ORDER BY created_at DESC,id DESC FOR UPDATE`, [dmRoomId, ids],
+           ORDER BY created_at DESC,id DESC FOR UPDATE`, [dmRoomId, supersededIds],
         );
-        for (const card of cards.rows) {
-          const grants = [...card.card.grants.filter(entry => !ids.includes(entry.grantId)), grantView];
-          await restateSystemLine(database, card.id, grantCardPhrase(requester, agent, grants), {
-            agent, owner, requester, grants, ...source,
-          });
-        }
-        if (cards.rows.length) return { messageId: cards.rows[0]!.id, cardRoomId: dmRoomId };
+        replacementCards = cards.rows;
       }
-      const open = kind === 'shared_asset' ? undefined : (
+      const open = replacementCards.length || kind === 'shared_asset' ? undefined : (
         await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
           `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
            AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
@@ -6691,8 +6686,9 @@ export class DaemonService {
           [dmRoomId, agentId, input.roomId, requester.pubkey],
         )
       ).rows[0];
-      if (open) {
-        const grants = [...open.card.grants, grantView];
+      const cardsToUpdate = replacementCards.length ? replacementCards : open ? [open] : [];
+      for (const open of cardsToUpdate) {
+        const grants = [...open.card.grants.filter(entry => !supersededIds.includes(entry.grantId)), grantView];
         await restateSystemLine(database, open.id, grantCardPhrase(requester, agent, grants), {
           agent,
           owner,
@@ -6700,8 +6696,8 @@ export class DaemonService {
           grants,
           ...source,
         });
-        return { messageId: open.id, cardRoomId: dmRoomId };
       }
+      if (cardsToUpdate.length) return { messageId: cardsToUpdate[0]!.id, cardRoomId: dmRoomId };
       const messageId = id();
       await systemLine(database, {
         id: messageId,

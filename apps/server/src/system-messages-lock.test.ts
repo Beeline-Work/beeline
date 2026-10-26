@@ -16,13 +16,12 @@ type Entry = {
   id: string;
   file: string;
   kind: string;
+  /** Review context only; hidden data and expression names do not gate wording. */
   template: string;
   literals: string[];
   occurrences: number;
 };
 const printer = ts.createPrinter({ removeComments: true });
-const print = (node: ts.Node) =>
-  printer.printNode(ts.EmitHint.Unspecified, node, node.getSourceFile());
 
 function sources(directory: string): Map<string, string> {
   const files = new Map<string, string>();
@@ -426,7 +425,7 @@ function scan(files: Map<string, string>): Entry[] {
   };
   // SQL is transport. Keep only assigned message values, resolving parameters
   // back to their expressions; predicates and other CTEs never supply wording.
-  const writes = new Map<ts.Node, { template: string; parts: ts.Node[] }>();
+  const writes = new Map<ts.Node, { template: string; parts: ts.Node[]; literals: string[] }>();
   const sqlWrite = (node: ts.Node, query: ts.Node, values?: ts.Node) => {
     const expressions: ts.Node[] = [];
     const render = (part: ts.Node, seen = new Set<ts.Node>()): string => {
@@ -476,9 +475,12 @@ function scan(files: Map<string, string>): Entry[] {
     };
     const parts: ts.Node[] = [];
     const outputs: string[] = [];
+    const sqlLiterals: string[] = [];
     const project = (tokens: string[], capture = false): string =>
       tokens
         .map((token) => {
+          if (capture && (token.startsWith("'") || /^\$(?:[A-Za-z_]\w*)?\$/.test(token)))
+            sqlLiterals.push(token);
           const parameter = /^\$(\d+)$/.exec(token);
           const expression = /^__expression_(\d+)__$/.exec(token);
           const value = parameter
@@ -638,12 +640,12 @@ function scan(files: Map<string, string>): Entry[] {
                 ...['author_id', 'presentation', 'card_type'].filter((name) => fields.has(name)),
               ]),
             ]
-              .map((name) => `${name}=${assigned(name, true)}`)
+              .map((name) => `${name}=${assigned(name, visible.includes(name))}`)
               .join(', '),
         );
       }
     }
-    if (outputs.length) writes.set(node, { template: outputs.join('\n'), parts });
+    if (outputs.length) writes.set(node, { template: outputs.join('\n'), parts, literals: sqlLiterals });
   };
   const direct = new Map<ts.Node, string>();
   for (const file of program.getSourceFiles()) {
@@ -677,6 +679,24 @@ function scan(files: Map<string, string>): Entry[] {
   // function that happens to emit a notice. This follows forwarding helpers
   // without freezing unrelated control flow such as a voice heartbeat.
   const wrappers = new Map<ts.Node, Set<number>>();
+  // Proven non-text metadata. Unknown keys remain wording dependencies.
+  const hiddenField = (name: ts.PropertyName) =>
+    (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+    /^(domain|appId|ownerId|roomId|messageId|id|kind|cardType|card_type|presentation)$/.test(name.text);
+  const wordingParts = (node: ts.Node): ts.Node[] =>
+    ts.isObjectLiteralExpression(node)
+      ? node.properties.flatMap((property) =>
+          ts.isSpreadAssignment(property)
+            ? [property.expression]
+            : ts.isShorthandPropertyAssignment(property)
+              ? hiddenField(property.name)
+                ? []
+                : [property.name]
+              : ts.isPropertyAssignment(property) && !hiddenField(property.name)
+                ? [property.initializer]
+                : [],
+        )
+      : [node];
   const phraseParts = (node: ts.Node): ts.Node[] =>
     ts.isObjectLiteralExpression(node)
       ? node.properties.flatMap((property) =>
@@ -815,12 +835,16 @@ function scan(files: Map<string, string>): Entry[] {
         parent.name
       )
         scope.unshift(parent.name.getText());
-    const id = `${file}:${scope.join('.') || 'module'}:${kind}:${createHash('sha256').update(template).digest('hex').slice(0, 16)}`;
-    const literals = new Set<string>();
+    const location = `${file}:${scope.join('.') || 'module'}:${kind}`;
+    const literals = new Set<string>(writes.get(node)?.literals);
     const seen = new Set<ts.Node>();
     const collect = (part: ts.Node) => {
       if (seen.has(part)) return;
       seen.add(part);
+      if (ts.isObjectLiteralExpression(part)) {
+        wordingParts(part).forEach(collect);
+        return;
+      }
       // The private command transport contributes its returned command values,
       // not unrelated wake-bookkeeping statements in its transaction callback.
       // Explicit mutations of returned locals are still followed below.
@@ -851,7 +875,10 @@ function scan(files: Map<string, string>): Entry[] {
         selected.parts.forEach(collect);
         return;
       }
-      if (ts.isStringLiteralLike(part) || ts.isTemplateExpression(part)) literals.add(print(part));
+      if (ts.isStringLiteralLike(part)) literals.add(JSON.stringify(part.text));
+      if (ts.isTemplateExpression(part)) {
+        literals.add(JSON.stringify([part.head.text, ...part.templateSpans.map((span) => span.literal.text)]));
+      }
       if (
         (ts.isIdentifier(part) || ts.isPropertyAccessExpression(part)) &&
         !(ts.isPropertyAccessExpression(part.parent) && part.parent.name === part) &&
@@ -892,9 +919,9 @@ function scan(files: Map<string, string>): Entry[] {
     const args = ts.isCallExpression(node) ? invocationArguments(node) : [];
     // The database argument is transport, not a phrase dependency.
     if (ts.isCallExpression(node) && kind === 'systemLine') {
-      if (args[1]) phraseParts(args[1]).forEach(collect);
+      if (args[1]) wordingParts(args[1]).forEach(collect);
     } else if (ts.isCallExpression(node) && kind === 'restateSystemLine') {
-      if (args[2]) phraseParts(args[2]).forEach(collect);
+      if (args[2]) wordingParts(args[2]).forEach(collect);
     } else if (writes.has(node)) writes.get(node)!.parts.forEach(collect);
     else if (kind === 'wrapper' && ts.isCallExpression(node)) {
       const indices = callableDeclarations(node.expression).flatMap((declaration) => [
@@ -904,6 +931,7 @@ function scan(files: Map<string, string>): Entry[] {
         if (args[index]) collect(args[index]!);
       });
     } else collect(node);
+    const id = `${location}:${createHash('sha256').update(JSON.stringify([...literals].sort())).digest('hex').slice(0, 16)}`;
     const prior = entries.get(id);
     if (prior) prior.occurrences++;
     else
@@ -926,7 +954,6 @@ function compare(current: Entry[], locked: Entry[]): { violations: string[]; rem
       const prior = baseline.get(entry.id);
       return (
         !prior ||
-        entry.template !== prior.template ||
         JSON.stringify(entry.literals) !== JSON.stringify(prior.literals) ||
         entry.occurrences !== prior.occurrences
       );
@@ -1517,3 +1544,58 @@ it.each([
   );
   expect(() => enforce(scan(changed), scan(files))).toThrow(failure);
 });
+
+// Reproduction SYSTEM-WORDING-1 exercises the same scanner/enforcer used by CI.
+it('SYSTEM-WORDING-1: accepts hidden sign-in card fields and code refactors', () => {
+  const base = fixture("line(db,{verb:'requested sign-in',cardType:'app-sign-in',card:{name:'Gmail'}});");
+  for (const replacement of [
+    "name:'Gmail',domain:'gmail.com'",
+    "name:'Gmail',domain:'google.com',appId:'internal-id'",
+  ]) {
+    const changed = new Map([...base].map(([path, text]) => [path, text.replace("name:'Gmail'", replacement)]));
+    expect(() => enforce(scan(changed), scan(base))).not.toThrow();
+  }
+  const renamed = new Map([...base].map(([path, text]) => [path, text.replaceAll('phrase', 'wording').replaceAll('line(db,', 'line( db ,')]));
+  expect(() => enforce(scan(renamed), scan(base))).not.toThrow();
+});
+
+it.each(['Gmail', 'requested sign-in'])('SYSTEM-WORDING-1: rejects visible card wording changes: %s', (word) => {
+  const base = fixture("line(db,{verb:'requested sign-in',cardType:'app-sign-in',card:{name:'Gmail'}});");
+  const changed = new Map([...base].map(([path, text]) => [path, text.replace(word, 'Changed wording')]));
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+// Unknown payload fields must stay locked until their rendering is understood.
+it.each([
+  "card:{custom:'visible words'}",
+  "card:{nested:{custom:'visible words'}}",
+  "card:{...{custom:'visible words'}}",
+  "card:{['custom']:'visible words'}",
+  "card:{'name':'visible words', 'domain':'gmail.com'}",
+])('locks conservatively collected wording: %s', (payload) => {
+  const base = fixture(`line(db,{verb:'requested sign-in',${payload}});`);
+  const changed = new Map([...base].map(([path, text]) => [path, text.replace('visible words', 'changed words')]));
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('accepts renamed template expressions while locking their visible fragments', () => {
+  const base = fixture("const person=external; line(db,{verb:`hello ${person}!`});");
+  const renamed = new Map([...base].map(([path, text]) => [path, text.replaceAll('person', 'recipient')]));
+  expect(() => enforce(scan(renamed), scan(base))).not.toThrow();
+  const changed = new Map([...base].map(([path, text]) => [path, text.replace('hello ${person}!', '!${person}hello ')]));
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('SYSTEM-WORDING-1: the real app sign-in producer accepts domain metadata and rejects visible wording', () => {
+  const base = sources(resolve(server, 'src'));
+  const path = resolve(server, 'src/daemon-service.ts');
+  const before = "card: { appId: firstParty.appId, appKey: firstParty.key, name: firstParty.name,";
+  expect(base.get(path)!.split(before)).toHaveLength(2);
+  const baseline = scan(base);
+  const changed = new Map(base);
+  changed.set(path, base.get(path)!.replace(before, before + " domain: 'stripe.com',"));
+  expect(() => enforce(scan(changed), baseline)).not.toThrow();
+  changed.set(path, changed.get(path)!.replace('Sign in to continue the request.', 'Sign in to finish the request.'));
+  expect(() => enforce(scan(changed), baseline)).toThrow(failure);
+  console.info('SYSTEM-WORDING-1: real app sign-in domain addition passes; visible wording change fails');
+}, 60_000);

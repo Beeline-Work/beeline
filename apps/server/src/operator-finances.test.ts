@@ -79,6 +79,19 @@ describe('operator finances', () => {
     expect(serialized).not.toContain('private-provider-body');
   });
 
+  it('R-FINANCES-HISTORY rejects September noon snapshots as completed last-month coverage', async () => {
+    const db = await database();
+    await db.query(`INSERT INTO operator_finance_snapshots
+      SELECT ('2026-09-01'::date + n), 'openrouter', 'server-keys', 'API', 0.50,
+        n + 0.50, ('2026-09-01'::date + n)::timestamp AT TIME ZONE 'UTC' + interval '12 hours'
+      FROM generate_series(0,29) AS n`);
+    const result = await createOperatorFinances(db, env, providers(), () => timestamp)();
+    expect(result.services.find(s => s.id === 'openrouter')!.spend.lastMonth)
+      .toMatchObject({ usd: null, source: 'unknown', state: 'unknown' });
+    expect(financesWire(result).services.find(s => s.id === 'openrouter')!.lastMonth)
+      .toEqual({ value: null, source: 'unknown' });
+  });
+
   it('coalesces simultaneous refreshes and caches provider failures for ten minutes', async () => {
     const db = await database(), fetcher = providers(); let time = timestamp;
     const read = createOperatorFinances(db, env, fetcher, () => time);

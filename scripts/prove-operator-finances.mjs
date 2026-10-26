@@ -8,6 +8,11 @@ import { createBeelineServer } from '../apps/server/dist/server.js';
 const db = new PgliteDatabase();
 await db.query(OPERATOR_FINANCES_SCHEMA);
 await db.query('CREATE TABLE free_agent_events(at timestamptz,kind text,detail jsonb)');
+// R-FINANCES-HISTORY: noon readings cover every date but never close a day.
+await db.query(`INSERT INTO operator_finance_snapshots
+  SELECT ('2026-09-01'::date + n), 'openrouter', 'server-keys', 'API', 0.50,
+    n + 0.50, ('2026-09-01'::date + n)::timestamp AT TIME ZONE 'UTC' + interval '12 hours'
+  FROM generate_series(0,29) AS n`);
 const request = globalThis.fetch;
 const realNow = Date.now;
 Date.now = () => Date.parse('2026-10-15T12:00:00Z');
@@ -38,6 +43,8 @@ try {
   assert.deepEqual(Object.keys(finances).sort(), ['daily','measuredAt','month','services','totals']);
   assert.deepEqual(model.mtd, { value: 12, source: 'api' });
   assert.equal(model.state, 'ready');
+  assert.deepEqual(model.lastMonth, { value: null, source: 'unknown' });
+  console.log('R-FINANCES-HISTORY: September noon snapshots reaching $29.50 produce unknown lastMonth, never $15/api.');
   assert.deepEqual(model.balance, { value: 3, source: 'api', measuredAt: '2026-10-15T12:00:00.000Z', low: true });
   assert.deepEqual(finances.totals.mtd, { value: null, source: 'unknown' });
   assert.deepEqual(finances.totals.perActiveUser, { value: null, source: 'unknown' });

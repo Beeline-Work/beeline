@@ -216,6 +216,14 @@ export function createOperatorFinances(
       const observations = dates.map(day => historyFor(id, day));
       if (!dates.length || observations.some(s => !s)) return unknown('Daily history does not cover this entire period');
       const rows = observations as Sample[];
+      // A saved observation is not a closed day. The key endpoint only ever
+      // reads the current day, so even a later timestamp cannot finalize it.
+      // Entered plans define the whole day; other historical reads must occur
+      // after its UTC boundary before they can establish completed coverage.
+      if (through <= start && rows.some(s => s.source !== 'entered' &&
+        (s.scope === 'server-keys' || Date.parse(s.measured_at) < Date.parse(s.day) + DAY))) {
+        return unknown('Daily history does not prove finalized coverage for this entire period');
+      }
       const latest = rows.map(s => s.measured_at).sort().at(-1)!;
       const source = rows[0]!.source;
       const partial = source !== 'entered';

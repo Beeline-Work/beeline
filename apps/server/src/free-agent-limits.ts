@@ -2,11 +2,45 @@ import type { SqlDatabase } from './database.js';
 
 export const DEFAULT_FREE_AGENT_DAILY_TOKENS = 3_000_000;
 
+/** A person's allowance during their first 24 hours, so day one does not run out. */
+export const DEFAULT_FREE_AGENT_FIRST_DAY_TOKENS = 10_000_000;
+
 export function freeAgentDailyTokenCapFromEnv(env: NodeJS.ProcessEnv): number {
   const configured = Number(env.BEELINE_FREE_AGENT_DAILY_TOKENS);
   return Number.isFinite(configured) && configured > 0
     ? configured
     : DEFAULT_FREE_AGENT_DAILY_TOKENS;
+}
+
+/** First-24h allowance; always at least the daily cap. */
+export function freeAgentFirstDayTokenCapFromEnv(env: NodeJS.ProcessEnv): number {
+  const configured = Number(env.BEELINE_FREE_AGENT_FIRST_DAY_TOKENS);
+  const daily = freeAgentDailyTokenCapFromEnv(env);
+  const firstDay = Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_FREE_AGENT_FIRST_DAY_TOKENS;
+  return Math.max(firstDay, daily);
+}
+
+/**
+ * The owner's token cap at `now`: the larger first-24h allowance until 24 hours
+ * after their first model call settles, then the daily cap. An owner with no
+ * model call yet is in their first day.
+ */
+export async function freeAgentTokenCapAt(
+  db: Pick<SqlDatabase, 'query'>,
+  ownerId: string,
+  now: Date,
+  caps: { dailyTokenCap: number; firstDayTokenCap: number },
+): Promise<number> {
+  const row = (await db.query<{ first_at: Date | string | null }>(
+    `SELECT MIN(e.at) first_at FROM free_agent_events e JOIN free_agents f ON f.agent_id=e.agent_id
+     WHERE f.owner_id=$1 AND e.kind='model_usage'`,
+    [ownerId],
+  )).rows[0];
+  const firstAt = row?.first_at ? new Date(row.first_at).getTime() : undefined;
+  const firstDay = firstAt === undefined || now.getTime() < firstAt + 24 * 60 * 60_000;
+  return firstDay ? Math.max(caps.dailyTokenCap, caps.firstDayTokenCap) : caps.dailyTokenCap;
 }
 
 export interface FreeAgentLimits {

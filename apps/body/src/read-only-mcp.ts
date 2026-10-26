@@ -2743,6 +2743,31 @@ function advertisedAgentTool(name: string): ToolDefinition {
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
   if (!Check(tool.inputSchema, args)) {
+    if (tool.name === 'request_grant') {
+      const properties = asObject(tool.inputSchema.properties);
+      const branches = tool.inputSchema.anyOf as JsonObject[];
+      const branch = branches.find(schema => Check(asObject(asObject(schema.properties).action), requestedAction ?? 'request'));
+      const required = new Set([
+        ...(tool.inputSchema.required as string[]),
+        ...((branch?.required as string[] | undefined) ?? []),
+      ]);
+      // Build diagnostics from the advertised schema only, never request values.
+      const details = Object.entries(properties).flatMap(([field, schema]) => {
+        if (args[field] === undefined && !required.has(field)) return [];
+        const rule = asObject(schema);
+        if (Check(rule, args[field])) return [];
+        const expectation = [
+          rule.enum ? `one of ${(rule.enum as string[]).join(', ')}` : rule.type,
+          rule.minLength !== undefined ? `at least ${rule.minLength} characters` : undefined,
+          rule.maxLength !== undefined ? `at most ${rule.maxLength} characters` : undefined,
+          rule.minimum !== undefined ? `at least ${rule.minimum}` : undefined,
+        ].filter(Boolean).join(', ');
+        return [`${field}: expected ${expectation}`];
+      });
+      if (Object.keys(args).some(field => !Object.hasOwn(properties, field)))
+        details.push('input: expected only advertised fields');
+      throw new Error(`${tool.name}: invalid arguments; ${details.join('; ')}; follow the advertised schema`);
+    }
     const required = tool.inputSchema.required as string[] | undefined;
     const missing = required?.filter(field => args[field] === undefined);
     const extra = Object.keys(args).filter(field => !(field in asObject(tool.inputSchema.properties)));

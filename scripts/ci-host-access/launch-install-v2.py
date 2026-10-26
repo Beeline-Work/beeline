@@ -4,7 +4,7 @@ from pathlib import Path
 
 payload = Path(__file__).resolve().with_name('install.py')
 data = payload.read_bytes()
-expected = 'c1457375839e6a6707cf12dd75d1d57afefaba9f6bba8edd3f9e2ce8f4452ad0'
+expected = 'ac6df3cc5560f16d83dbe268bd112e3d08bddeaef219c54dbb9c175ca8b69278'
 if hashlib.sha256(data).hexdigest() != expected:
     raise SystemExit('Reviewed CI installer SHA-256 mismatch')
 exec(compile(data, str(payload), 'exec'), {'__name__': '__main__', '__file__': str(payload)})

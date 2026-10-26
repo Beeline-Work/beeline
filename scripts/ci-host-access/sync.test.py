@@ -4,6 +4,7 @@ import importlib.util
 import os
 import json
 import ast
+import grp
 from pathlib import Path
 import subprocess
 import tempfile
@@ -21,7 +22,7 @@ class SyncTests(unittest.TestCase):
     def test_installer_pins_every_installed_file(self):
         manifest = json.loads((ROOT / 'INSTALL-SHA256.json').read_text())
         self.assertEqual(manifest['installer_sha256'], hashlib.sha256((ROOT / 'install.py').read_bytes()).hexdigest())
-        launcher = ast.parse((ROOT / 'launch-install.py').read_text())
+        launcher = ast.parse((ROOT / 'launch-install-v2.py').read_text())
         expected = next(ast.literal_eval(n.value) for n in launcher.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'expected' for t in n.targets))
         self.assertEqual(expected, manifest['installer_sha256'])
         tree = ast.parse((ROOT / 'install.py').read_text())
@@ -32,6 +33,22 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(row['sha256'], pins[row['source']])
             self.assertEqual(row['owner'], 'root:root')
             self.assertEqual(int(row['mode'], 8) & 0o022, 0)
+
+    def test_ubuntu_polkit_directory_group_is_allowed_only_at_exact_path(self):
+        gid = grp.getgrnam('polkitd').gr_gid
+        info = SimpleNamespace(st_mode=0o040750, st_uid=0, st_gid=gid)
+        with patch.object(Path, 'lstat', return_value=info), patch.object(Path, 'exists', return_value=True):
+            s.root_directory(Path('/etc/polkit-1/rules.d'))
+            with self.assertRaisesRegex(RuntimeError, 'root controlled'):
+                s.root_directory(Path('/opt/beeline-ci'))
+        print('CI-POLKIT-DIR-1 PASS: root:polkitd 0750 accepted only for /etc/polkit-1/rules.d')
+
+    def test_group_writable_polkit_directory_is_rejected(self):
+        info = SimpleNamespace(st_mode=0o040770, st_uid=0, st_gid=grp.getgrnam('polkitd').gr_gid)
+        with patch.object(Path, 'lstat', return_value=info), patch.object(Path, 'exists', return_value=True):
+            with self.assertRaisesRegex(RuntimeError, 'root controlled'):
+                s.root_directory(Path('/etc/polkit-1/rules.d'))
+        print('CI-POLKIT-DIR-2 PASS: root:polkitd 0770 rejected')
 
     def fixture(self, folder):
         repo = Path(folder) / 'repo'

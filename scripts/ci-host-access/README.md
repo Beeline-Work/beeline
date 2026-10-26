@@ -1,6 +1,6 @@
 # CI host access bootstrap
 
-One owner-approved run of `launch-install.py` (which hash-pins `install.py`) installs immutable CI scripts and a
+One owner-approved run of `launch-install-v2.py` (which hash-pins `install.py`) installs immutable CI scripts and a
 single polkit rule. It stops the ten existing experimental units during
 migration and leaves them stopped. It does not touch production runners,
 create an App/key, change fork policy or enable CI routing.
@@ -79,9 +79,24 @@ proofs. Default system-bus read access must remain available to the session.
 
 `INSTALL-SHA256.json` lists every installed regular file's initial destination,
 mode and SHA-256. The `current` symlink points to `releases/bootstrap`; all
-parent directories are root:root and mode 0755. No credentials are installed.
+new /opt parent directories are root:root and mode 0755; the existing
+polkit rules directory retains root:polkitd 0750. No credentials are installed.
 The requested command runs only the reviewed hash-pinned installer; it has
 not been executed with host root by the implementer.
 
 References: [polkit rule API](https://www.freedesktop.org/software/polkit/docs/latest/polkit.8),
 [systemd authorization](https://www.freedesktop.org/software/systemd/man/247/org.freedesktop.systemd1.html).
+
+## Root execution trust boundary
+
+A merge to main that touches `scripts/ci-host-access/` can run as root on
+squire after sync. In particular, `runtime/prepare.py` executes through
+`ExecStartPre=+`, `runtime/broker.py` runs as `User=root`, and the installed unit
+files define root execution. The merged-main check prevents unmerged/local
+changes from being installed; it does not make merged changes safe. The owner
+owns the merge-gating decision. This change adds no CODEOWNERS or branch rule.
+
+The single directory ownership exception is `/etc/polkit-1/rules.d`:
+root:polkitd with no group/other write bits is accepted (Ubuntu uses 0750).
+Every other checked directory still requires root:root and no group/other
+write bits. New files installed in the polkit directory remain root:root.

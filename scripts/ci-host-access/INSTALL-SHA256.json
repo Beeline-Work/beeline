@@ -1,10 +1,10 @@
 {
-  "installer_sha256": "c1457375839e6a6707cf12dd75d1d57afefaba9f6bba8edd3f9e2ce8f4452ad0",
+  "installer_sha256": "ac6df3cc5560f16d83dbe268bd112e3d08bddeaef219c54dbb9c175ca8b69278",
   "files": [
     {
       "source": "sync.py",
       "destination": "/opt/beeline-ci/sync.py",
-      "sha256": "1d8badfc2b60a1379d1354add007799a9b6ac0689d79bb7370e331e726732339",
+      "sha256": "3a68c8e74dd3915b342367afaef53f49427a70b4dfac6be73376e80e489ec19c",
       "mode": "0644",
       "owner": "root:root"
     },

@@ -1,5 +1,6 @@
 """Immutable root updater: fixed upstream, merged main objects, fixed destinations."""
 import fcntl
+import grp
 import hashlib
 import os
 from pathlib import Path
@@ -58,7 +59,8 @@ def root_directory(path):
     if not path.exists():
         path.mkdir(mode=0o755)
     info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != 0 or info.st_mode & 0o022:
+    allowed_gid = grp.getgrnam('polkitd').gr_gid if path == Path('/etc/polkit-1/rules.d') else 0
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_gid != allowed_gid or info.st_mode & 0o022:
         raise RuntimeError('Directory is not exclusively root controlled: ' + str(path))
 
 

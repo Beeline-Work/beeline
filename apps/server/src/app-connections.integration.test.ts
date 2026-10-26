@@ -657,7 +657,10 @@ describe('connect_app', () => {
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
     )).rows[0];
     expect(card?.card).toMatchObject({ appId: first.appId, status: 'pending', continuation });
-    expect(JSON.stringify(card)).not.toContain('composio');
+    // The app's https logo is the only provider-hosted value the card may carry.
+    const { logo, ...neutral } = card!.card as typeof card.card & { logo?: string };
+    expect(logo === undefined || /^https:\/\//.test(logo)).toBe(true);
+    expect(JSON.stringify(neutral)).not.toContain('composio');
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     const pendingRoom = await phone.readRoom(ROOM, OWNER);
@@ -713,16 +716,56 @@ describe('connect_app', () => {
     const stored = (await database.query<{ card: Record<string, unknown> }>(
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM])).rows;
     expect(stored).toHaveLength(1);
-    expect(stored[0]!.card).toMatchObject({ appKey: 'whatsapp', domain: 'whatsapp.com' });
-    expect(JSON.stringify(stored[0]!.card)).not.toContain('composio');
+    expect(stored[0]!.card).toMatchObject({ appKey: 'whatsapp', domain: 'whatsapp.com',
+      logo: 'https://logos.composio.dev/api/whatsapp' });
+    // The logo URL is the only provider-hosted value the card may carry.
+    const { logo: _logo, ...rest } = stored[0]!.card;
+    expect(JSON.stringify(rest)).not.toContain('composio');
     // The Room view keeps the stored domain even when the read-time logo lookup fails.
     provider.toolkit.mockRejectedValue(new Error('App provider is unavailable'));
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     const view = await phone.readRoom(ROOM, OWNER);
     expect(view?.messages.find((message) => message.appSignIn)?.appSignIn)
-      .toMatchObject({ appKey: 'whatsapp', domain: 'whatsapp.com' });
-    console.info('Reproduction RS-1: connect WhatsApp -> card stores domain whatsapp.com -> Room view returns it');
+      .toMatchObject({ appKey: 'whatsapp', domain: 'whatsapp.com', logo: 'https://logos.composio.dev/api/whatsapp' });
+    console.info('Reproduction RS-1: connect WhatsApp -> card stores logo and domain whatsapp.com -> Room view returns them');
+  });
+
+  it('RS-1: an unlisted app with a logo but no web address stores the logo on its sign-in card', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'whatsapp');
+    provider.toolkit.mockImplementation(async (toolkit: string) => ({ slug: toolkit,
+      logo: `https://logos.composio.dev/api/${toolkit}` }));
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const result = await daemon.execute('connect',
+      { ...turn, service: 'WhatsApp', reason: 'message customers' }, HELPER);
+    expect(result).toMatchObject({ status: 'needs_sign_in', appKey: 'whatsapp' });
+    const stored = (await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM])).rows;
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.card).toMatchObject({ appKey: 'whatsapp', logo: 'https://logos.composio.dev/api/whatsapp' });
+    expect(stored[0]!.card).not.toHaveProperty('domain');
+    // The Room view keeps the stored logo even when the read-time lookup fails.
+    provider.toolkit.mockRejectedValue(new Error('App provider is unavailable'));
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const view = await phone.readRoom(ROOM, OWNER);
+    expect(view?.messages.find((message) => message.appSignIn)?.appSignIn)
+      .toMatchObject({ appKey: 'whatsapp', logo: 'https://logos.composio.dev/api/whatsapp' });
+    console.info('Reproduction RS-1: connect WhatsApp (logo only) -> card stores logo -> Room view returns it');
+  });
+
+  it('RS-1: an app sign-in card drops a logo that is not https', async () => {
+    const provider = fakeComposio();
+    provider.supportsOAuth.mockImplementation(async (toolkit: string) => toolkit === 'whatsapp');
+    provider.toolkit.mockImplementation(async (toolkit: string) => ({ slug: toolkit,
+      logo: `http://logos.example/${toolkit}` }));
+    await daemonWith(fakeRegistry([]).client, provider).execute('connect',
+      { ...turn, service: 'WhatsApp', reason: 'message customers' }, HELPER);
+    const stored = (await database.query<{ card: Record<string, unknown> }>(
+      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM])).rows;
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.card).not.toHaveProperty('logo');
   });
 
   it('RS-1: an app sign-in card still posts when the app metadata lookup fails', async () => {
@@ -736,6 +779,7 @@ describe('connect_app', () => {
       `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM])).rows;
     expect(stored).toHaveLength(1);
     expect(stored[0]!.card).not.toHaveProperty('domain');
+    expect(stored[0]!.card).not.toHaveProperty('logo');
   });
 
   it('WB-1: corner turn discovers X app ID and status, posts sign-in card, and wakes after connection', async () => {

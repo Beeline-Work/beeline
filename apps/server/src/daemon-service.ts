@@ -7067,23 +7067,28 @@ export class DaemonService {
   }
 
   /**
-   * The web domain an app sign-in card stores so the card shows the app's
-   * mark instead of a letter. The app row's domain wins; otherwise the
-   * provider's (usually cached) toolkit metadata names it. A slow or failing
-   * lookup never delays or blocks the card.
+   * The logo and web domain an app sign-in card stores so the card shows the
+   * app's mark instead of a letter. The provider's (usually cached) toolkit
+   * metadata names the logo; the app row's domain wins over the metadata's.
+   * Only https logos are kept. A slow or failing lookup never delays or
+   * blocks the card.
    */
-  private async appCardDomain(appKey: string, domain?: string): Promise<string | undefined> {
-    if (domain) return domain;
-    if (!this.composio) return undefined;
+  private async appCardMark(appKey: string, domain?: string): Promise<{ logo?: string; domain?: string }> {
+    const mark = (logo?: string, metadataDomain?: string) => ({
+      ...(logo && /^https:\/\//i.test(logo) ? { logo } : {}),
+      ...(domain ?? metadataDomain ? { domain: domain ?? metadataDomain } : {}),
+    });
+    if (!this.composio) return mark();
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const metadata = await Promise.race([
         this.composio.toolkit(composioToolkitForApp(appKey)),
         new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
       ]);
-      return metadata?.appUrl ? registrableDomain(new URL(metadata.appUrl).hostname) : undefined;
+      return mark(metadata?.logo,
+        metadata?.appUrl ? registrableDomain(new URL(metadata.appUrl).hostname) : undefined);
     } catch {
-      return undefined;
+      return mark();
     } finally {
       clearTimeout(timeout);
     }
@@ -7661,7 +7666,7 @@ export class DaemonService {
     });
     if (outcome.transport === 'composio' && outcome.status === 'needs_sign_in' &&
       outcome.appId && outcome.appKey) {
-      const domain = await this.appCardDomain(outcome.appKey, outcome.domain);
+      const mark = await this.appCardMark(outcome.appKey, outcome.domain);
       await this.database.transaction(async (database) => {
         await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`,
           [`app-sign-in:${input.roomId}:${outcome.appId}`]);
@@ -7678,7 +7683,7 @@ export class DaemonService {
           consequence: 'Sign in to continue the request.',
           presentation: 'card', cardType: 'app-sign-in',
           card: { appId: outcome.appId, appKey: outcome.appKey,
-            name: outcome.name ?? app, ...(domain ? { domain } : {}), ownerId: context.owner.pubkey,
+            name: outcome.name ?? app, ...mark, ownerId: context.owner.pubkey,
             agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,
             ...(continuation ? { continuation } : {}) },
         });

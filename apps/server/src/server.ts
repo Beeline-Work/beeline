@@ -1,3 +1,4 @@
+import type { RoomsMcp } from './rooms-mcp.js';
 import { ingestScreenReport, parseScreenReport } from './x-ad-screen.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { FunnelRateLimit, recordSigninFunnelEvent } from './signin-funnel.js';
@@ -150,6 +151,7 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
+  roomsMcp?: RoomsMcp;
   sentryWakeSecret?: string;
   sentryWakeAgentId?: string;
   sentryTelegram?: SentryTelegramConfig;
@@ -1530,6 +1532,7 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (await options.roomsMcp?.handle(request, response)) return;
   if (method === 'POST' && url.pathname === '/v1/sentry/webhook') {
     let raw: Buffer;
     try { raw = await bytes(request, MAX_JSON_BYTES); }

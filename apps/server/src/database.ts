@@ -1,3 +1,4 @@
+import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { backfillCornerHoldMessages } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
@@ -213,7 +214,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 38;
+export const REQUIRED_SCHEMA_VERSION = 39;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3152,6 +3153,7 @@ export async function migrate(
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);
   };
   await ddlScript('server schema', SCHEMA);
+  await ddlScript('Rooms MCP OAuth', ROOMS_MCP_SCHEMA);
   await ddlScript('historical storage schema', LEGACY_STORAGE_SCHEMA);
   await retryMigrationStep('webhook retention index', () => createIndexConcurrently(
     database, 'github_webhook_deliveries_received_idx',

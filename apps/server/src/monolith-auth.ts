@@ -59,6 +59,7 @@ export async function createMonolithAuth(
     tenants,
     secureCookies: env.NODE_ENV === 'production',
     webAppOrigins: options.webAppOrigins,
+    nativeRedirectUris: ['google', 'github'].map(provider => new URL(`/mcp/oauth/callback/${provider}`, publicOrigin).toString()),
     githubSetupToken: env.BEELINE_AUTH_SETUP_TOKEN,
     logger: false,
     claimAgentPairingCode: async (input) => {

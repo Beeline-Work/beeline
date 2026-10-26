@@ -1,3 +1,5 @@
+import { RoomsMcp } from './rooms-mcp.js';
+import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { deliverXSignups } from './x-ads.js';
 import { flushOperatorSystemDms } from './operator-system-dm.js';
@@ -395,6 +397,7 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
+    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live),
     sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),

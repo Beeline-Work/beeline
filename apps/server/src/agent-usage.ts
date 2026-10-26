@@ -1,6 +1,6 @@
 import { readAgentUsage, type AgentUsage } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
-import { freeAgentDailyTokenCapFromEnv, freeAgentLimitsFromEnv } from './free-agent-limits.js';
+import { freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentLimitsFromEnv } from './free-agent-limits.js';
 
 /** Usage inputs for an `agents` row, null unless `viewer` (a SQL expression) owns it. */
 export function agentUsageColumns(agent: string, viewer: string): string {
@@ -12,7 +12,10 @@ export function agentUsageColumns(agent: string, viewer: string): string {
     CASE WHEN ${owned} THEN (SELECT u.tokens::text FROM free_agent_usage u
       WHERE u.owner_id=${agent}.owner_id AND u.day=${today}) END usage_free_tokens,
     CASE WHEN ${owned} THEN (SELECT b.usd::text FROM free_agent_budget b
-      WHERE b.day=${today}) END usage_free_budget_usd`;
+      WHERE b.day=${today}) END usage_free_budget_usd,
+    CASE WHEN ${owned} THEN (SELECT COALESCE(now() < MIN(e.at) + interval '24 hours', true)
+      FROM free_agent_events e JOIN free_agents ff ON ff.agent_id=e.agent_id
+      WHERE ff.owner_id=${agent}.owner_id AND e.kind='model_usage') END usage_free_first_day`;
 }
 
 export type AgentUsageRow = {
@@ -20,6 +23,7 @@ export type AgentUsageRow = {
   usage_free?: boolean | null;
   usage_free_tokens?: string | null;
   usage_free_budget_usd?: string | null;
+  usage_free_first_day?: boolean | null;
 };
 
 /**
@@ -37,7 +41,9 @@ export function projectAgentUsage(row: AgentUsageRow): AgentUsage | undefined {
       windows: [],
       free: {
         used: Number(row.usage_free_tokens ?? 0),
-        limit: freeAgentDailyTokenCapFromEnv(process.env),
+        limit: row.usage_free_first_day
+          ? freeAgentFirstDayTokenCapFromEnv(process.env)
+          : freeAgentDailyTokenCapFromEnv(process.env),
         resetsAt: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000,
         ...(paused ? { paused: true } : {}),
       },

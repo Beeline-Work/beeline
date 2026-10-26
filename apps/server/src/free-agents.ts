@@ -4,7 +4,7 @@ import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beel
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
-import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
+import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { joinRooms } from './membership-join.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 
@@ -85,6 +85,8 @@ export interface FreeAgentConfig {
   /** Free agents one person may own; later Workspaces get none. */
   maxPerOwner: number;
   dailyTokenCap: number;
+  /** Larger allowance during an owner's first 24 hours; always at least `dailyTokenCap`. */
+  firstDayTokenCap: number;
   /** Lifetime allowance per owner; 0 means none (the default). */
   lifetimeTokenCap: number;
   /** Key that seals the agent's identity keys at rest. */
@@ -120,6 +122,7 @@ export function freeAgentConfigFromEnv(
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
     dailyTokenCap: freeAgentDailyTokenCapFromEnv(env),
+    firstDayTokenCap: freeAgentFirstDayTokenCapFromEnv(env),
     lifetimeTokenCap: number('BEELINE_FREE_AGENT_LIFETIME_TOKENS', 0),
     sealSecret,
     publicOrigin: env.BEELINE_FREE_AGENT_SERVER_ORIGIN || publicOrigin,

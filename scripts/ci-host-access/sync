@@ -1,0 +1,4 @@
+#!/bin/sh
+# Start only the fixed root updater; never forward arguments or environment.
+[ "$#" -eq 0 ] || exit 64
+exec /usr/bin/systemctl start beeline-ci-sync.service

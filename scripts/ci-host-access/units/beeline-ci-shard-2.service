@@ -1,0 +1,37 @@
+[Unit]
+Description=Isolated ephemeral GitHub runner 2
+Requires=beeline-ci-network.service beeline-ci-registration.socket
+After=beeline-ci-network.service beeline-ci-registration.socket
+StartLimitIntervalSec=0
+[Service]
+User=beeline-ci-shard-2
+Group=beeline-ci-shard-2
+SupplementaryGroups=
+Slice=beeline-ci2.slice
+RootDirectory=/var/lib/beeline-ci-shard-2/root
+MountAPIVFS=yes
+BindReadOnlyPaths=/usr /etc/ssl/certs /etc/ld.so.cache /opt/beeline-ci
+BindPaths=/var/lib/beeline-ci-shard-2/state:/ci
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/ci /tmp /var/tmp /run
+PrivateTmp=yes
+ProtectKernelTunables=no
+ProtectControlGroups=yes
+UMask=0077
+Environment=HOME=/ci/home XDG_RUNTIME_DIR=/ci/run PYTHONDONTWRITEBYTECODE=1
+MemoryMax=12G
+CPUQuota=300%
+Nice=10
+TasksMax=4096
+TimeoutStopSec=60
+ExecStart=/usr/bin/python3 -I -B /opt/beeline-ci/current/entry.py run
+NoNewPrivileges=yes
+RootDirectoryStartOnly=yes
+WorkingDirectory=-/ci/runner
+ExecStartPre=+/usr/bin/python3 -I -B /opt/beeline-ci/current/prepare.py 2
+Environment=DOCKER_HOST=unix:///ci/run/docker.sock
+Restart=always
+RestartSec=30
+[Install]
+WantedBy=multi-user.target

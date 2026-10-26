@@ -1,0 +1,128 @@
+{
+  "installer_sha256": "c1457375839e6a6707cf12dd75d1d57afefaba9f6bba8edd3f9e2ce8f4452ad0",
+  "files": [
+    {
+      "source": "sync.py",
+      "destination": "/opt/beeline-ci/sync.py",
+      "sha256": "1d8badfc2b60a1379d1354add007799a9b6ac0689d79bb7370e331e726732339",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "sync",
+      "destination": "/opt/beeline-ci/sync",
+      "sha256": "acd431149d07997e2cb9607ea922f0fae97f88769f1270f5131c5c4c9058158f",
+      "mode": "0755",
+      "owner": "root:root"
+    },
+    {
+      "source": "beeline-ci-sync.service",
+      "destination": "/etc/systemd/system/beeline-ci-sync.service",
+      "sha256": "1031a5d30077dbb4825c52b96f432d680293ea50dc58b71c003e142de743847a",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "00-beeline-ci.rules",
+      "destination": "/etc/polkit-1/rules.d/00-beeline-ci.rules",
+      "sha256": "a7b6a510c10d0a68b8a4c940a1d3d52ec8fae33444e351cecfcf6950e9c1884b",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "runtime/broker.py",
+      "destination": "/opt/beeline-ci/releases/bootstrap/broker.py",
+      "sha256": "a416af17af98a1e79d8017f7fe03ddfc0dac2c97d0732ad2d47a4aedf6d1926e",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "runtime/entry.py",
+      "destination": "/opt/beeline-ci/releases/bootstrap/entry.py",
+      "sha256": "9d0fe031953f837039b34b2414cc8322da232985f9853ce4c02af8e7d7a94822",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "runtime/prepare.py",
+      "destination": "/opt/beeline-ci/releases/bootstrap/prepare.py",
+      "sha256": "036637d8cbd6900f70a96ed567f8a3cc9b0489adea5d6249d91a8756cb3a8018",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-registration.service",
+      "destination": "/etc/systemd/system/beeline-ci-registration.service",
+      "sha256": "530746526d6e6b519c8b6f806e2c6896d42af871623b1b19ddd6c6936f507d4f",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-registration.socket",
+      "destination": "/etc/systemd/system/beeline-ci-registration.socket",
+      "sha256": "7c8bbdc3a654ca076c637334b6fd0662e35b9e04239e48bffc7c38a897122394",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-1-docker.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-1-docker.service",
+      "sha256": "a7edf7045d557bae0a4fcece9daaa82ad55affceb5d30abbe74ad9e967de0300",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-1.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-1.service",
+      "sha256": "ad7c461bd5398413aa47624f38986c9a69915e66e8516a31a1425d034f8592e4",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-2-docker.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-2-docker.service",
+      "sha256": "bcc94b426b8054f46a2f6f641dfd14b55e830a4b3c74d9eedece01884fc043d6",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-2.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-2.service",
+      "sha256": "971dd205513c3c691c4e32b1750a05c492ea4f7c19698a4c8e8959dbb5168a15",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-3-docker.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-3-docker.service",
+      "sha256": "eb5c506292c9450005a1eeb2ad1345b3b25958c44d8d775f9252a021a50c7494",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-3.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-3.service",
+      "sha256": "b9a8e0895529ae526f85eb5d3cd34dc92aaea2d3ff488c0e2da31e49f2e0312a",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-4-docker.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-4-docker.service",
+      "sha256": "b4a10b8cf811ec0510e520926926c567370f0350dc503a83c9229d9fa077062b",
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    {
+      "source": "units/beeline-ci-shard-4.service",
+      "destination": "/etc/systemd/system/beeline-ci-shard-4.service",
+      "sha256": "0388c7ad9218978242124a3567fad587c1e6c6f9138a664918a2b55fb1fbf3b7",
+      "mode": "0644",
+      "owner": "root:root"
+    }
+  ],
+  "symlink": {
+    "destination": "/opt/beeline-ci/current",
+    "target": "releases/bootstrap"
+  }
+}

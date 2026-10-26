@@ -260,6 +260,8 @@ describe('an interpreter grant is bound to its script', () => {
     // No file to bind: `python3 -V` is not a hard stop.
     expect(interpreterScriptArgument(['python3', '-V'])).toBeUndefined();
     expect(interpreterScriptArgument(['npm', 'test'])).toBeUndefined();
+    expect(interpreterScriptArgument(['custom-script'], true)).toEqual({ index: 0, path: 'custom-script', direct: true });
+    expect(interpreterScriptArgument(['env', 'FOO=1', 'custom-script'], true)).toEqual({ index: 2, path: 'custom-script', direct: true });
     expect(interpreterScriptArgument(['env', 'FOO=1', 'npm', 'test'])).toBeUndefined();
   });
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { isNativeGrantExecutable } from './grant-script.js';
+import { isNativeGrantExecutable, resolveGrantExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
@@ -1954,6 +1954,8 @@ export interface AgentGrantDeps {
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
   /** Where a script argument may be read from: the checkout, then the scratch. */
   scriptRoots?: string[];
+  /** Execution environment used to resolve bare executable names. */
+  scriptEnv?: NodeJS.ProcessEnv;
   /** Test seam for reading those bytes. */
   readScript?: (path: string) => Buffer;
   /**
@@ -1993,22 +1995,26 @@ export function readGrantScript(
   rule: CommandGrantRule,
   deps: AgentGrantDeps,
 ): CommandGrantScript | undefined {
-  const argument = interpreterScriptArgument(rule.argv);
+  const argument = interpreterScriptArgument(rule.argv, true);
   if (!argument) return undefined;
   const roots = deps.scriptRoots ?? [];
   if (!roots.length) return undefined;
+  const executable = argument.direct
+    ? resolveGrantExecutable(argument.path, roots[0]!, deps.scriptEnv ?? process.env)
+    : undefined;
+  if (argument.direct && !executable) return undefined;
   if (argument.direct) {
     // Native executable paths do not need a script card, including binaries
     // outside the attachment roots. Script paths still meet the root check below.
     let candidate: Buffer;
     try {
-      candidate = (deps.readScript ?? readFileSync)(resolve(roots[0]!, argument.path));
+      candidate = (deps.readScript ?? readFileSync)(executable!);
     } catch { return undefined; }
     if (isNativeGrantExecutable(candidate)) return undefined;
   }
   let resolved: string;
   try {
-    resolved = resolveAttachPath(roots, argument.path);
+    resolved = resolveAttachPath(roots, executable ?? argument.path);
   } catch (error) {
     // A script that exists but sits outside the checkout and the scratch cannot
     // be put in front of a human, so it is not approvable from here.

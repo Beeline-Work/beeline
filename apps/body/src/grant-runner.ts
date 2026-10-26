@@ -1,4 +1,4 @@
-import { isNativeGrantExecutable } from './grant-script.js';
+import { isNativeGrantExecutable, resolveGrantExecutable } from './grant-script.js';
 /**
  * The command-kind grant runner (Agent Grants, slice 2).
  *
@@ -460,7 +460,7 @@ export class GrantCommandRunner {
     }
     // Use the same surface policy for the entire run.
     const policy = room.writePolicy();
-    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, argv), argv);
+    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, argv, { ...(this.options.env ?? process.env), ...policy.toolEnv }), argv);
     const secrets = new Map<string, string>();
     for (const name of rule.secrets) {
       const value = await this.resolveSecret(name);
@@ -492,7 +492,7 @@ export class GrantCommandRunner {
       ? { command: argv[0]!, args: argv.slice(1) }
       : roomSandboxCommand(policy, room.cwd, argv, sandboxMarker!);
     // Re-check after secret resolution and Once consumption, immediately before exec.
-    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, argv), argv);
+    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, argv, env), argv);
     const outcome = await new Promise<{
       exitCode: number | null;
       signal?: string;
@@ -600,7 +600,7 @@ export class GrantCommandRunner {
     candidates: readonly string[],
     argv: readonly string[],
   ): Promise<void> {
-    const argument = interpreterScriptArgument(argv);
+    const argument = interpreterScriptArgument(argv, true);
     if (!argument) return;
     let bytes: Buffer | undefined;
     for (const candidate of candidates) {
@@ -634,10 +634,12 @@ export class GrantCommandRunner {
 function scriptCandidates(
   cwd: string,
   argv: readonly string[],
+  env: NodeJS.ProcessEnv,
 ): string[] {
-  const argument = interpreterScriptArgument(argv);
+  const argument = interpreterScriptArgument(argv, true);
   if (!argument) return [];
-  return [resolve(cwd, argument.path)];
+  const path = argument.direct ? resolveGrantExecutable(argument.path, cwd, env) : resolve(cwd, argument.path);
+  return path ? [path] : [];
 }
 
 /** The bwrap-wrapped argv for a Room run, or a refusal when the host cannot wrap. */

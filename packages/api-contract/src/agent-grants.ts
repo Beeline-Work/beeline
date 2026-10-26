@@ -493,6 +493,7 @@ export function grantScriptTooLongMessage(path: string, bytes: number, lines: nu
 
 /**
  * The file an interpreter command will run, or an explicit executable path.
+ * With includePathCommands, bare executable names are candidates for PATH lookup.
  * Readers distinguish native executables from scripts, including ENOEXEC shell text.
  * Undefined when the command has neither candidate, or when the line carries
  * no such argument (`python3 -V`) — that still asks a human, it just has no
@@ -500,6 +501,7 @@ export function grantScriptTooLongMessage(path: string, bytes: number, lines: nu
  */
 export function interpreterScriptArgument(
   argv: readonly string[],
+  includePathCommands = false,
 ): { index: number; path: string; direct?: true } | undefined {
   // Step over `env FOO=1 …`, `sudo …`, `timeout 30 …`: the interpreter is what
   // matters, and a wrapper must not be a way around the binding.
@@ -514,7 +516,7 @@ export function interpreterScriptArgument(
     // Explicit executable paths may be scripts too. Callers inspect the bytes
     // to distinguish native executables from scripts and ENOEXEC shell text.
     const path = argv[head];
-    return path?.includes('/') ? { index: head, path, direct: true } : undefined;
+    return path && (includePathCommands || path.includes('/')) ? { index: head, path, direct: true } : undefined;
   }
   for (let index = head + 1; index < argv.length; index += 1) {
     const word = argv[index]!;

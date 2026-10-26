@@ -229,7 +229,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
             CASE WHEN jsonb_typeof(item.card->'grants')='array' THEN item.card->'grants' ELSE '[]'::jsonb END
           ) entry
           JOIN agent_grants pending_grant ON pending_grant.id::text=entry->>'grantId'
-            AND pending_grant.status='pending'
+            AND pending_grant.status='pending' AND pending_grant.superseded_at IS NULL
           WHERE ${grantDecidedBySql('pending_grant', 'person.id')}
         )
         WHEN item.card_type='${CHOICE_CARD_TYPE}'

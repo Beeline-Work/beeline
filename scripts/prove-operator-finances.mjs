@@ -44,6 +44,10 @@ try {
   assert.equal(finances.summary.monthToDate.knownUsd, 12);
   assert.equal(finances.snapshotState, 'saved');
   assert.equal(finances.services.find(s => s.id === 'groq').spend.monthToDate.usd, null);
+  assert.equal(finances.services.find(s => s.id === 'groq').spend.monthToDate.source, 'unknown');
+  assert.equal(typeof finances.services.find(s => s.id === 'groq').error, 'string');
+  assert.deepEqual(finances.perUser, { state: 'pending', delivery: 'PR B', users: [],
+    note: 'Per-user attribution follows in PR B' });
   assert.equal(finances.services.find(s => s.id === 'cloudflare').spend.monthToDate.usd, null);
   assert.equal(finances.daily[0].services.find(s => s.serviceId === 'openrouter').usd, null);
   assert.ok(!JSON.stringify(body).includes('fixture-private-key'));

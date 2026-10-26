@@ -1,6 +1,7 @@
 import type { SqlDatabase } from './database.js';
 import { createDashboardServices } from './operator-dashboard-services.js';
 import { fixedMonthlyCosts } from './operator-finances-config.js';
+import type { OperatorFinances } from './operator-finances-contract.js';
 
 export const OPERATOR_FINANCES_SCHEMA = `
 CREATE TABLE IF NOT EXISTS operator_finance_snapshots (
@@ -16,10 +17,7 @@ CREATE TABLE IF NOT EXISTS operator_finance_snapshots (
 `;
 
 type Source = 'API' | 'metered' | 'entered';
-type Money = {
-  usd: number | null; source: Source | null; state: 'measured' | 'partial' | 'stale' | 'unknown';
-  measuredAt: string | null; note: string;
-};
+type Money = OperatorFinances['services'][number]['spend']['monthToDate'];
 type Sample = {
   day: string; service_id: string; scope: string; source: Source;
   daily_usd: number | null; month_to_date_usd: number | null; measured_at: string;
@@ -28,7 +26,7 @@ type Spend = { monthToDate: Money; projectedMonth: Money; lastMonth: Money };
 type Env = Record<string, string | undefined>;
 const DAY = 86400000;
 const CACHE_MS = 600000;
-const unknown = (note: string): Money => ({ usd: null, source: null, state: 'unknown', measuredAt: null, note });
+const unknown = (note: string): Money => ({ usd: null, source: 'unknown', state: 'unknown', measuredAt: null, note });
 const number = (value: unknown): number => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new Error('Invalid cost');
   return value;
@@ -64,7 +62,7 @@ export function createOperatorFinances(
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   }
-  async function collect() {
+  async function collect(): Promise<OperatorFinances> {
     const time = now(), today = isoDay(time), measuredAt = new Date(time).toISOString();
     const start = monthStart(time), priorStart = monthStart(time, -1), trendStart = monthStart(time, -2);
     const elapsedDays = (time - start) / DAY;
@@ -242,9 +240,11 @@ export function createOperatorFinances(
         if (last) spend.monthToDate = { usd: last.month_to_date_usd, source: last.source, state: 'stale',
           measuredAt: last.measured_at, note: 'Last saved month-to-date snapshot; refresh unavailable' };
       }
-      return { ...row, spend };
+      return { ...row, spend, error: spend.monthToDate.state === 'unknown' || spend.monthToDate.state === 'stale'
+        ? spend.monthToDate.note : row.readings.some(r => r.state === 'unavailable')
+          ? 'Some provider balance reads are unavailable; see individual readings' : null };
     });
-    const total = (field: keyof Spend) => {
+    const total = (field: keyof Spend): OperatorFinances['summary']['monthToDate'] => {
       const values = services.map(s => s.spend[field]);
       const known = values.filter(v => v.usd !== null);
       return { usd: values.every(v => v.state === 'measured') ? known.reduce((n, v) => n + v.usd!, 0) : null,
@@ -259,9 +259,10 @@ export function createOperatorFinances(
       services,
       daily: days.map(day => ({ date: day, services: services.map(s => {
         const reading = historyFor(s.id, day);
-        return { serviceId: s.id, usd: reading?.daily_usd ?? null, source: reading?.source ?? null,
+        return { serviceId: s.id, usd: reading?.daily_usd ?? null, source: reading?.source ?? 'unknown',
           measuredAt: reading?.measured_at ?? null };
       }) })),
+      perUser: { state: 'pending', delivery: 'PR B', users: [], note: 'Per-user attribution follows in PR B' },
       note: 'Known spend is a subtotal, not total operating cost. Missing history remains null. Snapshots refresh hourly and on dashboard reads.',
     };
   }

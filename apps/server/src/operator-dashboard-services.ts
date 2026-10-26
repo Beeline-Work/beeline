@@ -1,4 +1,5 @@
 /** Operator-only dependency inventory. Evidence and exclusions: docs/operator-services.md. */
+import type { OperatorFinances } from './operator-finances-contract.js';
 type Environment = Record<string, string | undefined>;
 type Billing = 'credits' | 'pay-as-you-go card' | 'fixed plan' | 'free';
 type Service = {
@@ -68,15 +69,8 @@ const inventory: Service[] = [
     'free', 'https://link.com/', 'No operating credit balance API; user payment sources are private'),
 ];
 
-type Reading = {
-  label: string; source: string; state: 'measured' | 'unavailable';
-  value: number | null; unit: 'USD'; measuredAt: string | null;
-  low: boolean | null; note: string | null;
-};
-type ServiceRow = Service & {
-  state: 'measured' | 'unavailable' | 'no_balance_api';
-  balanceHealth: 'low' | 'unreadable' | 'ok' | 'not_applicable'; readings: Reading[];
-};
+type Reading = OperatorFinances['services'][number]['readings'][number];
+type ServiceRow = Omit<OperatorFinances['services'][number], 'spend' | 'error'>;
 const CACHE_MS = 10 * 60 * 1000;
 const TIMEOUT_MS = 5000;
 class BalanceReadError extends Error {}

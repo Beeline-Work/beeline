@@ -10,14 +10,21 @@ The existing dashboard sections and authentication are unchanged.
 
 ## Contract (PR A)
 
+The authoritative typed contract is `apps/server/src/operator-finances-contract.ts`.
+The collector return annotation enforces it. `docs/fixtures/operator-finances.json`
+is exported by the built HTTP proof. Notify the frontend owner before any shape change.
+
+`perUser` is `{state: pending, delivery: PR B, users: [], note}` until attribution ships.
+
+
 `finances` has `schemaVersion: 1`, `timeZone: UTC`, `currency: USD`, `measuredAt`,
 `cacheSeconds: 600`, `month` and `previousMonth` (YYYY-MM), `snapshotState`
-(`saved` / `unavailable`), `summary`, `services`, `daily`, and `note`.
+(`saved` / `unavailable`), `summary`, `services`, `daily`, `perUser`, and `note`.
 If collection as a whole fails, it uses the existing section-unavailable shape.
 
-A money metric is `{usd: number|null, source: API|metered|entered|null,
+A money metric is `{usd: number|null, source: API|metered|entered|unknown,
 state: measured|partial|stale|unknown, measuredAt: string|null, note: string}`.
-Never render null as zero. Every source must remain visible beside its amount.
+Never render null as zero. Every source must remain visible beside its amount. Unknown sources use the explicit `unknown` tag.
 `partial` is a known subset, not a service invoice. `stale` preserves a previously
 saved observation with its original timestamp after a failed refresh. Estimates
 and projections retain their source and explanatory note.
@@ -31,7 +38,8 @@ subsets, labelled **Known spend**, never total burn. Both can be null.
 Every `services` row has `id`, `name`, `powers`, `envVars` (names only), `billing`
 (`credits` / `pay-as-you-go card` / `fixed plan` / `free`), `billingUrl`,
 `balanceNote`, `state` (`measured` / `unavailable` / `no_balance_api`), `readings`,
-and `spend: {monthToDate, projectedMonth, lastMonth}` (money metrics).
+and `spend: {monthToDate, projectedMonth, lastMonth}` (money metrics). Each row has
+`error: string|null`, a sanitized explanation of missing spend or failed balance reads.
 `balanceHealth` is `low`, `unreadable`, `ok`, or `not_applicable`; low takes
 precedence over unreadable. Keep each reading's error visible even when another
 reading in the same row succeeds.

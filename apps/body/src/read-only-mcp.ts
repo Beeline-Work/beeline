@@ -2183,7 +2183,7 @@ export async function requestSharedAssetIsolation(
  * list_grants: every grant this agent raised — pending, approved, and once —
  * with status, target, reason, and, for a command grant, whether each named
  * secret currently resolves. This is inspection, never authority: it changes
- * no state and the server answers it from the agent's own rows.
+ * no state. Corner reviewers may also inspect that corner implementer's rows.
  */
 export async function listGrants(
   deps: AgentGrantDeps = agentGrantDepsFromEnv(),
@@ -2221,7 +2221,7 @@ export async function listGrants(
         // A target that no longer parses is shown plainly; nothing else to say.
       }
     }
-    lines.push(`- ${status} ${kind} ${target} [${grantId}]${reason ? ` · ${reason}` : ''}${secretsNote}`);
+    lines.push(`- ${status} ${kind} ${target} [${grantId}]${typeof entry.agentId === 'string' ? ` · agent ${entry.agentId}` : ''}${reason ? ` · ${reason}` : ''}${secretsNote}`);
   }
   return ['grants:', ...lines].join('\n');
 }

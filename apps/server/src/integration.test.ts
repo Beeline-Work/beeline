@@ -11040,6 +11040,47 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
+  it('GRANT-CURRENT-1: successive command requests paint and resume only the current grant', async () => {
+    const source = await (await operation('sendRoomMessage', {
+      roomId: ROOM, text: '@bee run the checks', mentions: [AGENT],
+    })).json() as { messageId: string };
+    const ask = async (reason: string) => {
+      const response = await daemonOperation('requestAgentGrant', {
+        roomId: ROOM, requestId: source.messageId, kind: 'command',
+        target: 'python3 check.py', reason,
+        script: { path: 'check.py', contents: 'print(1)', bytes: 8,
+          sha256: createHash('sha256').update('print(1)').digest('hex') },
+      });
+      expect(response.status).toBe(200);
+      return await response.json() as { grantId: string; messageId: string };
+    };
+    const first = await ask('First attempt');
+    const current = await ask('Current attempt');
+    expect(current.grantId).not.toBe(first.grantId);
+    const cardRoom = (await database.query<{ room_id: string }>(
+      'SELECT room_id FROM messages WHERE id=$1', [current.messageId],
+    )).rows[0]!.room_id;
+    const view = await (await request(`/v1/phone/rooms/${cardRoom}`, 'GET', undefined, accessToken)).json() as RoomView;
+    const card = view.messages.find(row => row.id === current.messageId)!.grantRequest!;
+    expect(card.grants.map(grant => grant.grantId)).toEqual([current.grantId]);
+    const tray = await (await operation('readNeedsYou', { workspaceId: WORKSPACE })).json();
+    expect(JSON.stringify(tray)).toContain(current.grantId);
+    expect(JSON.stringify(tray)).not.toContain(first.grantId);
+    const inspected = await (await daemonOperation('listAgentGrantRequests', { roomId: ROOM })).json();
+    expect(inspected.grants.map((grant: { grantId: string }) => grant.grantId)).toEqual([current.grantId]);
+    const stale = await operation('decideAgentGrant', { grantId: first.grantId, decision: 'once' });
+    expect(stale.status).toBe(409);
+    expect((await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [first.grantId])).rows)
+      .toEqual([{ status: 'pending' }]);
+    expect((await database.query(`SELECT 1 FROM messages WHERE card_type='grant-decision'`)).rows).toEqual([]);
+    expect((await operation('decideAgentGrant', { grantId: current.grantId, decision: 'once' })).status).toBe(200);
+    const wake = (await database.query<{ card: { grantId: string }; action: string }>(
+      `SELECT message.card,command.action FROM messages message JOIN agent_commands command
+       ON command.source_message_id=message.id WHERE message.card_type='grant-decision'`,
+    )).rows;
+    expect(wake).toEqual([{ card: { grantId: current.grantId, status: 'once' }, action: 'resume' }]);
+  });
+
   it('grant-src-1: creates and reads approval cards with the source message actual Room', async () => {
     const capture = vi.spyOn(serverSentry, 'captureServerError').mockImplementation(() => undefined);
     await database.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [AGENT]);

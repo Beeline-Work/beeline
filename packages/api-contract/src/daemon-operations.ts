@@ -572,7 +572,8 @@ export type DaemonOperationMap = {
   listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;
   /**
    * The inspect surface behind the agent's `list_grants` tool: every grant this
-   * agent raised — pending, approved, and once — with reason and age. The run
+   * agent raised — pending, approved, and once — with reason and age, plus the
+   * implementer's grants when called by that corner's reviewer. The run
    * gate (`listTurnAgentGrants`) keeps its approved-only view; this operation
    * never authorizes anything.
    */
@@ -1598,6 +1599,8 @@ export type AgentGrantListResult = {
 /** One grant row for the agent's own inspection (`list_grants`), never authority. */
 export type AgentGrantRequestView = {
   readonly grantId: string;
+  /** Present when inspecting the implementer's grant as a corner reviewer. */
+  readonly agentId?: string;
   readonly workspaceId: string;
   readonly roomId: string;
   readonly kind: AgentGrantKind;

@@ -156,7 +156,7 @@ export function AgentProfileView({
             <Text style={styles.copy} accessibilityRole="alert">
               {error}
             </Text>
-            <Button label="Retry" onPress={onRetry} variant="secondary" />
+            <Button size="inline" label="Retry" onPress={onRetry} variant="secondary" />
           </View>
         )}
         {identity && (

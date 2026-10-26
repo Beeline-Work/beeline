@@ -1,4 +1,5 @@
-import { ErrorBanner } from './buzz/ErrorBanner';
+import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
@@ -539,13 +540,11 @@ export const SidebarView = React.memo(function SidebarView() {
 
           />
           {pinError && (
-            <Text accessibilityRole="alert" style={styles.empty}>
-              {pinError}
-            </Text>
+            <SettingsRow title={pinError} />
           )}
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {navigationError ? (
-              <ErrorBanner inline title={navigationError} onRetry={() => setRefreshNonce((value) => value + 1)} />
+              <SettingsRow title={appErrorCopy(navigationError)} description={connectionErrorDescription} action="Retry" onPress={() => setRefreshNonce((value) => value + 1)} />
             ) : !filteredChats.length && (!surface || query.trim() || filter !== 'all') ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (

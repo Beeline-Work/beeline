@@ -1,4 +1,4 @@
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
+import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
@@ -150,7 +150,7 @@ function operationMessage(reason: unknown): string {
     const code = (reason as { code?: unknown }).code;
     if (typeof code === 'string' && code && code !== 'request_failed') return code;
   }
-  return reason instanceof Error ? reason.message : String(reason);
+  return appErrorCopy(reason);
 }
 
 /**
@@ -411,7 +411,7 @@ export default function BuzzMembers({
             }
           })
           .catch((reason) => {
-            if (!cancelled) setError(String(reason));
+            if (!cancelled) setError(appErrorCopy(reason));
           });
       })
       .then((release) => {
@@ -519,7 +519,7 @@ export default function BuzzMembers({
           if (!value) return;
           setWorkspaceError(null);
         },
-        onError: (reason) => setWorkspaceError(String(reason)),
+        onError: (reason) => setWorkspaceError(appErrorCopy(reason)),
       });
       schedulerRef.current = scheduler;
       const watch = watchWorkspace(
@@ -527,14 +527,14 @@ export default function BuzzMembers({
         nextRelayUrl,
         workspaceId,
         () => scheduler?.signal(),
-        (reason) => setWorkspaceError(String(reason)),
+        (reason) => setWorkspaceError(appErrorCopy(reason)),
       );
       stopWatch = watch.release;
       await watch.ready;
       if (cancelled) return;
       if (!profileAgentId) await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
-      if (!cancelled) setWorkspaceError(String(reason));
+      if (!cancelled) setWorkspaceError(appErrorCopy(reason));
     });
     return () => {
       cancelled = true;
@@ -579,7 +579,7 @@ export default function BuzzMembers({
       if (generation !== agentRequestGenerationRef.current) return;
       await mobileSurfaceCache.write(address, value, isAgentDetailView);
     } catch (reason) {
-      if (generation === agentRequestGenerationRef.current) setError(String(reason));
+      if (generation === agentRequestGenerationRef.current) setError(appErrorCopy(reason));
     }
   };
 
@@ -604,7 +604,7 @@ export default function BuzzMembers({
       );
       await Share.share({ message: url });
     } catch (reason) {
-      setError(`Could not create person invite: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not create person invite.`));
     } finally {
       setWorking(null);
     }
@@ -625,7 +625,7 @@ export default function BuzzMembers({
       const pairing = await (await writeClient()).createAgentPairingCode(workspaceId);
       setPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
-      setError(`Could not create agent invite: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not create agent invite.`));
     } finally {
       setWorking(null);
     }
@@ -666,7 +666,7 @@ export default function BuzzMembers({
         if (!cancelled) applyMemberPage(page, undefined, false);
       })
       .catch((reason) => {
-        if (!cancelled) setError(`Could not search members: ${String(reason)}`);
+        if (!cancelled) setError(appErrorCopy(reason, `Could not search members.`));
       })
       .finally(() => {
         if (!cancelled) setRosterLoading(false);
@@ -692,7 +692,7 @@ export default function BuzzMembers({
       });
       applyMemberPage(next, kind, true);
     } catch (reason) {
-      setError(`Could not load more members: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not load more members.`));
     } finally {
       setRosterLoading(false);
     }
@@ -706,7 +706,7 @@ export default function BuzzMembers({
       const room = await new BuzzRigTransport(identity).resolveDirectMessage(workspaceId, pubkey);
       navigateToRoom(router, room.channelId);
     } catch (reason) {
-      setError(`Could not open message: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not open message.`));
     } finally {
       setWorking(null);
     }
@@ -832,7 +832,7 @@ export default function BuzzMembers({
       clearSoul();
       setEditingAgentSoul(false);
     } catch (reason) {
-      setError(`Could not save agent settings: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not save agent settings.`));
     } finally {
       finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);
@@ -870,7 +870,7 @@ export default function BuzzMembers({
       setOpenModelAxis(null);
       showModelAppliesNote(kind);
     } catch (reason) {
-      setError(`Could not set ${kind}: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not set ${kind}.`));
     } finally {
       finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);
@@ -890,7 +890,7 @@ export default function BuzzMembers({
       });
       applyAgentReceipt(receipt as unknown as AgentDetailView);
     } catch (reason) {
-      setError(`Could not set Fast mode: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not set Fast mode.`));
     } finally {
       finishConfigWrite(selectedAgent.agent.identity.pubkey);
       setWorking(null);
@@ -1005,7 +1005,7 @@ export default function BuzzMembers({
       if (profileAgentId) (onClose ?? (() => router.back()))();
       setOpenModelAxis(null);
     } catch (reason) {
-      setError(`Could not remove agent: ${String(reason)}`);
+      setError(appErrorCopy(reason, `Could not remove agent.`));
     } finally {
       setWorking(null);
     }
@@ -1318,12 +1318,7 @@ export default function BuzzMembers({
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <Text style={styles.error}>{displayedError}</Text>
-        <Button
-          label="Retry"
-          onPress={() => setRetryGeneration((value) => value + 1)}
-          variant="secondary"
-        />
+        <SettingsRow title={appErrorCopy(displayedError)} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }
@@ -1399,7 +1394,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <ErrorBanner inline title={displayedError!} onRetry={() => { setError(null); schedulerRef.current?.force(); }} />
+          <SettingsRow title={appErrorCopy(displayedError!)} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); schedulerRef.current?.force(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}

@@ -66,8 +66,8 @@ export default function WorkbenchScreen() {
             })}
           </View> : null;
         })}
-        {error ? <Text accessibilityRole="alert" style={styles.error}>Could not refresh connections. Try again.</Text> : null}
-        {actions.error ? <Text accessibilityRole="alert" style={styles.error}>{actions.error}</Text> : null}
+        {error ? <SettingsRow title="Could not refresh connections. Try again." /> : null}
+        {actions.error ? <SettingsRow title={actions.error} /> : null}
       </ScrollView>}
     <ConnectorsSearchSheet visible={searchOpen} onClose={() => setSearchOpen(false)} scope={scope} view={view} />
   </View>;

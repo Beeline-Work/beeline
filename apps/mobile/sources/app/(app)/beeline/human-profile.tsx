@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { InlineActionRow } from '@/components/buzz/IndexRow';
@@ -126,7 +127,7 @@ export function HumanProfile({
       }
     })()
       .catch((reason) => {
-        if (!cancelled) setError(String(reason));
+        if (!cancelled) setError(appErrorCopy(reason));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -157,7 +158,7 @@ export function HumanProfile({
       await action();
     } catch (reason) {
       if (active.current) {
-        setError(String(reason));
+        setError(appErrorCopy(reason));
         setRetry((value) => value + 1);
       }
     } finally {
@@ -235,7 +236,7 @@ export function HumanProfile({
               {displayedError}
             </Text>
             {!member && (
-              <Button
+              <Button size="inline"
                 label="Retry"
                 onPress={() => { setError(null); setRetry((value) => value + 1); }}
                 variant="secondary"

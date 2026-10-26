@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 /**
  * Human-device half of the P1 permission ledger.
  *
@@ -307,7 +308,7 @@ export async function executeQueuedRoomCreate(
   } catch (error) {
     const after = await dependencies.inspectRoomFresh(request.value.scope);
     if (after !== 'exact') {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = appErrorCopy(error);
       item.state = 'needs-human';
       await dependencies.outbox.put(item);
       await dependencies.client.publish(

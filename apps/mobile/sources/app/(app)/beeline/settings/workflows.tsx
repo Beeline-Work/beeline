@@ -1,3 +1,5 @@
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -61,7 +63,7 @@ export default function RoomWorkflows() {
       setList(workflows);
       setError(null);
     } catch (caught) {
-      setError(`Could not load workflows: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not load workflows.`));
     } finally {
       setLoading(false);
     }
@@ -92,7 +94,7 @@ export default function RoomWorkflows() {
         });
         await reload();
       } catch (caught) {
-        setError(`Could not run ${workflow.name}: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not run ${workflow.name}.`));
       } finally {
         setRunning(null);
       }
@@ -155,9 +157,7 @@ export default function RoomWorkflows() {
             <Text style={styles.empty}>No dispatchable workflows in this Room.</Text>
           )}
           {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
-              ! {error}
-            </Text>
+            <SettingsRow title="! {error}" />
           )}
         </ScrollView>
       )}

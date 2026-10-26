@@ -1,3 +1,5 @@
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
 import { DesktopRoomListToggle } from '@/components/buzz/DesktopRoomListToggle';
 import { useDesktopLayout, setDesktopPaneOpen } from '@/buzz/desktop-layout-state';
@@ -783,7 +785,7 @@ export function BuzzChatSurface({
       setPushMuted(result.muted);
     } catch (error) {
       setPushMuted(previous);
-      setMembershipError(`Could not update notifications: ${String(error)}`);
+      setMembershipError(appErrorCopy(error, `Could not update notifications.`));
     } finally {
       setPushMuteWorking(false);
     }
@@ -1457,7 +1459,7 @@ export function BuzzChatSurface({
       } catch (reason) {
         Modal.alert(
           'Could not open direct message',
-          reason instanceof Error ? reason.message : String(reason),
+          appErrorCopy(reason),
         );
       } finally {
         openingMentionRef.current = null;
@@ -1957,7 +1959,7 @@ export function BuzzChatSurface({
       })
       .catch((err) => {
         if (!cancelled && rosterSurfaceVisible)
-          setMembershipError(`Could not read the Workspace roster: ${String(err)}`);
+          setMembershipError(appErrorCopy(err, `Could not read the Workspace roster.`));
       });
     return () => {
       cancelled = true;
@@ -2506,7 +2508,7 @@ export function BuzzChatSurface({
       ).createAgentPairingCode(activeCommunityId);
       setAgentPairCommand(agentPairingCommand(pairing.code));
     } catch (reason) {
-      setAgentPairError(`Could not create agent invite: ${String(reason)}`);
+      setAgentPairError(appErrorCopy(reason, `Could not create agent invite.`));
     } finally {
       setAgentPairBusy(false);
     }
@@ -3766,7 +3768,7 @@ export function BuzzChatSurface({
           delete updated[messageId];
           return updated;
         });
-        Modal.alert('Could not react', error instanceof Error ? error.message : String(error));
+        Modal.alert('Could not react', appErrorCopy(error));
       } finally {
         reactingRef.current.delete(messageId);
       }
@@ -3805,7 +3807,7 @@ export function BuzzChatSurface({
         AccessibilityInfo.announceForAccessibility('Bookmark change failed');
         Modal.alert(
           bookmarked ? 'Could not bookmark message' : 'Could not remove bookmark',
-          error instanceof Error ? error.message : String(error),
+          appErrorCopy(error),
         );
       }
     },
@@ -3876,7 +3878,7 @@ export function BuzzChatSurface({
         });
         Modal.alert(
           'Could not delete message',
-          error instanceof Error ? error.message : String(error),
+          appErrorCopy(error),
         );
       }
     },
@@ -3910,7 +3912,7 @@ export function BuzzChatSurface({
         ]);
         setForwardRooms(forwardTargets(chats, workspace, decodedId));
       } catch (error) {
-        setForwardError(error instanceof Error ? error.message : String(error));
+        setForwardError(appErrorCopy(error));
         setForwardRooms([]);
       }
     },
@@ -3952,7 +3954,7 @@ export function BuzzChatSurface({
         setForwardRooms(null);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (error) {
-        setForwardError(error instanceof Error ? error.message : String(error));
+        setForwardError(appErrorCopy(error));
       } finally {
         setForwardBusyRoomId(null);
       }
@@ -4672,7 +4674,7 @@ export function BuzzChatSurface({
       } catch (err) {
         setTargetBranchNotice({
           proposalId: proposal.proposalId,
-          text: err instanceof Error ? err.message : String(err),
+          text: appErrorCopy(err),
         });
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       } finally {
@@ -4697,7 +4699,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setParticipantPickerVisible(false);
       } catch (err) {
-        setMembershipError(`Could not add Room members: ${String(err)}`);
+        setMembershipError(appErrorCopy(err, `Could not add Room members.`));
       } finally {
         setAddingMembers(false);
       }
@@ -4730,7 +4732,7 @@ export function BuzzChatSurface({
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         })
         .catch((err) => {
-          setMembershipError(`Could not remove ${participant.name}: ${String(err)}`);
+          setMembershipError(appErrorCopy(err, `Could not remove ${participant.name}.`));
         })
         .finally(() => setMembershipActionPubkey(null));
     },
@@ -4759,7 +4761,7 @@ export function BuzzChatSurface({
       );
       await Share.share({ message: url });
     } catch (reason) {
-      setMembershipError(`Could not create person invite: ${String(reason)}`);
+      setMembershipError(appErrorCopy(reason, `Could not create person invite.`));
     } finally {
       setMemberInviteBusy(false);
     }
@@ -4820,7 +4822,7 @@ export function BuzzChatSurface({
       } catch (err) {
         refreshSignal.force();
         setMembershipError(
-          `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}: ${String(err)}`,
+          appErrorCopy(err, `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}.`),
         );
       } finally {
         setRoomLifecycleBusy(false);
@@ -4874,7 +4876,7 @@ export function BuzzChatSurface({
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       if (previousName) applyRoomName(previousName, name);
-      setRenameError(`Could not rename ${kindLabel}: ${String(err)}`);
+      setRenameError(appErrorCopy(err, `Could not rename ${kindLabel}.`));
     } finally {
       setRenameBusy(false);
     }
@@ -5100,7 +5102,7 @@ export function BuzzChatSurface({
         setCornerOpenRepoPrompt(false);
         setOwnerGrant(null);
       } catch (err) {
-        setRoomRepoError(`Could not link repo: ${String(err)}`);
+        setRoomRepoError(appErrorCopy(err, `Could not link repo.`));
       } finally {
         setRoomRepoBusy(false);
       }
@@ -5147,7 +5149,7 @@ export function BuzzChatSurface({
           (current) => ({ ...current, candidates: [...current.candidates, candidate] }));
         await applyRoomRepository(candidate);
       } catch (err) {
-        setRoomRepoError(`Could not create repo: ${String(err)}`);
+        setRoomRepoError(appErrorCopy(err, `Could not create repo.`));
         throw err;
       }
     },
@@ -5284,7 +5286,7 @@ export function BuzzChatSurface({
       handleBack();
     } catch (error) {
       refreshSignal.force();
-      Modal.alert('Could not close corner', error instanceof Error ? error.message : String(error));
+      Modal.alert('Could not close corner', appErrorCopy(error));
     } finally {
       closeCornerPending.current = false;
     }
@@ -6097,8 +6099,7 @@ export function BuzzChatSurface({
               <HeaderMetaCaps>HISTORY UNAVAILABLE</HeaderMetaCaps>
             </View>
           </View>
-          <ErrorBanner title="! ERROR" description={transcriptHydrationError ?? 'Could not load this conversation.'}
-            retryLabel="Retry" onRetry={retryHydration} />
+          <SettingsRow title={transcriptHydrationError ?? 'Could not load this conversation.'} description="Check your connection and try again." action="Retry" onPress={retryHydration} />
         </View>
       );
     }
@@ -7353,7 +7354,7 @@ export function BuzzChatSurface({
         onError={(error) => {
           refreshSignal.force();
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          Modal.alert('Could not complete request', error instanceof Error ? error.message : String(error));
+          Modal.alert('Could not complete request', appErrorCopy(error));
         }}
       />
 

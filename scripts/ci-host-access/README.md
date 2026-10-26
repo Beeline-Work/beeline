@@ -1,6 +1,6 @@
 # CI host access bootstrap
 
-One owner-approved run of `install.py` installs immutable CI scripts and a
+One owner-approved run of `launch-install.py` (which hash-pins `install.py`) installs immutable CI scripts and a
 single polkit rule. It stops the ten existing experimental units during
 migration and leaves them stopped. It does not touch production runners,
 create an App/key, change fork policy or enable CI routing.

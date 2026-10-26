@@ -21,6 +21,9 @@ class SyncTests(unittest.TestCase):
     def test_installer_pins_every_installed_file(self):
         manifest = json.loads((ROOT / 'INSTALL-SHA256.json').read_text())
         self.assertEqual(manifest['installer_sha256'], hashlib.sha256((ROOT / 'install.py').read_bytes()).hexdigest())
+        launcher = ast.parse((ROOT / 'launch-install.py').read_text())
+        expected = next(ast.literal_eval(n.value) for n in launcher.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'expected' for t in n.targets))
+        self.assertEqual(expected, manifest['installer_sha256'])
         tree = ast.parse((ROOT / 'install.py').read_text())
         pins = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'PINS' for t in n.targets))
         self.assertEqual(set(pins), {f['source'] for f in manifest['files']})

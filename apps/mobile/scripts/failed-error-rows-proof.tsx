@@ -32,7 +32,8 @@ function Proof() {
   const query = new URLSearchParams(location.search);
   if (query.has('changed')) {
     const page = Number(query.get('page') ?? 0);
-    const cases = changedSweeps.slice(page * 6, (page + 1) * 6);
+    const selected = query.get('case');
+    const cases = selected ? changedSweeps.filter((entry:any)=>entry.id===selected) : changedSweeps.slice(page * 6, (page + 1) * 6);
     return <View style={{ backgroundColor:t.bgBase, padding:16, gap:16 }}>
       {cases.map((entry: any) => <View key={entry.id}>
         <Text style={{ ...t.type.meta, color:t.textPrimary }}>{entry.label} · after line {entry.afterLine}</Text>

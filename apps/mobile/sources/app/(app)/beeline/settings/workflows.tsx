@@ -1,5 +1,5 @@
 import { SettingsRow } from '@/components/buzz/SettingsRow';
-import { appErrorCopy } from '@/buzz/app-error-copy';
+import { appErrorCopy, connectionErrorTitle, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -157,7 +157,13 @@ export default function RoomWorkflows() {
             <Text style={styles.empty}>No dispatchable workflows in this Room.</Text>
           )}
           {error && (
-            <SettingsRow title="! {error}" />
+            <SettingsRow
+              title={error}
+              description={error === connectionErrorTitle ? connectionErrorDescription : undefined}
+              action="Retry"
+              onPress={() => void reload()}
+              testID="workflows-error"
+            />
           )}
         </ScrollView>
       )}

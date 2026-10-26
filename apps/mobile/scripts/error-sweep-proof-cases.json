@@ -849,14 +849,13 @@
       "label": "app/(app)/beeline/settings/workflows.tsx:158",
       "before": {
         "jsx": [
-          "<Text accessibilityRole=\"alert\" style={styles.error}>\n              ! {error}\n            </Text>"
+          "<SettingsRow title=\"! {error}\" />"
         ],
         "wrappers": [
           "styles.content",
           "[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]"
         ],
         "styles": [
-          "error: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.danger }",
           "content: { padding: 16, gap: theme.buzz.space.sm }",
           "container: { flex: 1, backgroundColor: theme.buzz.bgTerminal }"
         ]
@@ -865,12 +864,15 @@
         "selectors": [
           {
             "tag": "SettingsRow",
-            "hash": "d0b3a52c2d9e2504f64f08f308ca4eaa4101f8a433b61b5878e335ef5b505407",
+            "hash": "600840fd3935ac19f175aa445d848d87d8ed62c7da76920a9ae24f680efb1a33",
             "occurrence": 0
           }
         ],
         "sourceLine": 160
-      }
+      },
+      "beforeCommit": "4a6e33172",
+      "beforeSnapshotLine": 160,
+      "screenFallback": "Could not load workflows."
     },
     {
       "file": "app/(app)/beeline/tray.tsx",
@@ -964,7 +966,7 @@
       "label": "app/(app)/join/[token].tsx:207",
       "before": {
         "jsx": [
-          "<View style={styles.failureBlock} testID=\"invite-unreachable\">\n            <ErrorBanner title=\"Couldn’t reach Beeline\"\n              description=\"Your invite may still be fine — we could not ask the server about it. Check your connection and try again.\" />\n            {error ? <Text style={styles.meta}>{error}</Text> : null}\n            <Button\n              label=\"Retry\"\n              onPress={retry}\n              style={styles.primary}\n              testID=\"invite-retry\"\n              variant=\"secondary\"\n            />\n            <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" />\n          </View>"
+          "<View style={styles.failureBlock} testID=\"invite-unreachable\">\n            <ErrorBanner title=\"Couldn\u2019t reach Beeline\"\n              description=\"Your invite may still be fine \u2014 we could not ask the server about it. Check your connection and try again.\" />\n            {error ? <Text style={styles.meta}>{error}</Text> : null}\n            <Button\n              label=\"Retry\"\n              onPress={retry}\n              style={styles.primary}\n              testID=\"invite-retry\"\n              variant=\"secondary\"\n            />\n            <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" />\n          </View>"
         ],
         "wrappers": [
           "[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]",
@@ -999,7 +1001,7 @@
       "label": "app/(app)/join/[token].tsx:209",
       "before": {
         "jsx": [
-          "<View style={styles.failureBlock} testID=\"invite-unreachable\">\n            <ErrorBanner title=\"Couldn’t reach Beeline\"\n              description=\"Your invite may still be fine — we could not ask the server about it. Check your connection and try again.\" />\n            {error ? <Text style={styles.meta}>{error}</Text> : null}\n            <Button\n              label=\"Retry\"\n              onPress={retry}\n              style={styles.primary}\n              testID=\"invite-retry\"\n              variant=\"secondary\"\n            />\n            <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" />\n          </View>"
+          "<View style={styles.failureBlock} testID=\"invite-unreachable\">\n            <ErrorBanner title=\"Couldn\u2019t reach Beeline\"\n              description=\"Your invite may still be fine \u2014 we could not ask the server about it. Check your connection and try again.\" />\n            {error ? <Text style={styles.meta}>{error}</Text> : null}\n            <Button\n              label=\"Retry\"\n              onPress={retry}\n              style={styles.primary}\n              testID=\"invite-retry\"\n              variant=\"secondary\"\n            />\n            <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" />\n          </View>"
         ],
         "wrappers": [
           "[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]",
@@ -1241,7 +1243,7 @@
       "fallback": "Could not load public join link.",
       "before": {
         "jsx": [
-          "<SettingsRow\n                  accessibilityLabel=\"Copy public join link\"\n                  action={joinLinkBusy ? 'Loading…' : joinLinkCopied ? 'Copied' : 'Copy'}\n                  description=\"Anyone with the link can join\"\n                  disabled={workingKey !== null || joinLinkBusy}\n                  onPress={copyJoinLink}\n                  testID=\"workspace-public-join-copy\"\n                  title=\"Public join link\"\n                />",
+          "<SettingsRow\n                  accessibilityLabel=\"Copy public join link\"\n                  action={joinLinkBusy ? 'Loading\u2026' : joinLinkCopied ? 'Copied' : 'Copy'}\n                  description=\"Anyone with the link can join\"\n                  disabled={workingKey !== null || joinLinkBusy}\n                  onPress={copyJoinLink}\n                  testID=\"workspace-public-join-copy\"\n                  title=\"Public join link\"\n                />",
           "<ErrorBanner inline title={error} />"
         ],
         "wrappers": [

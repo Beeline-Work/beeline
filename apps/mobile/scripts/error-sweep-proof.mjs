@@ -63,7 +63,7 @@ function fixtureJsx(snapshot, entry) {
           if (name === 'title') {
             expression = text === 'notice.title' ? 'noticeTitle' : /error|Error|attention|notice|explanation/.test(text) ? 'snapshotError' : 'rowTitle';
           } else if (name === 'description') {
-            expression = text === 'connectionErrorDescription' ? text : /error|Error|notice|explanation/.test(text) ? 'snapshotError' : 'undefined';
+            expression = text.includes('connectionErrorDescription') ? 'snapshotError === connectionErrorTitle ? connectionErrorDescription : undefined' : /error|Error|notice|explanation/.test(text) ? 'snapshotError' : 'undefined';
           } else if (name === 'descriptionTone') expression = '"danger"';
           else if (name === 'toggle') expression = '({value:true,onValueChange:retry})';
           else if (name === 'value') expression = text.includes('workspace?.name') ? '"Beeline"' : '"Private"';
@@ -116,7 +116,7 @@ export function changedSweepProofModule(mobile) {
         return {${snapshot.styles.join(',\n')}};
       });
       const stylesheet = styles;
-      const snapshotError = ${side === 'Before' ? entry.fallback ? JSON.stringify(entry.fallback.replace(/\.$/, '') + ': Error: unknown') : 'String(error)' : `appErrorCopy(${entry.fallback ? "new Error('unknown')" : 'error'}${entry.fallback ? ', ' + JSON.stringify(entry.fallback) : ''})`};
+      const snapshotError = ${side === 'Before' ? entry.fallback ? JSON.stringify(entry.fallback.replace(/\.$/, '') + ': Error: unknown') : 'String(error)' : `appErrorCopy(${entry.fallback ? "new Error('unknown')" : 'error'}${entry.fallback || entry.screenFallback ? ', ' + JSON.stringify(entry.fallback ?? entry.screenFallback) : ''})`};
       const rowTitle = ${JSON.stringify(entry.rowTitle ?? 'general')};
       return ${fixtureJsx(snapshot, entry)};
     }`;
@@ -133,7 +133,7 @@ export function changedSweepProofModule(mobile) {
     import { SettingsRow } from '@/components/buzz/SettingsRow';
     import { IndexRow } from '@/components/buzz/IndexRow';
     import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-    import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
+    import { appErrorCopy, connectionErrorTitle, connectionErrorDescription } from '@/buzz/app-error-copy';
     import { RoomViewHttpError } from '@beeline/buzz-client';
     const error = new RoomViewHttpError(504,'surface_request_timed_out');
     const retry = () => undefined;
@@ -155,5 +155,5 @@ export function writeEvidenceBoard(output) {
   });
   const manifest = JSON.parse(fs.readFileSync(new URL('./error-sweep-proof-cases.json', import.meta.url), 'utf8'));
   const rows = manifest.cases.map((entry, index) => `<tr><td>${entry.label.replaceAll('&', '&amp;').replaceAll('<', '&lt;')}</td><td>${Math.floor(index / 6) + 1}</td><td>${['bone','obsidian'].flatMap(theme => [828,1440].map(width => `<a href="#changed-${theme}-${width}-page-${Math.floor(index/6)+1}">${theme} ${width===828?'phone':'web'}</a>`)).join(' · ')} · before / after</td></tr>`).join('');
-  fs.writeFileSync(path.join(output, '..', 'error-proof.html'), `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Failure rows: complete browser evidence</title><style>body{margin:0;padding:24px;background:#14091a;color:#f0f0f3;font:16px sans-serif}h1{font-size:22px}p{color:#c9c9d1;max-width:76ch}img{width:100%;height:auto;border:1px solid #291e33}details{margin:24px 0}summary,a{color:#b08a4a}summary{cursor:pointer}table{border-collapse:collapse;font-size:13px;width:100%}td,th{border-bottom:1px solid #291e33;padding:8px;text-align:left;overflow-wrap:anywhere}</style><h1>Failure rows: complete browser evidence</h1><p>The original mock places and every changed inventory row are shown before and after in Bone and Obsidian at phone and web widths. Changed-sweep fixtures retain the source failure elements and surrounding source styles. Before JSX is pinned to the pre-fix commit; after JSX is extracted from current production source. Live data and callbacks are substituted. These are isolated browser fixtures, not authenticated full-page captures.</p><p>Observed in the unchanged application source: Workflow settings renders the literal title <code>! {error}</code> (changed-sweep page 5). This evidence refresh leaves application code untouched; that title needs a separate copy correction.</p><table><tr><th>Changed inventory location</th><th>Sweep page</th><th>Coverage</th></tr>${rows}</table>${headings.join('')}</html>`);
+  fs.writeFileSync(path.join(output, '..', 'error-proof.html'), `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Failure rows: complete browser evidence</title><style>body{margin:0;padding:24px;background:#14091a;color:#f0f0f3;font:16px sans-serif}h1{font-size:22px}p{color:#c9c9d1;max-width:76ch}img{width:100%;height:auto;border:1px solid #291e33}details{margin:24px 0}summary,a{color:#b08a4a}summary{cursor:pointer}table{border-collapse:collapse;font-size:13px;width:100%}td,th{border-bottom:1px solid #291e33;padding:8px;text-align:left;overflow-wrap:anywhere}</style><h1>Failure rows: complete browser evidence</h1><p>The original mock places and every changed inventory row are shown before and after in Bone and Obsidian at phone and web widths. Changed-sweep fixtures retain the source failure elements and surrounding source styles. Before JSX is pinned to the pre-fix commit; after JSX is extracted from current production source. Live data and callbacks are substituted. These are isolated browser fixtures, not authenticated full-page captures.</p><p>R2: Workflow settings now renders the real error sentence and Retry. Its before snapshot preserves the literal placeholder from commit 4a6e33172; the dedicated Workflow placeholder sheets and changed-sweep page 5 show the corrected production row.</p><table><tr><th>Changed inventory location</th><th>Sweep page</th><th>Coverage</th></tr>${rows}</table>${headings.join('')}</html>`);
 }

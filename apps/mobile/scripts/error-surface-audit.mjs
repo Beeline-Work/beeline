@@ -68,3 +68,28 @@ export function failureProofModule(root) {
   });
   return `import React from 'react'; import { IndexRow } from '@/components/buzz/IndexRow'; import { SettingsRow } from '@/components/buzz/SettingsRow'; import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy'; export default [${entries.join(',\n')}];`;
 }
+
+/** Quoted JSX/JS strings do not interpolate error variables. */
+export function scanErrorPlaceholders(root) {
+  const hits = [];
+  function walk(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) { if (entry.name !== 'vendor') walk(file); continue; }
+      if (!/\.tsx?$/.test(file) || /\.(test|spec)\./.test(file)) continue;
+      const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      function visit(node) {
+        if (ts.isStringLiteralLike(node)) {
+          const value = node.text.replace(/&#(?:123|x7b);/gi, '{').replace(/&#(?:125|x7d);/gi, '}');
+          if (/\{\s*(?:\w+\.)*(?:\w*(?:error|failure|exception|reason|caught|cause)\w*|err\w*)(?:\.\w+)*\s*\}/i.test(value)) {
+            hits.push({ file: path.relative(root, file), line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, value: value.slice(0, 200) });
+          }
+        }
+        ts.forEachChild(node, visit);
+      }
+      visit(source);
+    }
+  }
+  walk(root);
+  return hits;
+}

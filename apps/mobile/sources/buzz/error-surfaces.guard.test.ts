@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { expect, it } from 'vitest';
 // @ts-expect-error Executable source inventory.
-import { scanErrorSurfaces } from '../../scripts/error-surface-audit.mjs';
+import { scanErrorSurfaces, scanErrorPlaceholders } from '../../scripts/error-surface-audit.mjs';
 import exceptions from '../../design/error-surface-allowlist.json';
 
 it('requires an individually documented inset for every contextual error', () => {
@@ -53,4 +53,27 @@ it('never puts a boxed retry button or boxed banner back into a failure surface'
     }
   }
   visit(path.resolve('sources'));
+});
+
+it('rejects literal error placeholders throughout app source', () => {
+  expect(scanErrorPlaceholders(path.resolve('sources'))).toEqual([]);
+});
+it('recognizes quoted and encoded placeholders while allowing real interpolation', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-error-copy-'));
+  try {
+    fs.writeFileSync(path.join(directory, 'Placeholders.tsx'), [
+      '<SettingsRow title="! {error}" />;',
+      "setError('Could not {reason.message}');",
+      '<Text>{"${loadError}"}</Text>;',
+      '<SettingsRow title="&#123;cause&#125;" />;',
+      '<SettingsRow title="{errorMessage}" />;',
+      '<SettingsRow title="{lastError.message}" />;',
+      'const broken = `Failure: {exception}`;',
+      'const valid = `Could not ${error}`;',
+      '<SettingsRow title={error} />;',
+    ].join('\n'));
+    expect(scanErrorPlaceholders(directory).map((hit: {value:string}) => hit.value)).toEqual([
+      '! {error}', 'Could not {reason.message}', '${loadError}', '{cause}', '{errorMessage}', '{lastError.message}', 'Failure: {exception}',
+    ]);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

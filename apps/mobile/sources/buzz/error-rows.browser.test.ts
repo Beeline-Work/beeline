@@ -64,3 +64,29 @@ it('screenshots every changed inventory row before and after in both themes and 
   writeFileSync(path.join(output,'changed-coverage.json'),JSON.stringify({baselineCommit:changedManifest.baselineCommit,captured},null,2));
   writeEvidenceBoard(output);
 },180_000);
+
+it('R2: replaces the Workflow settings placeholder with the approved failed row in both themes and widths', async () => {
+  const mobile = process.cwd();
+  const output = path.resolve('../..', '.beeline-proof/error-rows');
+  mkdirSync(output,{recursive:true});
+  const fonts = ['SpaceGrotesk-Regular','SpaceGrotesk-Medium','SpaceGrotesk-SemiBold'].map(font => `@font-face{font-family:'${font}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile,'sources/assets/fonts',font+'.ttf')).toString('base64')})}`).join('');
+  const module = changedSweepProofModule(mobile);
+  for (const theme of ['obsidian','bone']) for (const width of [828,1440]) {
+    const shims = webProofShims(mobile);
+    shims['react-native-unistyles'] = `import { ${theme}Theme } from '${path.join(mobile,'sources/theme')}';\n` + shims['react-native-unistyles']!.replace(/const theme = \{ buzz: beelineThemes\.obsidian \};/, `const theme = ${theme}Theme;`);
+    shims['error-proof-production-rows'] = 'export default [];';
+    shims['error-proof-inventory'] = 'export default [];';
+    shims['error-proof-changed-sweep'] = module;
+    const proof = await runBrowserProof({entry:path.join(mobile,'scripts/failed-error-rows-proof.tsx'),mobile,shims,width,height:440,query:'?changed&case=sweep-29',head:`<style>${fonts}body{margin:0;background:${theme==='bone'?'#F3EEE4':'#14091A'}}#result{display:none}</style>`,screenshotPath:path.join(output,`workflow-placeholder-${theme}-${width}.png`)});
+    expect(proof.status,proof.stderr).toBe(0);
+    const result = JSON.parse(proof.result);
+    expect(result.errors).toEqual([]);
+    expect(result.frames.map((frame:{id:string})=>frame.id)).toEqual(['sweep-29-before','sweep-29-after']);
+    expect(result.frames[0].text).toBe('! {error}');
+    expect(result.frames[1].text).toContain('Couldn’t reach Beeline');
+    expect(result.frames[1].text).toContain('Check your connection and try again.');
+    expect(result.frames[1].text).toContain('Retry');
+    expect(result.frames[1].text).not.toMatch(/\{error\}|RoomViewHttpError|504/);
+  }
+  writeEvidenceBoard(output);
+},90_000);

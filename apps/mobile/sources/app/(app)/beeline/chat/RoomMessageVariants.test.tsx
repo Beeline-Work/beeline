@@ -2931,6 +2931,20 @@ describe('Room message variant components', () => {
         console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses favicon, then website glyph`);
     });
 
+    it('Reproduction RS-1: a stored domain shows the app mark; no logo or domain keeps the letter', () => {
+      const base = { appId: 'app-whatsapp', appKey: 'whatsapp', name: 'WhatsApp',
+        ownerId: 'zeke', agentId: 'monarch', status: 'pending' as const };
+      const card = render(<AppSignInCard message={message({ appSignIn: { ...base, domain: 'whatsapp.com' } })}
+        agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
+      expect(card.root.findAllByType('Image').some((node: ReactTestInstance) =>
+        node.props.source?.uri?.includes('domain=whatsapp.com'))).toBe(true);
+      expect(card.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === 'W')).toBe(false);
+      const letter = render(<AppSignInCard message={message({ appSignIn: base })}
+        agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
+      expect(letter.root.findAllByType('Image')).toHaveLength(0);
+      expect(letter.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === 'W')).toBe(true);
+    });
+
     it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {
       const onAccept = vi.fn();
       const card = render(

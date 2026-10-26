@@ -1,3 +1,4 @@
+// App sign-in card stored domain and https logo approved by lunchboxfortwo, message 3d09e2b6b1e393a85ba499fd7d1bc4339fce9210a9ec5e01d9109b4cebace300 (PR #2977); hidden card fields only, visible text unchanged; this connectAppFrontDoor entry only.
 // Draft readiness failure report approved by lunchboxfortwo in DM message 2ba8abca (Oct 26), relayed by Ruby; exact wording and this reconcileCornerMergeBlockers wrapper only.
 // False idle corners brief revision 4 (owner approval 15e88632b7dc84d655ba4202a69f8680ed378e1e52ab6adba17f5fc84971bf8f): remove obsolete timed/stall alert branches; retain the existing idle wording.
 // Current review and repair handoff target line and transitive wrappers approved by lunchboxfortwo, message 70add57a7141d4a4a811a3d9e81d02788a973d2377287c39d6bdaff758dade77; these five wrapper literal snapshots only.
@@ -1768,19 +1769,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:9ff44edb4483402b",
-    "file": "apps/server/src/corner-lifecycle.ts",
-    "kind": "wrapper",
-    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
-    "literals": [
-      "''",
-      "`${pr.headSha}:${ended}`",
-      "`; prior verdict and evidence: ${evidence}`",
-      "`the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:925659e8861c8779",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
@@ -1890,6 +1878,19 @@
       "`pull request #${pr.number}`",
       "`room-subscription:${id}:${subscription.id}`",
       "`the reviewer command could not be queued on ${pr.headSha}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:9ff44edb4483402b",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, reason, false)",
+    "literals": [
+      "''",
+      "`${pr.headSha}:${ended}`",
+      "`; prior verdict and evidence: ${evidence}`",
+      "`the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`"
     ],
     "occurrences": 1
   },
@@ -2220,23 +2221,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.connectAppFrontDoor:systemLine:5286cc8f3ed10726",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "systemLine",
-    "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: 'needs a connection to', object: outcome.name ?? app,\n    consequence: 'Sign in to continue the request.',\n    presentation: 'card', cardType: 'app-sign-in',\n    card: { appId: outcome.appId, appKey: outcome.appKey,\n        name: outcome.name ?? app, ownerId: context.owner.pubkey,\n        agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,\n        ...(continuation ? { continuation } : {}) },\n})",
-    "literals": [
-      "''",
-      "'Sign in to continue the request.'",
-      "'agent'",
-      "'app-sign-in'",
-      "'human'",
-      "'needs a connection to'",
-      "'pending'",
-      "'string'"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/daemon-service.ts:DaemonService.connectAppFrontDoor:systemLine:76f10864d79069f4",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
@@ -2261,6 +2245,36 @@
       "'stripe link (link.com)'",
       "'stripe link'",
       "`https://${normalized}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.connectAppFrontDoor:systemLine:2e46c1d7d13239bf",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "systemLine",
+    "template": "systemLine(database, {\n    roomId: input.roomId,\n    subject: { kind: 'agent', id: agentId, name: context.agent.name },\n    verb: 'needs a connection to', object: outcome.name ?? app,\n    consequence: 'Sign in to continue the request.',\n    presentation: 'card', cardType: 'app-sign-in',\n    card: { appId: outcome.appId, appKey: outcome.appKey,\n        name: outcome.name ?? app, ...mark, ownerId: context.owner.pubkey,\n        agentId, status: 'pending', commandId: this.authorizedCommand?.id ?? null,\n        ...(continuation ? { continuation } : {}) },\n})",
+    "literals": [
+      "''",
+      "'GET'",
+      "'Sign in to continue the request.'",
+      "'agent'",
+      "'app-sign-in'",
+      "'application/json'",
+      "'boolean'",
+      "'content-type'",
+      "'googlecalendar'",
+      "'googledocs'",
+      "'googledrive'",
+      "'googlesheets'",
+      "'https://backend.composio.dev/api'",
+      "'human'",
+      "'needs a connection to'",
+      "'object'",
+      "'pending'",
+      "'string'",
+      "'x-api-key'",
+      "`${API}/${version}${path}`",
+      "`/toolkits/${encodeURIComponent(toolkit)}?version=latest`"
     ],
     "occurrences": 1
   },
@@ -4986,6 +5000,19 @@
     "occurrences": 2
   },
   {
+    "id": "src/subscription-webhooks.ts:ingestSubscriptionWebhook:systemLine:cc7620c0a3f01f2b",
+    "file": "apps/server/src/subscription-webhooks.ts",
+    "kind": "systemLine",
+    "template": "systemLine(tx, { id: messageId, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' }, verb: 'received', object: 'a webhook call',\n    kind: 'subscription-fired', wakes: [row.agent_id],\n    payload: { source: 'webhook', event: 'webhook.called', body: payload },\n    subscriptionPrompt: row.prompt, subscriptionWorkflowSlug: row.workflow_slug ?? undefined })",
+    "literals": [
+      "'Beeline'",
+      "'a webhook call'",
+      "'received'",
+      "'system'"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/system-line.ts:backfillComputerObservations:message-write:400b93e3fc549fa7",
     "file": "apps/server/src/system-line.ts",
     "kind": "message-write",
@@ -5984,19 +6011,6 @@
       "'recent-failure'",
       "'status'",
       "'string'"
-    ],
-    "occurrences": 1
-  },
-  {
-    "id": "src/subscription-webhooks.ts:ingestSubscriptionWebhook:systemLine:cc7620c0a3f01f2b",
-    "file": "apps/server/src/subscription-webhooks.ts",
-    "kind": "systemLine",
-    "template": "systemLine(tx, { id: messageId, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' }, verb: 'received', object: 'a webhook call',\n    kind: 'subscription-fired', wakes: [row.agent_id],\n    payload: { source: 'webhook', event: 'webhook.called', body: payload },\n    subscriptionPrompt: row.prompt, subscriptionWorkflowSlug: row.workflow_slug ?? undefined })",
-    "literals": [
-      "'Beeline'",
-      "'a webhook call'",
-      "'received'",
-      "'system'"
     ],
     "occurrences": 1
   }

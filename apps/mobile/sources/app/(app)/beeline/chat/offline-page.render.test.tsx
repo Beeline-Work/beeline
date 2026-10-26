@@ -1,3 +1,4 @@
+vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 import React from 'react';
 import { isRoomView } from '@beeline/buzz-client';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.

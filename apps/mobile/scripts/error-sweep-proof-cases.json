@@ -1,0 +1,1392 @@
+{
+  "baselineCommit": "5498908b8",
+  "description": "Every changed inventory row in PR 2984. Before snapshots come from the pre-fix source; after JSX and surrounding styles are extracted from current production source.",
+  "cases": [
+    {
+      "file": "app/(app)/beeline/channels.tsx",
+      "beforeLine": 852,
+      "afterLine": 853,
+      "id": "sweep-01",
+      "label": "app/(app)/beeline/channels.tsx:852",
+      "before": {
+        "jsx": [
+          "<Text style={styles.error}>{error}</Text>",
+          "<Button\n          label=\"Retry\"\n          onPress={() => setRetryGeneration((value) => value + 1)}\n          variant=\"secondary\"\n        />"
+        ],
+        "wrappers": [
+          "[styles.center, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: hull.danger, textAlign: 'center' }",
+          "center: {\n      flex: 1,\n      alignItems: 'center',\n      justifyContent: 'center',\n      gap: hull.space.md,\n      backgroundColor: hull.bgTerminal,\n      paddingHorizontal: hull.space.xl,\n    }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "IndexRow",
+            "hash": "4d74fe9f69a4b2e2b3003ebfc1c6c39268ad39e913f3729b8beee5aac8c11e49",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 853
+      }
+    },
+    {
+      "file": "app/(app)/beeline/channels.tsx",
+      "beforeLine": 906,
+      "afterLine": 902,
+      "id": "sweep-02",
+      "label": "app/(app)/beeline/channels.tsx:906",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>\n            {pinError}\n          </Text>"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: hull.danger, textAlign: 'center' }",
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "IndexRow",
+            "hash": "67e048ea3687dbe6dc2dadcc4d61657aeca1581baf5be0842571047c71222833",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 902
+      }
+    },
+    {
+      "file": "app/(app)/beeline/channels.tsx",
+      "beforeLine": 960,
+      "afterLine": 954,
+      "id": "sweep-03",
+      "label": "app/(app)/beeline/channels.tsx:960",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={error} onRetry={refreshNow} />"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "View",
+            "hash": "a21bc348980e3be5abfc08effa27fd0b6ada4021e251740d08283abf41ff3bfe",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 954
+      }
+    },
+    {
+      "file": "app/(app)/beeline/chat/_chat-surface.tsx",
+      "beforeLine": 6100,
+      "afterLine": 6102,
+      "id": "sweep-04",
+      "label": "app/(app)/beeline/chat/_chat-surface.tsx:6100",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title=\"! ERROR\" description={transcriptHydrationError ?? 'Could not load this conversation.'}\n            retryLabel=\"Retry\" onRetry={retryHydration} />"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "container: {\n      flex: 1,\n      backgroundColor: groknight.bgTerminal,\n    }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "6b4dad75fcc18a00c5319d212aed589c13b658c3ccc43e0de749278e74f99c0e",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 6102
+      }
+    },
+    {
+      "file": "app/(app)/beeline/community.tsx",
+      "beforeLine": 217,
+      "afterLine": 218,
+      "id": "sweep-05",
+      "label": "app/(app)/beeline/community.tsx:217",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={error} testID=\"choice-error\" />"
+        ],
+        "wrappers": [
+          "[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]",
+          "[\n          styles.scroll,\n          { paddingTop: theme.buzz.space.lg, paddingBottom: theme.buzz.space.xxl + insets.bottom },\n        ]",
+          "styles.container"
+        ],
+        "styles": [
+          "column: { width: '100%', maxWidth: 460, alignSelf: 'center' }",
+          "scroll: {\n      flexGrow: 1,\n      justifyContent: 'flex-start',\n      paddingHorizontal: hull.space.lg,\n      paddingBottom: hull.space.xxl,\n    }",
+          "container: { flex: 1, minWidth: 0, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "ErrorBanner",
+            "hash": "e9513484a8519e686eb871e96684d1b26ef356cb0e9c970d8eec55878a672760",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 218
+      }
+    },
+    {
+      "file": "app/(app)/beeline/corners/[roomId].tsx",
+      "beforeLine": 177,
+      "afterLine": 178,
+      "id": "sweep-06",
+      "label": "app/(app)/beeline/corners/[roomId].tsx:177",
+      "before": {
+        "jsx": [
+          "<Text style={[styles.error, styles.errorCentered]}>{error}</Text>",
+          "<Button label=\"Retry\" onPress={() => void corners.refresh()} variant=\"secondary\" />"
+        ],
+        "wrappers": [
+          "[styles.container, styles.center, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...Typography.default(), ...hull.type.meta, color: hull.danger }",
+          "errorCentered: { textAlign: 'center' }",
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }",
+          "center: {\n      alignItems: 'center',\n      justifyContent: 'center',\n      gap: hull.space.md,\n      paddingHorizontal: hull.space.lg,\n    }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "b9865290e985646bf232d23cfca0328c274399c6b563eb32fbf88910ed0735e5",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 178
+      }
+    },
+    {
+      "file": "app/(app)/beeline/corners/[roomId].tsx",
+      "beforeLine": 212,
+      "afterLine": 212,
+      "id": "sweep-07",
+      "label": "app/(app)/beeline/corners/[roomId].tsx:212",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline\n            title={`! ${error}`}\n            retryLabel=\"Retry\"\n            onRetry={() => void corners.refresh()} />"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: insets.top }, desktop && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }]"
+        ],
+        "styles": [
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "b9865290e985646bf232d23cfca0328c274399c6b563eb32fbf88910ed0735e5",
+            "occurrence": 1
+          }
+        ],
+        "sourceLine": 212
+      }
+    },
+    {
+      "file": "app/(app)/beeline/create-workspace.tsx",
+      "beforeLine": 139,
+      "afterLine": 140,
+      "id": "sweep-08",
+      "label": "app/(app)/beeline/create-workspace.tsx:139",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={error} testID=\"create-error\" />"
+        ],
+        "wrappers": [
+          "[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]",
+          "[\n          styles.scroll,\n          { paddingBottom: insets.bottom + theme.buzz.space.xxl },\n        ]",
+          "[styles.container, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.sm }",
+          "scroll: { flexGrow: 1, paddingHorizontal: hull.space.lg, paddingTop: hull.space.lg }",
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "ErrorBanner",
+            "hash": "2d72bd9235de1afd94e509c706d822e802d2b3111b2378fa902c83ff7d743472",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 140
+      }
+    },
+    {
+      "file": "app/(app)/beeline/github-installation.tsx",
+      "beforeLine": 55,
+      "afterLine": 56,
+      "id": "sweep-09",
+      "label": "app/(app)/beeline/github-installation.tsx:55",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title=\"Continue connecting GitHub\"\n      description=\"Return to your Room to refresh repositories and finish setup.\"\n      retryLabel=\"Back to Room\" retryVariant=\"primary\" onRetry={() => setReturnPath(recoveryPath)} />"
+        ],
+        "wrappers": [
+          "[styles.page, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }]"
+        ],
+        "styles": [
+          "page: { flex: 1, justifyContent: 'center', padding: theme.buzz.space.lg, gap: theme.buzz.space.md, backgroundColor: theme.buzz.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "85e6e0fd77b6fc67f26e94a77c952a8e4b293954dd1250b74464a4b985b3948b",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 56
+      }
+    },
+    {
+      "file": "app/(app)/beeline/members.tsx",
+      "beforeLine": 1321,
+      "afterLine": 1321,
+      "id": "sweep-10",
+      "label": "app/(app)/beeline/members.tsx:1321",
+      "before": {
+        "jsx": [
+          "<Text style={styles.error}>{displayedError}</Text>",
+          "<Button\n          label=\"Retry\"\n          onPress={() => setRetryGeneration((value) => value + 1)}\n          variant=\"secondary\"\n        />"
+        ],
+        "wrappers": [
+          "[styles.container, styles.center, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: {\n      ...Typography.default(),\n      ...hull.type.meta,\n      color: hull.danger,\n      textAlign: 'center',\n    }",
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }",
+          "center: {\n      alignItems: 'center',\n      justifyContent: 'center',\n      gap: hull.space.md,\n      paddingHorizontal: hull.space.lg,\n    }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "2679e937d57e2dc2b4097193a7e423d9fde9622eff798c61aa1cd7a47baa6aa2",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 1321
+      }
+    },
+    {
+      "file": "app/(app)/beeline/members.tsx",
+      "beforeLine": 1402,
+      "afterLine": 1397,
+      "id": "sweep-11",
+      "label": "app/(app)/beeline/members.tsx:1402",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={displayedError!} onRetry={() => { setError(null); schedulerRef.current?.force(); }} />"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "d3fe6a161158146cfafa23449e64e781b4dcd56e71c52be30ab76baa1637e7b2",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 1397
+      }
+    },
+    {
+      "file": "app/(app)/beeline/onboarding.tsx",
+      "beforeLine": 593,
+      "afterLine": 592,
+      "id": "sweep-12",
+      "label": "app/(app)/beeline/onboarding.tsx:593",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={notice.title} description={notice.message} />"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]"
+        ],
+        "styles": [
+          "container: {\n      flex: 1,\n      paddingHorizontal: 24,\n      justifyContent: 'center',\n      backgroundColor: groknight.bgVoid,\n    }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "ErrorBanner",
+            "hash": "1e52199bd47171bb24e4585082510e080b416f342f6803f0224ea6283d76e431",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 592
+      }
+    },
+    {
+      "file": "app/(app)/beeline/onboarding.tsx",
+      "beforeLine": 623,
+      "afterLine": 622,
+      "id": "sweep-13",
+      "label": "app/(app)/beeline/onboarding.tsx:623",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={notice.title} description={notice.message} />"
+        ],
+        "wrappers": [
+          "[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]"
+        ],
+        "styles": [
+          "container: {\n      flex: 1,\n      paddingHorizontal: 24,\n      justifyContent: 'center',\n      backgroundColor: groknight.bgVoid,\n    }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "ErrorBanner",
+            "hash": "1e52199bd47171bb24e4585082510e080b416f342f6803f0224ea6283d76e431",
+            "occurrence": 1
+          }
+        ],
+        "sourceLine": 622
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/schedule.tsx",
+      "beforeLine": 68,
+      "afterLine": 68,
+      "id": "sweep-14",
+      "label": "app/(app)/beeline/settings/schedule.tsx:68",
+      "before": {
+        "jsx": [
+          "<ErrorBanner\n          title=\"Could not stop this schedule.\"\n          retryLabel=\"Retry\"\n          onRetry={() => void stop()}\n          retryTestID=\"schedule-stop-error-retry\"\n          testID=\"schedule-stop-error\"\n        />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "1e121d8a0aad4277727b5217c98e936d3d46289333bdfffd40b797ab4922af75",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 68
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/schedule.tsx",
+      "beforeLine": 76,
+      "afterLine": 75,
+      "id": "sweep-15",
+      "label": "app/(app)/beeline/settings/schedule.tsx:76",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={error} retryLabel=\"Retry\" onRetry={retry}\n          />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "3bf5c93313a27f839781e4f0ec32e95640bfd87285b9680ef142463e78e9c429",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 75
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/schedules.tsx",
+      "beforeLine": 132,
+      "afterLine": 131,
+      "id": "sweep-16",
+      "label": "app/(app)/beeline/settings/schedules.tsx:132",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={error} retryLabel=\"Retry\" onRetry={retry}\n          />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "3bf5c93313a27f839781e4f0ec32e95640bfd87285b9680ef142463e78e9c429",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 131
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/subscription.tsx",
+      "beforeLine": 96,
+      "afterLine": 95,
+      "id": "sweep-17",
+      "label": "app/(app)/beeline/settings/subscription.tsx:96",
+      "before": {
+        "jsx": [
+          "<ErrorBanner\n          title=\"Could not stop this subscription.\"\n          retryLabel=\"Retry\"\n          onRetry={() => void stop()}\n          retryTestID=\"subscription-stop-error-retry\"\n          testID=\"subscription-stop-error\"\n        />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "d01b4bf0be4e58e61df13737b26e58f69722a26f877164ec068cea33c56148a1",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 95
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/subscription.tsx",
+      "beforeLine": 104,
+      "afterLine": 102,
+      "id": "sweep-18",
+      "label": "app/(app)/beeline/settings/subscription.tsx:104",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={error} retryLabel=\"Retry\" onRetry={retry}\n          />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "3bf5c93313a27f839781e4f0ec32e95640bfd87285b9680ef142463e78e9c429",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 102
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/app.tsx",
+      "beforeLine": 124,
+      "afterLine": 124,
+      "id": "sweep-19",
+      "label": "app/(app)/beeline/settings/workbench/app.tsx:124",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>{error ?? (loadError ? 'App unavailable right now' : null) ?? (app && needsSquire\n        ? `${app.name} connects through Trusty Squire. Connect Trusty Squire, then return here to connect ${app.name}.`\n        : app?.transport !== 'composio' && app?.errorMessage === 'App sign-in is unavailable for this person'\n          ? `${app.name} connects through your helper. Retry to ask your helper to finish connecting it.`\n          : appErrorCopy(app?.errorMessage ?? ''))}</Text>"
+        ],
+        "wrappers": [
+          "[styles.content, { paddingBottom: 24 + insets.bottom }]",
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...Typography.default(), color: theme.buzz.dialogDanger }",
+          "content: { paddingHorizontal: hull.space.lg, paddingVertical: 24, gap: hull.space.md }",
+          "screen: { flex: 1, backgroundColor: board.canvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "cf0fae10e4d1a65d29e20df8e774d78abf14394493c9a0b074c8117069e9d494",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 124
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/connect-app.tsx",
+      "beforeLine": 68,
+      "afterLine": 68,
+      "id": "sweep-20",
+      "label": "app/(app)/beeline/settings/workbench/connect-app.tsx:68",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>{error ?? actions.error}</Text>"
+        ],
+        "wrappers": [
+          "styles.content"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.space.md, paddingBottom: theme.buzz.space.lg, gap: theme.buzz.space.sm }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "22d16c1021e85550226e6cbfc8220e23e37b839d9d6b76329218633c8b3100af",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 68
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/connect-app.tsx",
+      "beforeLine": 91,
+      "afterLine": 91,
+      "id": "sweep-21",
+      "label": "app/(app)/beeline/settings/workbench/connect-app.tsx:91",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>Connections are unavailable right now</Text>"
+        ],
+        "wrappers": [
+          "{ paddingBottom: insets.bottom }",
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "screen: { flex: 1, backgroundColor: theme.buzz.appCanvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "cbd60da1f72ab04f16762d524986958bf08f2fe418c4de78be25213436882cd9",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 91
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
+      "beforeLine": 50,
+      "afterLine": 52,
+      "id": "sweep-22",
+      "label": "app/(app)/beeline/settings/workbench/connect-signin.tsx:50",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>{error}</Text>"
+        ],
+        "wrappers": [
+          "styles.returnScreen"
+        ],
+        "styles": [
+          "error: { ...Typography.default(), color: theme.buzz.dialogDanger }",
+          "returnScreen: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.buzz.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "888259172380a26c473d83e4730736910af9a97015b9bccfb19a63a69c356d36",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 52
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
+      "beforeLine": 124,
+      "afterLine": 126,
+      "id": "sweep-23",
+      "label": "app/(app)/beeline/settings/workbench/connect-signin.tsx:124",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>\n              {observed.error ?? pageError}\n            </Text>",
+          "<Button\n              size=\"inline\"\n              label=\"Retry\"\n              variant=\"secondary\"\n              style={{ alignSelf: 'flex-end' }}\n              onPress={observed.installMissing ? () => router.back() : retry}\n              testID=\"signin-retry\"\n            />"
+        ],
+        "wrappers": [
+          "[styles.card, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]",
+          "styles.scrim"
+        ],
+        "styles": [
+          "error: { ...Typography.default(), color: theme.buzz.dialogDanger }",
+          "card: { flex: 1, marginHorizontal: 16, borderRadius: theme.buzz.radius, overflow: 'hidden', backgroundColor: theme.buzz.bgTerminal }",
+          "scrim: { flex: 1, justifyContent: 'center' }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "42dbc4f7f6d6a6d1ca8acd509bacfcd65ae4e7d0808b7670a23ee2e6ae98ef94",
+            "occurrence": 0
+          },
+          {
+            "tag": "Button",
+            "hash": "cba5d3980de5c40efb10d966aa30e032570b5e31dfc9995e2662889c2f68efff",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 126
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/service.tsx",
+      "beforeLine": 129,
+      "afterLine": 129,
+      "id": "sweep-24",
+      "label": "app/(app)/beeline/settings/workbench/service.tsx:129",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>{row.attention}</Text>"
+        ],
+        "wrappers": [
+          "[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]",
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap }",
+          "screen: { flex: 1, backgroundColor: theme.buzz.appCanvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "d88566a8523204329f5720c7b723d5292366135f1b48257e00834ec774675017",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 129
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/service.tsx",
+      "beforeLine": 170,
+      "afterLine": 170,
+      "id": "sweep-25",
+      "label": "app/(app)/beeline/settings/workbench/service.tsx:170",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>Could not refresh connections. Try again.</Text>"
+        ],
+        "wrappers": [
+          "[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]",
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap }",
+          "screen: { flex: 1, backgroundColor: theme.buzz.appCanvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "8d91ceb2532b2e30798755675188e2d86ccaa159f09c95fbe1ea3651774774ef",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 170
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench/service.tsx",
+      "beforeLine": 172,
+      "afterLine": 172,
+      "id": "sweep-26",
+      "label": "app/(app)/beeline/settings/workbench/service.tsx:172",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>{error ?? actions.error}</Text>"
+        ],
+        "wrappers": [
+          "[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]",
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap }",
+          "screen: { flex: 1, backgroundColor: theme.buzz.appCanvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "22d16c1021e85550226e6cbfc8220e23e37b839d9d6b76329218633c8b3100af",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 172
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench.tsx",
+      "beforeLine": 69,
+      "afterLine": 69,
+      "id": "sweep-27",
+      "label": "app/(app)/beeline/settings/workbench.tsx:69",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>Could not refresh connections. Try again.</Text>"
+        ],
+        "wrappers": [
+          "styles.content",
+          "[styles.contentInner, desktop && styles.desktopColumn, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]",
+          "[styles.container, { paddingTop: desktop ? 0 : insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "content: { flex: 1 }",
+          "contentInner: {\n paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap }",
+          "desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }",
+          "container: { flex: 1, backgroundColor: theme.buzz.appCanvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "8d91ceb2532b2e30798755675188e2d86ccaa159f09c95fbe1ea3651774774ef",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 69
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workbench.tsx",
+      "beforeLine": 70,
+      "afterLine": 70,
+      "id": "sweep-28",
+      "label": "app/(app)/beeline/settings/workbench.tsx:70",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>{actions.error}</Text>"
+        ],
+        "wrappers": [
+          "styles.content",
+          "[styles.contentInner, desktop && styles.desktopColumn, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]",
+          "[styles.container, { paddingTop: desktop ? 0 : insets.top }]"
+        ],
+        "styles": [
+          "error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger }",
+          "content: { flex: 1 }",
+          "contentInner: {\n paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap }",
+          "desktopColumn: { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }",
+          "container: { flex: 1, backgroundColor: theme.buzz.appCanvas }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "d12cf5c1a401fe8372d143da7503ee7247dd369bbb3797032252d70db0b05636",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 70
+      }
+    },
+    {
+      "file": "app/(app)/beeline/settings/workflows.tsx",
+      "beforeLine": 158,
+      "afterLine": 160,
+      "id": "sweep-29",
+      "label": "app/(app)/beeline/settings/workflows.tsx:158",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.error}>\n              ! {error}\n            </Text>"
+        ],
+        "wrappers": [
+          "styles.content",
+          "[styles.container, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top, paddingBottom: insets.bottom }]"
+        ],
+        "styles": [
+          "error: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.danger }",
+          "content: { padding: 16, gap: theme.buzz.space.sm }",
+          "container: { flex: 1, backgroundColor: theme.buzz.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "d0b3a52c2d9e2504f64f08f308ca4eaa4101f8a433b61b5878e335ef5b505407",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 160
+      }
+    },
+    {
+      "file": "app/(app)/beeline/tray.tsx",
+      "beforeLine": 851,
+      "afterLine": 852,
+      "id": "sweep-30",
+      "label": "app/(app)/beeline/tray.tsx:851",
+      "before": {
+        "jsx": [
+          "<ErrorBanner title={error} retryLabel=\"Retry\" onRetry={() => void load(true)}\n          />"
+        ],
+        "wrappers": [
+          "[styles.screen, { paddingTop: desktop ? 0 : insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "5b4fcbc822a43da5b5c9e6fdb6343245063e4b12fa340ab25d8a3cacfd565acd",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 852
+      }
+    },
+    {
+      "file": "app/(app)/beeline/workflow-run.tsx",
+      "beforeLine": 94,
+      "afterLine": 95,
+      "id": "sweep-31",
+      "label": "app/(app)/beeline/workflow-run.tsx:94",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={error} retryLabel=\"Retry\" onRetry={retry}\n          />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.list, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "b7232151960ea21d6ffd6c9ccc026d1df348f1f72a59ffd58fccb3e1f35b3038",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 95
+      }
+    },
+    {
+      "file": "app/(app)/beeline/workflow.tsx",
+      "beforeLine": 63,
+      "afterLine": 64,
+      "id": "sweep-32",
+      "label": "app/(app)/beeline/workflow.tsx:63",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={error} onRetry={() => void reload()} />"
+        ],
+        "wrappers": [
+          "[styles.screen, desktopPageLayout && { width: '100%', maxWidth: desktopColumnWidths.detail, alignSelf: 'center' }, { paddingTop: insets.top }]"
+        ],
+        "styles": [
+          "screen: { flex: 1, backgroundColor: theme.buzz.bgBase }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "c6afab65c6a23b29a63c872f8427945bc9efd0603322843258d6a0caaf7bca60",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 64
+      }
+    },
+    {
+      "file": "app/(app)/join/[token].tsx",
+      "beforeLine": 207,
+      "afterLine": 208,
+      "id": "sweep-33",
+      "label": "app/(app)/join/[token].tsx:207",
+      "before": {
+        "jsx": [
+          "<View style={styles.failureBlock} testID=\"invite-unreachable\">\n            <ErrorBanner title=\"Couldn’t reach Beeline\"\n              description=\"Your invite may still be fine — we could not ask the server about it. Check your connection and try again.\" />\n            {error ? <Text style={styles.meta}>{error}</Text> : null}\n            <Button\n              label=\"Retry\"\n              onPress={retry}\n              style={styles.primary}\n              testID=\"invite-retry\"\n              variant=\"secondary\"\n            />\n            <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" />\n          </View>"
+        ],
+        "wrappers": [
+          "[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]",
+          "[\n        styles.scroll,\n        { paddingTop: insets.top + 48, paddingBottom: theme.buzz.space.xxl + insets.bottom },\n      ]",
+          "styles.container"
+        ],
+        "styles": [
+          "failureBlock: { gap: hull.space.md }",
+          "meta: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet }",
+          "primary: { marginTop: hull.space.sm }",
+          "column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.md }",
+          "scroll: { flexGrow: 1, paddingHorizontal: hull.space.md, paddingBottom: hull.space.xxl }",
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "View",
+            "hash": "0d29633d6b070a844e2945dfebfb3e884f61e289b4f7d8d9649651514e73d82f",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 208
+      }
+    },
+    {
+      "file": "app/(app)/join/[token].tsx",
+      "beforeLine": 209,
+      "afterLine": 208,
+      "id": "sweep-34",
+      "label": "app/(app)/join/[token].tsx:209",
+      "before": {
+        "jsx": [
+          "<View style={styles.failureBlock} testID=\"invite-unreachable\">\n            <ErrorBanner title=\"Couldn’t reach Beeline\"\n              description=\"Your invite may still be fine — we could not ask the server about it. Check your connection and try again.\" />\n            {error ? <Text style={styles.meta}>{error}</Text> : null}\n            <Button\n              label=\"Retry\"\n              onPress={retry}\n              style={styles.primary}\n              testID=\"invite-retry\"\n              variant=\"secondary\"\n            />\n            <Button variant=\"quiet\" label=\"Choose another way in\" onPress={() => void otherWay()} testID=\"invite-other-way\" />\n          </View>"
+        ],
+        "wrappers": [
+          "[styles.column, desktopPageLayout && { maxWidth: desktopColumnWidths.detail }]",
+          "[\n        styles.scroll,\n        { paddingTop: insets.top + 48, paddingBottom: theme.buzz.space.xxl + insets.bottom },\n      ]",
+          "styles.container"
+        ],
+        "styles": [
+          "failureBlock: { gap: hull.space.md }",
+          "meta: { ...Typography.default(), ...hull.type.meta, color: hull.ledgerQuiet }",
+          "primary: { marginTop: hull.space.sm }",
+          "column: { width: '100%', maxWidth: 460, alignSelf: 'center', gap: hull.space.md }",
+          "scroll: { flexGrow: 1, paddingHorizontal: hull.space.md, paddingBottom: hull.space.xxl }",
+          "container: { flex: 1, backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "View",
+            "hash": "0d29633d6b070a844e2945dfebfb3e884f61e289b4f7d8d9649651514e73d82f",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 208
+      }
+    },
+    {
+      "file": "components/DesktopRoomInspector.tsx",
+      "beforeLine": 242,
+      "afterLine": 243,
+      "id": "sweep-35",
+      "label": "components/DesktopRoomInspector.tsx:242",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={observed.error} onRetry={observed.retry} retryTestID=\"desktop-corner-retry\" />"
+        ],
+        "wrappers": [
+          "[styles.inspector, { width: renderedWidth }]"
+        ],
+        "styles": [
+          "inspector: {\n    height: '100%',\n    backgroundColor: theme.colors.groupped.background,\n    borderLeftWidth: StyleSheet.hairlineWidth,\n    borderLeftColor: theme.colors.divider,\n    position: 'relative',\n  }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "7a67403cda24a360f24fd4a5d465d6f92a457308773c34ceebf050c0202e041a",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 243
+      }
+    },
+    {
+      "file": "components/SidebarView.tsx",
+      "beforeLine": 542,
+      "afterLine": 543,
+      "id": "sweep-36",
+      "label": "components/SidebarView.tsx:542",
+      "before": {
+        "jsx": [
+          "<Text accessibilityRole=\"alert\" style={styles.empty}>\n              {pinError}\n            </Text>"
+        ],
+        "wrappers": [
+          "[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]",
+          "{ flex: 1, flexDirection: 'row', paddingTop: macTitlebarInset }"
+        ],
+        "styles": [
+          "empty: {\n    ...theme.buzz.type.meta,\n    paddingHorizontal: theme.buzz.space.md,\n    paddingVertical: 24,\n    color: theme.colors.textSecondary,\n  }",
+          "container: {\n    flex: 1,\n    borderRightWidth: StyleSheet.hairlineWidth,\n    borderRightColor: theme.colors.divider,\n    backgroundColor: theme.colors.groupped.background,\n  }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "f295d8c8186f77ec294948542148ec7cdd9583220c706c63176082aa9d9f1954",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 543
+      }
+    },
+    {
+      "file": "components/SidebarView.tsx",
+      "beforeLine": 548,
+      "afterLine": 547,
+      "id": "sweep-37",
+      "label": "components/SidebarView.tsx:548",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={navigationError} onRetry={() => setRefreshNonce((value) => value + 1)} />"
+        ],
+        "wrappers": [
+          "styles.list",
+          "styles.listContent",
+          "[styles.container, { paddingTop: safeArea.top + (isDesktop ? 0 : headerHeight) }]",
+          "{ flex: 1, flexDirection: 'row', paddingTop: macTitlebarInset }"
+        ],
+        "styles": [
+          "list: { flex: 1 }",
+          "listContent: { paddingBottom: 8 }",
+          "container: {\n    flex: 1,\n    borderRightWidth: StyleSheet.hairlineWidth,\n    borderRightColor: theme.colors.divider,\n    backgroundColor: theme.colors.groupped.background,\n  }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "fdb90b616ea8ed35c55f5e2b074a9ad2ad6b25d99ca8e5cda00bfcacba247f7c",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 547
+      }
+    },
+    {
+      "file": "components/buzz/RuntimeErrorBoundary.tsx",
+      "beforeLine": 26,
+      "afterLine": 19,
+      "id": "sweep-38",
+      "label": "components/buzz/RuntimeErrorBoundary.tsx:26",
+      "before": {
+        "jsx": [
+          "<View style={{ backgroundColor: theme.bgBase, padding: 16, gap: 8,\n    ...(scope === 'app' ? { flex: 1, paddingTop: 48 } : {}) }} testID=\"runtime-error\">\n    <Text accessibilityRole=\"alert\" style={{ ...theme.type.bodyStrong, color: theme.textPrimary }}>\n      {scope === 'app' ? 'Beeline could not display this screen' : 'Conversation mode could not start'}\n    </Text>\n    <ScrollView style={{ maxHeight: 256 }}>\n      <Text selectable style={{ ...theme.type.body, color: theme.textPrimary }} testID=\"runtime-error-message\">{diagnostic.message}</Text>\n      {diagnostic.stack ? (\n          <Text selectable style={{ ...theme.type.meta, color: theme.textSecondary }} testID=\"runtime-error-stack\">{diagnostic.stack}</Text>\n        ) : null}\n    </ScrollView>\n    <Button\n      label=\"Retry\"\n      accessibilityLabel=\"Retry\"\n      onPress={retry}\n      emergencyTheme={theme}\n      variant=\"quiet\"\n      testID=\"runtime-error-retry\"\n      appearance={{\n        control: { minHeight: 44, justifyContent: 'center' },\n        label: { ...theme.type.bodyStrong, color: theme.accent },\n      }}\n    />\n  </View>"
+        ],
+        "wrappers": [],
+        "styles": []
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "View",
+            "hash": "669a9046cc5b3d3da80be173a606c976c65df1ce2041dc14f7b4ab72c69eca15",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 19
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 490,
+      "afterLine": 480,
+      "id": "sweep-39",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:490",
+      "before": {
+        "jsx": [
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "010275c66eb2a3e7d04e597f90692749a159c8f428b6e553b0750315f92dc931",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 480
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 530,
+      "afterLine": 484,
+      "id": "sweep-40",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:530",
+      "rowTitle": "Name",
+      "fallback": "Could not rename Workspace.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                accessibilityLabel={`${WORKSPACE_LABEL} name`}\n                chevron={renamingWorkspace ? 'down' : 'right'}\n                onPress={() => {\n                  workspaceDraft.initialize(workspace?.name ?? '');\n                  setRenamingWorkspace((open) => !open);\n                }}\n                testID=\"workspace-name-row\"\n                title=\"Name\"\n                value={renamingWorkspace ? undefined : (workspace?.name ?? '')}\n              />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "dd71174dcaf73fbdde7b2aecac851652210cab37ab9fa527f78265634725f166",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 484
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 546,
+      "afterLine": 525,
+      "id": "sweep-41",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:546",
+      "rowTitle": "Visibility",
+      "fallback": "Could not change Workspace visibility.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                  accessibilityLabel={`Change who can find this ${WORKSPACE_LABEL}`}\n                  chevron=\"right\"\n                  disabled={workingKey === 'visibility'}\n                  onPress={() => setVisibilityPickerOpen(true)}\n                  testID=\"workspace-visibility-row\"\n                  title=\"Visibility\"\n                  value={visibilityLabel}\n                />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "b80d5b1372caa488b47cb2ec331900d9fbf58ad5cbe18a8645f4d788e4deaea6",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 525
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 558,
+      "afterLine": 543,
+      "id": "sweep-42",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:558",
+      "rowTitle": "Public join link",
+      "fallback": "Could not load public join link.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                  accessibilityLabel=\"Copy public join link\"\n                  action={joinLinkBusy ? 'Loading…' : joinLinkCopied ? 'Copied' : 'Copy'}\n                  description=\"Anyone with the link can join\"\n                  disabled={workingKey !== null || joinLinkBusy}\n                  onPress={copyJoinLink}\n                  testID=\"workspace-public-join-copy\"\n                  title=\"Public join link\"\n                />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "a949234e1b56e88128ff026098aded738d5b868e9bc9bc07438f2fde587a6017",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 543
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 570,
+      "afterLine": 557,
+      "id": "sweep-43",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:570",
+      "rowTitle": "Use generated mark",
+      "fallback": "Could not reset Workspace picture.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                disabled={workingKey === 'picture'}\n                onPress={() => void resetWorkspacePicture()}\n                testID=\"workspace-picture-clear\"\n                title=\"Use generated mark\"\n                tone=\"action\"\n              />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "713fda33bea4e70959e0ec845388278516c8d32aa13f67dacd86164ec02f11b0",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 557
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 592,
+      "afterLine": 569,
+      "id": "sweep-44",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:592",
+      "rowTitle": "Allow fix sweep",
+      "fallback": "Could not update Allow fix sweep.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                title=\"Allow fix sweep\"\n                description=\"Helps Beeline improve\"\n                testID=\"workspace-fix-sweep\"\n                toggle={{\n                  value: workspaceView?.managerSettings?.allowFixSweep === true,\n                  disabled: workingKey !== null || typeof workspaceView?.managerSettings?.allowFixSweep !== 'boolean',\n                  onValueChange: (allowFixSweep) => {\n                    if (!communityId) return;\n                    setErrorRow('fix-sweep');\n                    setWorkingKey('fix-sweep');\n                    setError(null);\n                    void monolithPhoneOperation('updateWorkspace', { workspaceId: communityId, allowFixSweep })\n                      .then(() => workspaceSchedulerRef.current?.force())\n                      .catch((caught) => setError(`Could not update Allow fix sweep: ${String(caught)}`))\n                      .finally(() => setWorkingKey(null));\n                  },\n                }}\n              />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "34ab4cf782055aee2906b908d910bfb77fb78e721cea1030d979ef753b085665",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 569
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 651,
+      "afterLine": 629,
+      "id": "sweep-45",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:651",
+      "rowTitle": "general",
+      "fallback": "Could not change Room visibility.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                      accessibilityLabel={`Show actions for ${ROOM_LABEL} ${displayName}`}\n                      chevron=\"right\"\n                      description={description || undefined}\n                      descriptionAction={\n                        duplicateName\n                          ? {\n                              accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,\n                              label: 'Details',\n                              onPress: () => setRoomSheetId(room.id),\n                              testID: `room-details-${room.id}`,\n                            }\n                          : undefined\n                      }\n                      disabled={!room.canManage || workingKey === `room-${room.id}`}\n                      onPress={() => setRoomSheetId(room.id)}\n                      testID={`room-visibility-${room.id}`}\n                      title={displayName}\n                      value={ROOM_VISIBILITY_LABELS[room.visibility]}\n                    />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.container"
+        ],
+        "styles": [
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "94d60fb32ee47d8bfd6b62349c9f89aacc38042dc62e471e6f1d01a8b11eaed3",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 629
+      }
+    },
+    {
+      "file": "components/buzz/WorkspaceSettingsPanel.tsx",
+      "beforeLine": 667,
+      "afterLine": 659,
+      "id": "sweep-46",
+      "label": "components/buzz/WorkspaceSettingsPanel.tsx:667",
+      "rowTitle": "Delete Workspace",
+      "fallback": "Could not delete Workspace.",
+      "before": {
+        "jsx": [
+          "<SettingsRow\n                accessibilityLabel={`Delete this ${WORKSPACE_LABEL}`}\n                onPress={() => setDeleteSheetOpen(true)}\n                testID=\"workspace-delete-row\"\n                title={`Delete ${WORKSPACE_LABEL}`}\n                tone=\"destructive\"\n              />",
+          "<ErrorBanner inline title={error} />"
+        ],
+        "wrappers": [
+          "styles.dangerSection",
+          "styles.container"
+        ],
+        "styles": [
+          "dangerSection: { paddingTop: hull.layout.sectionGap }",
+          "container: { backgroundColor: hull.bgTerminal }"
+        ]
+      },
+      "after": {
+        "selectors": [
+          {
+            "tag": "SettingsRow",
+            "hash": "b62fb5c3699af913215c8c8df2ec85df8a5f13d2d7a41e74adfa99a27cf0494d",
+            "occurrence": 0
+          }
+        ],
+        "sourceLine": 659
+      }
+    }
+  ]
+}

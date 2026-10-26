@@ -57,3 +57,20 @@ the operating Workspace (custom saved copies are deliberately not overwritten
 by server seed migration), verify the 06:00/10:00 schedules, then collect one
 real walk's private receipts. The PR's local proof does not claim that a future
 scheduled walk has happened.
+
+## Author attribution and Monday history
+
+The existing 06:00 America/New_York walk uses a fourteen-day lookback on Monday;
+other days retain incremental coverage. Monday keeps any older unread backlog.
+SQL pages attach `authorId`, `authorKind` and agent `ownerId` to message activity.
+Distinct human authors establish observed participation; ownership alone does
+not establish that a person wrote or visited.
+
+Run `npm run prove:workspace-walk-history`. This synthetic
+stand-in exercises the built reservation, SQL-page and receipt path: historical
+messages excluded from a first daily read appear across two bounded weekly
+pages; human and agent authors remain distinct; ownership is verified; complete
+coverage leaves no daily backlog. It emits no message text. Workflow integration
+cases also exercise daily and Monday kickoff, while service-review regressions
+cover history reopening, consent rechecks and internal-workspace exclusion.
+The live scheduled production run still requires deployment.

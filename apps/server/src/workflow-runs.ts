@@ -950,7 +950,10 @@ async function enterState(
   if ((contract.name === FEEDBACK_TRIAGE_SLUG || contract.name === 'workspace-walk') && toState === 'browse') {
     if (!nextAgentId || nextAgentId !== roleBindings.triager)
       throw new Error('Service review must use the scheduled triager');
-    await reserveServiceReviewWorkspaces(db,nextAgentId,runId,contract.name === 'workspace-walk');
+    const daily = contract.name === 'workspace-walk';
+    const window = await db.query<{ days: 1 | 14 }>(`SELECT CASE
+      WHEN extract(isodow FROM now() AT TIME ZONE 'America/New_York')=1 THEN 14 ELSE 1 END AS days`);
+    await reserveServiceReviewWorkspaces(db,nextAgentId,runId,daily,daily ? window.rows[0]!.days : 1);
   }
   const attempt = run.seq + 1;
   const cardId = randomBytes(32).toString('hex');

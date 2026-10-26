@@ -560,7 +560,9 @@ export class PostgresDatabase implements ClosableDatabase {
   }
 
   close(): Promise<void> {
-    return this.#closePromise ??= this.backgroundWork.drain().then(() => this.#pool.end());
+    return this.#closePromise ??= this.backgroundWork.isEmpty
+      ? this.#pool.end()
+      : this.backgroundWork.drain().then(() => this.#pool.end());
   }
 
   async #beginTransaction(): Promise<{

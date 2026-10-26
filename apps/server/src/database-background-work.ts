@@ -2,6 +2,8 @@
 export class DatabaseBackgroundWork {
   private readonly pending = new Set<Promise<void>>();
 
+  get isEmpty(): boolean { return this.pending.size === 0; }
+
   run(work: () => Promise<void>): void {
     const task = Promise.resolve().then(work);
     this.pending.add(task);

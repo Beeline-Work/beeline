@@ -875,6 +875,14 @@ function scan(files: Map<string, string>): Entry[] {
         selected.parts.forEach(collect);
         return;
       }
+      // Member/callee identities choose what people see, even without fixed words.
+      // Omit the root local name so person.name and recipient.name stay equivalent.
+      if (ts.isPropertyAccessExpression(part)) literals.add(`.${part.name.text}`);
+      if (ts.isCallExpression(part)) {
+        const callee = part.expression;
+        if (ts.isIdentifier(callee)) literals.add(`${callee.text}()`);
+        else if (ts.isPropertyAccessExpression(callee)) literals.add(`.${callee.name.text}()`);
+      }
       if (ts.isStringLiteralLike(part)) literals.add(JSON.stringify(part.text));
       if (ts.isTemplateExpression(part)) {
         literals.add(JSON.stringify([part.head.text, ...part.templateSpans.map((span) => span.literal.text)]));
@@ -1599,3 +1607,24 @@ it('SYSTEM-WORDING-1: the real app sign-in producer accepts domain metadata and 
   expect(() => enforce(scan(changed), baseline)).toThrow(failure);
   console.info('SYSTEM-WORDING-1: real app sign-in domain addition passes; visible wording change fails');
 }, 60_000);
+
+it.each([
+  ['owner.name', 'owner.email'],
+  ['fmt(x)', 'other(x)'],
+  ['owner.profile.name', 'owner.profile.email'],
+  ['owner.format(x)', 'owner.other(x)'],
+])('locks the displayed expression identity: %s → %s', (before, after) => {
+  const base = fixture(`export function notice(owner: any, fmt: any, other: any, x: any) {
+    line(db,{verb:\`hello \${${before}}\`});
+  }`);
+  const changed = new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('accepts local root renames for displayed member access and method calls', () => {
+  const base = fixture(`export function notice(person: any) {
+    line(db,{verb:\`hello \${person.name} \${person.format()}\`});
+  }`);
+  const renamed = new Map([...base].map(([path, text]) => [path, text.replaceAll('person', 'recipient')]));
+  expect(() => enforce(scan(renamed), scan(base))).not.toThrow();
+});

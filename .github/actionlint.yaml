@@ -1,6 +1,7 @@
 self-hosted-runner:
   labels:
     - beeline-prod-host
+    - beeline-ci-shard
     - ios-builder
     - beeline-android
     - beeline-android-rig

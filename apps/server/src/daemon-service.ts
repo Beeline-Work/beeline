@@ -3787,8 +3787,9 @@ export class DaemonService {
     if (!this.landCorner || !this.prChecksStatus)
       return { status: 'blocked', blocker: 'GitHub is not configured on this server' };
     const gate = await this.prChecksStatus({ cornerId: input.cornerId });
-    if (!gate.mergeAllowed) {
+    if (!gate.mergeAllowed && !(gate.blockedReason === 'PR is a draft' && gate.checks === 'passed' && gate.approved && !gate.held)) {
       const blockers = [
+        gate.blockedReason ?? '',
         gate.checks !== 'passed' ? `checks are ${gate.checks}` : '',
         gate.approved ? '' : 'no yes on this head',
         gate.held ? `a hold stands: ${gate.holds.map(hold => `${hold.id} (${hold.holderName}, ${hold.holderId})`).join('; ')}` : '',

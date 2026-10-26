@@ -1101,7 +1101,7 @@ export class GitHubOperations {
           checks,
           reviewWoken: corner.review_woken,
         });
-    const mergeAllowed = !corner.archived && checks === 'passed' && gate.open;
+    const mergeAllowed = !corner.archived && checks === 'passed' && gate.open && pr.mergeability !== 'draft';
     // Where the corner stands, from the live facts above: building ->
     // checking -> waiting for a yes -> merged (or closed).
     const stage = pr.merged
@@ -1141,6 +1141,7 @@ export class GitHubOperations {
       held: gate.held,
       holds: gate.holds,
       mergeAllowed,
+      ...(pr.mergeability === 'draft' ? { blockedReason: 'PR is a draft' } : {}),
     };
   }
 
@@ -1244,7 +1245,35 @@ export class GitHubOperations {
       );
       return notAttempted('GitHub merge gate read failed');
     }
+    if (status.stage === 'waiting_for_yes' && status.blockedReason && status.checks === 'passed' && status.approved && !status.held) {
+      const reviewerPass = await this.database.query(`SELECT 1 FROM corner_merge_approvals approval
+        JOIN identities reviewer ON reviewer.id=approval.approved_by AND reviewer.kind='agent'
+        JOIN rooms corner ON corner.id=approval.corner_id
+        JOIN rooms parent ON parent.id=corner.parent_id
+        JOIN corner_facts fact ON fact.corner_id=corner.id
+        WHERE approval.corner_id=$1 AND approval.head_sha=$2
+          AND (approval.approved_by=${cornerReviewerSql('corner')}
+            OR approval.approved_by=ANY(${cornerReviewerFallbacksSql('corner')}))`, [cornerId, status.headSha]);
+      if (!reviewerPass.rowCount) return notAttempted('PR is a draft; waiting for reviewer PASS');
+      const draftHeadSha = status.headSha;
+      try {
+        const parent = (await this.database.query<{ parent_id: string }>('SELECT parent_id FROM rooms WHERE id=$1', [cornerId])).rows[0]!;
+        const target = await this.roomWorkflowTarget(parent.parent_id);
+        await this.app.markPullRequestReadyForReview(target.token, target.repository,
+          Number(status.pullRequest.split('/').at(-1)), status.headSha);
+        await this.database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'draftReadyFailure' WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha]);
+        status = await this.prChecksStatus({ cornerId });
+        if (status.blockedReason) throw new Error(status.blockedReason);
+      } catch (error) {
+        await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
+          '{pr,mergeability}','"draft"'::jsonb),'{draftReadyFailure}',jsonb_build_object('headSha',$2::text)) WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
+          [cornerId, draftHeadSha]);
+        await reconcileCornerMergeBlockers(this.database, cornerId);
+        return notAttempted(`PR is a draft: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     if (!status.mergeAllowed) return notAttempted([
+      status.blockedReason ?? '',
       status.checks !== 'passed' ? `checks are ${status.checks}` : '',
       status.approved ? '' : 'no yes on this head', status.held ? 'a hold stands' : '',
     ].filter(Boolean).join('; ') || 'the merge gate is closed');
@@ -1711,7 +1740,7 @@ export class GitHubOperations {
            '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
        WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
          AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
-         AND ($1::uuid IS NOT NULL OR fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty'))
+         AND ($1::uuid IS NOT NULL OR fact.lifecycle->'pr'->>'mergeability' IN ('unknown','dirty','draft'))
          AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
          AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND ($1::uuid IS NULL OR fact.corner_id=$1)`,
@@ -1750,7 +1779,7 @@ export class GitHubOperations {
             current.pr.number !== row.number ||
             current.pr.headSha !== pr.headSha ||
             (current.pr.baseSha ?? null) !== row.base_sha ||
-            (!cornerId && current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty')
+            (!cornerId && current.pr.mergeability !== 'unknown' && current.pr.mergeability !== 'dirty' && current.pr.mergeability !== 'draft')
           )
             return;
           await this.updateLifecycle(
@@ -2274,7 +2303,7 @@ export class GitHubOperations {
           headSha = live.headSha;
         }
         const mergeabilityValue = text(pullRequest?.mergeable_state);
-        let mergeability = githubMergeability(mergeabilityValue);
+        let mergeability = pullRequest?.draft === true ? 'draft' as const : githubMergeability(mergeabilityValue);
         let differentPr = false;
         if (!merged && url && number && targetBranch && headSha && body.action !== 'closed') {
           await database.transaction(async (tx) => {

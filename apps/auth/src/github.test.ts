@@ -302,6 +302,38 @@ it('looks up an open PR only under the repository owner and assigned branch', as
   expect(url.searchParams.get('state')).toBe('open');
 });
 
+it.each(['draft', 'clean', 'unknown'])('reads draft PRs even with mergeable_state %s (PR-2960-draft)', async mergeable_state => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    head: { sha: 'a'.repeat(40) }, draft: true, mergeable_state,
+  }))));
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  expect(await app.readPullRequest('token', 'owner/widgets', 7)).toMatchObject({ mergeability: 'draft' });
+  expect(githubMergeability('draft')).toBe('draft');
+});
+
+it('marks the matching PR head ready with the App token (PR-2960-draft)', async () => {
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_7', headRefOid: 'a'.repeat(40) } } } })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } } })));
+  vi.stubGlobal('fetch', fetch);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await app.markPullRequestReadyForReview('app-token', 'owner/widgets', 7, 'a'.repeat(40));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const request = fetch.mock.calls[1]! as unknown as [string, RequestInit];
+  expect(request[1].headers).toMatchObject({ authorization: 'Bearer app-token' });
+  expect(JSON.parse(request[1].body as string)).toMatchObject({
+    query: expect.stringContaining('markPullRequestReadyForReview'), variables: { id: 'PR_7' },
+  });
+});
+
+it('refuses to mark a changed head ready (PR-2960-draft)', async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { repository: { pullRequest: { id: 'PR_7', headRefOid: 'b'.repeat(40) } } } })));
+  vi.stubGlobal('fetch', fetch);
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.markPullRequestReadyForReview('token', 'owner/widgets', 7, 'a'.repeat(40))).rejects.toThrow('PR head changed');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 it('retries only unresolved GitHub mergeability answers', () => {
   expect(
     [null, 'unknown', 'clean', 'dirty', 'behind', 'unstable', 'blocked'].map(githubMergeability),

@@ -2,7 +2,9 @@
 
 Run `workspace-walk` daily at 06:00 America/New_York. Bind triager to yourself.
 Read its pinned run before acting and advance kickoff with started. The server
-reserves every opted-in workspace with a human message in the last 24 hours.
+reserves every opted-in external workspace with new messages or turns. On Monday,
+the same 06:00 schedule reads at least the last 14 days, including workspaces
+with no activity in the last 24 hours. Other days keep the incremental window.
 There is no five-workspace cap or 14-day exclusion in this walk.
 
 Use the owner's vaulted read-only beeline-prod-db through Trusty Squire
@@ -15,9 +17,18 @@ For every returned workspace, call `SELECT * FROM service_review_page($1,$2,$3,$
 with agent id, run id, workspace id, and the last returned id (empty initially).
 Read every page until an empty page. Reads recheck policy date and opt-out.
 The window ends at reservation time; it begins at the last completed walk's
-read-through timestamp, or 24 hours ago for a first walk. Failed walks never
+read-through timestamp, or 24 hours ago for a first walk. Monday begins at the
+earlier of that timestamp and 14 days ago. Failed walks never
 advance the window. Retain pagination order, but interpret messages by their
 activity.createdAt and turns by activity.startedAt to reconstruct the timeline.
+
+Message activity includes authorId, authorKind (human or agent), and ownerId
+(for agents; null for people or an unavailable owner). Count distinct human
+authorIds for people who wrote and returned; never count agents or their owners
+as people who participated. Compare the two seven-day halves of Monday history
+for observed returns and stopped writing, naming the observed date boundaries.
+These are verified message participation counts, not proof of visits without
+writing or activity before the available window.
 
 Before interpreting each workspace, identify what its users wanted to achieve.
 Read every new message and turn, including replies and failures. Look for stalls,

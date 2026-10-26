@@ -7555,11 +7555,11 @@ export class PhoneService {
     await this.database.transaction(async (database) => {
       const updated = await database.query<{ decided_at: Date }>(
         `UPDATE agent_grants SET status=$2,decided_by=$3,decided_at=now()
-         WHERE id::text=$1 AND status='pending' RETURNING decided_at`,
+         WHERE id::text=$1 AND status='pending' AND superseded_at IS NULL RETURNING decided_at`,
         [input.grantId, status, viewerId],
       );
       const decidedAt = updated.rows[0]?.decided_at;
-      if (!decidedAt) throw new Error('grant decision conflict: already decided');
+      if (!decidedAt) throw new Error('grant decision conflict: already decided or superseded; open the current card');
       for (const roomId of new Set(cardRoomIds))
         await settleGrantCard(database, {
           roomId, grantId: input.grantId, status, decidedBy: decider, decidedAt,

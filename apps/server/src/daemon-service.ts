@@ -6111,21 +6111,17 @@ export class DaemonService {
     // unless tools queued more files after that report.
     if (automatic && command.private_payload?.reportedGenerationId === command.generation_id && !pending.length)
       return this.writeResult();
-    const attachments = [...(command.private_payload?.attachments ?? []),
+    const attachments = [...(command.coalesced_attachments ?? command.private_payload?.attachments ?? []),
       ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
       .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
-    // DM final replies to private wakes also reach this report path.
-    // Prefer the carried attachment when an upload repeats the same bytes.
-    const ids = attachments.flatMap(attachment => mediaIdFromUrl(attachment.url) ?? []);
-    const hashes = new Map((ids.length ? (await database.query<{ id: string; sha256: string }>(
-      `SELECT id::text id,sha256 FROM objects WHERE id=ANY($1::uuid[])`, [ids],
-    )).rows : []).map(object => [object.id, object.sha256]));
+    // Collapse alternate URLs for the same object; content deduplication waits
+    // until reportToCommander has selected the recipient.
     const seen = new Set<string>();
     const uniqueAttachments = attachments.filter(attachment => {
-      const hash = hashes.get(mediaIdFromUrl(attachment.url) ?? '');
-      if (!hash) return true;
-      if (seen.has(hash)) return false;
-      seen.add(hash);
+      const id = mediaIdFromUrl(attachment.url) ?? '';
+      if (!id) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
     });
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
@@ -6591,6 +6587,17 @@ export class DaemonService {
         : true);
     const status = auto ? 'approved' : 'pending';
     const result = await this.database.transaction(async (database) => {
+      // A retry replaces only an undecided ask for this exact command and
+      // target. Preserve its status and approval history; supersession is not
+      // approval or revocation. The outer command transaction serializes asks.
+      const superseded = !auto && kind === 'command' && this.authorizedCommand
+        ? await database.query<{ id: string }>(
+          `UPDATE agent_grants SET superseded_at=now()
+           WHERE command_id=$1 AND agent_id=$2 AND room_id=$3 AND requested_by=$4
+             AND kind='command' AND target=$5 AND status='pending' AND superseded_at IS NULL
+           RETURNING id`,
+          [this.authorizedCommand.id, agentId, input.roomId, requester.pubkey, target],
+        ) : { rows: [] };
       const inserted = await database.query<{ created_at: Date; expires_at: Date | null }>(
         `INSERT INTO agent_grants(
            id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,
@@ -6651,7 +6658,18 @@ export class DaemonService {
         return { messageId: undefined, cardRoomId: resourceRoomId };
       }
       const dmRoomId = resourceRoomId;
-      const open = kind === 'shared_asset' ? undefined : (
+      const supersededIds = superseded.rows.map(row => row.id);
+      let replacementCards: { id: string; card: { grants: (typeof grantView)[] } }[] = [];
+      if (supersededIds.length) {
+        const cards = await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
+          `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
+           AND EXISTS (SELECT 1 FROM jsonb_array_elements(card->'grants') entry
+             WHERE entry->>'grantId'=ANY($2::text[]))
+           ORDER BY created_at DESC,id DESC FOR UPDATE`, [dmRoomId, supersededIds],
+        );
+        replacementCards = cards.rows;
+      }
+      const open = replacementCards.length || kind === 'shared_asset' ? undefined : (
         await database.query<{ id: string; card: { grants: (typeof grantView)[] } }>(
           `SELECT id,card FROM messages WHERE room_id=$1 AND card_type='grant-request'
            AND card->'agent'->>'pubkey'=$2 AND card->>'sourceRoomId'=$3
@@ -6664,8 +6682,9 @@ export class DaemonService {
           [dmRoomId, agentId, input.roomId, requester.pubkey],
         )
       ).rows[0];
-      if (open) {
-        const grants = [...open.card.grants, grantView];
+      const cardsToUpdate = replacementCards.length ? replacementCards : open ? [open] : [];
+      for (const open of cardsToUpdate) {
+        const grants = [...open.card.grants.filter(entry => !supersededIds.includes(entry.grantId)), grantView];
         await restateSystemLine(database, open.id, grantCardPhrase(requester, agent, grants), {
           agent,
           owner,
@@ -6673,8 +6692,8 @@ export class DaemonService {
           grants,
           ...source,
         });
-        return { messageId: open.id, cardRoomId: dmRoomId };
       }
+      if (cardsToUpdate.length) return { messageId: cardsToUpdate[0]!.id, cardRoomId: dmRoomId };
       const messageId = id();
       await systemLine(database, {
         id: messageId,
@@ -6852,13 +6871,15 @@ export class DaemonService {
 
   /**
    * The inspect surface behind the agent's `list_grants` tool: every grant this
-   * agent raised, pending included, so an agent can see what it asked for, what
-   * is still awaiting a decision, and what is live. This never authorizes
+   * agent raised, pending included, plus its reviewed corner's implementer
+   * grants. Superseded requests remain in history, not the actionable list.
+   * This never authorizes
    * anything — the run gate keeps its approved-only view.
    */
   private async listAgentGrantRequests(agentId: string, roomId?: string) {
     const rows = await this.database.query<{
       id: string;
+      agent_id: string;
       workspace_id: string;
       room_id: string;
       kind: AgentGrantKind;
@@ -6871,10 +6892,16 @@ export class DaemonService {
       created_at: Date;
       expires_at: Date | null;
     }>(
-      `SELECT g.id,g.workspace_id,g.room_id,g.kind,g.target,g.reason,g.status,g.auto,
+      `SELECT g.agent_id,g.id,g.workspace_id,g.room_id,g.kind,g.target,g.reason,g.status,g.auto,
               g.requested_by,requester.name requester_name,g.created_at,g.expires_at
        FROM agent_grants g LEFT JOIN identities requester ON requester.id=g.requested_by
-       WHERE g.agent_id=$1 AND g.status IN ('pending','approved','once')
+       WHERE (g.agent_id=$1 OR EXISTS (
+         SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN corner_facts fact ON fact.corner_id=corner.id
+         WHERE corner.id=$2 AND g.room_id=corner.id
+           AND g.agent_id=${cornerImplementerSql('fact', 'corner')}
+           AND (${cornerReviewerSql()}=$1 OR $1=ANY(${cornerReviewerFallbacksSql()}))
+       )) AND g.status IN ('pending','approved','once') AND g.superseded_at IS NULL
          AND (g.expires_at IS NULL OR g.expires_at>now())
          AND ($2::uuid IS NULL OR g.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2))
        ORDER BY g.created_at DESC,g.id`,
@@ -6883,6 +6910,7 @@ export class DaemonService {
     return {
       grants: rows.rows.map((row) => ({
         grantId: row.id,
+        ...(row.agent_id !== agentId ? { agentId: row.agent_id } : {}),
         workspaceId: row.workspace_id,
         roomId: row.room_id,
         kind: row.kind,

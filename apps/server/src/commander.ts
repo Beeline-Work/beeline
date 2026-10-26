@@ -533,7 +533,7 @@ export async function hasOrderContinuation(database: SqlDatabase, command: Comma
            AND (child.private_payload->>'kind'='order' OR child.action='resume'
              OR (child.reason='report' AND child.agent_id=current.agent_id)))
        OR EXISTS(SELECT 1 FROM agent_grants grant_row WHERE grant_row.command_id=current.id
-         AND grant_row.status='pending' AND grant_row.created_at>=current.claimed_at
+         AND grant_row.status='pending' AND grant_row.superseded_at IS NULL AND grant_row.created_at>=current.claimed_at
          AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now()))
        OR EXISTS(SELECT 1 FROM connector_offers offer WHERE offer.command_id=current.id
          AND offer.status IN ('pending','connecting') AND offer.created_at>=current.claimed_at)

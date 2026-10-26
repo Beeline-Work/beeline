@@ -429,7 +429,7 @@ const QUESTION_BRANCH = `
 const NEEDS_YOU_CANDIDATES = `WITH ${VIEWER_ROOMS},
   decidable AS (
     SELECT grant_row.id::text grant_id FROM agent_grants grant_row
-    WHERE grant_row.workspace_id=$1 AND grant_row.status='pending'
+    WHERE grant_row.workspace_id=$1 AND grant_row.status='pending' AND grant_row.superseded_at IS NULL
       AND ${grantDecidedBySql('grant_row', '$2')}
   ),
   candidates AS (

@@ -6,6 +6,8 @@ import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
 import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { joinRooms } from './membership-join.js';
+import { captureServerError } from './sentry.js';
+import { systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 
 /**
@@ -482,6 +484,51 @@ export interface FreeAgentBootstrapGrant {
   idleSeconds: number;
 }
 
+/**
+ * Starts without a connection that stop the restarts: a Machine that boots but
+ * never connects would otherwise be started every 20 seconds forever.
+ */
+export const FREE_AGENT_START_LIMIT = 5;
+export const FREE_AGENT_START_WINDOW_MINUTES = 10;
+
+/**
+ * Whether a wake is due for the row `f`: a pending command, a Machine, and the
+ * agent not serving. A waking or running agent waits 20 seconds between starts.
+ */
+const WAKE_DUE_SQL = `f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
+  AND (f.state IN ('sleeping','stopped')
+    OR (f.state IN ('waking','running')
+      AND (f.wake_requested_at IS NULL OR f.wake_requested_at<clock_timestamp()-interval '20 seconds')
+      AND NOT EXISTS (SELECT 1 FROM agent_connections connection
+        JOIN live_server_instances server ON server.instance_id=connection.instance_id
+        WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
+          AND server.renewed_at>clock_timestamp()-interval '90 seconds')))
+  AND EXISTS (SELECT 1 FROM agent_commands command
+    WHERE command.agent_id=f.agent_id AND command.state='pending'
+      AND (command.wake_after IS NULL OR command.wake_after<=now()))`;
+
+/**
+ * The start limit for one agent. A `connected` event ends an episode. A
+ * `start_limit_reached` event stops starts until a person sends a new message
+ * that queues a command; that message opens a fresh episode. Join, leave and
+ * other System lines carry a human author but never clear the stop.
+ */
+const START_LIMIT_SQL = `WITH last_connect AS (
+    SELECT max(at) at FROM free_agent_events WHERE agent_id=$1 AND kind='connected'),
+  last_stop AS (
+    SELECT max(at) at FROM free_agent_events WHERE agent_id=$1 AND kind='start_limit_reached')
+  SELECT
+    (last_stop.at IS NOT NULL AND (last_connect.at IS NULL OR last_stop.at>last_connect.at)
+      AND NOT EXISTS (SELECT 1 FROM agent_commands command
+        JOIN messages source ON source.id=command.source_message_id
+          AND source.presentation='message' AND source.system_event IS NULL
+        JOIN identities author ON author.id=source.author_id AND author.kind='human'
+        WHERE command.agent_id=$1 AND command.state='pending' AND command.created_at>last_stop.at)) stopped,
+    (SELECT count(*)::int FROM free_agent_events started
+      WHERE started.agent_id=$1 AND started.kind='wake_requested'
+        AND started.at>GREATEST(clock_timestamp()-make_interval(mins => $2), last_connect.at, last_stop.at)) starts
+  FROM last_connect, last_stop`;
+
 /** Wake reasons recorded for the latency measurement. */
 type WakeCause = 'command' | 'sweep' | 'provisioned';
 
@@ -610,31 +657,48 @@ export class FreeAgentService {
 
   async wake(agentId: string, cause: WakeCause = 'command'): Promise<boolean> {
     if (await this.#budgetPaused(agentId)) return false;
-    const claimed = (
-      await this.database.query<{ fly_machine_id: string; previous: string }>(
-        `UPDATE free_agents f SET state='waking',wake_requested_at=clock_timestamp(),
-           last_activity_at=now(),updated_at=now()
-         FROM (SELECT agent_id,state previous FROM free_agents WHERE agent_id=$1 FOR UPDATE) old
-         WHERE f.agent_id=old.agent_id AND f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
-           AND (f.state IN ('sleeping','stopped')
-             OR (f.state IN ('waking','running')
-               AND (f.wake_requested_at IS NULL OR f.wake_requested_at<clock_timestamp()-interval '20 seconds')
-               AND NOT EXISTS (SELECT 1 FROM agent_connections connection
-                 JOIN live_server_instances server ON server.instance_id=connection.instance_id
-                 WHERE connection.agent_id=f.agent_id AND connection.released_at IS NULL
-                   AND server.renewed_at>clock_timestamp()-interval '90 seconds')))
-           AND EXISTS (SELECT 1 FROM agent_commands command
-             WHERE command.agent_id=f.agent_id AND command.state='pending'
-               AND (command.wake_after IS NULL OR command.wake_after<=now()))
-         RETURNING f.fly_machine_id,old.previous`,
+    const decision = await this.database.transaction(async (db) => {
+      // The row lock is the fence: one instance decides each start or stop.
+      await db.query(`SELECT 1 FROM free_agents WHERE agent_id=$1 FOR UPDATE`, [agentId]);
+      const due = (
+        await db.query<{ fly_machine_id: string; previous: string }>(
+          `SELECT f.fly_machine_id,f.state previous FROM free_agents f WHERE f.agent_id=$1 AND ${WAKE_DUE_SQL}`,
+          [agentId],
+        )
+      ).rows[0];
+      if (!due) return undefined;
+      const limit = (
+        await db.query<{ stopped: boolean; starts: number }>(START_LIMIT_SQL, [
+          agentId,
+          FREE_AGENT_START_WINDOW_MINUTES,
+        ])
+      ).rows[0]!;
+      if (limit.stopped) return undefined;
+      if (limit.starts >= FREE_AGENT_START_LIMIT) {
+        await this.#stopStarts(db, agentId, due.fly_machine_id, limit.starts);
+        return { kind: 'stopped' as const, machineId: due.fly_machine_id, starts: limit.starts };
+      }
+      await db.query(
+        `UPDATE free_agents SET state='waking',wake_requested_at=clock_timestamp(),
+           last_activity_at=now(),updated_at=now() WHERE agent_id=$1`,
         [agentId],
-      )
-    ).rows[0];
-    if (!claimed) return false;
-    await recordFreeAgentEvent(this.database, agentId, 'wake_requested', {
-      cause,
-      previous: claimed.previous,
+      );
+      await recordFreeAgentEvent(db, agentId, 'wake_requested', { cause, previous: due.previous });
+      return { kind: 'claimed' as const, claimed: due };
     });
+    if (!decision) return false;
+    if (decision.kind === 'stopped') {
+      this.log(`agent ${agentId.slice(0, 12)} never connected after ${decision.starts} starts; stopped starting`);
+      captureServerError(
+        new Error(`Free agent Machine never connected after ${decision.starts} starts in ${FREE_AGENT_START_WINDOW_MINUTES} minutes`),
+        { area: 'free-agent-start-limit', agentId, machineId: decision.machineId, starts: String(decision.starts) },
+      );
+      await this.machines.stop(decision.machineId).catch((error) =>
+        this.log(`stop ${agentId.slice(0, 12)}: ${String(error)}`),
+      );
+      return false;
+    }
+    const claimed = decision.claimed;
     try {
       await this.machines.start(claimed.fly_machine_id);
       await recordFreeAgentEvent(this.database, agentId, 'machine_started', {
@@ -655,6 +719,46 @@ export class FreeAgentService {
       if (state !== 'started') throw error;
     }
     return true;
+  }
+
+  /**
+   * Record the stop and tell the person whose message is waiting, in the Room
+   * of the newest pending command. The notice id follows the stop event, so a
+   * retry writes nothing twice.
+   */
+  async #stopStarts(db: SqlDatabase, agentId: string, machineId: string, starts: number): Promise<void> {
+    await db.query(`UPDATE free_agents SET state='stopped',updated_at=now() WHERE agent_id=$1`, [agentId]);
+    const event = (
+      await db.query<{ id: string }>(
+        `INSERT INTO free_agent_events(agent_id,kind,detail) VALUES($1,'start_limit_reached',$2::jsonb) RETURNING id`,
+        [agentId, JSON.stringify({ machineId, starts })],
+      )
+    ).rows[0]!;
+    const target = (
+      await db.query<{ room_id: string; agent_name: string; person_id: string | null; person_handle: string | null }>(
+        `SELECT command.room_id,agent.name agent_name,person.id person_id,person.handle person_handle
+         FROM agent_commands command
+         JOIN identities agent ON agent.id=command.agent_id
+         JOIN free_agents f ON f.agent_id=command.agent_id
+         LEFT JOIN messages source ON source.id=command.source_message_id
+         LEFT JOIN identities author ON author.id=source.author_id AND author.kind='human'
+         LEFT JOIN identities person ON person.id=COALESCE(author.id,f.owner_id)
+         WHERE command.agent_id=$1 AND command.state='pending'
+         ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+        [agentId],
+      )
+    ).rows[0];
+    if (!target) return;
+    await systemLine(db, {
+      roomId: target.room_id,
+      id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),
+      subject: { kind: 'agent', id: agentId, name: target.agent_name },
+      verb: 'could not start',
+      ...(target.person_id && target.person_handle
+        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }
+        : {}),
+      consequence: 'the Beeline team has been told. Send a new message to try again',
+    });
   }
 
   /**

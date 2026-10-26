@@ -46,6 +46,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db.close());
 beforeEach(async () => {
+  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);
@@ -99,14 +100,15 @@ const commands = async (roomId: string, agentId: string) => {
   await flushDueCommanderWakes(db);
   return (await readAgentCommands(db, roomId, agentId)).commands;
 };
-async function open() {
+async function open(name = 'Widget') {
   return daemon.execute(
     'createCorner',
     {
       ...authority(order),
       requestId: order.turnRequestId,
       targetRoomId: ROOM,
-      name: 'Widget',
+      name,
+      ...(name !== 'Widget' ? { idempotencyKey: name } : {}),
       objective: 'Build the widget',
       implementer: 'worker',
       brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
@@ -119,6 +121,89 @@ async function worker(cornerId: string) {
   await claim(command);
   return command;
 }
+
+it.each(['report', 'postRoomMessage'] as const)('Reproduction FILE-HANDOFF: batched reports retain every file through %s', async (delivery) => {
+  await daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  const attachments = [];
+  const turns = [];
+  // Both workers finish before the commander consumes the batched wake.
+  for (const name of ['first.txt', 'second.txt']) {
+    const opened = await open(name);
+    const turn = await worker(opened.cornerId);
+    const bytes = Buffer.from(`${delivery}:${name}`);
+    const uploaded = await objects.uploadArtifact(WORKER, bytes, 'text/plain', name);
+    const attachment = { url: uploaded.url, name, mimeType: 'text/plain', size: bytes.length };
+    attachments.push(attachment);
+    await daemon.execute('postAgentAttachment', { ...authority(turn), attachment }, WORKER);
+    turns.push(turn);
+  }
+  for (const [index, turn] of turns.entries()) {
+    await daemon.execute('report', { ...authority(turn), status: 'done', text: `done: attached ${attachments[index]!.name}` }, WORKER);
+  }
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports).toHaveLength(1);
+  const report = reports[0]!;
+  expect(report.source.attachments).toEqual(attachments);
+  await claim(report);
+  if (delivery === 'report') {
+    await daemon.execute('report', { ...authority(report), status: 'done', text: 'done: first.txt and second.txt attached' }, RUBY);
+  } else {
+    await daemon.execute('postRoomMessage', { ...authority(report), text: 'first.txt and second.txt attached' }, RUBY);
+  }
+  const visible = (await phone.readRoom(DM, HUMAN))!.messages.filter(message => message.attachments?.length);
+  expect(visible).toHaveLength(1);
+  expect(visible[0]!.attachments).toEqual(attachments.map(attachment => expect.objectContaining(attachment)));
+  const readable = await daemon.execute('getRoomMessage', { roomId: DM, messageId: visible[0]!.id }, RUBY);
+  expect(readable.attachments).toEqual(attachments.map(attachment => expect.objectContaining(attachment)));
+  for (const attachment of readable.attachments) {
+    const mediaId = attachment.url.split('/').at(-1)!;
+    expect(Buffer.from((await objects.readOwnedBytes(WORKER, mediaId))!).toString()).toBe(`${delivery}:${attachment.name}`);
+  }
+});
+
+it.each(['report', 'postRoomMessage'] as const)('Reproduction FILE-HANDOFF: %s keeps batched files on their own commander route', async delivery => {
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  const commanders = ['12'.repeat(32), '13'.repeat(32)];
+  const incoming = [];
+  for (const commander of commanders) {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Commander') ON CONFLICT DO NOTHING`, [commander]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [commander, HUMAN]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, commander]);
+    const parent = (await createAgentCommand(db, {
+      roomId: ROOM, agentId: RUBY, sourceMessageId: null, reason: 'order',
+      privatePayload: { kind: 'order', authorId: commander, fromRoomId: ROOM, text: 'Prepare my file' },
+    }))!;
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [parent.id]);
+    const name = `${commander.slice(0, 2)}.txt`;
+    // Distinct objects with identical bytes also exercise deduplication after routing.
+    const uploaded = await objects.uploadArtifact(commander, Buffer.from(`private-${delivery}`), 'text/plain', name);
+    incoming.push({ parent, attachment: { url: uploaded.url, name, mimeType: 'text/plain', size: Buffer.byteLength(`private-${delivery}`) } });
+  }
+  await daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
+  for (const { parent, attachment } of incoming) {
+    await createAgentCommand(db, {
+      roomId: ROOM, agentId: RUBY, sourceMessageId: null, reason: 'report', parent, retainDepth: true,
+      privatePayload: { kind: 'report', authorId: WORKER, fromRoomId: ROOM, text: 'done: file ready', attachments: [attachment] },
+    });
+  }
+  const batched = (await commands(ROOM, RUBY)).find(command => command.reason === 'report')!;
+  expect(batched.source.attachments).toHaveLength(2);
+  await claim(batched);
+  if (delivery === 'report') {
+    await daemon.execute('report', { ...authority(batched), status: 'done', text: 'done: files attached' }, RUBY);
+  } else {
+    await daemon.execute('postRoomMessage', { ...authority(batched), text: 'Files attached' }, RUBY);
+  }
+  for (const [index, commander] of commanders.entries()) {
+    const delivered = (await commands(ROOM, commander)).find(command => command.reason === 'report')!;
+    expect(delivered.source.attachments).toEqual([incoming[index]!.attachment]);
+    const read = await daemon.execute('getRoomMessage', { roomId: ROOM, messageId: delivered.id }, commander);
+    expect(read.attachments).toEqual([expect.objectContaining(incoming[index]!.attachment)]);
+    await expect(daemon.execute('getRoomMessage', { roomId: ROOM, messageId: delivered.id }, commanders[1 - index]!))
+      .rejects.toThrow('message access denied');
+  }
+});
 
 it('reports a later corner order to its actual orderer', async () => {
   const opened = await open();

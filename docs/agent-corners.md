@@ -2,6 +2,8 @@
 
 Report review evidence comes from the reporting turn (`createAgentCommand.reportSource`), while its parent retains the commander's incoming order for one-step-up routing. A repair completion may follow a new head without inheriting its commander's stale review verdict. A current reviewer report retains its own head; stale verdicts remain fenced. Coverage: `commander-order-target.integration.test.ts`, Reproduction `report-commander-refused`.
 
+Batched reports carry every source attachment through explicit reports and automatic completions. Carried files follow their source's commander return route; content deduplication happens after recipient selection. Coverage: `commander-recovery.integration.test.ts` (`FILE-HANDOFF`); built HTTP and file-opening proof: `node --import tsx scripts/prove-report-files.mjs` after building the server.
+
 Paths and commands below are relative to the repository root. Read these invariants before editing this area; named code and tests hold implementation detail.
 
 ## Authority and lifecycle

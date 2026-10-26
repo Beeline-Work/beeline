@@ -1,3 +1,4 @@
+import type { TurnReplay } from './turn-replay.js';
 import type { SquireApprovalDetails } from './approval-copy.js';
 import type { RepositoryOnboardingCard } from './repository-onboarding.js';
 import type { AgentUsage } from './agent-usage.js';
@@ -1280,6 +1281,7 @@ export type RetractLiveOutputInput = TurnOutputAuthority &
     readonly kind: 'draft' | 'thought';
   };
 export type PostTurnReceiptInput = AgentRoomInput & {
+  readonly trace?: TurnReplay;
   readonly requestId: string;
   /**
    * `cancelled` is TERMINAL and wins: once the requester has stopped a turn,

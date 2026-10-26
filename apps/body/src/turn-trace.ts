@@ -1,3 +1,6 @@
+import { redactReplayError, replayToolName, sanitizeTurnReplay, type ReplayToolCall, type TurnReplay } from '@beeline/api-contract/daemon';
+import type { ToolCallEntry } from './acp.js';
+import { isFailedToolCall, toolCallText } from './tool-call-failure.js';
 /**
  * Where a turn's time goes.
  *
@@ -84,6 +87,7 @@ export interface TurnAttemptTrace {
   phases: Partial<Record<TurnPhase, number>>;
   /** Distinct tool calls the harness reported during this attempt. */
   toolCalls: number;
+  tools?: ReplayToolCall[];
   /**
    * How the institutional-memory snapshot fetch resolved: `served` carried
    * content, `empty` completed with nothing relevant, `timed-out` missed its
@@ -154,6 +158,7 @@ interface MutableAttempt {
   retryReason?: string;
   phases: Map<TurnPhase, number>;
   toolCallIds: Set<string>;
+  tools: Map<string, { started: number; ended?: number; call: ReplayToolCall }>;
   promptSentAt?: number;
   firstOutputAt?: number;
   toolWorkOpenedAt?: number;
@@ -209,6 +214,7 @@ export class TurnTrace {
       capacityWait: false,
       phases: new Map(),
       toolCallIds: new Set(),
+      tools: new Map(),
     };
   }
 
@@ -317,10 +323,30 @@ export class TurnTrace {
    * never marks a call terminal therefore reads as "tools outstanding to the
    * end of the turn", which is exactly what happened.
    */
-  toolCalls(calls: readonly { id?: string; status?: string }[]): void {
+  toolCalls(calls: readonly ToolCallEntry[]): void {
     const attempt = this.current;
     calls.forEach((call, index) => {
       const id = call.id ?? `#${index}`;
+      const title = replayToolName(call.title);
+      const name = title === 'unknown' ? replayToolName(call.kind) : title;
+      let tool = attempt.tools.get(id);
+      if (!tool && attempt.tools.size < 2000) {
+        tool = { started: this.now(), call: { name, outcome: 'unfinished', durationMs: 0 } };
+        attempt.tools.set(id, tool);
+      }
+      if (tool) {
+        if (name !== 'unknown') tool.call.name = name;
+        const failed = isFailedToolCall(call);
+        const error = failed ? toolCallText(call.content) || toolCallText(call.rawOutput) : '';
+        if (!toolCallOutstanding(call) || isFailedToolCall(call)) {
+          tool.ended ??= this.now();
+          tool.call.outcome = /^(?:denied|rejected)$/i.test(call.status ?? '') ||
+            (isFailedToolCall(call) && /refus|denied|forbidden|not allowed|permission|rejected/i.test(error))
+            ? 'refused' : isFailedToolCall(call) ? 'error' : /cancel/i.test(call.status ?? '') ? 'unfinished' : 'ok';
+          if (isFailedToolCall(call) && error) tool.call.error = redactReplayError(error);
+        }
+        tool.call.durationMs = round((tool.ended ?? this.now()) - tool.started);
+      }
       attempt.toolCallIds.add(id);
       this.toolCallIds.add(`${attempt.attempt}:${id}`);
     });
@@ -375,6 +401,14 @@ export class TurnTrace {
     return this.toolCallIds.size;
   }
 
+  /** The content-free wire projection, included with the existing receipt. */
+  replay(): TurnReplay | undefined {
+    for (const phase of [...this.open.keys()]) this.end(phase);
+    this.promptSettled();
+    const record = this.snapshot('complete');
+    return sanitizeTurnReplay({ totalMs: record.totalMs, attempts: record.attempts });
+  }
+
   /** The record as it stands, without writing it. */
   snapshot(outcome: 'complete' | 'failed' | 'cancelled', reason?: string): TurnTraceRecord {
     return {
@@ -385,7 +419,7 @@ export class TurnTrace {
       requestId: this.options.requestId,
       startedAt: this.startedAtWall,
       outcome,
-      ...(reason ? { reason } : {}),
+      ...(reason ? { reason: redactReplayError(reason) } : {}),
       totalMs: round(this.now() - this.begunAt),
       attempts: this.attempts.map((attempt) => ({
         attemptId: `${this.options.requestId}#${attempt.attempt}`,
@@ -393,7 +427,7 @@ export class TurnTrace {
         activation: attempt.activation,
         ...(attempt.capacityWait ? { capacityWait: true } : {}),
         ...(attempt.provider ? { provider: attempt.provider } : {}),
-        ...(attempt.retryReason ? { retryReason: attempt.retryReason } : {}),
+        ...(attempt.retryReason ? { retryReason: redactReplayError(attempt.retryReason) } : {}),
         ...(attempt.institutionalMemory ? { institutionalMemory: attempt.institutionalMemory } : {}),
         ...(attempt.institutionalMemoryEmbeddingOutcome
           ? {
@@ -408,6 +442,8 @@ export class TurnTrace {
           ]),
         ),
         toolCalls: attempt.toolCallIds.size,
+        tools: [...attempt.tools.values()].map(tool => ({ ...tool.call,
+          durationMs: round((tool.ended ?? this.now()) - tool.started) })),
       })),
       scheduler: {
         ...(this.atQueue ? { atQueue: this.atQueue } : {}),

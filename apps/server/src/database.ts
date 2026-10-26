@@ -1190,6 +1190,20 @@ ALTER TABLE agent_turns ALTER COLUMN started_at SET NOT NULL;
 ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_status_check;
 ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_status_check
   CHECK (status IN ('working', 'complete', 'failed', 'cancelled'));
+-- Replay diagnostics expire independently of durable turn/message history.
+CREATE TABLE IF NOT EXISTS agent_turn_traces (
+  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  request_id text NOT NULL,
+  agent_id text NOT NULL REFERENCES identities(id),
+  trigger_message_id text,
+  reply_message_ids jsonb NOT NULL DEFAULT '[]',
+  outcome text NOT NULL,
+  trace jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(room_id,request_id,agent_id)
+);
+CREATE INDEX IF NOT EXISTS agent_turn_traces_created ON agent_turn_traces(created_at);
+
 CREATE INDEX IF NOT EXISTS agent_turns_agent_activity ON agent_turns(agent_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS agent_turns_room_created ON agent_turns(room_id,created_at DESC);
 

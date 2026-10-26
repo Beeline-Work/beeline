@@ -3060,10 +3060,19 @@ export class GitHubOperations {
   private async syncInstallation(
     viewerId: string,
     installationId: number,
-    database: SqlDatabase = this.database,
+    transaction?: SqlDatabase,
   ) {
+    const database = transaction ?? this.database;
+    // Only autocommit writes can replay independently. A supplied transaction
+    // must propagate the deadlock so its owner can roll back the entire unit.
+    const write = async (run: () => Promise<unknown>) => {
+      if (transaction) { await run(); return; }
+      await retryOnDeadlock(async () => { await run(); }, {
+        attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
+      });
+    };
     const account = await this.app.installationAccount(installationId);
-    await database.query(
+    await write(() => database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()
        WHERE (github_installations.owner_id,github_installations.account_id,github_installations.account_login,github_installations.account_type,github_installations.account_avatar_url,github_installations.repository_selection,github_installations.status)
          IS DISTINCT FROM (EXCLUDED.owner_id,EXCLUDED.account_id,EXCLUDED.account_login,EXCLUDED.account_type,EXCLUDED.account_avatar_url,EXCLUDED.repository_selection,EXCLUDED.status)`,
@@ -3076,14 +3085,14 @@ export class GitHubOperations {
         account.avatarUrl ?? null,
         account.repositorySelection,
       ],
-    );
+    ));
     const repositories = await this.app.listRepositories(installationId);
-    for (const repository of repositories) await this.storeRepository(repository, database);
-    await database.query(
+    for (const repository of repositories) await write(() => this.storeRepository(repository, database));
+    await write(() => database.query(
       `UPDATE github_repositories SET active=false,updated_at=now()
        WHERE installation_id=$1 AND NOT (repository_id=ANY($2::bigint[])) AND active`,
       [installationId, repositories.map((repository) => repository.id)],
-    );
+    ));
   }
   /**
    * GET /user/installations is keyed to the OAuth lookup token's visibility:

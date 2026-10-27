@@ -39,7 +39,7 @@ export function AiClientsSection({ clients, onChanged }: {
     <HullActionSheetModal visible={Boolean(selected)} title={`Disconnect ${selected?.name ?? 'client'}?`}
       onClose={() => { if (!busy) setSelected(null); }} testID="ai-client-disconnect-sheet">
       <Text style={styles.description}>{selected?.name} can no longer read your Rooms or post as you. Messages it already sent stay in their Rooms.</Text>
-      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {error ? <SettingsRow title={error} action="Retry" onPress={() => void disconnect()} /> : null}
       <View style={styles.actions}><Button label="Disconnect" variant="danger" fullWidth loading={busy}
         onPress={() => void disconnect()} testID="ai-client-disconnect" /></View>
       <HullActionSheetCancel disabled={busy} onPress={() => setSelected(null)} />
@@ -49,5 +49,4 @@ export function AiClientsSection({ clients, onChanged }: {
 const styles = StyleSheet.create(theme => ({
   actions: { paddingHorizontal: theme.buzz.space.md },
   description: { ...theme.buzz.type.body, color: theme.buzz.textSecondary, padding: theme.buzz.space.md },
-  error: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary, padding: theme.buzz.space.md },
 }));

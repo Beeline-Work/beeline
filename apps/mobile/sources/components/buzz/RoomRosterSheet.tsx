@@ -1,5 +1,4 @@
 import { Button } from '@/components/buzz/Button';
-import { RoomListSectionHeader } from './RoomListSectionHeader';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -55,7 +54,7 @@ function rosterRowNote({
 
 /**
  * The Room's members, in the Members page's vocabulary so the two views read
- * as one: "Members" over ONE counted section head that includes the viewer, a
+ * as one: "Members" with an add control beside Close, then a
  * 64pt row per identity with its handle at body size and one quiet metadata
  * line: a person's Workspace role, or an agent's model and owner. People lead and
  * agents follow inside that single list. The gold ring on the tile means
@@ -133,6 +132,16 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             <Text style={styles.rosterModalEyebrow}>In this {ROOM_LABEL}</Text>
             <Text style={styles.rosterModalTitle}>{MEMBERS_LABEL}</Text>
           </View>
+          {canAddMembers && (
+            <Button
+              label="Add"
+              style={styles.rosterModalAdd}
+              variant="quiet"
+              accessibilityLabel="Add members"
+              testID="room-roster-add-members"
+              onPress={onAddMembers}
+            />
+          )}
           <Button
             accessibilityLabel={`Close ${ROOM_LABEL} roster`}
             onPress={onClose}
@@ -148,20 +157,6 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
           contentContainerStyle={styles.rosterContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* One head over one list. A manager keeps it on an empty Room
-              because the head is where the add control lives: with the Room
-              header's `+` retired (C83), an agentless Room would otherwise
-              have no way to reach an agent at all. The sheet title already
-              says Members, so the head carries only the count and `+`. */}
-          <RoomListSectionHeader
-            title=""
-            count={members.length}
-            testID="room-roster-members-head"
-            surface="sheet"
-            actionAccessibilityLabel="Add members"
-            actionTestID="room-roster-add-members"
-            onAction={canAddMembers ? onAddMembers : undefined}
-          />
           {roster.visible.map((participant) => {
             const display = participant.agent
               ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
@@ -301,6 +296,7 @@ const styles = StyleSheet.create((theme) => {
       marginTop: hull.space.xs,
       color: hull.textPrimary,
     },
+    rosterModalAdd: { marginTop: -hull.space.sm },
     rosterModalClose: {
       width: 44,
       height: 44,

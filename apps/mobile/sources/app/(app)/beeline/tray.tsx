@@ -1,6 +1,7 @@
+import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { ContentTarget } from '@/components/buzz/IndexRow';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
@@ -217,7 +218,7 @@ export default function TrayScreen() {
     lostWorkspaceRef.current = null;
     setLostWorkspaceId(null);
     if (result.status === 'rejected')
-      setError(result.reason instanceof Error ? result.reason.message : String(result.reason));
+      setError(appErrorCopy(result.reason));
     else if (result.value.needsError || result.value.savedError)
       setError(result.value.needsError ?? result.value.savedError ?? null);
     if (result.status === 'fulfilled')
@@ -253,7 +254,7 @@ export default function TrayScreen() {
       await loadSavedList(workspaceId, savedNext);
     } catch (cause) {
       if (generation === loadGenerationRef.current)
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(appErrorCopy(cause));
     } finally {
       loadingSaved.current = false;
     }
@@ -351,7 +352,7 @@ export default function TrayScreen() {
       } catch (cause) {
         if (cancelled) return;
         setInspectRoom(null);
-        setInspectError(cause instanceof Error ? cause.message : String(cause));
+        setInspectError(appErrorCopy(cause));
       }
     })();
     return () => {
@@ -401,7 +402,7 @@ export default function TrayScreen() {
       removal.settle();
     } catch (cause) {
       // A failure that lands after an account switch belongs to the previous account.
-      if (removal.restore()) setError(cause instanceof Error ? cause.message : String(cause));
+      if (removal.restore()) setError(appErrorCopy(cause));
     }
   }, []);
 
@@ -445,7 +446,7 @@ export default function TrayScreen() {
       AccessibilityInfo.announceForAccessibility('Decision sent');
     } catch (cause) {
       if (generation === clientResetGeneration())
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(appErrorCopy(cause));
     }
   }, []);
 
@@ -467,7 +468,7 @@ export default function TrayScreen() {
         await monolithPhoneOperation('clearNeedsYouSection', { workspaceId: clear.workspaceId });
         removal.settle();
       } catch (cause) {
-        if (removal.restore()) setError(cause instanceof Error ? cause.message : String(cause));
+        if (removal.restore()) setError(appErrorCopy(cause));
       }
       return;
     }
@@ -484,7 +485,7 @@ export default function TrayScreen() {
       updateSavedList(clear.workspaceId, (current) =>
         [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
       ).settle();
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(appErrorCopy(cause));
     }
   }, []);
 
@@ -582,7 +583,7 @@ export default function TrayScreen() {
       edit.cancel();
       setRemoved(null);
       updateSavedList(bookmark.workspaceId, (current) => [bookmark, ...current]).settle();
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(appErrorCopy(cause));
     }
   }, []);
 
@@ -605,7 +606,7 @@ export default function TrayScreen() {
       edit.cancel();
       updateSavedList(bookmark.workspaceId,
         (current) => current.filter((item) => item.messageId !== bookmark.messageId)).settle();
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(appErrorCopy(cause));
     }
   }, [removed]);
 
@@ -848,7 +849,7 @@ export default function TrayScreen() {
       <PageHeader backAccessibilityLabel="Back to Rooms" eyebrow={workspaceName ?? 'Workspace'}
         onBack={desktop ? undefined : () => router.back()} prominent testID="tray-header" title="Tray" />
       {error ? (
-        <ErrorBanner title={error} retryLabel="Retry" onRetry={() => void load(true)}
+        <SettingsRow title={error} action="Retry" onPress={() => void load(true)}
           />
       ) : null}
       <View style={styles.body}>

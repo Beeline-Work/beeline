@@ -1,6 +1,5 @@
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
-import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
@@ -129,7 +128,7 @@ export default function ScheduledWork() {
         testID="scheduled-work-header"
         title="Schedules and subscriptions"
       />
-      {error && <ErrorBanner title={error} retryLabel="Retry" onRetry={retry}
+      {error && <SettingsRow title={error} action="Retry" onPress={retry}
           />}
       {loading ? (
         <View style={styles.loading}>

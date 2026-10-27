@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { IndexRow } from '@/components/buzz/IndexRow';
@@ -76,7 +77,7 @@ export default function WorkspaceChoice() {
       await saveActiveCommunityId(identity.publicKey, created.id);
       enterWorkspaceRoom(created.id, created.roomId ?? null);
     } catch (reason) {
-      setError(`Could not create Workspace: ${reason instanceof Error ? reason.message : String(reason)}`);
+      setError(appErrorCopy(reason, `Could not create Workspace.`));
       setCreating(false);
     }
   };
@@ -103,7 +104,7 @@ export default function WorkspaceChoice() {
         setWorkspaceList(fresh);
         void mobileSurfaceCache.write(address, fresh, isWorkspaceListView);
       } catch (err) {
-        if (!cancelled) setError(String(err));
+        if (!cancelled) setError(appErrorCopy(err));
       }
     })();
     return () => {
@@ -214,7 +215,7 @@ export default function WorkspaceChoice() {
           </View>
 
           {error ? (
-            <ErrorBanner title={error} testID="choice-error" />
+            <ErrorBanner inline title={error} testID="choice-error" />
           ) : null}
         </View>
       </ScrollView>

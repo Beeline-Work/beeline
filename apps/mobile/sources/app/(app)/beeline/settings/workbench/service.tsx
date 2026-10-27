@@ -59,7 +59,7 @@ export default function ConnectorServiceScreen() {
     if (appBusy) return;
     setAppBusy(app.id); setError(null); setNotice(null);
     try { setNotice(await reconnectWorkbenchApp(app, scope)); await refresh(); }
-    catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not connect app')); }
+    catch (cause) { setError(appErrorCopy(cause, 'Could not connect app')); }
     finally { setAppBusy(null); }
   };
   const disconnectApp = async (app: WorkbenchApp) => {
@@ -67,7 +67,7 @@ export default function ConnectorServiceScreen() {
     if (appBusy) return;
     setAppBusy(app.id); setError(null);
     try { await getWorkbenchSource().disconnectApp({ workspaceId: scope.workspaceId, appId: app.id }); await refresh(); }
-    catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not disconnect app')); }
+    catch (cause) { setError(appErrorCopy(cause, 'Could not disconnect app')); }
     finally { setAppBusy(null); }
   };
   const appRow = (item: WorkbenchCompany['items'][number], app: WorkbenchApp) => {
@@ -126,7 +126,7 @@ export default function ConnectorServiceScreen() {
           valueTone={topState === 'error' ? 'danger' : undefined}
           statusGlyph={topState === 'error' ? 'failed' : topState === 'connected' ? 'live' : undefined} testID="connector-info-status" />
         <Text style={styles.note} testID="connector-info-agents">{agents}</Text>
-        {row.attention ? <Text accessibilityRole="alert" style={styles.error}>{row.attention}</Text> : null}
+        {row.attention ? <SettingsRow title={row.attention} /> : null}
         {row.kind === 'sign-in-service' ? <View>
           <RoomListSectionHeader title="Your computers" inset="content" />
           {row.machines.map(item => {
@@ -167,9 +167,9 @@ export default function ConnectorServiceScreen() {
             leading={<ServiceMark company={app.providerName} domain={app.domain} mark={app.logo} />} chevron="right"
             disabled={Boolean(actions.busy)} onPress={() => void actions.connect(app)} testID={`company-available-${app.appKey}`} />)}
         </View> : null}
-        {loadError ? <Text accessibilityRole="alert" style={styles.error}>Could not refresh connections. Try again.</Text> : null}
+        {loadError ? <SettingsRow title="Could not refresh connections. Try again." /> : null}
         {notice ? <Text accessibilityLiveRegion="polite" style={styles.note} testID="connector-info-notice">{notice}</Text> : null}
-        {error || actions.error ? <Text accessibilityRole="alert" style={styles.error}>{error ?? actions.error}</Text> : null}
+        {error || actions.error ? <SettingsRow title={(error ?? actions.error)!} /> : null}
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
       {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : manageMachine && !manageMachine.online ? <Text style={styles.error} testID="squire-computer-offline">{manageMachine.error ?? `Turn on ${manageMachine.name} to reconnect it.`}</Text>

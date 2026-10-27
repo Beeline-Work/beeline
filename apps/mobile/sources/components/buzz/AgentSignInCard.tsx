@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { ErrorBanner } from './ErrorBanner';
 import { InlineRow } from './IndexRow';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
@@ -145,7 +146,7 @@ export function AgentSignInCard({
       await onSubmit(trimmed);
       setValue('');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(appErrorCopy(reason));
     } finally {
       setBusy(false);
     }

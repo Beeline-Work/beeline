@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop } from '@/utils/responsive';
 import { Button } from '@/components/buzz/Button';
@@ -150,7 +151,7 @@ export default function BuzzIdentitySettings() {
       if (!ticket) return;
       await google.completeGoogleAccountLink(ticket, profilePubkey);
       await publishManagedIdentity(await monolithPhoneOperation('getManagedIdentity', {}));
-    })().catch(reason => setGitHubNotice(reason instanceof Error ? reason.message : String(reason)));
+    })().catch(reason => setGitHubNotice(appErrorCopy(reason)));
   }, [profilePubkey]);
   const [googleBusy, setGoogleBusy] = useState(false);
   const connectGoogle = async () => {
@@ -169,7 +170,7 @@ export default function BuzzIdentitySettings() {
         subscribeToUrls: subscribeToAuthUrls });
       await completeGoogleAccountLink(ticket, profilePubkey);
       await publishManagedIdentity(await monolithPhoneOperation('getManagedIdentity', {}));
-    } catch (reason) { setGitHubNotice(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) { setGitHubNotice(appErrorCopy(reason)); }
     finally { setGoogleBusy(false); }
   };
   const [githubBusy, setGitHubBusy] = useState(false);
@@ -193,7 +194,7 @@ export default function BuzzIdentitySettings() {
         onRefreshPhase: () => undefined,
       });
     } catch (reason) {
-      setGitHubNotice(reason instanceof Error ? reason.message : String(reason));
+      setGitHubNotice(appErrorCopy(reason));
     } finally { setGitHubBusy(false); }
   };
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -318,7 +319,7 @@ export default function BuzzIdentitySettings() {
         setPushPermission(permission);
         await saveStoredPushLevel(identity.publicKey, settings.identity.pushLevel);
       } catch (caught) {
-        if (!cancelled) setError(`Could not load your profile: ${String(caught)}`);
+        if (!cancelled) setError(appErrorCopy(caught, `Could not load your profile.`));
       }
     })();
     return () => {
@@ -357,7 +358,7 @@ export default function BuzzIdentitySettings() {
       const result = await registerBuzzPushNotifications(profileIdentity);
       await applyPushResult(profileIdentity, result, pushRegistration);
     } catch (caught) {
-      setError(`Could not retry push registration: ${String(caught)}`);
+      setError(appErrorCopy(caught, `Could not retry push registration.`));
     } finally {
       setPushWorking(false);
     }
@@ -383,7 +384,7 @@ export default function BuzzIdentitySettings() {
           await applyPushResult(profileIdentity, result, pushRegistration);
         }
       } catch (caught) {
-        setError(`Could not update notifications: ${String(caught)}`);
+        setError(appErrorCopy(caught, `Could not update notifications.`));
         throw caught;
       } finally {
         setPushWorking(false);
@@ -580,7 +581,7 @@ export default function BuzzIdentitySettings() {
           <UiSizeSetting onChange={changeUiSize} value={uiSize} />
           <SpeakingSpeedSetting value={managedProjection?.speakingSpeed ?? 1.15} onChange={(speakingSpeed) => {
             void monolithPhoneOperation('updateIdentitySpeakingSpeed', { speakingSpeed })
-              .then(publishManagedIdentity).catch((e) => setError(e instanceof Error ? e.message : 'Could not save speaking speed'));
+              .then(publishManagedIdentity).catch((e) => setError(appErrorCopy(e, 'Could not save speaking speed')));
           }} />
           {roomOpenTraceEnabled() && (
             <View testID="debug-settings">

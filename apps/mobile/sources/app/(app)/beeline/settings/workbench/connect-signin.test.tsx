@@ -153,7 +153,7 @@ describe('ConnectorSignInScreen', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
       expect(renderer.root.findByType('PageHeader').props.title).toBe('Sign in to Google');
-      expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(0);
+      expect(JSON.stringify(renderer.toJSON())).toContain('Couldn’t reach Beeline');
       await act(async () => { void renderer.root.findByProps({ testID: 'signin-retry' }).props.onPress(); });
       expect(readInstallState).toHaveBeenCalledTimes(2);
     } finally { await act(async () => { renderer.unmount(); releases.forEach(resolve => resolve(null)); }); vi.useRealTimers(); }

@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -1273,7 +1274,7 @@ export function useRoomSurfaceSession({
                 if (cancelled) return;
                 markRoomOpen('watch-install');
                 void installWatch().catch((error) => {
-                  if (!cancelled) setHydrationError(`Live updates unavailable. ${String(error)}`);
+                  if (!cancelled) setHydrationError(appErrorCopy(error, 'Live updates unavailable.'));
                 });
               });
             }
@@ -1332,7 +1333,7 @@ export function useRoomSurfaceSession({
                   ? 'The server did not respond. Check your connection and retry.'
                   : error instanceof RoomViewHttpError && error.code === 'invalid_surface_response'
                     ? 'The server returned an invalid Room response.'
-                    : `Could not load this conversation. ${String(error)}`,
+                    : appErrorCopy(error, 'Could not load this conversation.'),
               );
             }
             if (openReadBeforeWatch && !terminal && !watchStarted) {
@@ -1362,7 +1363,7 @@ export function useRoomSurfaceSession({
       } catch (error) {
         if (cancelled) return;
         setHydrationFailed(true);
-        setHydrationError(`Could not open this ${ROOM_LABEL}. ${String(error)}`);
+        setHydrationError(appErrorCopy(error, `Could not open this ${ROOM_LABEL}.`));
       }
     })();
 

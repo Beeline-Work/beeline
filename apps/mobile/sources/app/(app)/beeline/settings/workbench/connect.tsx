@@ -1,3 +1,4 @@
+import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
@@ -139,7 +140,7 @@ function ConnectToolFlow() {
         startObserving(pairedConnectorId);
       } catch (cause) {
         if (!feedbackShown) {
-          setError(cause instanceof Error ? cause.message : 'Pairing failed');
+          setError(appErrorCopy(cause, 'Pairing failed'));
         }
       } finally {
         clearTimeout(feedback);
@@ -176,7 +177,7 @@ function ConnectToolFlow() {
           if (accepted.status !== 'accepted') startObserving(accepted.connectorId);
         })
         .catch((cause) => {
-          setError(cause instanceof Error ? cause.message : 'Pairing failed');
+          setError(appErrorCopy(cause, 'Pairing failed'));
         });
       return;
     }

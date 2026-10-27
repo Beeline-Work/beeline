@@ -506,3 +506,40 @@ Ads Manager account days may use a local time zone while signup joins use UTC
 dates; accept the resulting few-hour offset when comparing cost per signup.
 
 Onboarding revision 4: `invite_shared` records the server posting an invite link in chat, not a native share action. Second opinions are prompted, never orchestrated by the server; `task_second_opinion` observes an agent mention during the task.
+
+### Daily X site visit estimates
+
+`xAds.siteVisits` adds Cloudflare Web Analytics independently of X Ads API access.
+The daily job uses only `CLOUDFLARE_ANALYTICS_TOKEN` (Account Analytics Read), with
+the usebeeline.app account and site identifiers fixed in `x-site-visits.ts`.
+The staged production secret becomes available on the next server deployment.
+No new tracking is installed. The job refreshes the last seven complete UTC dates,
+leases once daily with hourly retries, and commits validated snapshots atomically.
+
+The block contains `state` (`estimated` or `unavailable`), `lastSyncedAt`, `source`
+(`cloudflare_web_analytics`), `estimated: true`, `sampling`, `scope`, and `daily`.
+Each of the last 90 UTC dates (including today's unavailable partial day) has
+`{date, siteVisits: number | null, byAd: [{adPath, siteVisits}] | null}`. Path keys
+are `/x/<ad>` URLs; they are not assumed to match X Ads API entity IDs. Totals use
+Cloudflare's `sum.visits`, counting the union of `t.co`, `x.com`,
+`com.twitter.android` referrers and `/x/<ad>` paths without double counting a
+matching group. Organic X traffic can be included; these are not verified paid
+click conversions and must not be presented as an exact paid conversion rate.
+
+The site uses lite mode (about 10% sampled). Values are returned exactly as
+Cloudflare supplied them, with no scaling. A successful date with other observed
+site traffic but no matching X visits is zero. A date with no observations is null;
+empty results do not establish zero. Missing credentials, invalid/partial/truncated
+responses, and stale syncs (over 36 hours) make the block unavailable and its daily
+values null. Failed queries preserve saved snapshots for recovery but do not expose
+them as current counts. To total a range, require every selected complete date's
+`siteVisits` to be non-null, then sum only those daily totals (never add `byAd`).
+
+Recorded evidence: `x-site-visits.recorded.json` captures the aggregate GraphQL
+response from October 27 for October 25 (256 X visits). Unit coverage is in
+`x-site-visits.test.ts`. After building, run
+`node --import tsx scripts/prove-x-site-visits.mjs` to demonstrate missing data,
+recorded counts, and provider failure through the authenticated built HTTP
+`GET /v1/admin/dashboard` path on loopback with isolated PGlite. The proof rebases
+only the recorded date to remain within the rolling window and saves the full
+payload under the declared `.beeline-proof/` directory.

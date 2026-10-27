@@ -216,7 +216,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 39;
+export const REQUIRED_SCHEMA_VERSION = 40;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2439,6 +2439,12 @@ ALTER TABLE x_ad_daily ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'ap
 CREATE TABLE IF NOT EXISTS x_ad_sync (
   id text PRIMARY KEY, completed_at timestamptz, failed_at timestamptz,
   next_attempt_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS x_site_visit_daily (
+  day date PRIMARY KEY,
+  site_visits bigint NOT NULL CHECK(site_visits>=0),
+  by_ad jsonb NOT NULL DEFAULT '[]'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS signin_funnel_installs (

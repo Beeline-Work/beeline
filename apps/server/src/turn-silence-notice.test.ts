@@ -569,6 +569,25 @@ describe('first-silence notice', () => {
     expect(await notices()).toHaveLength(2);
   });
 
+  it('WAKE-STORM: a GitHub reset shares one notice across retries, long waits and new wakes', async () => {
+    const daemon = new DaemonService(database, new LiveHub());
+    const requestId = 'github-reset';
+    const command = await ask(database, requestId);
+    const reason = 'GitHub rate limit; checks readable again at 2026-10-27T18:07:00.000Z';
+    for (const attempt of [1, 2, 3]) {
+      if (attempt > 1) await claimAgentCommand(database, ROOM, AGENT, command.id, `g${attempt}`);
+      await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, requestId,
+        generationId: `g${attempt}`, status: 'failed', reason, reasonKind: 'hiccup' }, AGENT);
+      await database.query(`UPDATE messages SET created_at=now()-interval '1 hour' WHERE card_type='turn-failed'`);
+    }
+    const next = await ask(database, 'github-reset-new-wake');
+    await daemon.execute('postAgentTurnReceipt', { roomId: ROOM, requestId: next.turn_request_id,
+      generationId: 'g1', status: 'failed', reason, reasonKind: 'hiccup' }, AGENT);
+    const notices = (await database.query<{ request_id: string }>(
+      `SELECT card->>'requestId' request_id FROM messages WHERE room_id=$1 AND card_type='turn-failed'`, [ROOM])).rows;
+    expect(notices).toEqual([{ request_id: requestId }]);
+  });
+
   it.each(['human', 'agent'])('retries a hung harness once for a %s trigger, then completes its command', async (author) => {
     const requestId = 'hang-request';
     const command = await ask(database, requestId);

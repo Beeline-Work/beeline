@@ -23,7 +23,11 @@ it('WAKE-STORM: one installation reset stops queued corners, other repositories,
   const app = new GitHubAppClient(config);
   const replica = new GitHubAppClient(config);
   let shared = 0;
-  const store = { get: async () => shared, set: async (_id: number, reset: number) => { shared = Math.max(shared, reset); } };
+  const resets = new Map<number, number>();
+  const store = { get: async (id: number) => resets.get(id) ?? 0, set: async (id: number, reset: number) => {
+    resets.set(id, Math.max(resets.get(id) ?? 0, reset));
+    shared = Math.max(shared, reset);
+  } };
   app.setRateLimitStore(store);
   replica.setRateLimitStore(store);
   vi.useFakeTimers();
@@ -46,8 +50,10 @@ it('WAKE-STORM: one installation reset stops queued corners, other repositories,
   await expect(app.installationToken(42, { repositoryIds: [3] })).rejects.toMatchObject({ rateLimited: true });
   await expect(replica.readPullRequest('installation-42', 'owner/two', 7)).rejects.toMatchObject({ rateLimited: true });
   expect(fetcher).toHaveBeenCalledTimes(calls);
+  await expect(app.installationToken(43, { repositoryIds: [1] })).resolves.toMatchObject({ token: 'other-installation' });
+  expect(fetcher).toHaveBeenCalledTimes(calls + 1);
   vi.setSystemTime(shared + 1);
   fetcher.mockImplementation(async () => Response.json({ head: { sha: 'a'.repeat(40) }, state: 'open' }));
   await expect(replica.readPullRequest('installation-42', 'owner/two', 7)).resolves.toMatchObject({ state: 'open' });
-  expect(fetcher).toHaveBeenCalledTimes(calls + 1);
+  expect(fetcher).toHaveBeenCalledTimes(calls + 2);
 });

@@ -287,7 +287,7 @@ describe('GitHub phone operations', () => {
   });
 
   it('WAKE-STORM: persists installation cooldown across server clients and keeps restore readable', async () => {
-    const { corners } = await checksFixture();
+    const { corners, headSha } = await checksFixture();
     const { privateKey } = await generateKeyPair('RS256');
     const config = { appId: '42', slug: 'test', privateKey: await exportPKCS8(privateKey) };
     const app = new GitHubAppClient(config);
@@ -310,7 +310,7 @@ describe('GitHub phone operations', () => {
     Object.assign(daemon, { github: second });
     for (let i = 0; i < 20; i++) {
       const restore = await daemon.execute('getCornerRestoreState', { cornerId: corners[0]! }, REVIEWER);
-      expect(restore.lifecycle?.pr?.headSha).toBe('a'.repeat(40));
+      expect(restore.lifecycle?.pr?.headSha).toBe(headSha);
     }
     expect(fetcher).toHaveBeenCalledTimes(requests);
     // Reset expiry permits fresh provider evidence; the stored deadline is
@@ -319,7 +319,7 @@ describe('GitHub phone operations', () => {
     const recovered = new GitHubOperations(database, {} as GitHubOAuthClient, new GitHubAppClient(config), 'secret');
     fetcher.mockImplementation(async input => String(input).endsWith('/access_tokens')
       ? Response.json({ token: 'recovered', expires_at: new Date(Date.now() + 3600_000).toISOString() })
-      : Response.json({ head: { sha: 'a'.repeat(40) }, state: 'open' }));
+      : Response.json({ head: { sha: headSha }, state: 'open' }));
     await recovered.refreshCornerReviewHead(corners[0]!);
     expect(fetcher).toHaveBeenCalledTimes(requests + 2);
   });

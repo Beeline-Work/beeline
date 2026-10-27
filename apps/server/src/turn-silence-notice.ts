@@ -335,7 +335,8 @@ async function inscribeSilence(
 
   const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX);
   const classified = classifyTurnSilence(reason || undefined, input.reasonKind);
-  const standing = ['helper-out-of-date', 'not-signed-in'].includes(classified.kind);
+  const standing = ['helper-out-of-date', 'not-signed-in'].includes(classified.kind) ||
+    /GitHub rate limit; checks readable again at/.test(reason);
   if (standing) await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
     [`silence-span:${input.roomId}:${input.agentId}`]);
   const command = (
@@ -413,8 +414,8 @@ async function inscribeSilence(
   )).rowCount > 0;
   if (!command?.private_payload || cornerFailure) {
     const recent = (
-      await database.query<{ id: string }>(
-        `SELECT id FROM messages notice WHERE room_id=$1 AND card_type='turn-failed'
+      await database.query<{ id: string; request_id: string }>(
+        `SELECT id,card->>'requestId' request_id FROM messages notice WHERE room_id=$1 AND card_type='turn-failed'
          AND card->>'agentId'=$3 AND card->>'state'='failed'
          AND ((card->>'requestId'=$2 AND ($4::boolean OR created_at>now()-interval '10 minutes'))
            OR ($5::boolean AND card->>'silenceKind'=$6 AND NOT EXISTS (
@@ -427,7 +428,7 @@ async function inscribeSilence(
       )
     ).rows[0];
     if (recent) {
-      if (restart || givingUp || classified.kind === 'update-interrupted')
+      if (recent.request_id === input.requestId && (restart || givingUp || classified.kind === 'update-interrupted'))
         await restateSystemLine(database, recent.id, systemPhrase, card);
     } else {
       await systemLine(database, {

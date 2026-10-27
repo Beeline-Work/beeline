@@ -517,10 +517,9 @@ export class DaemonApiClient {
     }
     if (event.type === 'agent-sign-in') {
       const frame = agentSignInFrame(event);
-      if (frame) {
-        this.agentSignInListener?.(frame);
-        if (frame.step === 'result' && frame.outcome === 'signed-in') this.configChangedListener?.();
-      }
+      if (frame) this.agentSignInListener?.(frame);
+      if (event.step === 'result' && event.outcome === 'signed-in' &&
+          typeof event.attemptId === 'string' && event.attemptId) this.configChangedListener?.();
       return;
     }
     if (event.type === 'config-changed') {

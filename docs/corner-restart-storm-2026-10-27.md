@@ -98,8 +98,9 @@ Three mechanisms amplified the outage:
 - Invalid ACP requests classify as `helper-out-of-date`, including legacy
   receipts labeled `hiccup`. Review dispatch waits for a configuration/sign-in
   change, helper version change, or demonstrated recovery. Presence refreshes
-  preserve version metadata. Standing protocol/auth failures share one notice
-  until a successful turn ends the span, rather than one notice per new wake.
+  preserve version metadata. Standing protocol/auth failures and dated GitHub
+  failures share one notice until a successful turn ends the span, including
+  resets longer than ten minutes and newly generated wakes.
 
 ## Regression evidence
 

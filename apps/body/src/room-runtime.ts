@@ -324,6 +324,7 @@ type RoomLeaf = Pick<
   | 'interruptForServerMinimum'
   | 'interruptedTurn'
   | 'requestReconciliation'
+  | 'configurationChanged'
   | 'refreshPersonaForSoulUpdate'
   | 'forceRecoverRoom'
 > & {
@@ -622,10 +623,11 @@ export class RoomRuntimeCoordinator {
   private membershipDrain: Promise<void> | undefined;
   /** Set by `shutdown`: a pushed event may no longer start anything. */
   private stopped = false;
-  /** Per corner, the requests whose start failure has already been said out loud. */
+  /** Runtime refusals wait for a server configuration/sign-in change. */
   private readonly standingRuntimeStartFaults = new Set<string>();
   private cornerStartRetryAt = 0;
   private cornerStartRetryTimer?: ReturnType<typeof setTimeout>;
+  /** Per corner, the requests whose start failure has already been said out loud. */
   private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
   private readonly standingCornerStartFaults = new Map<string, { configKey: string; error: unknown }>();
@@ -712,8 +714,10 @@ export class RoomRuntimeCoordinator {
     // still reconciles, and the per-turn currency check remains the net.
     this.options.daemonApi.setConfigChangedListener?.(() => {
       this.supervisor.configurationChanged();
+      const retryStarts = this.standingRuntimeStartFaults.size > 0;
       this.standingRuntimeStartFaults.clear();
-      for (const running of this.running.values()) running.body.configurationChanged();
+      if (retryStarts) this.wakeDiscovery();
+      for (const running of this.running.values()) running.body.configurationChanged?.();
       void this.scheduler
         .suspendIdle()
         .catch((error) => console.error('[body] config-change session restart failed', error));

@@ -422,8 +422,10 @@ export function reviewerDispatchCarriesHead(
 
 /**
  * The shared review-wake decision. True means this head was already verdicted,
- * already has a yes, or already has a review wake in flight, so another wake
+ * already has a yes, or already has a live review wake, so another wake
  * of a configured reviewer would hand them the same code again.
+ * A failed turn is not a verdict, and an expired claim is the handoff to the
+ * next reviewer on the list. Neither one keeps the head.
  * `createAgentCommand` applies it to every insert. `queueReviewerCommand`
  * applies it first so a refusal is not reported as a lost wake.
  */
@@ -447,7 +449,13 @@ export async function refuseVerdictedReviewerWake(
      JOIN rooms parent ON parent.id=corner.parent_id
      LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.room_id=$1 AND command.action='input'
-       AND command.state IN ('pending','claimed')
+       AND (command.state='pending'
+         OR (command.state='claimed' AND command.lease_expires_at>now()))
+       AND NOT EXISTS (
+         SELECT 1 FROM agent_turns turn
+         WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+           AND turn.request_id=command.turn_request_id AND turn.status='failed'
+       )
        AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
        AND (
          command.reason='corner_review_dispatch'

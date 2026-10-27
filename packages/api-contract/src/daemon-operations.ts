@@ -1313,6 +1313,11 @@ export type PostTurnReceiptInput = AgentRoomInput & {
   readonly promptBytes?: number;
   /** Sum of recorded prompt usage across every model call and attempt in this turn. */
   readonly totalInputTokens?: number;
+  /**
+   * Output tokens the harness reported for this turn. Optional, so an older
+   * daemon that omits it leaves the turn unmeasured instead of zero.
+   */
+  readonly outputTokens?: number;
   /** Calls included in the total, and calls whose usage was unavailable. */
   readonly modelCalls?: number;
   readonly modelCallsWithoutUsage?: number;

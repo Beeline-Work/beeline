@@ -13,8 +13,10 @@ import { QueryWindow } from './query-profile.js';
 import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
-import type { DaemonService } from './daemon-service.js';
-import type { LiveHub } from './live.js';
+import { claimAgentCommand, createAgentCommand } from './agent-command.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { dashboardCoreMetrics } from './operator-dashboard-core-metrics.js';
 
 const workspace = '10000000-0000-4000-8000-000000000801';
 const room = '20000000-0000-4000-8000-000000000801';
@@ -1059,4 +1061,515 @@ it('requires an owned agent reply strictly after the first retained production m
   expect(await counts()).toEqual([1, 1, 1, 1, 1]);
   await db.query(`UPDATE messages SET deleted_at=now() WHERE id='sequence-agent'`);
   expect(await counts()).toEqual([1, 1, 1, 0, 0]);
+});
+
+const coreWorkspace = '30000000-0000-4000-8000-000000000802';
+const coreRoom = '30000000-0000-4000-8000-000000000803';
+const secondWorkspace = '30000000-0000-4000-8000-000000000804';
+const coreMeasuredAt = '2026-10-27T16:00:00.000Z';
+const coreId = (n: number) => n.toString(16).padStart(64, '0');
+const coreAt = (day: string, hourUtc = 16) =>
+  `${day}T${String(hourUtc).padStart(2, '0')}:00:00.000Z`;
+
+function easternDay(instant = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(instant);
+}
+function shiftEasternDay(day: string, delta: number): string {
+  return new Date(Date.parse(`${day}T00:00:00.000Z`) + delta * 86_400_000).toISOString().slice(0, 10);
+}
+function corePoint<T extends { date: string }>(daily: T[], date: string): T {
+  const found = daily.find((row) => String(row.date).slice(0, 10) === date);
+  if (!found) throw new Error(`missing ${date}`);
+  return found;
+}
+
+describe('core metrics', () => {
+  const A = 1, B = 2, A1 = 3, A2 = 4, B1 = 5, INTERNAL = 6, BOTH = 7, ANDROID = 8;
+  const F = 9, G = 10, H = 11, I = 12, J = 13, K = 14, L = 15, NULL_INVITE = 16;
+  const STARTERS = 17, DELETED = 18, ROOM_INVITEE = 19, AGENT_INVITEE = 20;
+  const FREE = 30, G_AGENT = 31, H_AGENT = 32, J_AGENT = 33, K_AGENT = 34, L_AGENT = 35;
+  const ANDROID_AGENT = 36, INTERNAL_AGENT = 37, ANDROID_FREE = 38;
+
+  async function identity(n: number, kind: 'human' | 'agent', createdAt = '2020-01-01T00:00:00.000Z') {
+    await db.query(
+      `INSERT INTO identities(id,kind,name,created_at) VALUES($1,$2,$3,$4)`,
+      [coreId(n), kind, kind, createdAt],
+    );
+  }
+  async function join(n: number, ws: string, at?: string, invitedBy?: number) {
+    await db.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role,joined_at,invited_by)
+       VALUES($1,$2,'member',COALESCE($3::timestamptz, now()),$4)`,
+      [ws, coreId(n), at ?? null, invitedBy === undefined ? null : coreId(invitedBy)],
+    );
+  }
+  async function device(n: number, platform: 'ios' | 'android') {
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES($1,$2,$3,'physical')`,
+      [`core-push-${n}`, coreId(n), platform],
+    );
+  }
+  async function person(n: number, platform: 'ios' | 'android', createdAt?: string, ws = workspace) {
+    await identity(n, 'human', createdAt);
+    await join(n, ws);
+    await device(n, platform);
+  }
+  async function ownAgent(n: number, owner: number, opts?: { free?: boolean; roomMember?: boolean }) {
+    await identity(n, 'agent');
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [coreId(n), coreId(owner)]);
+    await join(n, workspace);
+    if (opts?.roomMember) {
+      await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [workspace, room, coreId(n)],
+      );
+    }
+    if (opts?.free) {
+      await db.query(
+        `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'sealed')`,
+        [coreId(n), workspace, coreId(owner)],
+      );
+    }
+  }
+  async function invite(key: string, personId: number, ws: string, at: string | null, onboarding = false) {
+    await db.query(
+      `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at,created_at,onboarding_room_id)
+       VALUES($1,$2,$3,now() + interval '7 days',$4,$5)`,
+      [key, ws, coreId(personId), at, onboarding ? room : null],
+    );
+  }
+  async function pairing(key: string, personId: number, ws: string, at: string | null) {
+    await db.query(
+      `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at,created_at)
+       VALUES($1,$2,$3,now() + interval '1 day',$4)`,
+      [key, ws, coreId(personId), at],
+    );
+  }
+  async function say(key: string, author: number, at: string, roomId = room) {
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,'hello',$4)`,
+      [key, roomId, coreId(author), at],
+    );
+  }
+  async function repoCard(
+    key: string, personId: number, at: string, kind: 'repository' | 'starters', roomId = room, deleted = false,
+  ) {
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at,deleted_at)
+       VALUES($1,$2,$3,'repository','card','repository-onboarding',$4::jsonb,$5,$6)`,
+      [key, roomId, coreId(personId), JSON.stringify({ kind, requesterId: coreId(personId) }), at, deleted ? at : null],
+    );
+  }
+
+  it('counts the five operator metrics, drops internal workspaces, and keeps unknown history null', async () => {
+    await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Internal',true)`, [coreWorkspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Internal')`, [coreRoom, coreWorkspace]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Second')`, [secondWorkspace]);
+    await db.query(
+      `UPDATE operator_metric_epochs SET started_at=$1 WHERE metric IN ('invite','agent_pairing')`,
+      ['2026-10-01T16:00:00.000Z'],
+    );
+    await person(A, 'ios');
+    await person(B, 'ios');
+    await person(BOTH, 'ios');
+    await join(BOTH, coreWorkspace);
+    await person(INTERNAL, 'ios', coreAt('2026-10-20'), coreWorkspace);
+    await person(ANDROID, 'android', coreAt('2026-10-20'));
+    await person(NULL_INVITE, 'ios');
+    await person(STARTERS, 'ios');
+    await person(DELETED, 'ios');
+    await person(F, 'ios', coreAt('2026-10-20'));
+    await person(G, 'ios', coreAt('2026-10-20'));
+    await person(H, 'ios', coreAt('2026-10-26'));
+    await person(I, 'ios', coreAt('2026-10-20'));
+    await person(J, 'ios', coreAt('2026-10-20'));
+    await person(K, 'ios');
+    await person(L, 'ios');
+    for (const [n, at] of [[A1, coreAt('2026-10-21')], [A2, coreAt('2026-10-21')], [B1, coreAt('2026-10-21')]] as const) {
+      await identity(n, 'human');
+      await join(n, workspace, at, n === B1 ? B : A);
+    }
+    await identity(ROOM_INVITEE, 'human');
+    await db.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,joined_at,invited_by)
+       VALUES($1,$2,$3,'member',$4,$5)`,
+      [workspace, room, coreId(ROOM_INVITEE), coreAt('2026-10-21'), coreId(A)],
+    );
+    await identity(AGENT_INVITEE, 'agent');
+    await join(AGENT_INVITEE, workspace, coreAt('2026-10-21'), A);
+
+    await invite('a-oct1', A, workspace, coreAt('2026-10-01', 12));
+    await invite('a-oct19', A, workspace, coreAt('2026-10-19'));
+    await invite('a-oct20', A, workspace, coreAt('2026-10-20'));
+    await invite('a-onboarding', A, workspace, coreAt('2026-10-20'), true);
+    await invite('a-oct21', A, workspace, coreAt('2026-10-21'));
+    await invite('a-oct22', A, workspace, coreAt('2026-10-22'));
+    await invite('a-sept', A, workspace, coreAt('2026-09-15'));
+    await invite('a-null', A, workspace, null);
+    await invite('b-oct20', B, workspace, coreAt('2026-10-20'));
+    await invite('both-internal', BOTH, coreWorkspace, coreAt('2026-10-20'));
+    await invite('internal-only', INTERNAL, coreWorkspace, coreAt('2026-10-20'));
+    await invite('android', ANDROID, workspace, coreAt('2026-10-20'));
+    await invite('null-only', NULL_INVITE, workspace, null);
+
+    await ownAgent(FREE, F, { free: true });
+    await ownAgent(G_AGENT, G);
+    await ownAgent(H_AGENT, H);
+    await ownAgent(J_AGENT, J);
+    await ownAgent(K_AGENT, K, { roomMember: true });
+    await ownAgent(L_AGENT, L);
+    await ownAgent(ANDROID_AGENT, ANDROID);
+    await ownAgent(INTERNAL_AGENT, INTERNAL, { free: true });
+    await ownAgent(ANDROID_FREE, ANDROID, { free: true });
+    await say('f-reply', FREE, coreAt('2026-10-20'));
+    await say('f-return', F, coreAt('2026-10-21'));
+    await say('g-reply', G_AGENT, coreAt('2026-10-20'));
+    await say('g-internal-return', G, coreAt('2026-10-21'), coreRoom);
+    await say('h-reply', H_AGENT, coreAt('2026-10-26'));
+    await say('h-return', H, coreAt('2026-10-27'));
+    await say('j-internal-reply', J_AGENT, coreAt('2026-10-20'), coreRoom);
+    await say('internal-reply', INTERNAL_AGENT, coreAt('2026-10-20'), coreRoom);
+    await say('android-reply', ANDROID_AGENT, coreAt('2026-10-20'));
+
+    await pairing('k-oct1', K, workspace, coreAt('2026-10-01', 12));
+    await pairing('k-oct20-a', K, workspace, coreAt('2026-10-20'));
+    await pairing('k-oct20-b', K, workspace, coreAt('2026-10-20'));
+    await pairing('k-oct21', K, workspace, coreAt('2026-10-21'));
+    await pairing('k-oct22', K, workspace, coreAt('2026-10-22'));
+    await pairing('k-sept', K, workspace, coreAt('2026-09-15'));
+    await pairing('k-null', K, workspace, null);
+    await pairing('both-internal', BOTH, coreWorkspace, coreAt('2026-10-20'));
+    await pairing('android', ANDROID, workspace, coreAt('2026-10-20'));
+    await pairing('internal', INTERNAL, coreWorkspace, coreAt('2026-10-20'));
+    for (const [n, agentId, at, revoked] of [
+      [1, K_AGENT, coreAt('2026-10-21'), false],
+      [2, K_AGENT, coreAt('2026-10-22'), false],
+      [3, L_AGENT, coreAt('2026-10-20'), true],
+      [4, L_AGENT, coreAt('2026-10-22'), false],
+      [5, L_AGENT, coreAt('2026-10-23'), false],
+      [6, FREE, coreAt('2026-10-20'), false],
+      [7, ANDROID_AGENT, coreAt('2026-10-21'), false],
+      [8, INTERNAL_AGENT, coreAt('2026-10-21'), false],
+    ] as const) {
+      await db.query(
+        `INSERT INTO daemon_tokens(token_hash,agent_id,created_at,revoked_at) VALUES($1,$2,$3,$4)`,
+        [n.toString(16).padStart(64, 'd'), coreId(agentId), at, revoked ? at : null],
+      );
+    }
+
+    await repoCard('k-card-19', K, coreAt('2026-10-19'), 'repository');
+    await repoCard('k-card-20a', K, coreAt('2026-10-20'), 'repository');
+    await repoCard('k-card-20b', K, coreAt('2026-10-20'), 'repository');
+    await repoCard('k-starters', K, coreAt('2026-10-20'), 'starters');
+    await repoCard('starters-only', STARTERS, coreAt('2026-10-20'), 'starters');
+    await repoCard('deleted', DELETED, coreAt('2026-10-20'), 'repository', room, true);
+    await repoCard('internal-card', BOTH, coreAt('2026-10-20'), 'repository', coreRoom);
+    await repoCard('android-card', ANDROID, coreAt('2026-10-20'), 'repository');
+    await repoCard('internal-person-card', INTERNAL, coreAt('2026-10-20'), 'repository', coreRoom);
+    for (const [ws, at] of [
+      [workspace, coreAt('2026-10-21')],
+      [secondWorkspace, coreAt('2026-10-21')],
+      [coreWorkspace, coreAt('2026-10-21')],
+    ] as const) {
+      await db.query(
+        `INSERT INTO repository_link_successes(identity_id,workspace_id,first_linked_at) VALUES($1,$2,$3)`,
+        [coreId(K), ws, at],
+      );
+    }
+    await db.query(
+      `INSERT INTO repository_link_successes(identity_id,workspace_id,first_linked_at) VALUES($1,$2,$3)`,
+      [coreId(ANDROID), workspace, coreAt('2026-10-21')],
+    );
+
+    const daemon = new DaemonService(db, new LiveHub());
+    const receipt = async (
+      requestId: string,
+      tokens: { inputTokens?: number; totalInputTokens?: number; outputTokens?: number },
+    ) => {
+      await db.query(
+        `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent')`,
+        [requestId, room, coreId(K)],
+      );
+      const command = await createAgentCommand(db, {
+        roomId: room,
+        agentId: coreId(K_AGENT),
+        sourceMessageId: requestId,
+        reason: 'human_tag',
+      });
+      await claimAgentCommand(db, room, coreId(K_AGENT), command!.id, 'core-generation');
+      await daemon.execute('postAgentTurnReceipt', {
+        roomId: room,
+        requestId,
+        status: 'complete',
+        generationId: 'core-generation',
+        agentId: coreId(K_AGENT),
+        ...tokens,
+      }, coreId(K_AGENT));
+    };
+    await receipt('core-measured', { inputTokens: 10, totalInputTokens: 1000, outputTokens: 200 });
+    await receipt('core-bare', {});
+    await receipt('core-bad', { totalInputTokens: 1.5, outputTokens: -1 });
+    await db.query(`UPDATE agent_turns SET created_at=$2 WHERE request_id=$1`, ['core-measured', coreAt('2026-10-20')]);
+    await db.query(`UPDATE agent_turns SET created_at=$2 WHERE request_id=$1`, ['core-bare', coreAt('2026-10-21')]);
+    await db.query(`UPDATE agent_turns SET created_at=$2 WHERE request_id=$1`, ['core-bad', coreAt('2026-10-21')]);
+    for (const [request, agentId, at, input, output, roomId] of [
+      ['sql-unmeasured', K_AGENT, coreAt('2026-10-20'), null, null, room],
+      ['sql-oct26', K_AGENT, coreAt('2026-10-26'), 200, null, room],
+      ['sql-oct27', K_AGENT, coreAt('2026-10-27'), 300, 100, room],
+      ['sql-free', FREE, coreAt('2026-10-20'), 5000, 0, room],
+      ['sql-internal', K_AGENT, coreAt('2026-10-20'), 9999, 0, coreRoom],
+      ['sql-android', ANDROID_AGENT, coreAt('2026-10-20'), 7777, 0, room],
+    ] as const) {
+      await db.query(
+        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at,input_tokens,output_tokens)
+         VALUES($1,$2,$3,'complete',$4,$5,$6)`,
+        [roomId, request, coreId(agentId), at, input, output],
+      );
+    }
+    for (const [agentId, at, tokens, kind] of [
+      [FREE, coreAt('2026-10-20'), 100, 'model_usage'],
+      [FREE, coreAt('2026-10-20'), 50, 'model_usage'],
+      [FREE, coreAt('2026-10-20'), 'nope', 'model_usage'],
+      [FREE, coreAt('2026-10-20'), 5000, 'sleep'],
+      [FREE, coreAt('2026-10-26'), 100, 'model_usage'],
+      [FREE, coreAt('2026-10-27'), 200, 'model_usage'],
+      [INTERNAL_AGENT, coreAt('2026-10-20'), 999, 'model_usage'],
+      [ANDROID_FREE, coreAt('2026-10-20'), 888, 'model_usage'],
+    ] as const) {
+      await db.query(
+        `INSERT INTO free_agent_events(agent_id,kind,at,detail) VALUES($1,$2,$3,$4::jsonb)`,
+        [coreId(agentId), kind, at, JSON.stringify({ tokens })],
+      );
+    }
+
+    const stored = await db.query<{ request_id: string; input_tokens: number | null; output_tokens: number | null }>(
+      `SELECT request_id,input_tokens,output_tokens FROM agent_turns
+       WHERE request_id IN ('core-measured','core-bare','core-bad') ORDER BY request_id`,
+    );
+    expect(stored.rows).toEqual([
+      { request_id: 'core-bad', input_tokens: null, output_tokens: null },
+      { request_id: 'core-bare', input_tokens: null, output_tokens: null },
+      { request_id: 'core-measured', input_tokens: 1000, output_tokens: 200 },
+    ]);
+
+    const metrics = await dashboardCoreMetrics(db, ['ios'], coreMeasuredAt);
+    expect(metrics.invites.state).toBe('measured');
+    expect(metrics.onboarding.state).toBe('measured');
+    expect(metrics.ownAgents.state).toBe('measured');
+    expect(metrics.repositories.state).toBe('measured');
+    expect(metrics.tokens.state).toBe('measured');
+    if (metrics.invites.state !== 'measured' || metrics.onboarding.state !== 'measured'
+      || metrics.ownAgents.state !== 'measured' || metrics.repositories.state !== 'measured'
+      || metrics.tokens.state !== 'measured') return;
+
+    const invites = metrics.invites.data;
+    const onboarding = metrics.onboarding.data;
+    const own = metrics.ownAgents.data;
+    const repos = metrics.repositories.data;
+    const tokens = metrics.tokens.data;
+    expect(invites.daily).toHaveLength(90);
+    expect(invites.since).toBe('2026-10-01T16:00:00.000Z');
+    expect(own.since).toBe('2026-10-01T16:00:00.000Z');
+    expect(corePoint(invites.daily, '2026-09-15')).toMatchObject({ inviters: null, invitesAccepted: 0 });
+    expect(corePoint(invites.daily, '2026-10-01')).toMatchObject({ inviters: 1, invitesAccepted: 0 });
+    expect(corePoint(invites.daily, '2026-10-02')).toMatchObject({ inviters: 0, invitesAccepted: 0 });
+    expect(corePoint(invites.daily, '2026-10-19')).toMatchObject({ inviters: 1 });
+    expect(corePoint(invites.daily, '2026-10-20')).toMatchObject({ inviters: 2, invitesAccepted: 0 });
+    expect(corePoint(invites.daily, '2026-10-21')).toMatchObject({ inviters: 1, invitesAccepted: 2 });
+    expect(corePoint(invites.daily, '2026-10-22')).toMatchObject({ inviters: 1 });
+    expect(corePoint(invites.daily, '2026-10-27')).toMatchObject({ inviters: 0, invitesAccepted: 0 });
+    expect(invites.prior7).toEqual({ inviters: 2, invitesAccepted: 0 });
+    expect(invites.last7).toEqual({ inviters: 1, invitesAccepted: 2 });
+
+    expect(corePoint(onboarding.daily, '2026-10-20')).toEqual({
+      date: '2026-10-20', completedOnboarding: 2, returnedNextDay: 1, eligible: 2,
+    });
+    expect(corePoint(onboarding.daily, '2026-10-26')).toEqual({
+      date: '2026-10-26', completedOnboarding: 1, returnedNextDay: 0, eligible: 0,
+    });
+    expect(corePoint(onboarding.daily, '2026-10-02')).toMatchObject({
+      completedOnboarding: 0, returnedNextDay: 0, eligible: 0,
+    });
+    expect(onboarding.prior7).toEqual({ completedOnboarding: 2, returnedNextDay: 1, eligible: 2 });
+    expect(onboarding.last7).toEqual({ completedOnboarding: 1, returnedNextDay: 0, eligible: 0 });
+
+    expect(corePoint(own.daily, '2026-09-15')).toMatchObject({ connectAttempted: null, connectSucceeded: 0 });
+    expect(corePoint(own.daily, '2026-10-01')).toMatchObject({ connectAttempted: 1, connectSucceeded: 0 });
+    expect(corePoint(own.daily, '2026-10-02')).toMatchObject({ connectAttempted: 0, connectSucceeded: 0 });
+    expect(corePoint(own.daily, '2026-10-20')).toMatchObject({ connectAttempted: 1, connectSucceeded: 0 });
+    expect(corePoint(own.daily, '2026-10-21')).toMatchObject({ connectAttempted: 1, connectSucceeded: 1 });
+    expect(corePoint(own.daily, '2026-10-22')).toMatchObject({ connectAttempted: 1, connectSucceeded: 1 });
+    expect(own.prior7).toEqual({ connectAttempted: 1, connectSucceeded: 0 });
+    expect(own.last7).toEqual({ connectAttempted: 1, connectSucceeded: 2 });
+
+    expect(corePoint(repos.daily, '2026-10-19')).toMatchObject({ linkAttempted: 1, linkSucceeded: 0 });
+    expect(corePoint(repos.daily, '2026-10-20')).toMatchObject({ linkAttempted: 1, linkSucceeded: 0 });
+    expect(corePoint(repos.daily, '2026-10-21')).toMatchObject({ linkAttempted: 0, linkSucceeded: 1 });
+    expect(corePoint(repos.daily, '2026-10-02')).toMatchObject({ linkAttempted: 0, linkSucceeded: 0 });
+    expect(repos.prior7).toEqual({ linkAttempted: 1, linkSucceeded: 0 });
+    expect(repos.last7).toEqual({ linkAttempted: 0, linkSucceeded: 1 });
+
+    expect(corePoint(tokens.daily, '2026-10-20')).toEqual({
+      date: '2026-10-20', freeAgentTokens: 150, ownAgentTokens: 1200, ownAgentTurnsUnmeasured: 1,
+    });
+    expect(corePoint(tokens.daily, '2026-10-21')).toEqual({
+      date: '2026-10-21', freeAgentTokens: 0, ownAgentTokens: null, ownAgentTurnsUnmeasured: 2,
+    });
+    expect(corePoint(tokens.daily, '2026-10-02')).toEqual({
+      date: '2026-10-02', freeAgentTokens: 0, ownAgentTokens: 0, ownAgentTurnsUnmeasured: 0,
+    });
+    expect(corePoint(tokens.daily, '2026-10-26')).toMatchObject({ freeAgentTokens: 100, ownAgentTokens: 200 });
+    expect(corePoint(tokens.daily, '2026-10-27')).toMatchObject({ freeAgentTokens: 200, ownAgentTokens: 400 });
+    expect(tokens.prior7).toEqual({ freeAgentTokens: 150, ownAgentTokens: 1200, ownAgentTurnsUnmeasured: 1 });
+    expect(tokens.last7).toEqual({ freeAgentTokens: 300, ownAgentTokens: 600, ownAgentTurnsUnmeasured: 2 });
+    expect(tokens.change).toEqual({
+      freeAgentTokens: { dayOverDay: 1, weekOverWeek: 1 },
+      ownAgentTokens: { dayOverDay: 1, weekOverWeek: -0.5 },
+    });
+    const body = JSON.stringify(metrics);
+    for (const n of [A, B, F, K, INTERNAL, ANDROID, NULL_INVITE]) expect(body).not.toContain(coreId(n));
+  }, 30_000);
+
+  it('leaves one failed core metric unavailable and keeps the others', async () => {
+    const original = db.query.bind(db);
+    vi.spyOn(db, 'query').mockImplementation((sql, values) => {
+      if (String(sql).includes('core-metric:invites')) return Promise.reject(new Error(secret));
+      return original(sql, values);
+    });
+    const metrics = await dashboardCoreMetrics(db, ['ios'], coreMeasuredAt);
+    expect(metrics.invites).toEqual({ state: 'unavailable', measuredAt: null });
+    expect(metrics.tokens.state).toBe('measured');
+    expect(metrics.onboarding.state).toBe('measured');
+    expect(JSON.stringify(metrics)).not.toContain(secret);
+  });
+
+  it('shows today on GET /v1/admin/dashboard and leaves yesterday unknown', async () => {
+    const human = '1'.repeat(64);
+    const internal = '2'.repeat(64);
+    const forgotten = '3'.repeat(64);
+    await db.query(
+      `INSERT INTO identities(id,kind,name) VALUES($1,'human','Person'),($2,'human','Internal'),($3,'human','Forgotten')`,
+      [human, internal, forgotten],
+    );
+    await db.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member'),($1,$3,'member')`,
+      [workspace, human, forgotten],
+    );
+    await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Internal',true)`, [coreWorkspace]);
+    await db.query(
+      `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`,
+      [coreWorkspace, internal],
+    );
+    await db.query(
+      `INSERT INTO push_devices(token,identity_id,platform,environment)
+       VALUES('core-http-1',$1,'ios','physical'),('core-http-2',$2,'ios','physical'),('core-http-3',$3,'ios','physical')`,
+      [human, internal, forgotten],
+    );
+    await db.query(
+      `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at)
+       VALUES('core-http-live',$1,$2,now() + interval '1 day')`,
+      [workspace, human],
+    );
+    await db.query(
+      `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at,created_at)
+       VALUES('core-http-null',$1,$2,now() + interval '1 day',NULL)`,
+      [workspace, forgotten],
+    );
+    await db.query(
+      `INSERT INTO invites(token_hash,workspace_id,created_by,expires_at)
+       VALUES('core-http-internal',$1,$2,now() + interval '1 day')`,
+      [coreWorkspace, internal],
+    );
+    const response = await get('?platforms=ios');
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload.schemaVersion).toBe(1);
+    const invites = payload.coreMetrics.invites;
+    expect(invites.state).toBe('measured');
+    expect(payload.coreMetrics.onboarding.state).toBe('measured');
+    expect(payload.coreMetrics.ownAgents.state).toBe('measured');
+    expect(payload.coreMetrics.repositories.state).toBe('measured');
+    expect(payload.coreMetrics.tokens.state).toBe('measured');
+    expect(invites.data.daily).toHaveLength(90);
+    const today = easternDay();
+    const todayPoint = corePoint(invites.data.daily, today);
+    expect(todayPoint.inviters).toBe(1);
+    expect(todayPoint.invitesAccepted).toBe(0);
+    expect(corePoint(invites.data.daily, shiftEasternDay(today, -1)).inviters).toBeNull();
+    expect(invites.data.prior7.inviters).toBeNull();
+    expect(invites.data.last7.inviters).toBe(1);
+    const body = JSON.stringify(payload);
+    expect(body).not.toContain(human);
+    expect(body).not.toContain(internal);
+    expect(body).not.toContain(forgotten);
+    expect(body).not.toContain(secret);
+  }, 30_000);
+
+  it('Reproduction CORE-OWN-WEEK: an unmeasured own-agent week stays null on the dashboard', async () => {
+    const human = 41;
+    const agent = 42;
+    const internal = 43;
+    const internalAgent = 44;
+    const today = easternDay();
+    const priorDay = shiftEasternDay(today, -10);
+    const measuredPriorDay = shiftEasternDay(today, -8);
+    const quietDay = shiftEasternDay(today, -1);
+    await db.query(`INSERT INTO workspaces(id,name,internal) VALUES($1,'Internal',true)`, [coreWorkspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Internal')`, [coreRoom, coreWorkspace]);
+    await person(human, 'ios');
+    await ownAgent(agent, human);
+    await person(internal, 'ios', undefined, coreWorkspace);
+    await ownAgent(internalAgent, internal);
+    const turn = (requestId: string, agentId: number, roomId: string, at: string, input: number | null, output: number | null) =>
+      db.query(
+        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at,input_tokens,output_tokens)
+         VALUES($1,$2,$3,'complete',$4,$5,$6)`,
+        [roomId, requestId, coreId(agentId), at, input, output],
+      );
+    await turn('week-today', agent, room, coreAt(today), null, null);
+    await turn('week-prior', agent, room, coreAt(priorDay), null, null);
+    await turn('week-internal', internalAgent, coreRoom, coreAt(today), 9999, 1);
+
+    const readTokens = async () => {
+      const response = await get('?platforms=ios');
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.coreMetrics.tokens.state).toBe('measured');
+      const body = JSON.stringify(payload);
+      expect(body).not.toContain(coreId(human));
+      expect(body).not.toContain(coreId(internal));
+      return payload.coreMetrics.tokens.data;
+    };
+
+    const unmeasured = await readTokens();
+    expect(corePoint(unmeasured.daily, today)).toMatchObject({
+      ownAgentTokens: null, ownAgentTurnsUnmeasured: 1, freeAgentTokens: 0,
+    });
+    expect(corePoint(unmeasured.daily, priorDay)).toMatchObject({
+      ownAgentTokens: null, ownAgentTurnsUnmeasured: 1,
+    });
+    expect(corePoint(unmeasured.daily, quietDay)).toMatchObject({
+      ownAgentTokens: 0, ownAgentTurnsUnmeasured: 0,
+    });
+    expect(unmeasured.last7).toMatchObject({ ownAgentTokens: null, ownAgentTurnsUnmeasured: 1 });
+    expect(unmeasured.prior7).toMatchObject({ ownAgentTokens: null, ownAgentTurnsUnmeasured: 1 });
+    expect(unmeasured.change.ownAgentTokens).toEqual({ dayOverDay: null, weekOverWeek: null });
+
+    await turn('week-prior-measured', agent, room, coreAt(measuredPriorDay), 80, 20);
+    const mixedPrior = await readTokens();
+    expect(mixedPrior.last7.ownAgentTokens).toBeNull();
+    expect(mixedPrior.prior7).toMatchObject({ ownAgentTokens: 100, ownAgentTurnsUnmeasured: 1 });
+    expect(mixedPrior.change.ownAgentTokens.weekOverWeek).toBeNull();
+
+    await turn('week-zero', agent, room, coreAt(today), 0, 0);
+    const measuredZero = await readTokens();
+    expect(corePoint(measuredZero.daily, today)).toMatchObject({
+      ownAgentTokens: 0, ownAgentTurnsUnmeasured: 1,
+    });
+    expect(measuredZero.last7).toMatchObject({ ownAgentTokens: 0, ownAgentTurnsUnmeasured: 1 });
+    expect(measuredZero.prior7.ownAgentTokens).toBe(100);
+    expect(measuredZero.change.ownAgentTokens.weekOverWeek).toBe(-1);
+  }, 60_000);
 });

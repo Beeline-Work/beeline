@@ -445,6 +445,8 @@ describe('agent reply completion latency', () => {
         status: 'complete',
         generationId: GENERATION,
         inputTokens: 30_000,
+        totalInputTokens: 45_000,
+        outputTokens: 800,
         promptBytes: 60_000,
         toolCalls: 7,
       },
@@ -466,11 +468,11 @@ describe('agent reply completion latency', () => {
     expect(
       (
         await database.query(
-          `SELECT tool_calls FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
+          `SELECT tool_calls,input_tokens,output_tokens FROM agent_turns WHERE room_id=$1 AND request_id=$2`,
           [ROOM, request],
         )
       ).rows[0],
-    ).toEqual({ tool_calls: 7 });
+    ).toEqual({ tool_calls: 7, input_tokens: 45_000, output_tokens: 800 });
     expect(
       (
         await database.query(

@@ -1184,6 +1184,15 @@ ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS tool_calls integer;
 ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_tool_calls_check;
 ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_tool_calls_check
   CHECK (tool_calls IS NULL OR tool_calls >= 0);
+-- Optional harness token totals. Null means the daemon did not report a figure.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS input_tokens integer;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS output_tokens integer;
+ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_input_tokens_check;
+ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_input_tokens_check
+  CHECK (input_tokens IS NULL OR input_tokens >= 0);
+ALTER TABLE agent_turns DROP CONSTRAINT IF EXISTS agent_turns_output_tokens_check;
+ALTER TABLE agent_turns ADD CONSTRAINT agent_turns_output_tokens_check
+  CHECK (output_tokens IS NULL OR output_tokens >= 0);
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS started_at timestamptz;
 UPDATE agent_turns SET started_at=created_at WHERE started_at IS NULL;
 ALTER TABLE agent_turns ALTER COLUMN started_at SET DEFAULT now();
@@ -2156,6 +2165,10 @@ WHERE w.id='8556a9be-d929-41e7-a0ef-d70af452a494' AND w.visibility='public'
   AND NOT EXISTS(SELECT 1 FROM invites i WHERE i.workspace_id=w.id AND i.public_token IS NOT NULL)
 ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END,m.identity_id LIMIT 1
 ON CONFLICT DO NOTHING;
+-- Existing invites stay null. There is no backfill; operator_metric_epochs
+-- records when creation counts start.
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS created_at timestamptz;
+ALTER TABLE invites ALTER COLUMN created_at SET DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   code_hash text PRIMARY KEY,
@@ -2166,6 +2179,8 @@ CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   claimed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS agent_pairing_codes_workspace_idx ON agent_pairing_codes(workspace_id);
+ALTER TABLE agent_pairing_codes ADD COLUMN IF NOT EXISTS created_at timestamptz;
+ALTER TABLE agent_pairing_codes ALTER COLUMN created_at SET DEFAULT now();
 
 -- Workspace-owned bytes, independent of expiring Room attachments.
 CREATE TABLE IF NOT EXISTS avatars (
@@ -2265,6 +2280,8 @@ CREATE TABLE IF NOT EXISTS operator_metric_epochs (
   started_at timestamptz NOT NULL DEFAULT now()
 );
 INSERT INTO operator_metric_epochs(metric) VALUES('repository_link') ON CONFLICT DO NOTHING;
+INSERT INTO operator_metric_epochs(metric) VALUES('invite') ON CONFLICT DO NOTHING;
+INSERT INTO operator_metric_epochs(metric) VALUES('agent_pairing') ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS github_user_tokens (
   subject text PRIMARY KEY,
@@ -3246,6 +3263,36 @@ export async function migrate(
     database, 'memberships_operator_invited_history_idx',
     `CREATE INDEX CONCURRENTLY memberships_operator_invited_history_idx
      ON memberships(joined_at,invited_by) WHERE room_id IS NULL AND invited_by IS NOT NULL`,
+  ));
+  await retryMigrationStep('operator invite creation index', () => createIndexConcurrently(
+    database, 'invites_operator_created_idx',
+    `CREATE INDEX CONCURRENTLY invites_operator_created_idx
+     ON invites(created_at,created_by) WHERE created_at IS NOT NULL`,
+  ));
+  await retryMigrationStep('operator pairing code creation index', () => createIndexConcurrently(
+    database, 'agent_pairing_codes_operator_created_idx',
+    `CREATE INDEX CONCURRENTLY agent_pairing_codes_operator_created_idx
+     ON agent_pairing_codes(created_at,created_by) WHERE created_at IS NOT NULL`,
+  ));
+  await retryMigrationStep('operator turn token index', () => createIndexConcurrently(
+    database, 'agent_turns_operator_tokens_idx',
+    `CREATE INDEX CONCURRENTLY agent_turns_operator_tokens_idx
+     ON agent_turns(created_at,agent_id) INCLUDE (input_tokens,output_tokens)`,
+  ));
+  await retryMigrationStep('operator repository link index', () => createIndexConcurrently(
+    database, 'repository_link_successes_operator_linked_idx',
+    `CREATE INDEX CONCURRENTLY repository_link_successes_operator_linked_idx
+     ON repository_link_successes(first_linked_at,identity_id)`,
+  ));
+  await retryMigrationStep('operator repository card index', () => createIndexConcurrently(
+    database, 'messages_repository_onboarding_idx',
+    `CREATE INDEX CONCURRENTLY messages_repository_onboarding_idx
+     ON messages(created_at) WHERE card_type='repository-onboarding' AND deleted_at IS NULL`,
+  ));
+  await retryMigrationStep('operator unrevoked daemon token index', () => createIndexConcurrently(
+    database, 'daemon_tokens_unrevoked_created_idx',
+    `CREATE INDEX CONCURRENTLY daemon_tokens_unrevoked_created_idx
+     ON daemon_tokens(agent_id,created_at) WHERE revoked_at IS NULL`,
   ));
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',

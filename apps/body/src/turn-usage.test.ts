@@ -65,7 +65,8 @@ describe('harness turn usage', () => {
     );
     await expect(readHarnessTurnUsage({ agentEnv, sessionId: SESSION_ID })).resolves.toEqual({
       inputTokens: 2_120 + 88_832,
-      totalInputTokens: 2_120 + 88_832, modelCalls: 1, modelCallsWithoutUsage: 0,
+      totalInputTokens: 2_120 + 88_832,
+      totalOutputTokens: 99, modelCalls: 1, modelCallsWithoutUsage: 0,
       model: 'z-ai/glm-5.3-flash',
     });
   });

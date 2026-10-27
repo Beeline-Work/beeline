@@ -3,7 +3,6 @@ import {
   INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
   INSTITUTIONAL_HISTORY_RESULT_MIN,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
-  INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
 } from '@beeline/api-contract/daemon';
 
 /** Canonical model-facing vocabulary. Internal route keys are never callable tools. */
@@ -640,7 +639,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "scope": {"type": "string", "enum": ["history", "memory"]},
         "query": {
           ...INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
-          "description": `1–500 characters. Memory scope also caps the query at ${INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes.`
+          "description": "1–500 characters."
         },
         "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX}
       },

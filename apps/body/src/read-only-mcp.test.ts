@@ -62,18 +62,18 @@ describe('canonical tool contracts', () => {
     expect(Check(schema('remember'),{kind:'fact',action:'delete',item_id:'item'})).toBe(false);
   });
 
-  it('keeps memory query byte limits inside the advertised schema and tool path', async () => {
+  it('keeps memory query character limits inside the advertised schema and tool path', async () => {
     const searchSchema = schema('search');
     const memoryQuery = (query: string) => ({ scope: 'memory', query, limit: 1 });
-    expect(searchSchema.properties.query.description).toMatch(/Memory scope .* 500 UTF-8 bytes/);
-    const withinCap = memoryQuery('🙂'.repeat(125));
-    const overCap = memoryQuery('🙂'.repeat(126));
+    expect(searchSchema.properties.query.description).toMatch(/1–500 characters/);
+    const withinCap = memoryQuery('🙂'.repeat(500));
+    const overCap = memoryQuery('🙂'.repeat(501));
 
-    expect(Buffer.byteLength(withinCap.query, 'utf8')).toBe(500);
+    expect(Buffer.byteLength(withinCap.query, 'utf8')).toBe(2_000);
     expect(Check(searchSchema, withinCap)).toBe(true);
-    expect(Buffer.byteLength(overCap.query, 'utf8')).toBeGreaterThan(500);
+    expect(Check(searchSchema, overCap)).toBe(false);
     await expect(callAgentTool('search', overCap, 'memory-search-over-cap'))
-      .rejects.toThrow(/query: memory scope allows at most 500 UTF-8 bytes/);
+      .rejects.toThrow(/query: at most 500 characters/);
   });
 
   it('separates assignment completion, feedback, discovery and execution', () => {

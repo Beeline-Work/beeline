@@ -142,11 +142,11 @@ describe('search_memory recall (institutional memory)', () => {
   });
   it('Reproduction search-refusal: memory query and limit errors name their allowed bounds', async () => {
     const command = await openCommand('invalid-search-fields', 'invalid-search-generation');
-    for (const query of ['', '  ', 'bad\0query', '🙂'.repeat(126)]) {
+    for (const query of ['', '  ', 'bad\0query', '🙂'.repeat(501)]) {
       await expect(searchInstitutionalMemory(database, command, {
         agentId: RONNIE, roomId: ROOM, query,
       }, async () => ({ outcome: 'disabled', ms: 0 })))
-        .rejects.toThrow(/query.*non-empty.*NUL.*500 UTF-8 bytes/i);
+        .rejects.toThrow(/query.*non-empty.*NUL.*500 characters/i);
     }
     for (const limit of [0, 11, 1.5, null]) {
       await expect(searchInstitutionalMemory(database, command, {
@@ -154,7 +154,7 @@ describe('search_memory recall (institutional memory)', () => {
       }, async () => ({ outcome: 'disabled', ms: 0 })))
         .rejects.toThrow(/limit.*integer from 1 to 10/i);
     }
-    for (const query of ['x'.repeat(500), '🙂'.repeat(125)]) {
+    for (const query of ['x'.repeat(500), '🙂'.repeat(126), '🙂'.repeat(500)]) {
       const result = await searchInstitutionalMemory(database, command, {
         agentId: RONNIE, roomId: ROOM, query, limit: 10,
       }, async () => ({ outcome: 'disabled', ms: 0 }));

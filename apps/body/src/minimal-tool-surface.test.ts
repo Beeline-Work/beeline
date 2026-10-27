@@ -314,12 +314,13 @@ describe('minimal agent surface', () => {
   });
   it('Reproduction search-refusal: names invalid fields and accepts advertised bounds', async () => {
     const schema = agentToolsFor(true, false).find(tool => tool.name === 'search')!.inputSchema;
+    const queryMaximum = (schema.properties as { query: { maxLength: number } }).query.maxLength;
     for (const [args, message] of [
       [{ scope: 'other', query: 'term' }, /scope.*history.*memory/i],
       [{ scope: 'history', query: '  ' }, /query/i],
       [{ scope: 'history', query: 'term', limit: 0 }, /limit.*1.*10/i],
-      [{ scope: 'memory', query: '🙂'.repeat(126) }, /query.*500.*UTF-8 bytes/i],
-      [{ scope: 'history', query: 'x'.repeat(501) }, /query.*1–500 characters/i],
+      [{ scope: 'history', query: 'x'.repeat(queryMaximum + 1) }, /query.*at most 500 characters/i],
+      [{ scope: 'memory', query: 'x'.repeat(queryMaximum + 1) }, /query.*at most 500 characters/i],
     ] as const) {
       await expect(callAgentTool('search', args, 'invalid')).rejects.toThrow(message);
     }
@@ -327,7 +328,7 @@ describe('minimal agent surface', () => {
 
     const accepted = [
       { scope: 'history', query: '🙂'.repeat(500), limit: 10 },
-      { scope: 'memory', query: '🙂'.repeat(125), limit: 1 },
+      { scope: 'memory', query: '🙂'.repeat(126), limit: 1 },
       { scope: 'memory', query: 'x'.repeat(500), limit: 10 },
     ];
     for (const args of accepted) {
@@ -335,6 +336,17 @@ describe('minimal agent surface', () => {
       await callAgentTool('search', args, 'valid');
     }
     expect(calls).toHaveLength(accepted.length);
+
+    for (const scope of ['history', 'memory'] as const) {
+      const acceptedBySchema = { scope, query: '🙂'.repeat(queryMaximum), limit: 10 };
+      const refusedBySchema = { scope, query: '🙂'.repeat(queryMaximum + 1), limit: 10 };
+      expect(Check(schema, acceptedBySchema)).toBe(true);
+      expect(Check(schema, refusedBySchema)).toBe(false);
+      await callAgentTool('search', acceptedBySchema, 'schema-boundary');
+      await expect(callAgentTool('search', refusedBySchema, 'schema-over-boundary'))
+        .rejects.toThrow(/query.*at most 500 characters/i);
+    }
+    expect(calls).toHaveLength(accepted.length + 2);
   });
   it('reads exact messages, revisions, procedures and bounded transcripts through existing authorities', async () => {
     await callAgentTool(

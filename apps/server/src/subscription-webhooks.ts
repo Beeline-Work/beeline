@@ -36,9 +36,11 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_webhook_outbox (
  message_id text NOT NULL,
  body text NOT NULL,
  attempts integer NOT NULL DEFAULT 0,
+ claimed_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now(),
  delivered_at timestamptz
 );
+ALTER TABLE rooms_mcp_webhook_outbox ADD COLUMN IF NOT EXISTS claimed_at timestamptz;
 CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_pending
  ON rooms_mcp_webhook_outbox(created_at) WHERE delivered_at IS NULL;
 CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_room ON rooms_mcp_webhook_outbox(room_id);

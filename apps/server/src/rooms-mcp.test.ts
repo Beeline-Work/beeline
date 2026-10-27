@@ -260,6 +260,38 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const ownId = JSON.parse((own.content as { text: string }[])[0]!.text).data.messageId as string;
     expect((await db.query('SELECT 1 FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, ownId])).rowCount).toBe(0);
   });
+  it('claims a pending delivery once so overlapping drains never double-post', async () => {
+    const { grant, member } = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/concurrent' WHERE id=$1`, [grant.clientId]);
+    // Drain earlier tests' backlog so only this delivery is pending.
+    await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} deliver once` }, USER);
+    let calls = 0;
+    let started!: () => void;
+    const firstStarted = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    // Only the first HTTP request is held open; a duplicate attempt returns at
+    // once, so an overlapping drain that re-claims the row is caught, not stuck.
+    const transport = (async () => {
+      calls++;
+      if (calls === 1) {
+        started();
+        await gate;
+      }
+      return new Response('', { status: 200 });
+    }) as unknown as typeof fetch;
+    const first = deliverMcpMemberWebhooks(db, transport);
+    await firstStarted;
+    // A second drain overlaps the first while its HTTP request is held open.
+    const overlapping = await deliverMcpMemberWebhooks(db, transport);
+    release();
+    expect(await first).toBe(1);
+    expect(overlapping).toBe(0);
+    expect(calls).toBe(1);
+    expect((await db.query('SELECT delivered_at FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rows[0]!.delivered_at).not.toBeNull();
+  });
   it('denies cross-user reads, searches, sends and corner reads without exposing private content', async () => {
     const { client } = await connected();
     for (const [name, args] of [

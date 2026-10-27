@@ -112,8 +112,11 @@ export async function recordMcpMemberWebhook(
 }
 
 /**
- * Best-effort delivery, one batch per maintenance cycle. The ledger row records
- * the outcome either way, and a refused call is not retried forever.
+ * Best-effort delivery, one batch per maintenance cycle. A delivery is claimed
+ * atomically before the HTTP request, so two drains never call the same pending
+ * row twice. The one-minute claim lease lets a crashed claim retry later, the
+ * ledger row records the outcome either way, and a refused call is not retried
+ * forever.
  */
 export async function deliverMcpMemberWebhooks(
   db: SqlDatabase,
@@ -124,13 +127,20 @@ export async function deliverMcpMemberWebhooks(
     call_id: string; member_id: string; room_id: string; message_id: string;
     body: string; callback_url: string | null;
   }>(
-    `SELECT outbox.call_id,outbox.member_id,outbox.room_id,outbox.message_id,outbox.body,
+    `WITH claimed AS (
+       UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
+       WHERE outbox.call_id IN (
+         SELECT candidate.call_id FROM rooms_mcp_webhook_outbox candidate
+         WHERE candidate.delivered_at IS NULL AND candidate.attempts<3
+           AND (candidate.claimed_at IS NULL OR candidate.claimed_at<now()-interval '1 minute')
+         ORDER BY candidate.created_at,candidate.call_id LIMIT $1
+         FOR UPDATE SKIP LOCKED)
+       RETURNING outbox.call_id,outbox.member_id,outbox.room_id,outbox.message_id,outbox.body)
+     SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
        client.callback_url
-     FROM rooms_mcp_webhook_outbox outbox
-     JOIN rooms_mcp_members member ON member.member_id=outbox.member_id
-     JOIN rooms_mcp_clients client ON client.id=member.client_id
-     WHERE outbox.delivered_at IS NULL AND outbox.attempts<3
-     ORDER BY outbox.created_at,outbox.call_id LIMIT $1`,
+     FROM claimed
+     JOIN rooms_mcp_members member ON member.member_id=claimed.member_id
+     JOIN rooms_mcp_clients client ON client.id=member.client_id`,
     [limit],
   );
   let delivered = 0;
@@ -147,10 +157,7 @@ export async function deliverMcpMemberWebhooks(
       });
       accepted = response.ok;
     } catch { accepted = false; }
-    await db.query(
-      `UPDATE rooms_mcp_webhook_outbox SET delivered_at=now(),attempts=attempts+1 WHERE call_id=$1`,
-      [row.call_id],
-    );
+    await db.query(`UPDATE rooms_mcp_webhook_outbox SET delivered_at=now() WHERE call_id=$1`, [row.call_id]);
     if (!accepted)
       await db.query(`UPDATE subscription_webhook_calls SET outcome='refused',reason='delivery failed' WHERE id=$1`, [row.call_id]);
     else delivered++;

@@ -292,6 +292,43 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(calls).toBe(1);
     expect((await db.query('SELECT delivered_at FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rows[0]!.delivered_at).not.toBeNull();
   });
+  it('claims each delivery at send time so a slow batch cannot go stale and double-post', async () => {
+    const { grant, member } = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/slow-batch' WHERE id=$1`, [grant.clientId]);
+    // Drain earlier tests' backlog so only this batch is pending.
+    await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const texts = ['batch one', 'batch two', 'batch three'];
+    for (const text of texts) await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} ${text}` }, USER);
+    const received: string[] = [];
+    let inFlight = '';
+    let started!: () => void;
+    const firstStarted = new Promise<void>(resolve => { started = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const transport = (async (_url: string, init: RequestInit) => {
+      const payload = JSON.parse(String(init.body)) as { text: string };
+      received.push(payload.text);
+      if (!inFlight) { inFlight = payload.text; started(); await gate; }
+      return new Response('', { status: 200 });
+    }) as unknown as typeof fetch;
+    const first = deliverMcpMemberWebhooks(db, transport);
+    await firstStarted;
+    // The first drain is still sending its first row. Backdate every other
+    // queued claim to simulate a batch that has outlived the one-minute lease.
+    const inFlightId = (await db.query<{ message_id: string }>(
+      'SELECT message_id FROM rooms_mcp_webhook_outbox WHERE body=$1 AND delivered_at IS NULL', [inFlight])).rows[0]!.message_id;
+    await db.query(
+      `UPDATE rooms_mcp_webhook_outbox SET claimed_at=now()-interval '2 minutes'
+       WHERE delivered_at IS NULL AND message_id<>$1`, [inFlightId]);
+    const overlapping = await deliverMcpMemberWebhooks(db, transport);
+    release();
+    await first;
+    // Each queued delivery is sent exactly once, by whichever drain claimed it.
+    expect(overlapping).toBe(2);
+    expect(received).toHaveLength(3);
+    for (const text of texts) expect(received.filter(body => body.endsWith(text))).toHaveLength(1);
+  });
   it('denies cross-user reads, searches, sends and corner reads without exposing private content', async () => {
     const { client } = await connected();
     for (const [name, args] of [

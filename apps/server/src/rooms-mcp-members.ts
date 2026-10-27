@@ -112,39 +112,41 @@ export async function recordMcpMemberWebhook(
 }
 
 /**
- * Best-effort delivery, one batch per maintenance cycle. A delivery is claimed
- * atomically before the HTTP request, so two drains never call the same pending
- * row twice. The one-minute claim lease lets a crashed claim retry later, the
- * ledger row records the outcome either way, and a refused call is not retried
- * forever.
+ * Best-effort delivery. Each pending delivery is claimed atomically immediately
+ * before its own HTTP request, never as a batch, so a slow batch cannot outlive
+ * its claim and two drains never call the same pending row twice. The
+ * one-minute claim lease only has to outlast one request (5s timeout); it lets
+ * a crashed claim retry later. The ledger row records the outcome either way,
+ * and a refused call is not retried forever.
  */
 export async function deliverMcpMemberWebhooks(
   db: SqlDatabase,
   transport: typeof fetch = fetch,
   limit = 50,
 ): Promise<number> {
-  const pending = await db.query<{
-    call_id: string; member_id: string; room_id: string; message_id: string;
-    body: string; callback_url: string | null;
-  }>(
-    `WITH claimed AS (
-       UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
-       WHERE outbox.call_id IN (
-         SELECT candidate.call_id FROM rooms_mcp_webhook_outbox candidate
-         WHERE candidate.delivered_at IS NULL AND candidate.attempts<3
-           AND (candidate.claimed_at IS NULL OR candidate.claimed_at<now()-interval '1 minute')
-         ORDER BY candidate.created_at,candidate.call_id LIMIT $1
-         FOR UPDATE SKIP LOCKED)
-       RETURNING outbox.call_id,outbox.member_id,outbox.room_id,outbox.message_id,outbox.body)
-     SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
-       client.callback_url
-     FROM claimed
-     JOIN rooms_mcp_members member ON member.member_id=claimed.member_id
-     JOIN rooms_mcp_clients client ON client.id=member.client_id`,
-    [limit],
-  );
   let delivered = 0;
-  for (const row of pending.rows) {
+  for (let index = 0; index < limit; index++) {
+    const claimed = await db.query<{
+      call_id: string; member_id: string; room_id: string; message_id: string;
+      body: string; callback_url: string | null;
+    }>(
+      `WITH claimed AS (
+         UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
+         WHERE outbox.call_id IN (
+           SELECT candidate.call_id FROM rooms_mcp_webhook_outbox candidate
+           WHERE candidate.delivered_at IS NULL AND candidate.attempts<3
+             AND (candidate.claimed_at IS NULL OR candidate.claimed_at<now()-interval '1 minute')
+           ORDER BY candidate.created_at,candidate.call_id LIMIT 1
+           FOR UPDATE SKIP LOCKED)
+         RETURNING outbox.call_id,outbox.member_id,outbox.room_id,outbox.message_id,outbox.body)
+       SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
+         client.callback_url
+       FROM claimed
+       JOIN rooms_mcp_members member ON member.member_id=claimed.member_id
+       JOIN rooms_mcp_clients client ON client.id=member.client_id`,
+    );
+    const row = claimed.rows[0];
+    if (!row) break;
     let accepted = false;
     try {
       if (!row.callback_url) throw new Error('no callback url');

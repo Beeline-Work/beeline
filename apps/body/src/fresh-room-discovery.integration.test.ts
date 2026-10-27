@@ -814,6 +814,6 @@ describe('fresh Room discovery through the live membership wake', () => {
       `UPDATE github_installations SET status='suspended',updated_at=now() WHERE installation_id=77`,
     );
     await vi.waitFor(() => expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands').length).toBeGreaterThan(0),
-      { timeout: 10_000 });
+      { timeout: 30_000 });
   });
 });

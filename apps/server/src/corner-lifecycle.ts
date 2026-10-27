@@ -1392,6 +1392,34 @@ export type CornerMergeGate = {
   open: boolean;
 };
 
+export type CornerMergeabilityInput = {
+  checks: string;
+  approved: boolean;
+  held: boolean;
+  holds: readonly { id: string; holderId?: string; holderName?: string | null }[];
+  archived: boolean;
+  expectedHeadSha?: string | null;
+  currentHeadSha: string;
+  mergeability?: string;
+};
+
+/** One verdict and refusal reason for both the checks read and merge command. */
+export function cornerMergeability(input: CornerMergeabilityInput) {
+  const reasons = [
+    input.archived ? 'the corner is closed' : '',
+    input.expectedHeadSha && input.expectedHeadSha !== input.currentHeadSha
+      ? 'PR head changed; checks and approval must match the corner head'
+      : '',
+    input.mergeability === 'draft' ? 'PR is a draft' : '',
+    input.checks !== 'passed' ? `checks are ${input.checks}` : '',
+    input.approved ? '' : 'no yes on this head',
+    input.held
+      ? `a hold stands${input.holds.length ? `: ${input.holds.map(hold => `${hold.id}${hold.holderName ? ` (${hold.holderName}, ${hold.holderId ?? ''})` : ''}`).join('; ')}` : ''}`
+      : '',
+  ].filter(Boolean);
+  return { mergeAllowed: reasons.length === 0, ...(reasons.length ? { blockedReason: reasons.join('; ') } : {}) };
+}
+
 /**
  * The merge gate for one exact PR head, minus the checks verdict (the caller
  * supplies that live from GitHub). Shared by `pr_checks_status` and the server

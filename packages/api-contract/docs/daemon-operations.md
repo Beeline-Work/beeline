@@ -73,6 +73,11 @@ parent Room's currently configured reviewer as `@handle`, or null), `reviewerExi
 sentence), `held`/`holds`, and `mergeAllowed`:
 
     mergeAllowed = checks === 'passed' && approved && !held
+                   && the live PR head matches the corner head && PR is not a draft
+
+The checks read and `mergeCorner` use the same mergeability decision and blocker text. A stale
+head, pending checks, missing yes, hold, closed corner, or draft PR therefore has one verdict and
+reason across both operations.
 
 A new commit cancels the yes because it is bound to the exact head; a brief edit does not. A
 hold is the only veto.

@@ -3843,6 +3843,8 @@ async function executeAgentOperation(
     }
     case 'offer_connector':
       return offerConnector(args);
+    case 'post_starter_welcome':
+      return JSON.stringify(await daemonExecute('postStarterWelcome', { ...await activeCommandContext() }));
     case 'post_room_invite':
       return JSON.stringify(await daemonExecute('postRoomInvite', { ...await activeCommandContext() }));
     case 'post_repository_card':

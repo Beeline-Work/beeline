@@ -7763,7 +7763,7 @@ export class PhoneService {
         const result = await answerRoomChoice(database, {
           choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
         }, { wake: !(game || explanation || invite) });
-        if (starter.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C' | 'D' });
+        if (starter.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C' | 'D', roomId: starter.room_id });
         if (explanation) await postStarterExplanation(database, starter.room_id, starter.agent_id);
         if (game) await postStarterGame(database, this.objects, starter.room_id, viewerId);
         if (invite) {
@@ -7780,14 +7780,14 @@ export class PhoneService {
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
     return this.database.transaction(
       async (database) => {
-        const starter = (await database.query<{ stage: string }>(
-          `SELECT m.card->>'starterOnboarding' stage FROM room_choices c JOIN messages m ON m.id=c.message_id
+        const starter = (await database.query<{ stage: string; room_id: string }>(
+          `SELECT c.room_id,m.card->>'starterOnboarding' stage FROM room_choices c JOIN messages m ON m.id=c.message_id
            WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
         )).rows[0];
         const result = await (
         (await settleWorkflowGate(database, { choiceId: input.choiceId, viewerId, skip: true })) ??
         skipRoomChoice(database, { choiceId: input.choiceId, viewerId }, { wake: !starter }));
-        if (starter?.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'welcome_skipped');
+        if (starter?.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'welcome_skipped', { roomId: starter.room_id });
         return result;
       },
     );

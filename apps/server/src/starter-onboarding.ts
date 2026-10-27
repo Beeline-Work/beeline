@@ -1,6 +1,6 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
-import { postRoomChoice } from './room-choice.js';
+import { postRoomChoice, skipRoomChoice } from './room-choice.js';
 import { readFile } from 'node:fs/promises';
 import { identityFaceDataUri } from './identity-face.js';
 import type { ObjectService } from './object-service.js';
@@ -54,7 +54,7 @@ export async function postStarterGame(database: SqlDatabase, objects: ObjectServ
     JSON.stringify([{ url: stored.url, name: stored.title, mimeType: stored.mimeType, size: stored.size }]),
   ]);
   await postStarterNextStep(database, roomId, game.ally.id);
-  await recordOnboardingEvent(database, userId, 'game_posted', { artifactId: stored.objectId });
+  await recordOnboardingEvent(database, userId, 'game_posted', { artifactId: stored.objectId, roomId });
 }
 
 const STARTER_EXPLANATION = `Most AI apps give you one assistant in a private chat. Beeline is a team.
@@ -70,8 +70,22 @@ const STARTER_OPTIONS = [
 ] as const;
 
 export async function postStarterWelcome(database: SqlDatabase, input: {
-  roomId: string; agentId: string; includeExplanation?: boolean;
+  roomId: string; agentId: string; includeExplanation?: boolean; manualUserId?: string;
 }) {
+  if (input.manualUserId) {
+    const previous = (await database.query<{ id: string }>(
+      `SELECT c.id FROM room_choices c JOIN messages m ON m.id=c.message_id
+       WHERE c.room_id=$1 AND c.agent_id=$2 AND c.status='open'
+       AND m.card->>'starterOnboarding' IN ('welcome','next') FOR UPDATE OF c`, [input.roomId, input.agentId],
+    )).rows;
+    for (const choice of previous) await skipRoomChoice(database, {
+      choiceId: choice.id, viewerId: input.manualUserId,
+    }, { wake: false });
+  }
+  const inherited = input.includeExplanation === false ? (await database.query<{ card: Record<string, unknown> }>(
+    `SELECT card FROM messages WHERE room_id=$1 AND card->>'starterOnboarding'='welcome'
+     ORDER BY created_at DESC,id DESC LIMIT 1`, [input.roomId],
+  )).rows[0]?.card : undefined;
   const choice = await postRoomChoice(database, {
     roomId: input.roomId, agentId: input.agentId, mode: 'question',
     prompt: 'What should we do first?',
@@ -79,6 +93,13 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
       .map(option => ({ ...option, consequence: option.label })),
   });
   await database.query(`UPDATE messages SET created_at=clock_timestamp(),card=card || '{"starterOnboarding":"welcome"}'::jsonb WHERE id=$1`, [choice.messageId]);
+  if (inherited?.onboardingManual) await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [choice.messageId,
+    JSON.stringify({ onboardingManual: true, onboardingUserId: inherited.onboardingUserId, onboardingRunId: inherited.onboardingRunId })]);
+  if (input.manualUserId) {
+    await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [choice.messageId,
+      JSON.stringify({ onboardingManual: true, onboardingUserId: input.manualUserId, onboardingRunId: randomUUID() })]);
+    await recordOnboardingEvent(database, input.manualUserId, 'welcome_shown', { roomId: input.roomId });
+  }
   return choice;
 }
 

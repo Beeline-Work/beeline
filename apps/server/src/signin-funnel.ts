@@ -22,7 +22,21 @@ function funnelAccountHash(identityId: string) {
 }
 
 export async function recordOnboardingEvent(database: SqlDatabase, identityId: string, event: OnboardingEvent,
-  detail: { option?: 'A' | 'B' | 'C' | 'D'; durationMs?: number; artifactId?: string } = {}) {
+  detail: { option?: 'A' | 'B' | 'C' | 'D'; durationMs?: number; artifactId?: string; roomId?: string } = {}) {
+  const { roomId, ...eventDetail } = detail;
+  if (roomId) {
+    const manual = (await database.query<{ run_id: string }>(
+      `SELECT card->>'onboardingRunId' run_id FROM messages
+       WHERE room_id=$1 AND card->>'starterOnboarding'='welcome'
+       ORDER BY created_at DESC,id DESC LIMIT 1`, [roomId],
+    )).rows[0];
+    if (manual?.run_id) {
+      await database.query(`INSERT INTO signin_funnel_installs(install_id,internal) VALUES($1,true) ON CONFLICT DO NOTHING`, [manual.run_id]);
+      await recordSigninFunnelEvent(database, { event, installId: manual.run_id, attemptId: manual.run_id,
+        platform: 'web', version: 'manual', environment: 'production', timestamp: new Date().toISOString(), ...eventDetail }, 'server', identityId);
+      return;
+    }
+  }
   const context = (await database.query<{ install_id: string; attempt_id: string; platform: SigninFunnelEvent['platform']; version: string }>(
     `SELECT e.install_id,e.attempt_id,e.platform,e.version FROM signin_funnel_installs i
      JOIN signin_funnel_events e ON e.install_id=i.install_id
@@ -38,7 +52,7 @@ export async function recordOnboardingEvent(database: SqlDatabase, identityId: s
   await recordSigninFunnelEvent(database, {
     event, installId: context.install_id, attemptId: context.attempt_id,
     platform: context.platform, version: context.version, environment: 'production',
-    timestamp: new Date().toISOString(), ...detail,
+    timestamp: new Date().toISOString(), ...eventDetail,
   }, 'server', identityId);
 }
 
@@ -52,15 +66,15 @@ export async function observeOnboardingMessage(database: SqlDatabase, roomId: st
   )).rows;
   const owner = team[0]?.owner_id;
   if (owner && identityId === owner) {
-    await recordOnboardingEvent(database, owner, 'user_answered');
-    await recordOnboardingEvent(database, owner, 'task_question');
+    await recordOnboardingEvent(database, owner, 'user_answered', { roomId });
+    await recordOnboardingEvent(database, owner, 'task_question', { roomId });
     const welcome = (await database.query<{ age: string }>(
       `SELECT EXTRACT(epoch FROM now()-min(e.occurred_at)) age FROM signin_funnel_events e
        JOIN signin_funnel_installs i ON i.install_id=e.install_id WHERE i.account_hash=$1 AND e.event='welcome_shown'`,
       [funnelAccountHash(owner)],
     )).rows[0];
-    if (Number(welcome?.age) >= 86_400) await recordOnboardingEvent(database, owner, 'returned_day_1');
-    if (Number(welcome?.age) >= 7 * 86_400) await recordOnboardingEvent(database, owner, 'returned_day_7');
+    if (Number(welcome?.age) >= 86_400) await recordOnboardingEvent(database, owner, 'returned_day_1', { roomId });
+    if (Number(welcome?.age) >= 7 * 86_400) await recordOnboardingEvent(database, owner, 'returned_day_7', { roomId });
   } else if (owner && depth !== undefined) {
     const peerHandles = [...typedMentionHandles(text)].map(handle => handle.toLowerCase());
     const mentionsPeer = peerHandles.length > 0 && (await database.query(
@@ -69,30 +83,30 @@ export async function observeOnboardingMessage(database: SqlDatabase, roomId: st
        AND lower(btrim(i.handle,'@'))=ANY($3::text[]) LIMIT 1`, [roomId, identityId, peerHandles],
     )).rowCount > 0;
     if (depth === 0) {
-      await recordOnboardingEvent(database, owner, 'task_first_answer');
+      await recordOnboardingEvent(database, owner, 'task_first_answer', { roomId });
       if (mentionsPeer)
-        await recordOnboardingEvent(database, owner, 'task_review_requested');
+        await recordOnboardingEvent(database, owner, 'task_review_requested', { roomId });
     }
-    if (!mentionsPeer && (depth === 0 || depth >= 2)) await recordOnboardingEvent(database, owner, 'task_final_answer');
+    if (!mentionsPeer && (depth === 0 || depth >= 2)) await recordOnboardingEvent(database, owner, 'task_final_answer', { roomId });
   }
   const inviter = (await database.query<{ created_by: string }>(
     `SELECT created_by FROM invites WHERE onboarding_room_id=$1 AND onboarding_friend_id=$2 LIMIT 1`, [roomId, identityId],
   )).rows[0];
-  if (inviter) await recordOnboardingEvent(database, inviter.created_by, 'invite_friend_messaged');
+  if (inviter) await recordOnboardingEvent(database, inviter.created_by, 'invite_friend_messaged', { roomId });
 }
 
 export async function observeOnboardingInvite(database: SqlDatabase, tokenHash: string, viewerId?: string, joined = false) {
-  const invite = (await database.query<{ created_by: string; onboarding_created_at: string | Date }>(
-    `SELECT created_by,onboarding_created_at FROM invites WHERE token_hash=$1 AND onboarding_room_id IS NOT NULL`, [tokenHash],
+  const invite = (await database.query<{ created_by: string; onboarding_room_id: string; onboarding_created_at: string | Date }>(
+    `SELECT created_by,onboarding_room_id,onboarding_created_at FROM invites WHERE token_hash=$1 AND onboarding_room_id IS NOT NULL`, [tokenHash],
   )).rows[0];
   if (!invite || invite.created_by === viewerId) return;
-  await recordOnboardingEvent(database, invite.created_by, 'invite_opened');
+  await recordOnboardingEvent(database, invite.created_by, 'invite_opened', { roomId: invite.onboarding_room_id });
   if (joined && viewerId) {
     await database.query(`UPDATE invites SET onboarding_friend_id=$2 WHERE token_hash=$1`, [tokenHash, viewerId]);
     if ((await database.query(`SELECT 1 FROM signin_funnel_installs i JOIN signin_funnel_events e ON e.install_id=i.install_id
       JOIN identities person ON person.id=$3 WHERE i.account_hash=$1 AND e.event='signup'
         AND person.created_at >= $2::timestamptz`, [funnelAccountHash(viewerId), invite.onboarding_created_at, viewerId])).rowCount)
-      await recordOnboardingEvent(database, invite.created_by, 'invite_friend_signed_up');
+      await recordOnboardingEvent(database, invite.created_by, 'invite_friend_signed_up', { roomId: invite.onboarding_room_id });
   }
 }
 export class FunnelRateLimit {
@@ -135,6 +149,35 @@ export async function recordSigninFunnelEvent(
   }
   if (source === 'client' && (['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event) || ONBOARDING_EVENTS.includes(event.event as never)) && !identityId) return;
   if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !['welcome_shown', 'game_viewer_opened', 'game_viewer_closed'].includes(event.event)) return;
+  if (source === 'client' && event.event === 'welcome_shown' && identityId) {
+    const latest = (await database.query<{ room_id: string; manual: boolean }>(
+      `SELECT latest.room_id,COALESCE((latest.card->>'onboardingManual')::boolean,false) manual
+       FROM memberships member CROSS JOIN LATERAL (
+         SELECT room_id,card,created_at,id FROM messages WHERE room_id=member.room_id
+         AND card->>'starterOnboarding'='welcome' ORDER BY created_at DESC,id DESC LIMIT 1
+       ) latest WHERE member.identity_id=$1 AND member.room_id IS NOT NULL AND member.removed_at IS NULL
+       ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1`, [identityId],
+    )).rows[0];
+    if (latest?.manual) {
+      await recordOnboardingEvent(database, identityId, 'welcome_shown', { roomId: latest.room_id });
+      return;
+    }
+  }
+  if (source === 'client' && ['game_viewer_opened', 'game_viewer_closed'].includes(event.event) && identityId
+    && event.artifactId && FUNNEL_UUID.test(event.artifactId)) {
+    const manual = (await database.query<{ install_id: string; attempt_id: string }>(
+      `SELECT e.install_id,e.attempt_id FROM signin_funnel_events e JOIN signin_funnel_installs i USING(install_id)
+       WHERE e.event='game_posted' AND e.artifact_id=$1::uuid AND e.version='manual' AND i.internal
+         AND EXISTS(SELECT 1 FROM memberships m JOIN messages welcome ON welcome.room_id=m.room_id
+           WHERE m.identity_id=$2 AND m.removed_at IS NULL
+             AND welcome.card->>'onboardingRunId'=e.install_id::text) LIMIT 1`, [event.artifactId, identityId],
+    )).rows[0];
+    if (manual) {
+      await recordSigninFunnelEvent(database, { ...event, installId: manual.install_id,
+        attemptId: manual.attempt_id, version: 'manual' }, 'server', identityId);
+      return;
+    }
+  }
   if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !(await database.query(
     `SELECT 1 FROM signin_funnel_installs WHERE install_id=$1 AND account_hash=$2`,
     [event.installId, funnelAccountHash(identityId!)],

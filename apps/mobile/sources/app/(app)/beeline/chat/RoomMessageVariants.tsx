@@ -435,8 +435,8 @@ export const ChoiceCard = React.memo(function ChoiceCard({
 }: ChoiceCardProps) {
   const card = message.choice!;
   React.useEffect(() => {
-    if (card.starterOnboarding === 'welcome') void funnelOnboarding('welcome_shown');
-  }, [card.choiceId, card.starterOnboarding]);
+    if (card.starterOnboarding === 'welcome' && !card.onboardingManual) void funnelOnboarding('welcome_shown');
+  }, [card.choiceId, card.starterOnboarding, card.onboardingManual]);
   const display =
     card.agent.kind === 'agent' ? resolveAgentDisplayIdentity(card.agent.pubkey, agent) : null;
   const agentName = display && agent ? display.name : card.agent.name;

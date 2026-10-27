@@ -200,6 +200,11 @@ export function generateAgentKeypair(): { secretKey: string; publicKey: string }
 export const FREE_AGENT_JOIN_GREETING =
   "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
 
+/** Owner-approved backfill greeting (approval relayed by Ruby, ae9a4279). */
+export const LUNA_BACKFILL_HELLO =
+  "Hi {name}, I'm Luna. I just joined your team. Beebee and I run on different AI models, so we can check each other's work. What should we do first?";
+export const LUNA_BACKFILL_HELLO_APPROVED = true;
+
 export const FREE_AGENT_HELLO =
   `@<owner> Hi, I'm Beebee, your free agent. I run on my own small cloud computer, so I can research, write, draft, build things and run code for you.
 

@@ -20,8 +20,10 @@ beforeEach(async () => {
 afterEach(() => {vi.unstubAllEnvs();vi.unstubAllGlobals();});
 it('discovers cards and Room invitations without an external connection and binds writes to the active turn',async()=>{
   const discovered=JSON.parse(await callAgentTool('app_tool',{app:'beeline:onboarding'},'discover'));
-  expect(discovered.tools.map((t:{name:string})=>t.name)).toEqual(['invite','repository','starters']);
+  expect(discovered.tools.map((t:{name:string})=>t.name)).toEqual(['welcome','invite','repository','starters']);
   calls.length = 0;
+  await callAgentTool('app_tool',{app:'beeline:onboarding',tool:'welcome',args:{}});
+  expect(calls.find(call => call.name === 'postStarterWelcome')!.input).toMatchObject({roomId:'room-1',requestId:'request-1',taskId:'command-1',generationId:context.generationId});
   for (const tool of ['repository','starters']) await callAgentTool('app_tool',{app:'beeline:onboarding',tool,args:{}});
   expect(calls.filter(call=>call.name === 'postRepositoryOnboarding').map(call=>call.name)).toEqual(['postRepositoryOnboarding','postRepositoryOnboarding']);
   expect(calls.filter(call=>call.name === 'postRepositoryOnboarding').map(call=>call.input.kind)).toEqual(['repository','starters']);

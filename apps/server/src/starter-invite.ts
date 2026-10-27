@@ -13,7 +13,7 @@ export async function postStarterInviteOffer(database: SqlDatabase, roomId: stri
   const messageId = randomBytes(32).toString('hex');
   await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
     [messageId, roomId, beebee?.agent_id ?? agentId, invite.message]);
-  await recordOnboardingEvent(database, personId, 'invite_shared');
+  await recordOnboardingEvent(database, personId, 'invite_shared', { roomId });
   return { ...invite, messageId };
 }
 
@@ -30,7 +30,7 @@ export async function createStarterInvite(database: SqlDatabase, roomId: string,
   const tokenHash = createHash('sha256').update(token).digest('hex');
   await database.query(`INSERT INTO invites(token_hash,workspace_id,created_by,expires_at,onboarding_room_id,onboarding_created_at)
     VALUES($1,$2,$3,now()+interval '7 days',$4,clock_timestamp())`, [tokenHash, room.workspace_id, personId, roomId]);
-  await recordOnboardingEvent(database, personId, 'invite_created');
+  await recordOnboardingEvent(database, personId, 'invite_created', { roomId });
   const url = new URL(`/join/${encodeURIComponent(token)}`, new URL(publicOrigin).hostname.endsWith('usebeeline.app') ? 'https://usebeeline.app' : publicOrigin).href;
   return { url, message: `Here's your invite link. Send it to anyone you want in this chat: ${url}` };
 }

@@ -1,3 +1,4 @@
+import { postStarterWelcome } from './starter-onboarding.js';
 import { visibleMessageSql } from './read-cursor.js';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
@@ -573,6 +574,7 @@ export class DaemonService {
       'executeAppTool',
       'postRepositoryOnboarding',
       'postRoomInvite',
+      'postStarterWelcome',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -1846,6 +1848,19 @@ export class DaemonService {
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postStarterWelcome': {
+        const request = input as Input<'postStarterWelcome'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const requester = await this.grantRequester();
+        const personId = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        if (!personId) throw new Error('Onboarding requester unavailable');
+        const result = await this.database.transaction(db => postStarterWelcome(db, {
+          roomId: request.roomId, agentId: authenticatedAgentId, manualUserId: personId,
+        }));
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message' });
+        return result as Output<Name>;
+      }
       case 'postRoomInvite': {
         const request = input as Input<'postRoomInvite'>;
         await this.access(request.roomId, authenticatedAgentId);
@@ -9181,6 +9196,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   requestAgentGrant: true,
   postRepositoryOnboarding: true,
   postRoomInvite: true,
+  postStarterWelcome: true,
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,

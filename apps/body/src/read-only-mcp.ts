@@ -41,6 +41,7 @@ import {
   wakeBatchMinutes,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
+  INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
   encodeArtifactTitleHeader,
   type ArtifactMimeType,
   type CornerRestoreResult,
@@ -2761,7 +2762,27 @@ function advertisedAgentTool(name: string): ToolDefinition {
 }
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
+  if (tool.name === 'search' && args.scope === 'memory' && typeof args.query === 'string' &&
+      Buffer.byteLength(args.query.trim(), 'utf8') > INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES) {
+    throw new Error(`search: query must be at most ${INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes for memory searches`);
+  }
   if (!Check(tool.inputSchema, args)) {
+    if (tool.name === 'search') {
+      const properties = asObject(tool.inputSchema.properties);
+      const required = new Set(tool.inputSchema.required as string[] | undefined);
+      const details = Object.entries(properties).flatMap(([field, rawSchema]) => {
+        if (args[field] === undefined) return required.has(field) ? [`${field}: required`] : [];
+        const rule = asObject(rawSchema);
+        if (Check(rule, args[field])) return [];
+        if (Array.isArray(rule.enum)) return [`${field}: expected one of ${(rule.enum as string[]).join(', ')}`];
+        if (field === 'query') return [`${field}: expected a non-whitespace string of 1–500 characters without NUL`];
+        if (field === 'limit') return [`${field}: expected an integer from ${rule.minimum} to ${rule.maximum}`];
+        return [`${field}: invalid value`];
+      });
+      const extra = Object.keys(args).filter(field => !Object.hasOwn(properties, field));
+      if (extra.length) details.push(`unknown fields: ${extra.join(', ')}; allowed fields: ${Object.keys(properties).join(', ')}`);
+      throw new Error(`search: invalid arguments; ${details.join('; ')}; follow the advertised schema`);
+    }
     if (tool.name === 'request_grant') {
       const properties = asObject(tool.inputSchema.properties);
       const branches = tool.inputSchema.anyOf as JsonObject[];

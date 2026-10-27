@@ -312,6 +312,29 @@ describe('minimal agent surface', () => {
     });
     expect(calls[3]!.input).toMatchObject({ itemIds: ['fact'], snapshotItems: [1] });
   });
+  it('Reproduction search-refusal: names invalid fields and accepts advertised bounds', async () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'search')!.inputSchema;
+    for (const [args, message] of [
+      [{ scope: 'other', query: 'term' }, /scope.*history.*memory/i],
+      [{ scope: 'history', query: '  ' }, /query/i],
+      [{ scope: 'history', query: 'term', limit: 0 }, /limit.*1.*10/i],
+      [{ scope: 'memory', query: '🙂'.repeat(126) }, /query.*500.*UTF-8 bytes/i],
+    ] as const) {
+      await expect(callAgentTool('search', args, 'invalid')).rejects.toThrow(message);
+    }
+    expect(calls).toEqual([]);
+
+    const accepted = [
+      { scope: 'history', query: '🙂'.repeat(500), limit: 10 },
+      { scope: 'memory', query: '🙂'.repeat(125), limit: 1 },
+      { scope: 'memory', query: 'x'.repeat(500), limit: 10 },
+    ];
+    for (const args of accepted) {
+      expect(Check(schema, args)).toBe(true);
+      await callAgentTool('search', args, 'valid');
+    }
+    expect(calls).toHaveLength(accepted.length);
+  });
   it('reads exact messages, revisions, procedures and bounded transcripts through existing authorities', async () => {
     await callAgentTool(
       'read',

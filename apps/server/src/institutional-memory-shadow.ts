@@ -963,11 +963,11 @@ export async function searchInstitutionalMemory(
     query.includes('\0') ||
     Buffer.byteLength(query, 'utf8') > INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES
   ) {
-    throw new Error('institutional memory search query is invalid');
+    throw new Error(`institutional memory query must be non-empty after trimming, contain no NUL, and be at most ${INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes`);
   }
   const limit = input.limit === undefined ? 5 : input.limit;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX) {
-    throw new Error('institutional memory search limit is invalid');
+    throw new Error('institutional memory limit must be an integer from 1 to 10');
   }
   const queryEmbedding = await withDeadline(embed, SEARCH_MEMORY_EMBEDDING_TIMEOUT_MS)(
     query, 'query');

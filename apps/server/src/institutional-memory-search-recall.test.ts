@@ -140,6 +140,27 @@ describe('search_memory recall (institutional memory)', () => {
       return {outcome:'disabled',ms:0};
     });
   });
+  it('Reproduction search-refusal: memory query and limit errors name their allowed bounds', async () => {
+    const command = await openCommand('invalid-search-fields', 'invalid-search-generation');
+    for (const query of ['', '  ', 'bad\0query', '🙂'.repeat(126)]) {
+      await expect(searchInstitutionalMemory(database, command, {
+        agentId: RONNIE, roomId: ROOM, query,
+      }, async () => ({ outcome: 'disabled', ms: 0 })))
+        .rejects.toThrow(/query.*non-empty.*NUL.*500 UTF-8 bytes/i);
+    }
+    for (const limit of [0, 11, 1.5, null]) {
+      await expect(searchInstitutionalMemory(database, command, {
+        agentId: RONNIE, roomId: ROOM, query: 'valid query', limit: limit as number,
+      }, async () => ({ outcome: 'disabled', ms: 0 })))
+        .rejects.toThrow(/limit.*integer from 1 to 10/i);
+    }
+    for (const query of ['x'.repeat(500), '🙂'.repeat(125)]) {
+      const result = await searchInstitutionalMemory(database, command, {
+        agentId: RONNIE, roomId: ROOM, query, limit: 10,
+      }, async () => ({ outcome: 'disabled', ms: 0 }));
+      expect(result.results).toBeInstanceOf(Array);
+    }
+  });
   it("finds the active requester profile fact for every one of Ronnie's real natural-language queries", async () => {
     const daemon = liveDaemon();
     await openCommand('cake-order-turn', 'cake-order-generation');

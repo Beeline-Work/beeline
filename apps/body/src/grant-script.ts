@@ -1,34 +1,90 @@
-import { accessSync, constants, statSync, readFileSync } from 'node:fs';
+import { COMMAND_WRAPPERS } from '@beeline/api-contract/agent-grants';
+import { accessSync, constants, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-/** Expand env split strings for inspection only; execution retains the original argv.
- * Grant targets exclude quoting, escapes and substitutions. Refuse those forms
- * here too rather than guess at GNU env's additional split-string syntax.
- */
-export function expandGrantEnvSplitStrings(input: readonly string[]): readonly string[] {
+/** Resolve GNU env options without changing the argv sent to the child. */
+export function resolveGrantCommand(input: readonly string[], cwd: string, env: NodeJS.ProcessEnv): {
+  argv: readonly string[]; cwd: string; env: NodeJS.ProcessEnv;
+} {
   const argv = [...input];
+  let result = { ...env };
   let head = 0;
-  let expansions = 0;
-  while (argv[head]?.split('/').pop() === 'env') {
-    head += 1;
+  const noValue = ['ignore-environment', 'null', 'debug', 'list-signal-handling', 'help', 'version'];
+  const required = ['unset', 'chdir', 'argv0', 'split-string'];
+  const optional = ['block-signal', 'default-signal', 'ignore-signal'];
+  const names = [...noValue, ...required, ...optional];
+  while (COMMAND_WRAPPERS.has(argv[head]?.split('/').pop() ?? '')) {
+    const wrapper = argv[head++]!.split('/').pop();
+    if (wrapper !== 'env') {
+      // Preserve the contract's existing traversal of other command wrappers.
+      while (head < argv.length - 1 && (argv[head]!.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[head]!) || /^\d+$/.test(argv[head]!))) head += 1;
+      continue;
+    }
+    let clear = false;
+    const unset: string[] = [];
+    let directory: string | undefined;
+    const apply = (name: string, value?: string) => {
+      if (name === 'ignore-environment') clear = true;
+      if (name === 'unset') unset.push(value!);
+      if (name === 'chdir') directory = value;
+    };
     while (head < argv.length) {
       const word = argv[head]!;
       if (word === '--') { head += 1; break; }
-      if (word === '-S' || word === '--split-string' || word.startsWith('-S') || word.startsWith('--split-string=')) {
-        const separate = word === '-S' || word === '--split-string';
-        const value = separate ? argv[head + 1] : word.startsWith('-S') ? word.slice(2) : word.slice('--split-string='.length);
-        if (!value || /[^a-zA-Z0-9_./:=,+% @-]/.test(value) || ++expansions > 32) {
+      if (word === '-' || !word.startsWith('-')) break;
+      let split: string | undefined;
+      if (word.startsWith('--')) {
+        const equal = word.indexOf('=');
+        const name = word.slice(2, equal < 0 ? undefined : equal);
+        const matches = names.includes(name) ? [name] : names.filter(candidate => candidate.startsWith(name));
+        if (matches.length !== 1) throw new Error(`env rejects unknown or ambiguous option: ${word}`);
+        const full = matches[0]!;
+        let value = equal < 0 ? undefined : word.slice(equal + 1);
+        if (noValue.includes(full) && value !== undefined) throw new Error(`env option does not take a value: ${word}`);
+        if (required.includes(full) && value === undefined) value = argv[++head];
+        if (required.includes(full) && value === undefined) throw new Error(`env option is missing its operand: ${word}`);
+        if (full === 'help' || full === 'version') return { argv: [], cwd, env: result };
+        apply(full, value);
+        if (full === 'split-string') split = value;
+      } else {
+        for (let index = 1; index < word.length; index += 1) {
+          const flag = word[index]!;
+          const name = ({ i: 'ignore-environment', '0': 'null', v: 'debug', u: 'unset', C: 'chdir', a: 'argv0', S: 'split-string' } as Record<string, string>)[flag];
+          if (!name) throw new Error(`env rejects unknown option: -${flag}`);
+          let value: string | undefined;
+          if (required.includes(name)) {
+            value = word.slice(index + 1) || argv[++head];
+            if (value === undefined) throw new Error(`env option is missing its operand: -${flag}`);
+            index = word.length;
+          }
+          apply(name, value);
+          if (name === 'split-string') split = value;
+        }
+      }
+      head += 1;
+      if (split !== undefined) {
+        // The command grant grammar forbids shell quoting and substitutions.
+        // Retain the authorized literal split-string subset at execution too.
+        if (/[^a-zA-Z0-9_./:=,+% @-]/.test(split)) {
           throw new Error('Cannot safely resolve env wrapper options: unsupported split string.');
         }
-        argv.splice(head, separate ? 2 : 1, ...value.trim().split(/ +/));
-        continue;
+        argv.splice(head, 0, ...(split.trim() ? split.trim().split(/ +/) : []));
       }
-      if (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(word)) head += 2;
-      else if (word.startsWith('-') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) head += 1;
-      else break;
     }
+    // GNU env treats a bare dash after options as ignore-environment too.
+    if (argv[head] === '-') { clear = true; head += 1; }
+    if (clear) result = {};
+    for (const name of unset) delete result[name];
+    // Assignments are operands: subsequent dash-prefixed words are commands.
+    while (head < argv.length && argv[head]!.includes('=')) {
+      const assignment = argv[head++]!;
+      const equal = assignment.indexOf('=');
+      result[assignment.slice(0, equal)] = assignment.slice(equal + 1);
+    }
+    // Only the final -C applies, relative to this env invocation's incoming cwd.
+    if (directory !== undefined) cwd = resolve(cwd, directory);
   }
-  return argv;
+  return { argv: argv.slice(head), cwd, env: result };
 }
 
 /** Resolve the first executable file exactly in the child execution PATH. */
@@ -56,62 +112,11 @@ export function isNativeGrantExecutable(bytes: Buffer): boolean {
     (bytes[0] === 0x4d && bytes[1] === 0x5a); // Windows PE
 }
 
-/** Apply the env wrapper context before inspecting a native candidate. */
-function grantExecutionContext(argv: readonly string[], candidateIndex: number, env: NodeJS.ProcessEnv, cwd: string, nativeOptions = false): { env: NodeJS.ProcessEnv; cwd: string } {
-  const result = { ...env };
-  for (let index = 0; index < candidateIndex; index += 1) {
-    if (argv[index]!.split('/').pop() !== 'env') continue;
-    let directory: string | undefined;
-    index += 1;
-    if (argv[index] === '--') index += 1;
-    while (index < candidateIndex) {
-      const word = argv[index]!;
-      if (nativeOptions && (word === '-i' || word === '--ignore-environment')) {
-        for (const name of Object.keys(result)) delete result[name];
-        index += 1;
-        continue;
-      }
-      if (word === '--') { index += 1; continue; }
-      if (nativeOptions && (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(word) ||
-          /^--(?:unset|chdir|argv0)=/.test(word) || /^-[uCa].+/.test(word))) {
-        const separate = ['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(word);
-        const value = separate ? argv[++index] : word.startsWith('--') ? word.slice(word.indexOf('=') + 1) : word.slice(2);
-        if (value === undefined) throw new Error('env wrapper option is missing its operand');
-        if (word.startsWith('-u') || word.startsWith('--unset')) delete result[value];
-        if (word.startsWith('-C') || word.startsWith('--chdir')) directory = value;
-        index += 1;
-        continue;
-      }
-      if (word.startsWith('-')) {
-        throw new Error('Cannot safely resolve env wrapper options. Use env NAME=value command or request approval for the script directly.');
-      }
-      const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(word);
-      if (!assignment) break;
-      result[assignment[1]!] = assignment[2]!;
-      index += 1;
-    }
-    // env applies only its final chdir option, relative to the incoming cwd.
-    if (directory !== undefined) cwd = resolve(cwd, directory);
-    index -= 1;
-  }
-  return { env: result, cwd };
-}
-
-/** Detect native files with the wrapper environment before applying script refusals. */
+/** Resolve the file using the parsed execution environment and directory. */
 export function resolveGrantScriptExecutable(
-  argv: readonly string[],
-  argument: { index: number; path: string; direct?: true },
+  argument: { path: string; direct?: true },
   cwd: string,
   env: NodeJS.ProcessEnv,
-  read: (path: string) => Buffer = readFileSync,
 ): string | undefined {
-  if (argument.direct) {
-    try {
-      const nativeEnv = grantExecutionContext(argv, argument.index, env, cwd, true);
-      const candidate = resolveGrantExecutable(argument.path, nativeEnv.cwd, nativeEnv.env);
-      if (candidate && isNativeGrantExecutable(read(candidate))) return candidate;
-    } catch { /* Script resolution below retains the refusal for unsupported options. */ }
-  }
-  const scriptEnv = grantExecutionContext(argv, argument.index, env, cwd);
-  return argument.direct ? resolveGrantExecutable(argument.path, scriptEnv.cwd, scriptEnv.env) : resolve(scriptEnv.cwd, argument.path);
+  return argument.direct ? resolveGrantExecutable(argument.path, cwd, env) : resolve(cwd, argument.path);
 }

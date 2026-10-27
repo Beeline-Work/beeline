@@ -14,7 +14,7 @@ import {
   type AgentGrantDeps,
   type GrantRunDeps,
 } from './read-only-mcp.js';
-import { expandGrantEnvSplitStrings } from './grant-script.js';
+import { resolveGrantCommand } from './grant-script.js';
 import { approvedDeviceGrant } from './monolith-room-turn.js';
 
 function deps(
@@ -35,16 +35,29 @@ function deps(
 describe('beeline-agent request_grant', () => {
   it('expands literal env split strings without modifying execution argv', () => {
     const argv = ['env', '-S', 'bash approved.sh', 'argument'];
-    expect(expandGrantEnvSplitStrings(argv)).toEqual(['env', 'bash', 'approved.sh', 'argument']);
+    expect(resolveGrantCommand(argv, '/tmp', {}).argv).toEqual(['bash', 'approved.sh', 'argument']);
     expect(argv).toEqual(['env', '-S', 'bash approved.sh', 'argument']);
-    expect(expandGrantEnvSplitStrings(['env', '-u', 'PATH', '-S', '/bin/echo approved']))
-      .toEqual(['env', '-u', 'PATH', '/bin/echo', 'approved']);
+    expect(resolveGrantCommand(['env', '-u', 'PATH', '-S', '/bin/echo approved'], '/tmp', {}).argv)
+      .toEqual(['/bin/echo', 'approved']);
     for (const value of ['bash\\_changed.sh', 'bash ${SCRIPT}', 'bash "changed.sh"', 'bash #changed.sh']) {
-      expect(() => expandGrantEnvSplitStrings(['env', '-S', value])).toThrow('unsupported split string');
+      expect(() => resolveGrantCommand(['env', '-S', value], '/tmp', {})).toThrow('unsupported split string');
     }
   });
 
-  it.each(['-S', '--split-string', '--split-string=/bin/echo', '-S/bin/echo', '-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('requests a native env %s command without a script binding', async (option) => {
+  it('applies env options before assignments, keeps only the final chdir, and stops options at operands', () => {
+    expect(resolveGrantCommand(['env', '-viuFOO', '-C', '/elsewhere', '-C.', 'FOO=restored', '/bin/echo'], '/tmp', { FOO: 'old', OTHER: 'removed' }))
+      .toEqual({ argv: ['/bin/echo'], cwd: '/tmp', env: { FOO: 'restored' } });
+    expect(resolveGrantCommand(['env', '--', '-', 'FOO=x', '-v'], '/tmp', { OTHER: 'removed' }))
+      .toEqual({ argv: ['-v'], cwd: '/tmp', env: { FOO: 'x' } });
+    expect(resolveGrantCommand(['env', '--deb', '--split-string=', '/bin/echo'], '/tmp', {}).argv).toEqual(['/bin/echo']);
+    expect(resolveGrantCommand(['timeout', '5', 'env', '-C', 'nested', 'env', 'PATH=bin', 'chosen'], '/tmp', {}))
+      .toEqual({ argv: ['chosen'], cwd: '/tmp/nested', env: { PATH: 'bin' } });
+    for (const argv of [['env', '--not-an-option', '/bin/echo'], ['env', '-u'], ['env', '--debug=yes'], ['env', '--i']]) {
+      expect(() => resolveGrantCommand(argv, '/tmp', {})).toThrow(/env/);
+    }
+  });
+
+  it.each(['--debug', '-i -u FOO -C /tmp', '-v', '-iv', '-0', '--null', '--help', '--version', '--', '--list-signal-handling', '--block-signal=PIPE', '--default-signal', '--ignore-signal=PIPE', '-', '-S', '--split-string', '--split-string=/bin/echo', '-S/bin/echo', '-i', '-u PATH', '--unset=PATH', '-C /tmp', '--chdir=/tmp'])('requests a native env %s command without a script binding', async (option) => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     await requestGrant({ kind: 'command', target: `env ${option} /bin/echo approved`,
       purpose: 'Print approved', reason: 'Native command regression' }, {
@@ -461,6 +474,18 @@ describe('request_grant carries the script an interpreter will run', () => {
     writeFileSync(join(root, name), contents);
     return root;
   };
+
+  it.each(['-v', '-iv --', '--chdir=CHECKOUT', '-i -u FOO -C CHECKOUT', '--block-signal=PIPE', '--ignore-signal', '--default-signal='])('binds env %s scripts to the executed bytes', async (option) => {
+    const contents = '#!/bin/sh\nprintf approved\n';
+    const root = checkout(contents, 'script.sh');
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await requestGrant({ kind: 'command', target: `env ${option.replaceAll('CHECKOUT', root)} ./script.sh`,
+      purpose: 'Run reviewed script', reason: 'Wrapper hash regression' }, {
+      ...deps({ grantId: 'script', status: 'pending', auto: false }, ops), scriptRoots: [root],
+    });
+    expect(ops[0]!.input.script).toEqual({ path: './script.sh', contents, bytes: Buffer.byteLength(contents),
+      sha256: createHash('sha256').update(contents).digest('hex') });
+  });
 
   it('sends the file contents and its hash with the ask, and tells the agent so', async () => {
     const body = 'import os\nos.remove("/tmp/x")\n';

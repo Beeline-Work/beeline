@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { expandGrantEnvSplitStrings, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
+import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
@@ -1995,14 +1995,12 @@ export function readGrantScript(
   rule: CommandGrantRule,
   deps: AgentGrantDeps,
 ): CommandGrantScript | undefined {
-  const argv = expandGrantEnvSplitStrings(rule.argv);
-  const argument = interpreterScriptArgument(argv, true);
-  if (!argument) return undefined;
   const roots = deps.scriptRoots ?? [];
   if (!roots.length) return undefined;
-  const candidatePath = resolveGrantScriptExecutable(
-    argv, argument, roots[0]!, deps.scriptEnv ?? process.env, deps.readScript ?? readFileSync,
-  );
+  const context = resolveGrantCommand(rule.argv, roots[0]!, deps.scriptEnv ?? process.env);
+  const argument = interpreterScriptArgument(context.argv, true);
+  if (!argument) return undefined;
+  const candidatePath = resolveGrantScriptExecutable(argument, context.cwd, context.env);
   const executable = argument.direct ? candidatePath : undefined;
   if (argument.direct && !executable) return undefined;
   if (argument.direct) {
@@ -2016,7 +2014,7 @@ export function readGrantScript(
   }
   let resolved: string;
   try {
-    resolved = resolveAttachPath(roots, executable ?? argument.path);
+    resolved = resolveAttachPath(roots, candidatePath ?? argument.path);
   } catch (error) {
     // A script that exists but sits outside the checkout and the scratch cannot
     // be put in front of a human, so it is not approvable from here.

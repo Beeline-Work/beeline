@@ -1,4 +1,4 @@
-import { expandGrantEnvSplitStrings, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
+import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 /**
  * The command-kind grant runner (Agent Grants, slice 2).
  *
@@ -600,7 +600,7 @@ export class GrantCommandRunner {
     candidates: readonly string[],
     argv: readonly string[],
   ): Promise<void> {
-    argv = expandGrantEnvSplitStrings(argv);
+    argv = resolveGrantCommand(argv, '.', {}).argv;
     const argument = interpreterScriptArgument(argv, true);
     if (!argument) return;
     let bytes: Buffer | undefined;
@@ -637,10 +637,10 @@ function scriptCandidates(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
 ): string[] {
-  argv = expandGrantEnvSplitStrings(argv);
-  const argument = interpreterScriptArgument(argv, true);
+  const context = resolveGrantCommand(argv, cwd, env);
+  const argument = interpreterScriptArgument(context.argv, true);
   if (!argument) return [];
-  const path = resolveGrantScriptExecutable(argv, argument, cwd, env);
+  const path = resolveGrantScriptExecutable(argument, context.cwd, context.env);
   return path ? [path] : [];
 }
 

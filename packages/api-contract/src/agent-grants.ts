@@ -262,7 +262,7 @@ const INTERPRETER_COMMANDS = new Set([
 ]);
 
 /** Wrappers whose real command is an argument; the script lookup steps over them. */
-const COMMAND_WRAPPERS = new Set([
+export const COMMAND_WRAPPERS = new Set([
   'env',
   'xargs',
   'nohup',

@@ -1168,6 +1168,45 @@ describe('Room message variant components', () => {
     expect(onReply).not.toHaveBeenCalled();
   });
 
+  it('paints the corner swipe panel only while a swipe is under way (Reproduction R1)', () => {
+    // On Android the off-screen translation Swipeable uses to hide its panels
+    // can be lost, leaving the corner panel laid over the message text at rest.
+    vi.useFakeTimers();
+    try {
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={message({ id: 'rest' })} desktopLayout={false} participantsHydrated viewerPubkey="viewer"
+          speakerWorking={false} continued={false} participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
+          onChannelReference={vi.fn()} onReply={vi.fn()} onForwardToNewCorner={vi.fn()}
+          onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
+        />,
+      );
+      const swipe = () => renderer.root.findByType('Swipeable');
+      const flat = (style: unknown) =>
+        Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) as Record<string, number>;
+      const panel = () =>
+        render(swipe().props.renderLeftActions()).root.findByProps({ testID: 'corner-swipe-action-rest' });
+      const painted = () => flat(panel().props.style).opacity !== 0;
+      // Width stays reserved so Swipeable still measures the open distance.
+      expect(flat(panel().props.style).width).toBe(78);
+
+      expect(painted()).toBe(false);
+      act(() => swipe().props.onSwipeableOpenStartDrag('left'));
+      expect(painted()).toBe(true);
+      act(() => swipe().props.onSwipeableClose('left'));
+      expect(painted()).toBe(false);
+
+      // A committed swipe whose closing spring never reports its end.
+      act(() => swipe().props.onSwipeableWillOpen('left'));
+      act(() => vi.advanceTimersByTime(0));
+      act(() => swipe().props.onSwipeableWillClose('left'));
+      expect(painted()).toBe(true);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(painted()).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('leaves swipe right inert where no new corner can open', () => {
     const renderer = render(
       <OrdinaryLedgerMessage

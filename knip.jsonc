@@ -194,6 +194,10 @@
         "scripts/render-quiet-row-actions-proof.mjs",
         "scripts/capture-quiet-row-actions-web.mjs",
         "scripts/quiet-row-actions-{native,web}-proof.tsx",
+        // The corner swipe rest runbook invokes these CLIs; esbuild selects the entry by path.
+        "scripts/render-corner-swipe-rest-proof.mjs",
+        "scripts/capture-corner-swipe-rest-web.mjs",
+        "scripts/corner-swipe-rest-web-proof.tsx",
         // esbuild and Gradle load the header alignment proof entries by path.
         "scripts/render-header-alignment-proof.mjs",
         "scripts/header-alignment-proof/{native,web}.tsx",

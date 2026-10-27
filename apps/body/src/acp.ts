@@ -18,7 +18,6 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { watch, readFileSync, realpathSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { delimiter, dirname, isAbsolute } from 'node:path';
-import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { explainAgentProgramFailure } from './agent-command.js';
 import { piStartupEnvironment } from './pi-startup.js';
 import { PiSessionInstructions } from './pi-session-instructions.js';
@@ -953,18 +952,17 @@ export class AcpClient extends EventEmitter {
     this.resourceScope = this.useResourceScope && !this.resourceScopeUnavailable
       ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
     const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);
-    this.child = await withAdapterInstallLock(() =>
-      spawn(launch?.command ?? this.agentCommand, launch?.args ?? this.agentArgs, {
-        // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
-        // a real boundary, not a decorative one layered over a full inherit.
-        env: launch?.env ?? childEnv,
-        ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
-        // Managed Linux sessions use a cgroup scope. The process-group fallback
-        // covers helpers without a user systemd manager.
-        detached: !launch && process.platform !== 'win32',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }),
-    );
+    // Managed adapters are immutable; a candidate install never blocks sessions.
+    this.child = spawn(launch?.command ?? this.agentCommand, launch?.args ?? this.agentArgs, {
+      // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
+      // a real boundary, not a decorative one layered over a full inherit.
+      env: launch?.env ?? childEnv,
+      ...(this.agentCwd ? { cwd: this.agentCwd } : {}),
+      // Managed Linux sessions use a cgroup scope. The process-group fallback
+      // covers helpers without a user systemd manager.
+      detached: !launch && process.platform !== 'win32',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
     this.alive = true;
 
     this.stderrTail = '';

@@ -9,6 +9,7 @@ import { promisify } from 'node:util';
 import { decodeNsec, getPublicKey } from '@beeline/nostr';
 import { DEFAULT_ACCESS_POLICY, LEGACY_ACCESS_POLICY, type AgentAccessPolicy } from './access-policy.js';
 import { resolveAgentCommand, type AgentCommand, type AgentKind } from './agent-command.js';
+import { activeAdapterCommand } from './adapter-store.js';
 import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
 import type { SandboxPolicy } from './bwrap-sandbox.js';
 
@@ -120,7 +121,7 @@ export function runtimeAgentCommand(
   }
   return {
     kind: runtime.agentKind ?? 'reference',
-    command: runtime.agentCommand ?? runtime.agentBinary,
+    command: activeAdapterCommand(runtime.agentKind ?? '', env) ?? runtime.agentCommand ?? runtime.agentBinary,
     args: runtime.agentArgs ?? [],
   };
 }

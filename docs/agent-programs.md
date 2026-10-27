@@ -7,11 +7,38 @@ missing program ends the wizard with its name and installation command.
 Existing agents whose program was removed carry that same error through the
 ordinary Room turn receipt. No System message is added.
 
-The helper installs only separable ACP adapters with npm `@latest`, omitting
-optional bundled native harness binaries. Node/npm and agent programs belong to
-the operator. Workspace cache sharing remains, but the helper no longer creates
+The helper follows npm's latest release channel for Claude, Codex and Pi ACP
+adapters, waiting **24 hours from the npm registry publish time** before adoption.
+While the newest release ages, the newest eligible prior release is considered.
+Each candidate installs at an exact version in a unique prefix under
+`$XDG_DATA_HOME/beeline/adapters` (default `~/.local/share/beeline/adapters`),
+omitting optional bundled native harness binaries. It never replaces a global
+adapter or an already adopted prefix.
+
+Before promotion, `adapter-session-check.ts` runs the production `AcpClient`
+through `initialize` and `session/new`, including a system prompt, MCP declaration
+and harness-specific metadata, without a model prompt. Protocol version 1 must
+negotiate successfully; advertised capabilities are recorded, with optional
+features left optional. Package versions select releases, never compatibility.
+The runtime check uses the operator's installed program and existing environment;
+an authentication refusal fails the check just like any other session failure.
+
+A passing candidate atomically becomes the shared active command for every agent
+of that kind, including agents with older global paths in their runtime records.
+Already running sessions retain their original prefix. On failure, the working
+command stays selected, the failed version is remembered, and one helper error
+names the adapter, exact version and redacted cause. It uses the existing Sentry
+alert route (`/api/webhooks/sentry`) to the configured Telegram channel. Repeated
+starts and concurrent helpers sharing the adapter store do not repeat that alert
+or retry that version; the next published version gets a fresh check. A
+kernel-owned lock serializes installations and pointer writes, including Connect
+and pairing. Candidate installation does not block sessions on the working copy.
+Registry and npm failures leave the active command intact. No compatibility
+allowlist, package-version pin, or manual adoption gate is used.
+
+Node/npm and agent programs belong to the operator. Workspace cache sharing remains, but the helper no longer creates
 Workspace copies of adapters and harness CLIs. No toolchain manifest, Node or
-agent downloader, checksum store, or helper-owned program prefix is retained.
+agent downloader, checksum store, or helper-owned harness program prefix is retained.
 
 `loadBodyConfig` and Connect model probes explicitly set
 `CLAUDE_CODE_EXECUTABLE` to the discovered user `claude`, `CODEX_PATH` to the user
@@ -39,27 +66,40 @@ and [Claude adapter implementation](https://github.com/agentclientprotocol/claud
 
 ## Daily check
 
-The feedback-triage workflow's `adapters` step runs
-`node scripts/check-acp-adapters.mjs` after building Body. It installs the three
-latest adapters into temporary prefixes and uses the installed programs. Every
+The daily GitHub workflow `.github/workflows/acp-adapters.yml` and the
+feedback-triage workflow's `adapters` step run `node scripts/check-acp-adapters.mjs`
+after building Body. It installs the three latest adapters into temporary prefixes and uses the installed programs. Every
 check has private HOME/XDG/config/cache directories and an explicit environment
-without provider keys, logins, tokens or inherited Node options. It runs the
-production ACP client through `initialize` and `session/new`, never prompts a
-model, cleans up processes/files and returns versioned JSON results. Nonzero exit
+without provider keys, logins, tokens or inherited Node options. It uses the
+same session-start check as runtime adoption, deliberately bypasses
+the release-age delay to test the newest versions immediately, never prompts a
+model, cleans up processes/files and returns versioned JSON results including
+negotiated protocol and capabilities when initialization succeeds. Nonzero exit
 means findings must be assessed, not ignored. See the workflow procedure for the
 normal human approval and dispatch path.
 
 A refused unauthenticated session is a precise limitation, not evidence that a
-logged-in turn is broken. On the local run:
+logged-in turn is broken. The isolated run on 27 October 2026 reproduced the
+production request-shape failure:
 
 ```text
-@agentclientprotocol/codex-acp 2.2.2: initialize passed; session/new refused Authentication required
-@agentclientprotocol/claude-agent-acp 0.93.0: initialize and session/new passed
+@agentclientprotocol/codex-acp 2.3.0: initialize passed; session/new refused Invalid params (-32602)
+@agentclientprotocol/claude-agent-acp 0.97.0: initialize passed; session/new refused Invalid params (-32602)
 pi-acp 0.0.34: initialize passed; session/new refused Authentication required
 exit status: 1
 ```
 
-No login or credential was supplied to resolve those refusals.
+No login or credential was supplied to resolve those refusals. Authentication
+refusals remain failures in CI; a green check requires an actual successful
+session start, not just a successful initialize. The separate system-prompt wire
+fix is responsible for making the October releases pass; this update protection
+keeps the working command selected when a new release fails.
+
+Regression coverage: `adapter-update.test.ts` exercises failing and passing real
+ACP subprocesses for all three kinds, durable alert deduplication, the one-day
+boundary, partial installs, live command resolution and two independent helpers
+sharing one installation. `adapter-freshness.test.ts` covers update fan-out and
+session launches proceeding while a candidate holds the install lock.
 
 ## Reproduction installed-agent-add
 

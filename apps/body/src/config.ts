@@ -14,6 +14,7 @@ import {
   type AgentCommand,
   type AgentKind,
 } from './agent-command.js';
+import { activeAdapterCommand } from './adapter-store.js';
 import type { AgentAccessPolicy } from './access-policy.js';
 import type { ModelUnavailableState } from './model-availability.js';
 import type { ExternalMcpCapability } from './external-mcp-capabilities.js';
@@ -530,6 +531,11 @@ export function buildAgentEnv(
   return agentEnv;
 }
 
+/** Resolve again at each cold session so running helpers see successful promotions. */
+export function bodyAgentCommand(config: Pick<BodyConfig, 'agentKind' | 'agentCommand' | 'agentBinary' | 'agentEnv'>): string {
+  return activeAdapterCommand(config.agentKind ?? '', config.agentEnv) ?? config.agentCommand ?? config.agentBinary;
+}
+
 export function loadBodyConfig(opts: {
   workspaceRoot: string;
   llmEnvFile?: string;
@@ -537,7 +543,8 @@ export function loadBodyConfig(opts: {
   agent?: AgentCommand;
 }): BodyConfig {
   const env = opts.env ?? process.env;
-  const agent = opts.agent ?? resolveAgentCommand({ kind: 'reference', env });
+  const selected = opts.agent ?? resolveAgentCommand({ kind: 'reference', env });
+  const agent = { ...selected, command: activeAdapterCommand(selected.kind, env) ?? selected.command };
   const mcpBinary = resolveMcpBinary(env);
   const readonlyMcp = resolveReadonlyMcpCommand(env);
   const agentEnv = { ...buildAgentEnv(env, opts.llmEnvFile), ...installedAgentProgramEnvironment(agent.kind, env) };

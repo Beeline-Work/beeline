@@ -405,9 +405,6 @@ export async function handleFreeAgentModelRequest(
         : Array.isArray(message.content) ? message.content.map((part: { text?: string }) => part?.text ?? '').join('') : '';
       if (/data:[^\s,]+;base64,[a-z0-9+/=]{64}/i.test(content))
         throw new Error('free agent model requests do not support inline binary data');
-      if (Array.isArray(message.reasoning_details) && message.reasoning_details.some(
-        (detail: { type?: string }) => detail?.type === 'reasoning.encrypted'))
-        throw new Error('free agent model requests support text reasoning only');
     }
   } catch (error) {
     sendJson(response, 400, { error: { message: error instanceof Error ? error.message : 'invalid request' } });

@@ -1,0 +1,97 @@
+{
+  "data": {
+    "viewer": {
+      "accounts": [
+        {
+          "rumPageloadEventsAdaptiveGroups": [
+            {
+              "avg": {
+                "sampleInterval": 1
+              },
+              "count": 6,
+              "dimensions": {
+                "date": "2026-10-25",
+                "refererHost": "accounts.google.com",
+                "requestPath": "/"
+              },
+              "sum": {
+                "visits": 6
+              }
+            },
+            {
+              "avg": {
+                "sampleInterval": 1
+              },
+              "count": 8,
+              "dimensions": {
+                "date": "2026-10-25",
+                "refererHost": "t.co",
+                "requestPath": "/"
+              },
+              "sum": {
+                "visits": 8
+              }
+            },
+            {
+              "avg": {
+                "sampleInterval": 1
+              },
+              "count": 215,
+              "dimensions": {
+                "date": "2026-10-25",
+                "refererHost": "com.twitter.android",
+                "requestPath": "/"
+              },
+              "sum": {
+                "visits": 215
+              }
+            },
+            {
+              "avg": {
+                "sampleInterval": 1
+              },
+              "count": 1,
+              "dimensions": {
+                "date": "2026-10-25",
+                "refererHost": "",
+                "requestPath": "/privacy/"
+              },
+              "sum": {
+                "visits": 1
+              }
+            },
+            {
+              "avg": {
+                "sampleInterval": 1
+              },
+              "count": 33,
+              "dimensions": {
+                "date": "2026-10-25",
+                "refererHost": "x.com",
+                "requestPath": "/"
+              },
+              "sum": {
+                "visits": 33
+              }
+            },
+            {
+              "avg": {
+                "sampleInterval": 1
+              },
+              "count": 127,
+              "dimensions": {
+                "date": "2026-10-25",
+                "refererHost": "",
+                "requestPath": "/"
+              },
+              "sum": {
+                "visits": 127
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "errors": null
+}

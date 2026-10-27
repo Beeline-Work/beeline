@@ -1678,23 +1678,27 @@ export async function postArtifact(
 const BRIEF_FILE_INERT_MIMES = new Set(['text/html', 'image/svg+xml', 'application/vnd.beeline.game+html']);
 
 /** Absolute or `~/` paths written in brief or order text. */
-const NAMED_PATH = /(?:^|[\s`'"(<[])((?:~\/|\/)[^\s`'")<>\]]+)/g;
+const NAMED_PATH = /(?:^|[\s(<[])(?:"((?:~\/|\/)[^"\n]+)"|'((?:~\/|\/)[^'\n]+)'|`((?:~\/|\/)[^`\n]+)`|((?:~\/|\/)[^\s`'"()<>\]]+))/g;
 
-/** Files in the caller's checkout or writable home that `text` names. Only
- *  existing regular files count, so prose such as `/v1/media` never matches. */
+/** Recognize private paths even when missing or unreadable, so delivery fails
+ *  explicitly rather than handing the worker an inaccessible filename. */
 export function namedPrivateFiles(roots: string[], text: string): { named: string; resolved: string }[] {
   const home = process.env.HOME?.trim();
   const found: { named: string; resolved: string }[] = [];
   for (const match of text.matchAll(NAMED_PATH)) {
-    const named = match[1]!.replace(/[.,;:!?*]+$/, '');
+    const quoted = match[1] ?? match[2] ?? match[3];
+    const named = quoted ?? match[4]!.replace(/[.,;:!?*]+$/, '');
     const absolute = named.startsWith('~/') ? (home ? join(home, named.slice(2)) : '') : named;
     if (!absolute) continue;
+    let resolved = resolve(absolute);
+    const inRoots = roots.some((root) => withinRoot(resolve(root), resolved));
     try {
-      const resolved = resolveAttachPath(roots, absolute);
-      if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
+      resolved = resolveAttachPath(roots, absolute);
     } catch {
-      // Outside the caller's roots, missing, or not a file: nothing private is named.
+      // A named path in our roots still needs a refusal if it cannot be read.
+      if (!inRoots) continue;
     }
+    if (!found.some((file) => file.resolved === resolved)) found.push({ named, resolved });
   }
   return found;
 }

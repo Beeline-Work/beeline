@@ -1190,6 +1190,16 @@ it('Reproduction commander-files: a commander home file reaches the worker as th
     // A brief that names the private file without attaching it is refused by name.
     await expect(openCorner('Named-only', { spec: `Read ${trace} and find the failing step.` }))
       .rejects.toThrow(`the brief names ${trace}, which only you can open`);
+    // Quoted filenames and missing home files must never silently reach a worker.
+    const spaced = join(home, 'trace data.csv');
+    await writeFile(spaced, bytes);
+    for (const named of [`"${spaced}"`, `'${spaced}'`, `\`${spaced}\``, join(home, 'missing.csv'), `"${join(home, 'missing trace.csv')}"`]) {
+      const path = named.replace(/^["'`]|["'`]$/g, '');
+      await expect(openCorner('Private-path', { spec: `Read ${named}` }))
+        .rejects.toThrow(`the brief names ${path}, which only you can open`);
+      await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${named}` }, 'order-private'))
+        .rejects.toThrow(`the order names ${path}, which only you can open`);
+    }
     // A path that cannot be read is refused by name.
     await expect(openCorner('Missing-file', { spec: 'Read the trace.', attachments: [
       { path: join(home, 'gone.csv'), purpose: 'Failing trace', required: true }] }))
@@ -1198,12 +1208,12 @@ it('Reproduction commander-files: a commander home file reaches the worker as th
     // An order that names the private file is refused by name.
     await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${trace}` }, 'order-named'))
       .rejects.toThrow(`the order names ${trace}, which only you can open`);
-    const opened = JSON.parse(await openCorner('Attached-trace', { spec: `Read ${trace} and find the failing step.`,
-      attachments: [{ path: trace, purpose: 'Failing trace', required: true }] }));
+    const opened = JSON.parse(await openCorner('Attached-trace', { spec: `Read "${spaced}" and find the failing step.`,
+      attachments: [{ path: spaced, purpose: 'Failing trace', required: true }] }));
     const next = await worker(opened.address);
     const brief = await daemon.execute('listCornerBriefRevisions', { ...authority(next), cornerId: opened.address, limit: 1 }, WORKER);
     const [file] = brief.revisions[0]!.attachments;
-    expect(file).toMatchObject({ title: 'trace.csv', mime: 'text/csv', required: true,
+    expect(file).toMatchObject({ title: 'trace data.csv', mime: 'text/csv', required: true,
       sha256: createHash('sha256').update(bytes).digest('hex') });
     // The worker opens the brief file with its own read tool.
     caller = WORKER;

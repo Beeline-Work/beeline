@@ -90,7 +90,7 @@ export async function recordStartupWakeOutcome(db: SqlDatabase, input: {
         WHERE member.workspace_id=room.workspace_id AND member.room_id IS NULL
           AND member.identity_id=agent.owner_id AND member.removed_at IS NULL)`, [agentId,input.roomId])).rows[0];
   if (owner) await sendSystemDirectMessage(db,owner.workspace_id,owner.owner_id,
-    `${owner.name} repeatedly failed during startup. Automatic wakes are paused for five minutes. A human message can still try a turn; a successful turn resumes automatic wakes.`,
+    `${owner.name} keeps failing to start. Automatic wakes are paused for 5 minutes.`,
     createHash('sha256').update(`startup-backoff:${agentId}:${opened.rows[0]!.paused_until.toISOString()}`).digest('hex'));
 }
 

@@ -780,12 +780,12 @@ it.each(['success','expiry'])('Reproduction STARTUP-STORM: startup failures acro
   await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[batched!.id]);
   await flushDueCommanderWakes(db);
   expect((await db.query(`SELECT wake_after FROM agent_commands WHERE id=$1`,[batched!.id])).rows[0]!.wake_after).not.toBeNull();
-  const notices = await db.query(`SELECT id FROM messages WHERE text LIKE '%Automatic wakes are paused for five minutes.%'`);
+  const notices = await db.query(`SELECT id FROM messages WHERE text LIKE '%Automatic wakes are paused for 5 minutes.%'`);
   expect(notices.rows).toHaveLength(1);
   // A replayed terminal receipt must not add failures or notices.
   await db.transaction(tx=>recordStartupWakeOutcome(tx,{roomId:C,requestId:'startup-4',generationId:'startup-4',
     status:'failed',toolCalls:0,reasonKind:'workspace-failure'},WORKER));
-  expect((await db.query(`SELECT id FROM messages WHERE text LIKE '%Automatic wakes are paused for five minutes.%'`)).rows).toHaveLength(1);
+  expect((await db.query(`SELECT id FROM messages WHERE text LIKE '%Automatic wakes are paused for 5 minutes.%'`)).rows).toHaveLength(1);
   await post('human-recovery-source','Try again',HUMAN);
   const human = await createAgentCommand(db,{id:'human-recovery',roomId:C,agentId:WORKER,
     sourceMessageId:'human-recovery-source',reason:'human_tag'});

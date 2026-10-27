@@ -1,6 +1,6 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { advanceCorner } from './corner-lifecycle.js';
-import { randomUUID, randomBytes } from 'node:crypto';
+import { createHash, randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
@@ -1133,6 +1133,93 @@ it('R1 carries a closed corner artifact into a successor brief and refuses priva
     bridge.closeAllConnections();
     await new Promise<void>((resolve, reject) => bridge.close((error) => error ? reject(error) : resolve()));
     await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+// Reproduction commander-files: the commander's open_corner, revise_corner and
+// order tools run in-process against the daemon service; the worker then reads
+// the brief file with its own read tool.
+it('Reproduction commander-files: a commander home file reaches the worker as the same bytes', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'commander-home-'));
+  const workerHome = await mkdtemp(join(tmpdir(), 'worker-home-'));
+  const trace = join(home, 'trace.csv');
+  const bytes = Buffer.from('at,step\n1,open\n2,fail\n');
+  await writeFile(trace, bytes);
+  await writeFile(join(home, 'turn.json'), JSON.stringify(authority(order)));
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  let caller = RUBY;
+  const bridge = createServer(async (request, response) => {
+    try {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = Buffer.concat(chunks);
+      const url = request.url ?? '';
+      let result: unknown;
+      if (url === '/v1/daemon/artifacts') {
+        result = await objects.uploadArtifact(caller, body, String(request.headers['content-type']),
+          decodeURIComponent(String(request.headers['x-artifact-title'])));
+      } else if (url.startsWith('/v1/media/')) {
+        const owned = await objects.readOwnedBytes(RUBY, url.slice('/v1/media/'.length));
+        response.writeHead(200, { 'content-type': 'text/csv' }).end(owned);
+        return;
+      } else if (url.startsWith('/v1/daemon/operations/')) {
+        result = await daemon.execute(url.slice('/v1/daemon/operations/'.length) as never, JSON.parse(body.toString()) as never, caller);
+      } else throw new Error('unexpected proof route');
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+    } catch (error) {
+      response.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: String(error) }));
+    }
+  });
+  const openCorner = (name: string, brief: object) => callAgentTool('open_corner', {
+    room: ROOM, name, objective: 'Find the failing step', implementer: 'worker',
+    brief: { repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId }, ...brief },
+  }, name);
+  const cornerCount = async () => Number((await db.query<{ count: string }>(
+    `SELECT count(*) FROM rooms WHERE parent_id=$1`, [ROOM])).rows[0]!.count);
+  try {
+    await new Promise<void>((resolve) => bridge.listen(0, '127.0.0.1', resolve));
+    const port = (bridge.address() as { port: number }).port;
+    vi.stubEnv('BEELINE_DAEMON_BASE_URL', `http://127.0.0.1:${port}`);
+    vi.stubEnv('BEELINE_DAEMON_TOKEN', 'isolated-fixture-token');
+    vi.stubEnv('BEELINE_DAEMON_ROOM_ID', DM);
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
+    vi.stubEnv('BEELINE_ATTACH_ROOT', home);
+    vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', home);
+    vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', join(home, 'turn.json'));
+    const before = await cornerCount();
+    // A brief that names the private file without attaching it is refused by name.
+    await expect(openCorner('Named-only', { spec: `Read ${trace} and find the failing step.` }))
+      .rejects.toThrow(`the brief names ${trace}, which only you can open`);
+    // A path that cannot be read is refused by name.
+    await expect(openCorner('Missing-file', { spec: 'Read the trace.', attachments: [
+      { path: join(home, 'gone.csv'), purpose: 'Failing trace', required: true }] }))
+      .rejects.toThrow(`brief attachment ${join(home, 'gone.csv')} cannot be delivered`);
+    expect(await cornerCount()).toBe(before);
+    // An order that names the private file is refused by name.
+    await expect(callAgentTool('order', { address: ROOM, agent: 'worker', text: `Read ${trace}` }, 'order-named'))
+      .rejects.toThrow(`the order names ${trace}, which only you can open`);
+    const opened = JSON.parse(await openCorner('Attached-trace', { spec: `Read ${trace} and find the failing step.`,
+      attachments: [{ path: trace, purpose: 'Failing trace', required: true }] }));
+    const next = await worker(opened.address);
+    const brief = await daemon.execute('listCornerBriefRevisions', { ...authority(next), cornerId: opened.address, limit: 1 }, WORKER);
+    const [file] = brief.revisions[0]!.attachments;
+    expect(file).toMatchObject({ title: 'trace.csv', mime: 'text/csv', required: true,
+      sha256: createHash('sha256').update(bytes).digest('hex') });
+    // The worker opens the brief file with its own read tool.
+    caller = WORKER;
+    vi.stubEnv('BEELINE_DAEMON_ROOM_ID', opened.address);
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', opened.address);
+    vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', workerHome);
+    vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', '');
+    const downloaded = JSON.parse(await callAgentTool('read', { facet: 'attachment', attachmentId: file!.objectId }, 'worker-read'));
+    expect(await readFile(downloaded.path)).toEqual(bytes);
+    console.info(`Demonstrated commander-files: worker read ${downloaded.path} (${bytes.length} bytes, same sha256)`);
+  } finally {
+    vi.unstubAllEnvs();
+    bridge.closeAllConnections();
+    await new Promise<void>((resolve) => bridge.close(() => resolve()));
+    await rm(home, { recursive: true, force: true });
+    await rm(workerHome, { recursive: true, force: true });
   }
 });
 

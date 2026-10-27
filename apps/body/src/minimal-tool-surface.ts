@@ -771,11 +771,14 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
             "attachments": {
               "type": "array",
               "maxItems": 16,
+              "description": "Files the worker receives. Name a posted file by objectId, or a file in your checkout or home by path; a path is uploaded and posted here, and an unreadable path refuses the call.",
               "items": {
                 "type": "object",
-                "required": ["objectId", "purpose", "required"],
+                "required": ["purpose", "required"],
+                "anyOf": [{"required": ["objectId"]}, {"required": ["path"]}],
                 "properties": {
                   "objectId": {"type": "string", "format": "uuid"},
+                  "path": {"type": "string", "minLength": 1, "maxLength": 4096},
                   "purpose": {"type": "string", "maxLength": 500},
                   "required": {"type": "boolean"}
                 },
@@ -837,11 +840,14 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
             "attachments": {
               "type": "array",
               "maxItems": 16,
+              "description": "Files the worker receives. Name a posted file by objectId, or a file in your checkout or home by path; a path is uploaded and posted here, and an unreadable path refuses the call.",
               "items": {
                 "type": "object",
-                "required": ["objectId", "purpose", "required"],
+                "required": ["purpose", "required"],
+                "anyOf": [{"required": ["objectId"]}, {"required": ["path"]}],
                 "properties": {
                   "objectId": {"type": "string", "format": "uuid"},
+                  "path": {"type": "string", "minLength": 1, "maxLength": 4096},
                   "purpose": {"type": "string", "maxLength": 500},
                   "required": {"type": "boolean"}
                 },

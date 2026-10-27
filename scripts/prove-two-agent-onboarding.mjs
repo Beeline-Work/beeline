@@ -37,7 +37,15 @@ try {
   const card = welcome.messages.find(m => m.choice)?.choice;
   assert.deepEqual(card.options.map(o => o.optionId), ['A','B','C','D']);
   await recordOnboardingEvent(db, owner, 'welcome_shown');
+  await phone.execute('sendRoomMessage', { roomId: workspace.roomId, text: 'I have a question before choosing.' }, owner);
   await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'D' }, owner);
+  const beforeAnswer = await dashboardPeriods(db, new Date().toISOString());
+  assert.equal(beforeAnswer['24h'].onboardingFunnel.steps.find(step => step.key === 'answered_after_pick').count, 0);
+  await phone.execute('sendRoomMessage', { roomId: workspace.roomId, text: 'Here is my answer after choosing.' }, owner);
+  const afterAnswer = await dashboardPeriods(db, new Date().toISOString());
+  assert.equal(afterAnswer['24h'].onboardingFunnel.steps.find(step => step.key === 'answered_after_pick').count, 1,
+    'ONBOARDING-ANSWER-1: a message before the pick must not block the first answer after it');
+  const messageCommands = (await db.query(`SELECT 1 FROM agent_commands`)).rowCount;
   const explained = await snapshot('explanation');
   const explanation = explained.messages.find(m => m.text.startsWith('Most AI apps')).text;
   assert(explanation.includes('**Big jobs get their own corner.**'));
@@ -66,7 +74,7 @@ try {
   assert(printed.text.includes('/join/'));
   assert(card.options.every(option => !option.consequence || option.consequence === option.label));
   assert.equal(card.options[3].label, 'Tell me what makes Beeline different');
-  assert.equal((await db.query(`SELECT 1 FROM agent_commands`)).rowCount, 0);
+  assert.equal((await db.query(`SELECT 1 FROM agent_commands`)).rowCount, messageCommands);
   const periods = await dashboardPeriods(db, new Date().toISOString());
   const funnel = periods['24h'].onboardingFunnel;
   assert.equal(funnel.cohort, 'welcome_shown_in_window');

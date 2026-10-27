@@ -10,8 +10,16 @@ creates an isolated user and Workspace, reads the welcome A–D card, selects D,
 reads the fixed explanation and A–C follow-up, selects B, reads Luna's stored
 game and Beebee's next-step card, then selects its invite option. Assertions
 check the static board, embedded PNG faces, absence of external URLs and invite
-buttons in the game, printed invite link and zero model commands. Output goes to
+buttons in the game, printed invite link and no additional model commands from the choices. Output goes to
 `/tmp/beeline-two-agent-proof`, or `ONBOARDING_PROOF_OUTPUT`.
+
+### Regression ONBOARDING-ANSWER-1
+
+The same built-service proof now sends a human message before the first pick,
+selects D, then sends another message. Before the fix this returned
+`answered_after_pick.count = 0`; afterward it returns `1`. A pre-pick message
+does not record `user_answered`, and repeated post-pick messages preserve the
+first qualifying timestamp. The dashboard contract and user-facing text are unchanged.
 
 PGlite and in-memory object storage replace production PostgreSQL and Tigris.
 No Fly Machine or live model is used. The model proxy regression separately

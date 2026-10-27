@@ -26,10 +26,12 @@ export async function recordOnboardingEvent(database: SqlDatabase, identityId: s
     `SELECT e.install_id,e.attempt_id,e.platform,e.version FROM signin_funnel_installs i
      JOIN signin_funnel_events e ON e.install_id=i.install_id
      WHERE i.account_hash=$1 AND NOT i.internal AND e.event='signed_in'
+       AND ($2 <> 'user_answered' OR EXISTS(SELECT 1 FROM signin_funnel_events pick
+         WHERE pick.install_id=e.install_id AND pick.attempt_id=e.attempt_id AND pick.event='option_picked'))
        AND EXISTS(SELECT 1 FROM signin_funnel_events signup WHERE signup.install_id=e.install_id
          AND signup.attempt_id=e.attempt_id AND signup.event='signup')
      ORDER BY EXISTS(SELECT 1 FROM signin_funnel_events welcome WHERE welcome.install_id=e.install_id
-       AND welcome.attempt_id=e.attempt_id AND welcome.event='welcome_shown') DESC,e.occurred_at DESC LIMIT 1`, [funnelAccountHash(identityId)],
+       AND welcome.attempt_id=e.attempt_id AND welcome.event='welcome_shown') DESC,e.occurred_at DESC LIMIT 1`, [funnelAccountHash(identityId), event],
   )).rows[0];
   if (!context) return;
   await recordSigninFunnelEvent(database, {

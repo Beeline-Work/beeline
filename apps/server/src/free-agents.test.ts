@@ -34,6 +34,7 @@ import type { GitHubOperations } from './github-operations.js';
 import { PgliteDatabase, MemoryObjectStorage } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { recordSigninFunnelEvent, recordOnboardingEvent } from './signin-funnel.js';
+import { dashboardPeriods } from './operator-dashboard-periods.js';
 
 const sentryCaptures = vi.hoisted(() => [] as { error: unknown; tags: Record<string, string> | undefined }[]);
 vi.mock('./sentry.js', async (importOriginal) => ({
@@ -257,6 +258,29 @@ describe('free starter agents', () => {
       expect(next?.agent_depth).toBe(index + 1);
       parent = next!;
     }
+  });
+
+  it('counts the first answer after a pick even when the person messaged before choosing', async () => {
+    const installId = '11111111-1111-4111-8111-111111111111';
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    await recordSigninFunnelEvent(db, { event: 'signed_in', installId, attemptId, provider: 'google',
+      platform: 'android', version: '0.2.22', environment: 'production', timestamp: new Date().toISOString() }, 'server', FRIEND);
+    await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+      VALUES($1,$2,'signup','android','0.2.22','server',now())`, [installId, attemptId]);
+    const workspace = await phone.execute('createWorkspace', { name: 'Answer after choosing' }, FRIEND);
+    await recordOnboardingEvent(db, FRIEND, 'welcome_shown');
+    await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Before I choose' }, FRIEND);
+    expect((await db.query(`SELECT 1 FROM signin_funnel_events WHERE event='user_answered'`)).rowCount).toBe(0);
+    const room = await phone.readRoom(workspace.roomId!, FRIEND);
+    const welcome = room!.messages.find(message => message.choice?.status === 'open')!.choice!;
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'D' }, FRIEND);
+    await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'Here is my answer' }, FRIEND);
+    const firstAnswer = (await db.query(`SELECT occurred_at FROM signin_funnel_events WHERE event='user_answered'`)).rows;
+    await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'And another answer' }, FRIEND);
+    expect((await db.query(`SELECT occurred_at FROM signin_funnel_events WHERE event='user_answered'`)).rows).toEqual(firstAnswer);
+    const periods = await dashboardPeriods(db, new Date().toISOString());
+    const funnel = periods['24h'].onboardingFunnel!;
+    expect('steps' in funnel && funnel.steps.find(step => step.key === 'answered_after_pick')?.count).toBe(1);
   });
 
   it('records return milestones after the welcome, using the existing signup funnel', async () => {

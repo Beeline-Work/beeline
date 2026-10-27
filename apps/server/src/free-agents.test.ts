@@ -160,6 +160,44 @@ describe('free starter agents', () => {
     await db.close();
   });
 
+  it('reruns welcome in the calling Room and keeps every manual step out of signup counts', async () => {
+    const workspace = await phone.execute('createWorkspace', { name: 'Manual welcome' }, FRIEND);
+    const roomId = workspace.roomId!;
+    const beebee = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM free_agents WHERE workspace_id=$1 AND starter_role='beebee'`, [workspace.id])).rows[0]!.agent_id;
+    const installId = '11111111-1111-4111-8111-111111111111', attemptId = '22222222-2222-4222-8222-222222222222';
+    await recordSigninFunnelEvent(db, { event: 'signed_in', installId, attemptId, platform: 'android', version: 'test', environment: 'production', timestamp: new Date().toISOString() }, 'server', FRIEND);
+    await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at) VALUES($1,$2,'signup','android','test','server',now())`, [installId, attemptId]);
+    // Run in another Room, proving the action does not silently target General.
+    const other = await phone.execute('createRoom', { workspaceId: workspace.id, name: 'onboarding-test' }, FRIEND);
+    await phone.execute('addRoomMember', { roomId: other.id, memberId: beebee }, FRIEND);
+    const source = 'e'.repeat(64);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'run onboarding')`, [source, other.id, FRIEND]);
+    const command = (await createAgentCommand(db, { roomId: other.id, agentId: beebee, sourceMessageId: source, reason: 'human_tag' }))!;
+    await claimAgentCommand(db, other.id, beebee, command.id, 'welcome-generation');
+    const daemon = new DaemonService(db, live);
+    const first = await daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'welcome-generation' } as never, beebee);
+    const welcome = await daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'welcome-generation' } as never, beebee);
+    expect((await phone.readRoom(other.id, FRIEND))!.messages.find(message => message.id === first.messageId)!.choice!.status).toBe('skipped');
+    const view = (await phone.readRoom(other.id, FRIEND))!;
+    const card = view.messages.find(message => message.id === welcome.messageId)!.choice!;
+    expect(card.onboardingManual).toBe(true);
+    expect(card.options.map(option => option.optionId)).toEqual(['A', 'B', 'C', 'D']);
+    expect((await phone.readRoom(roomId, FRIEND))!.messages.some(message => message.id === welcome.messageId)).toBe(false);
+    await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'D' }, FRIEND);
+    const next = (await phone.readRoom(other.id, FRIEND))!.messages.find(message => message.choice?.status === 'open')!.choice!;
+    expect(next.onboardingManual).toBe(true);
+    await phone.execute('answerChoice', { choiceId: next.choiceId, optionId: 'C' }, FRIEND);
+    await phone.execute('sendRoomMessage', { roomId: other.id, text: 'Try the task' }, FRIEND);
+    const signup = (await db.query(`SELECT event FROM signin_funnel_events WHERE install_id=$1 ORDER BY event`, [installId])).rows;
+    expect(signup).toEqual([{ event: 'signed_in' }, { event: 'signup' }]);
+    const manual = (await db.query<{ event: string }>(`SELECT e.event FROM signin_funnel_events e JOIN signin_funnel_installs i USING(install_id) WHERE i.internal AND e.version='manual'`)).rows.map(row => row.event);
+    expect(manual).toEqual(expect.arrayContaining(['welcome_shown', 'option_picked', 'invite_created', 'invite_shared', 'user_answered']));
+    const periods = await dashboardPeriods(db, new Date().toISOString());
+    const funnel = periods['24h'].onboardingFunnel!;
+    expect('steps' in funnel && funnel.steps[0]!.count).toBe(0);
+    await expect(daemon.execute('postStarterWelcome', { roomId: other.id, requestId: command.turn_request_id, generationId: 'wrong' } as never, beebee)).rejects.toThrow();
+  });
+
   it('welcome choices explain Beeline without model work, then offer A–C', async () => {
     const workspace = await phone.execute('createWorkspace', { name: 'Welcome' }, OWNER);
     const before = await phone.readRoom(workspace.roomId!, OWNER);

@@ -288,3 +288,45 @@ matching image needs no reserve allocation on its first turn.
 ## Starter onboarding (revision 4)
 
 Beebee asks the opening question in its greeting; the welcome card contains only A–D options. Option A wakes Beebee alone. Its prompt asks for a single second opinion on the first three substantive questions when another agent is present, then only when in doubt. No server-specific review wake or review-depth rule is added. Option C and the post-game invite action print an invite link in chat; the agent invite tool does the same. The funnel invite_shared milestone means that committed chat post, not a native share action.
+
+
+## Manual onboarding and Luna backfill
+
+Agents can load the `beeline-onboarding` skill, discover
+`app_tool(app:"beeline:onboarding")`, and call its `welcome` action. This reuses
+signup's welcome choices in the calling chat. An earlier onboarding question
+from the same agent is skipped without a wake; unrelated questions retain their
+normal open-choice rule. Signup still posts its welcome directly on the server.
+
+Manual welcome cards carry `onboardingManual` and a separate run ID. Their server events
+use that run ID as an internal funnel install/attempt with version `manual`, so
+signup cohorts exclude them. Explanation cards retain the marker. Game viewer
+and invite milestones also follow the manual run. Older clients' welcome events
+are routed to the manual run on the server.
+
+After building the server, `npm run backfill:luna` prints the production target
+inventory without writes; provide `DATABASE_URL` through the operator's approved
+secret environment. `npm run backfill:luna -- --apply` requires the owner's
+approval of the dry-run list after release. The script enforces the six excluded
+workspace IDs in `apps/server/src/luna-backfill.ts` for the free-Beebee sweep.
+The explicitly assigned Room `289fbeab-3df5-4db3-9b70-d2fd3b937cae` is a separate
+exception inside Tubing Crew; no other Room in a skipped workspace is targeted.
+Its resolved workspace and explicit-Room label appear in the inventory. A missing
+explicit Room aborts the inventory rather than selecting a replacement.
+The owner approved `LUNA_BACKFILL_HELLO` beside Beebee's hello (approval relayed
+by Ruby, message ae9a4279). The CLI uses only the frozen workspace/Room pairs
+in `scripts/luna-backfill-approved.json`; new signups do not expand this run.
+A missing approved pair stops before writes and requires a new decision.
+The two additional exclusions are jellybean-beeline-test's team and Methoxine's
+team, both matched by workspace ID. Apply remains an operator action after merge
+and release; approval does not execute it.
+It serializes each workspace
+and owner, reuses normal free-agent provisioning and its owner cap, and commits
+Luna and a deterministic per-workspace intro message together. An existing Luna,
+including a removed one, is never duplicated. It makes no Fly or model calls.
+Normal subscribed membership notifications still apply to other agents.
+
+`npm run prove:onboarding:welcome` exercises the built MCP action, active-command
+service, and phone-read welcome → explanation → game → invite path in isolation.
+PGlite, in-memory storage, and a minimal HTTP adapter stand in for production;
+this proof does not claim a native app or live model run.

@@ -10,6 +10,7 @@ export const BEELINE_MEMORY_SKILL_NAME = 'beeline-memory';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
 export const BEELINE_REVIEW_SKILL_NAME = 'beeline-review';
 export const BEELINE_SPEC_SKILL_NAME = 'beeline-spec';
+export const BEELINE_ONBOARDING_SKILL_NAME = 'beeline-onboarding';
 
 /**
  * Situational skills: each covers one kind of situation an agent meets in
@@ -265,6 +266,7 @@ export function beelineManagedSkills(
   options: { isReviewer: boolean },
 ): Array<{ name: string; content: string }> {
   return [
+    { name: BEELINE_ONBOARDING_SKILL_NAME, content: beelineOnboardingSkillMarkdown(releaseId) },
     { name: BEELINE_FILES_SKILL_NAME, content: beelineFilesSkillMarkdown(releaseId) },
     { name: BEELINE_CORNERS_SKILL_NAME, content: beelineCornersSkillMarkdown(releaseId) },
     { name: BEELINE_WAKES_SKILL_NAME, content: beelineWakesSkillMarkdown(releaseId) },
@@ -395,6 +397,7 @@ Use your judgment about how much planning work needs. This loop can help for a l
 
 - When a visual or interaction decision needs eyes, create and post one self-contained mock with the beeline-files-and-mocks steps.
 - A mock/file posted with \`post_artifact\` in this planning turn is added automatically to the brief attachment manifest; do not manually copy its object ID. Still list it under \`## References\` with whose call it is. Existing human-posted files must be named explicitly in attachments.
+- A working file in your own home or checkout (trace, CSV, screenshot, template) is yours alone: attach it as \`brief.attachments [{path, purpose, required}]\` so the worker receives the same bytes. A brief or order that names such a file without attaching it is refused.
 
 ### 6. Implementation tasks
 
@@ -488,4 +491,14 @@ Once a corner is open for a reported bug, follow these steps in order. They are 
 - When none was obtained, state that plainly and show the regression instead.
 - Name the identifier in the pull request when one exists so the reviewer can check that proof, not merely that some test exists.
 `;
+}
+
+function beelineOnboardingSkillMarkdown(releaseId: string): string {
+  return skillMarkdown(BEELINE_ONBOARDING_SKILL_NAME, 'Run or rerun Beeline onboarding in the current chat when someone asks to try the welcome flow.', releaseId,
+    `# Run onboarding
+
+Discover the existing onboarding app with app_tool(app:"beeline:onboarding"). Call its welcome action with app_tool(app:"beeline:onboarding", tool:"welcome", args:{}).
+The action posts the same welcome choices as signup in your current chat. Let the person choose on the card; its choices run the task, game, invite or explanation flow. Manual runs stay out of signup funnel counts.
+Do not recreate the greeting or choices in prose. If the app refuses, follow its returned reason and report the concrete next step.
+`);
 }

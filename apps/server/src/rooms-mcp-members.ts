@@ -118,6 +118,10 @@ export async function recordMcpMemberWebhook(
  * one-minute claim lease only has to outlast one request (5s timeout); it lets
  * a crashed claim retry later. The ledger row records the outcome either way,
  * and a refused call is not retried forever.
+ *
+ * Access is rechecked at claim time, not just when the wake was queued: a
+ * member removed from the Room (or its Workspace) before the drain must not
+ * receive Room text, so an ineligible claim is retired as skipped with no HTTP.
  */
 export async function deliverMcpMemberWebhooks(
   db: SqlDatabase,
@@ -128,7 +132,7 @@ export async function deliverMcpMemberWebhooks(
   for (let index = 0; index < limit; index++) {
     const claimed = await db.query<{
       call_id: string; member_id: string; room_id: string; message_id: string;
-      body: string; callback_url: string | null;
+      body: string; callback_url: string | null; deliverable: boolean;
     }>(
       `WITH claimed AS (
          UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
@@ -140,13 +144,30 @@ export async function deliverMcpMemberWebhooks(
            FOR UPDATE SKIP LOCKED)
          RETURNING outbox.call_id,outbox.member_id,outbox.room_id,outbox.message_id,outbox.body)
        SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
-         client.callback_url
+         client.callback_url,(
+           room.id IS NOT NULL AND room.archived_at IS NULL
+           AND EXISTS (SELECT 1 FROM effective_memberships room_member
+             WHERE room_member.room_id=claimed.room_id AND room_member.identity_id=claimed.member_id
+               AND room_member.removed_at IS NULL)
+           AND EXISTS (SELECT 1 FROM memberships workspace_member
+             WHERE workspace_member.workspace_id=room.workspace_id AND workspace_member.room_id IS NULL
+               AND workspace_member.identity_id=claimed.member_id AND workspace_member.removed_at IS NULL)
+         ) deliverable
        FROM claimed
-       JOIN rooms_mcp_members member ON member.member_id=claimed.member_id
-       JOIN rooms_mcp_clients client ON client.id=member.client_id`,
+       LEFT JOIN rooms_mcp_members member ON member.member_id=claimed.member_id
+       LEFT JOIN rooms_mcp_clients client ON client.id=member.client_id
+       LEFT JOIN rooms room ON room.id=claimed.room_id`,
     );
     const row = claimed.rows[0];
     if (!row) break;
+    if (!row.deliverable) {
+      await db.query('UPDATE rooms_mcp_webhook_outbox SET delivered_at=now() WHERE call_id=$1', [row.call_id]);
+      await db.query(
+        `UPDATE subscription_webhook_calls SET outcome='skipped',reason='membership ended' WHERE id=$1`,
+        [row.call_id],
+      );
+      continue;
+    }
     let accepted = false;
     try {
       if (!row.callback_url) throw new Error('no callback url');

@@ -19,6 +19,7 @@ import { LiveHub } from '../apps/server/dist/live.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
 import { createBeelineServer } from '../apps/server/dist/server.js';
 import { claimAgentCommand } from '../apps/server/dist/agent-command.js';
+import { deliverMcpMemberWebhooks } from '../apps/server/dist/rooms-mcp-members.js';
 
 const db = new PgliteDatabase();
 let server, mount, client;
@@ -165,6 +166,19 @@ try {
     transcript(`UI proof fixture ${origin}; only synthetic accounts and credentials. Keep running until screenshots and Disconnect complete.`);
     await new Promise(resolve => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });
   } else {
+    // A wake queued before removal must never deliver Room text after it.
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.invalid/removed' WHERE id=$1`, [info.client_id]);
+    const memberHandle = (await db.query(`SELECT handle FROM identities WHERE id=$1`, [member])).rows[0].handle;
+    const queued = await options.phone.execute('sendRoomMessage', { roomId: room, text: `@${memberHandle} queued before removal` }, person);
+    await options.phone.execute('removeRoomMember', { roomId: room, memberId: member }, person);
+    assert.equal((await client.callTool({ name: 'read_messages', arguments: { room } })).isError, true);
+    let removalDeliveries = 0;
+    const removalCount = await deliverMcpMemberWebhooks(db, async () => { removalDeliveries++; return new Response('', { status: 200 }); });
+    assert.equal(removalCount, 0); assert.equal(removalDeliveries, 0);
+    const skipped = (await db.query(`SELECT c.outcome,o.delivered_at FROM subscription_webhook_calls c
+      JOIN rooms_mcp_webhook_outbox o ON o.call_id=c.id WHERE c.member_id=$1 AND c.wake_message_id=$2`, [member, queued.messageId])).rows[0];
+    assert.equal(skipped.outcome, 'skipped'); assert.ok(skipped.delivered_at);
+    transcript('Removed from the Room: the next MCP read was denied and the webhook queued before removal was retired skipped with zero HTTP calls.');
     await options.phone.execute('disconnectAiClient', { clientId: info.client_id }, person);
   }
   response = await fetch(origin + '/mcp', { headers: { authorization: `Bearer ${tokens.access_token}` } }); assert.equal(response.status, 401);

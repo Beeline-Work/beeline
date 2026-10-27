@@ -295,6 +295,23 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const ownId = JSON.parse((own.content as { text: string }[])[0]!.text).data.messageId as string;
     expect((await db.query('SELECT 1 FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, ownId])).rowCount).toBe(0);
   });
+  it('delivers nothing to a member removed from the Room before the drain', async () => {
+    const { grant, member } = await connected();
+    await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/removed' WHERE id=$1`, [grant.clientId]);
+    // Drain earlier tests' backlog so only this delivery is pending.
+    await deliverMcpMemberWebhooks(db, async () => new Response('', { status: 200 }));
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const sent = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} queued before removal` }, USER);
+    // The wake is already queued, then the owner removes the member from the Room.
+    await phone.execute('removeRoomMember', { roomId: ROOM, memberId: member }, USER);
+    let calls = 0;
+    const delivered = await deliverMcpMemberWebhooks(db, async () => { calls++; return new Response('', { status: 200 }); });
+    // No HTTP call fires and the queued text never leaves the outbox.
+    expect(delivered).toBe(0);
+    expect(calls).toBe(0);
+    expect((await db.query('SELECT delivered_at FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2', [member, sent.messageId])).rows[0]!.delivered_at).not.toBeNull();
+    expect((await db.query('SELECT outcome FROM subscription_webhook_calls WHERE member_id=$1 AND wake_message_id=$2', [member, sent.messageId])).rows[0]!.outcome).toBe('skipped');
+  });
   it('claims a pending delivery once so overlapping drains never double-post', async () => {
     const { grant, member } = await connected();
     await db.query(`UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/concurrent' WHERE id=$1`, [grant.clientId]);

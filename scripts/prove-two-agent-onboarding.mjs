@@ -57,8 +57,13 @@ try {
   const next = played.messages.find(m => m.choice?.status === 'open').choice;
   assert.equal(next.prompt, 'After your game, what next?');
   const invite = await phone.execute('answerChoice', { choiceId: next.choiceId, optionId: 'A' }, owner);
-  assert(invite.share?.message.includes('Join me in #general'));
-  await writeFile(`${output}/share.json`, JSON.stringify(invite.share));
+  assert(!('share' in invite));
+  const invited = await snapshot('invite');
+  const printed = invited.messages.find(message => message.text.startsWith("Here's your invite link."));
+  assert.equal(printed.author.name, 'Beebee');
+  assert(printed.text.includes('/join/'));
+  assert(card.options.every(option => !option.consequence || option.consequence === option.label));
+  assert.equal(card.options[3].label, 'Tell me what makes Beeline different');
   assert.equal((await db.query(`SELECT 1 FROM agent_commands`)).rowCount, 0);
   const periods = await dashboardPeriods(db, new Date().toISOString());
   const funnel = periods['24h'].onboardingFunnel;
@@ -66,7 +71,8 @@ try {
   assert.equal(funnel.steps[0].count, 1);
   assert.equal(funnel.byOption.special.steps[1].count, 1);
   assert.equal(funnel.paths.game[0].count, 1);
+  assert.equal(funnel.paths.invite[1].count, 1);
   await writeFile(`${output}/funnel.json`, JSON.stringify(funnel, null, 2));
   await snapshot('invite');
-  console.log(`Demonstrated ONBOARDING-2: built PhoneService createWorkspace → D → B → next-card invite; two teammates, static game faces/board, no model turns, share text, funnel split. Output: ${output}`);
+  console.log(`Demonstrated ONBOARDING-2: built PhoneService createWorkspace → D → B → next-card invite; two teammates, static game faces/board, no model turns, printed invite link, funnel split. Output: ${output}`);
 } finally { await db.close(); }

@@ -1,6 +1,6 @@
 # Two-agent onboarding evidence
 
-This is a feature, not a defect report. The governing assignment is brief revision 3.
+This is a feature, not a defect report. The governing assignment is brief revision 4.
 
 ## Demonstrated: ONBOARDING-2
 
@@ -10,14 +10,14 @@ creates an isolated user and Workspace, reads the welcome A–D card, selects D,
 reads the fixed explanation and A–C follow-up, selects B, reads Luna's stored
 game and Beebee's next-step card, then selects its invite option. Assertions
 check the static board, embedded PNG faces, absence of external URLs and invite
-buttons in the game, share text and zero model commands. Output goes to
+buttons in the game, printed invite link and zero model commands. Output goes to
 `/tmp/beeline-two-agent-proof`, or `ONBOARDING_PROOF_OUTPUT`.
 
 PGlite and in-memory object storage replace production PostgreSQL and Tigris.
 No Fly Machine or live model is used. The model proxy regression separately
 executes authenticated HTTP requests for both teammates and verifies stored
 model selection and one shared owner allowance. Live model interpretation of
-the shared review prompt is not evaluated by these deterministic proofs.
+the optional second-opinion prompt is not evaluated by these deterministic proofs.
 
 The template is recovered exactly as Ruby's private order
 `815725790fd8989147c7bb48170e104d914c5b16e5b5f0dfc2bf249fa4082768`
@@ -47,7 +47,7 @@ are adapters; it does not send fixture data to production.
 - [Game post, inert preview and next-step card](android-game-post.png)
 - [Opened game](android-game-viewer.png)
 - [Game move and coaching](android-game-playing.png)
-- [Native share sheet](android-share-sheet.png)
+- [Printed invite link](android-invite-link.png)
 
 The local proof rerolls agent identities on each execution. Capture a screenshot
 set from one proof run; do not rerun the service proof between captures.
@@ -65,9 +65,11 @@ cover the app surfaces; the dashboard corner owns its view and proof.
 
 - Root `npm run typecheck`, including mobile and scripts.
 - Server provisioning, proxy, funnel and ordinary routing suites; additional
-  regressions cover game/invite, untagged starter routing, one review round and
+  regressions cover game/invite, untagged starter routing, prompt-only review routing and
   return milestones.
 - Mobile transcript card, runnable viewer and funnel client suites.
 - Shared funnel schema/client and phone contract tests.
 - `npm run faces:check`: generated face data matches the mobile sources.
 - `npm run dead-code`, UI component policy and workflow-path checks.
+
+Revision 4 moves the question into the greeting, suppresses the welcome card title, removes option subtitles, and changes D to the owner-approved label. Invites are plain Beebee chat messages, with invite_shared recorded on the server when posted. No onboarding share sheet or forced review is used. The existing choice-label bound is raised to 48 characters to fit the exact D wording.

@@ -1,4 +1,3 @@
-import { funnelOnboarding } from '@/auth/signin-funnel';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { useDesktopParentRoom } from '@/buzz/use-desktop-parent-room';
@@ -4525,15 +4524,11 @@ export function BuzzChatSurface({
       if (viewerIsAgent || choiceActionId) return;
       setChoiceActionId(choiceId);
       try {
-        const decision = await monolithPhoneOperation('answerChoice', {
+        await monolithPhoneOperation('answerChoice', {
           choiceId,
           optionId,
           ...(note ? { note } : {}),
         });
-        if (decision.share) {
-          const shared = await Share.share({ message: decision.share.message });
-          if (shared.action === Share.sharedAction) void funnelOnboarding('invite_shared');
-        }
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
         refreshSignal.force();

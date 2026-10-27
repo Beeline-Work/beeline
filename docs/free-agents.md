@@ -284,3 +284,7 @@ into a Workspace generation. Rooms and corners use the installed host
 harness directly, without cloning it into a Workspace generation. Free-agent
 images allocate the normal 128 MiB recovery reserve during construction, so a
 matching image needs no reserve allocation on its first turn.
+
+## Starter onboarding (revision 4)
+
+Beebee asks the opening question in its greeting; the welcome card contains only A–D options. Option A wakes Beebee alone. Its prompt asks for a single second opinion on the first three substantive questions when another agent is present, then only when in doubt. No server-specific review wake or review-depth rule is added. Option C and the post-game invite action print an invite link in chat; the agent invite tool does the same. The funnel invite_shared milestone means that committed chat post, not a native share action.

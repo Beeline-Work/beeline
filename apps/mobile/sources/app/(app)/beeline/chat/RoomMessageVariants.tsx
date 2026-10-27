@@ -500,7 +500,7 @@ export const ChoiceCard = React.memo(function ChoiceCard({
           size={26}
         />
       }
-      title={card.prompt}
+      title={card.starterOnboarding === 'welcome' ? null : card.prompt}
       wrapTitle
       subline={subline || card.constraint}
       sublineTestID={`choice-${card.choiceId}-subline`}

@@ -106,7 +106,7 @@ export async function funnelSuccessfulOperation(name: string) {
   await funnel.activation(event, await monolithSession.authorization());
 }
 
-export async function funnelOnboarding(event: 'welcome_shown' | 'game_viewer_opened' | 'game_viewer_closed' | 'invite_shared', durationMs?: number) {
+export async function funnelOnboarding(event: 'welcome_shown' | 'game_viewer_opened' | 'game_viewer_closed', durationMs?: number) {
   try {
     const funnel = await getClient();
     if (!funnel) return;

@@ -504,3 +504,5 @@ reporting window, including screen rows. Success returns
 
 Ads Manager account days may use a local time zone while signup joins use UTC
 dates; accept the resulting few-hour offset when comparing cost per signup.
+
+Onboarding revision 4: `invite_shared` records the server posting an invite link in chat, not a native share action. Second opinions are prompted, never orchestrated by the server; `task_second_opinion` observes an agent mention during the task.

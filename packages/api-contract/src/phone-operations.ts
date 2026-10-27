@@ -635,7 +635,6 @@ export type CreateRoomPollResult = {
 };
 export type SkipChoiceInput = { readonly choiceId: string };
 export type ChoiceDecisionResult = {
-  readonly share?: { readonly url: string; readonly message: string };
   readonly choiceId: string;
   readonly status: ChoiceStatus;
   readonly roomId: string;

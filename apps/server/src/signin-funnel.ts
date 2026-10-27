@@ -10,6 +10,7 @@ import {
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
+import { typedMentionHandles } from './message-mentions.js';
 
 const lastCompaction = new WeakMap<SqlDatabase, string>();
 
@@ -58,12 +59,18 @@ export async function observeOnboardingMessage(database: SqlDatabase, roomId: st
     if (Number(welcome?.age) >= 86_400) await recordOnboardingEvent(database, owner, 'returned_day_1');
     if (Number(welcome?.age) >= 7 * 86_400) await recordOnboardingEvent(database, owner, 'returned_day_7');
   } else if (owner && depth !== undefined) {
+    const peerHandles = [...typedMentionHandles(text)].map(handle => handle.toLowerCase());
+    const mentionsPeer = peerHandles.length > 0 && (await database.query(
+      `SELECT 1 FROM identities i JOIN memberships m ON m.identity_id=i.id AND m.room_id=$1
+       AND m.removed_at IS NULL WHERE i.kind='agent' AND i.id<>$2 AND i.handle IS NOT NULL
+       AND lower(btrim(i.handle,'@'))=ANY($3::text[]) LIMIT 1`, [roomId, identityId, peerHandles],
+    )).rowCount > 0;
     if (depth === 0) {
       await recordOnboardingEvent(database, owner, 'task_first_answer');
-      if (team.some(member => member.agent_id !== identityId && member.handle && text.includes(`@${member.handle}`)))
+      if (mentionsPeer)
         await recordOnboardingEvent(database, owner, 'task_review_requested');
     }
-    if (depth === 2) await recordOnboardingEvent(database, owner, 'task_final_answer');
+    if (!mentionsPeer && (depth === 0 || depth >= 2)) await recordOnboardingEvent(database, owner, 'task_final_answer');
   }
   const inviter = (await database.query<{ created_by: string }>(
     `SELECT created_by FROM invites WHERE onboarding_room_id=$1 AND onboarding_friend_id=$2 LIMIT 1`, [roomId, identityId],
@@ -124,13 +131,13 @@ export async function recordSigninFunnelEvent(
     }
   }
   if (source === 'client' && (['signed_in', 'workspace_created', 'first_message_sent', 'screen_shown'].includes(event.event) || ONBOARDING_EVENTS.includes(event.event as never)) && !identityId) return;
-  if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !['welcome_shown', 'game_viewer_opened', 'game_viewer_closed', 'invite_shared'].includes(event.event)) return;
+  if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !['welcome_shown', 'game_viewer_opened', 'game_viewer_closed'].includes(event.event)) return;
   if (source === 'client' && ONBOARDING_EVENTS.includes(event.event as never) && !(await database.query(
     `SELECT 1 FROM signin_funnel_installs WHERE install_id=$1 AND account_hash=$2`,
     [event.installId, funnelAccountHash(identityId!)],
   )).rowCount) return;
-  if (source === 'client' && ['game_viewer_opened', 'game_viewer_closed', 'invite_shared'].includes(event.event)) {
-    const prerequisite = event.event === 'invite_shared' ? 'invite_created' : 'game_posted';
+  if (source === 'client' && ['game_viewer_opened', 'game_viewer_closed'].includes(event.event)) {
+    const prerequisite = 'game_posted';
     if (!(await database.query(`SELECT 1 FROM signin_funnel_events WHERE install_id=$1 AND attempt_id=$2 AND event=$3`,
       [event.installId, event.attemptId, prerequisite])).rowCount) return;
   }

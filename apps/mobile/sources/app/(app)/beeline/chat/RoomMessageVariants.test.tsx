@@ -3509,6 +3509,21 @@ describe('Room message variant components', () => {
     expect(onSkip).toHaveBeenCalledWith('c-1');
   });
 
+  it('shows the welcome options without repeating the greeting question or adding subtitles', () => {
+    const renderer = render(<ChoiceCard message={message({ choice: {
+      starterOnboarding: 'welcome', choiceId: 'welcome', mode: 'question', status: 'open',
+      agent: { pubkey: 'beebee', kind: 'agent', name: 'Beebee' }, prompt: 'What should we do first?',
+      options: [
+        { optionId: 'A', letter: 'A', label: 'Give us a task', consequence: 'Give us a task' },
+        { optionId: 'D', letter: 'D', label: 'Tell me what makes Beeline different', consequence: 'Tell me what makes Beeline different' },
+      ], electorate: ['human'], votedCount: 0, electorateCount: 1, responses: [],
+    } })} viewerIsAgent={false} viewerPubkey="human" actionId={null} onAnswer={vi.fn()} onSkip={vi.fn()} />);
+    const text = JSON.stringify(renderer.toJSON());
+    expect(text).not.toContain('What should we do first?');
+    expect(text).toContain('Tell me what makes Beeline different');
+    expect(text).not.toContain('Luna checks the work');
+  });
+
   it('offers a note only on a workflow gate and submits it with the pick', () => {
     const onAnswer = vi.fn();
     const gate = (runId?: string) =>

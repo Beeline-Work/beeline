@@ -579,14 +579,6 @@ export async function createAgentCommand(
   const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
     ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;
-  if (input.reason === 'agent_tag' && parent && depth > 2 && (await db.query(
-    `SELECT 1 FROM free_agents lead JOIN free_agents peer ON peer.owner_id=lead.owner_id
-       AND peer.workspace_id=lead.workspace_id
-     JOIN rooms room ON room.id=$3 AND room.parent_id IS NULL
-     WHERE lead.agent_id=$1 AND peer.agent_id=$2 AND lead.starter_role IS NOT NULL
-       AND peer.starter_role IS NOT NULL AND lead.removed_at IS NULL AND peer.removed_at IS NULL`,
-    [parent.agent_id, input.agentId, input.roomId],
-  )).rowCount) return undefined;
   const id = input.id ?? randomBytes(32).toString('hex');
   const minutes = member.rows[0]!.wake_batch_minutes;
   // Stop/restart are helper controls, not model turns. Human-authored scheduler

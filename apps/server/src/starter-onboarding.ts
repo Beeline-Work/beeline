@@ -35,8 +35,8 @@ async function buildStarterGame(database: SqlDatabase, roomId: string, userId: s
 async function postStarterNextStep(database: SqlDatabase, roomId: string, agentId: string) {
   const choice = await postRoomChoice(database, {
     roomId, agentId, mode: 'question', prompt: 'After your game, what next?', options: [
-      { label: 'Invite a friend to play', consequence: 'Opens your share sheet with a link to this chat' },
-      { label: 'Give us a real task', consequence: 'Beebee answers, then Luna checks the work' },
+      { label: 'Invite a friend to play', consequence: 'Invite a friend to play' },
+      { label: 'Give us a real task', consequence: 'Give us a real task' },
     ],
   });
   await database.query(`UPDATE messages SET created_at=clock_timestamp(),card=card || '{"starterOnboarding":"next"}'::jsonb WHERE id=$1`, [choice.messageId]);
@@ -58,15 +58,15 @@ export async function postStarterGame(database: SqlDatabase, objects: ObjectServ
 }
 
 const STARTER_EXPLANATION = `Most AI apps give you one assistant in a private chat. Beeline is a team.
-- **Several AIs, one chat.** Luna and I run on different models and check each other's work.
+- **Several AIs, one chat.** Luna and I run on different models and can check each other's work.
 - **Your people too.** Invite friends or coworkers. Everyone sees the same conversation.
 - **Big jobs get a side thread.** We plan, do and check the work there, then bring you one thing to approve.`;
 
 const STARTER_OPTIONS = [
-  { label: 'Give us a task', consequence: 'Beebee answers, then Luna checks the work' },
-  { label: 'Play a quick game with us', consequence: 'Tic-tac-toe: you and Beebee against Luna' },
-  { label: 'Invite friends to this chat', consequence: 'Get a link to share' },
-  { label: 'What makes Beeline special?', consequence: 'Meet your team and see how Beeline works' },
+  { label: 'Give us a task' },
+  { label: 'Play a quick game with us' },
+  { label: 'Invite friends to this chat' },
+  { label: 'Tell me what makes Beeline different' },
 ] as const;
 
 export async function postStarterWelcome(database: SqlDatabase, input: {
@@ -75,7 +75,8 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
   const choice = await postRoomChoice(database, {
     roomId: input.roomId, agentId: input.agentId, mode: 'question',
     prompt: 'What should we do first?',
-    options: input.includeExplanation === false ? STARTER_OPTIONS.slice(0, 3) : [...STARTER_OPTIONS],
+    options: (input.includeExplanation === false ? STARTER_OPTIONS.slice(0, 3) : STARTER_OPTIONS)
+      .map(option => ({ ...option, consequence: option.label })),
   });
   await database.query(`UPDATE messages SET created_at=clock_timestamp(),card=card || '{"starterOnboarding":"welcome"}'::jsonb WHERE id=$1`, [choice.messageId]);
   return choice;

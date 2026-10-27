@@ -1,7 +1,7 @@
 import { disconnectMcp } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
 import { postStarterExplanation, postStarterGame } from './starter-onboarding.js';
-import { createStarterInvite } from './starter-invite.js';
+import { postStarterInviteOffer } from './starter-invite.js';
 import { recordOnboardingEvent, observeOnboardingMessage, observeOnboardingInvite } from './signin-funnel.js';
 import { waitForConnection } from './connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
@@ -7751,8 +7751,8 @@ export class PhoneService {
 
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
     return this.database.transaction(async database => {
-      const starter = (await database.query<{ room_id: string; agent_id: string; stage: string; share: { url: string; message: string } | null }>(
-        `SELECT c.room_id,c.agent_id,m.card->>'starterOnboarding' stage,m.card->'starterShare' share
+      const starter = (await database.query<{ room_id: string; agent_id: string; stage: string }>(
+        `SELECT c.room_id,c.agent_id,m.card->>'starterOnboarding' stage
          FROM room_choices c JOIN messages m ON m.id=c.message_id
          WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
       )).rows[0];
@@ -7767,10 +7767,8 @@ export class PhoneService {
         if (explanation) await postStarterExplanation(database, starter.room_id, starter.agent_id);
         if (game) await postStarterGame(database, this.objects, starter.room_id, viewerId);
         if (invite) {
-          const share = starter.share ?? await createStarterInvite(database, starter.room_id, viewerId, this.publicOrigin);
-          await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
-            [randomBytes(32).toString('hex'), starter.room_id, starter.agent_id, share.message]);
-          return { ...result, share };
+          await postStarterInviteOffer(database, starter.room_id, starter.agent_id, viewerId, this.publicOrigin);
+          return result;
         }
         return result;
       }

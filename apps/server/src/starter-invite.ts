@@ -2,28 +2,19 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createCommunityInviteToken } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { recordOnboardingEvent } from './signin-funnel.js';
-import { postRoomChoice } from './room-choice.js';
 
 export async function postStarterInviteOffer(database: SqlDatabase, roomId: string, agentId: string, personId: string, publicOrigin: string) {
-  const share = await createStarterInvite(database, roomId, personId, publicOrigin);
-  const existing = (await database.query<{ message_id: string }>(
-    `SELECT c.message_id FROM room_choices c JOIN messages m ON m.id=c.message_id
-     JOIN free_agents f ON f.agent_id=c.agent_id AND f.owner_id=$2
-     WHERE c.room_id=$1 AND c.status='open' AND m.card->>'starterOnboarding' IN ('welcome','next') LIMIT 1`,
-    [roomId, personId],
+  const invite = await createStarterInvite(database, roomId, personId, publicOrigin);
+  const beebee = (await database.query<{ agent_id: string }>(
+    `SELECT f.agent_id FROM free_agents f JOIN memberships m ON m.identity_id=f.agent_id
+     AND m.room_id=$1 AND m.removed_at IS NULL WHERE f.owner_id=$2
+     AND f.starter_role='beebee' AND f.removed_at IS NULL LIMIT 1`, [roomId, personId],
   )).rows[0];
-  if (existing) {
-    await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
-      [existing.message_id, JSON.stringify({ starterShare: share })]);
-    return { ...share, messageId: existing.message_id };
-  }
-  const choice = await postRoomChoice(database, { roomId, agentId, mode: 'question', prompt: 'Invite friends to this chat', options: [
-    { label: 'Share this chat', consequence: 'Opens your share sheet with an invite link' },
-    { label: 'Give us a real task', consequence: 'Beebee answers, then Luna checks the work' },
-  ] });
-  await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`,
-    [choice.messageId, JSON.stringify({ starterOnboarding: 'next', starterShare: share })]);
-  return { ...share, messageId: choice.messageId };
+  const messageId = randomBytes(32).toString('hex');
+  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
+    [messageId, roomId, beebee?.agent_id ?? agentId, invite.message]);
+  await recordOnboardingEvent(database, personId, 'invite_shared');
+  return { ...invite, messageId };
 }
 
 export async function createStarterInvite(database: SqlDatabase, roomId: string, personId: string, publicOrigin: string) {
@@ -41,5 +32,5 @@ export async function createStarterInvite(database: SqlDatabase, roomId: string,
     VALUES($1,$2,$3,now()+interval '7 days',$4,clock_timestamp())`, [tokenHash, room.workspace_id, personId, roomId]);
   await recordOnboardingEvent(database, personId, 'invite_created');
   const url = new URL(`/join/${encodeURIComponent(token)}`, new URL(publicOrigin).hostname.endsWith('usebeeline.app') ? 'https://usebeeline.app' : publicOrigin).href;
-  return { url, message: `Join me in #${room.name} on Beeline: ${url}` };
+  return { url, message: `Here's your invite link. Send it to anyone you want in this chat: ${url}` };
 }

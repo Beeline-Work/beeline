@@ -1,7 +1,6 @@
 import {
   ARTIFACT_MIME_TYPES,
   INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
-  INSTITUTIONAL_MEMORY_SEARCH_QUERY_SCHEMA,
   INSTITUTIONAL_HISTORY_RESULT_MIN,
   INSTITUTIONAL_HISTORY_RESULT_MAX,
 } from '@beeline/api-contract/daemon';
@@ -641,10 +640,6 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "query": INSTITUTIONAL_HISTORY_QUERY_SCHEMA,
         "limit": {"type": "integer", "minimum": INSTITUTIONAL_HISTORY_RESULT_MIN, "maximum": INSTITUTIONAL_HISTORY_RESULT_MAX}
       },
-      "allOf": [{
-        "if": { "properties": { "scope": { "const": "memory" } }, "required": ["scope"] },
-        "then": { "properties": { "query": INSTITUTIONAL_MEMORY_SEARCH_QUERY_SCHEMA } }
-      }],
       "required": ["scope", "query"],
       "additionalProperties": false
     }

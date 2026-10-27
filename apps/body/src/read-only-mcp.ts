@@ -41,7 +41,6 @@ import {
   wakeBatchMinutes,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
-  INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES,
   encodeArtifactTitleHeader,
   type ArtifactMimeType,
   type CornerRestoreResult,
@@ -2762,9 +2761,8 @@ function advertisedAgentTool(name: string): ToolDefinition {
 }
 function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
   const requestedAction = args.action;
-  if (tool.name === 'search' && args.scope === 'memory' && typeof args.query === 'string' &&
-      Buffer.byteLength(args.query.trim(), 'utf8') > INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES) {
-    throw new Error(`search: query must be at most ${INSTITUTIONAL_MEMORY_SEARCH_QUERY_MAX_BYTES} UTF-8 bytes for memory searches`);
+  if (tool.name === 'search' && typeof args.query === 'string' && args.query.length > 125) {
+    throw new Error('search: query must be at most 125 characters');
   }
   if (!Check(tool.inputSchema, args)) {
     if (tool.name === 'search') {

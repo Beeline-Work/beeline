@@ -211,6 +211,32 @@ describe('deleteAccount', () => {
     expect(result.rowCount, sql).toBe(expected);
   };
 
+  it('retains workspace deletion audits when their actor deletes their account (R-ACCOUNT-AUDIT)', async () => {
+    await startServer();
+    ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;
+    const workspaceId = '66666666-6666-4666-8666-666666666666';
+    const operation = (name: string, input: object) => fetch(`${origin}/v1/phone/operations/${name}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    expect((await operation('createWorkspace', { workspaceId, name: 'Deleted workspace' })).status).toBe(200);
+    expect((await operation('deleteWorkspace', { workspaceId })).status).toBe(204);
+    const before = (await database.query(
+      `SELECT workspace_id,workspace_name,deleted_by,deleted_at FROM workspace_deletions WHERE workspace_id=$1`,
+      [workspaceId],
+    )).rows;
+    expect(before).toHaveLength(1);
+    expect(before[0]!.deleted_by).toBe(OWNER);
+
+    expect((await operation('deleteAccount', {})).status).toBe(204);
+    await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
+    expect((await database.query(
+      `SELECT workspace_id,workspace_name,deleted_by,deleted_at FROM workspace_deletions WHERE workspace_id=$1`,
+      [workspaceId],
+    )).rows).toEqual([{ ...before[0], deleted_by: DELETED_ACCOUNT_IDENTITY_ID }]);
+  });
+
   it('deletes the account and its agents through the real operation path, anonymising shared content', async () => {
     await startServer();
     ownerToken = (await auth.exchangeGitHubOidc('proof')).accessToken;

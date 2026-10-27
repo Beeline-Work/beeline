@@ -1,7 +1,7 @@
-// Native proof entry for the artifact card footer restore. Renders the real
+// Native proof entry for the restored artifact card footer. Renders the real
 // ArtifactCard for non-previewable file cards (video/mp4, application/zip) and
-// for previewable artifacts that share ArtifactCardShell (image, PDF, HTML) so
-// the scoped footer can be compared across revisions and themes.
+// for the previewable artifacts that share ArtifactCardShell (image, PDF,
+// HTML) so the v0.1.106 footer is captured for every format and theme.
 import React from 'react';
 import { registerRootComponent } from 'expo';
 import { useFonts } from 'expo-font';
@@ -87,11 +87,11 @@ const htmlFile = {
 } as unknown as AttachmentReference;
 
 const sourceFiles: { label: string; attachment: AttachmentReference }[] = [
-  { label: 'External file card · video/mp4', attachment: videoFile },
-  { label: 'External file card · application/zip', attachment: zipFile },
-  { label: 'Preview artifact · image/png (shared shell)', attachment: imageFile },
-  { label: 'Preview artifact · application/pdf (shared shell)', attachment: pdfFile },
-  { label: 'Preview artifact · text/html (shared shell)', attachment: htmlFile },
+  { label: 'File card · video/mp4 (browser link only)', attachment: videoFile },
+  { label: 'File card · application/zip (browser link only)', attachment: zipFile },
+  { label: 'Image card · image/png (browser link + Open →)', attachment: imageFile },
+  { label: 'PDF card · application/pdf (browser link + Open →)', attachment: pdfFile },
+  { label: 'HTML card · text/html (browser link + Open →)', attachment: htmlFile },
 ];
 
 function Proof() {

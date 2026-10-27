@@ -225,10 +225,42 @@ describe('the artifact card is the preview (mock 1b)', () => {
     expect(text).toContain('Login mock');
     expect(text).toContain('@hoots');
     expect(text).toContain('2.0 KB');
-    expect(text).toContain('Open in browser');
-    expect(text).toContain('Open');
+    expect(text).toContain('Open in browser ↗');
+    expect(text).toContain('Open →');
     // The captain's rule: if you are showing it to me it is ready — no status word.
     expect(text).not.toMatch(/\b(ready|pending|failed)\b/i);
+  });
+
+  // The v0.1.106 footer is the one true footer: quiet "Open in browser ↗" on
+  // the left, a spacer, and the accent "Open →" on the right. PR 2959 gave
+  // previewable artifacts a shorter inline "Open"; this pins the restore for
+  // every card that shares ArtifactCardShell.
+  it.each([
+    ['image', 'image/png', 'photo.png', true],
+    ['PDF', 'application/pdf', 'spec.pdf', true],
+    ['HTML', 'text/html', 'mock.html', true],
+    ['file', 'application/zip', 'bundle.zip', false],
+  ])('shows the same v0.1.106 footer on an %s card', async (_name, mimeType, fileName, hasOpen) => {
+    mocks.platformOS.value = 'android';
+    mocks.probeArtifactPreview.mockResolvedValue(null);
+    mocks.fetchArtifactBytes.mockResolvedValue(
+      new TextEncoder().encode('<html><body><p>mock</p></body></html>'),
+    );
+    mocks.artifactBase64.mockResolvedValue('JVBERi0xLjQK');
+    mocks.loadPdfViewerDocument.mockResolvedValue('<!doctype html><html>pdf</html>');
+    const renderer = render(
+      <ArtifactCard
+        attachment={artifactAttachment({ mimeType, name: fileName, title: fileName })}
+      />,
+    );
+    await flush();
+    const text = textOf(renderer);
+    expect(text).toContain('Open in browser ↗');
+    expect(hostNodes(renderer, 'artifact-open-browser')).toHaveLength(1);
+    // A document card has no in-app viewer, so its only action is the browser
+    // link; every previewable card also gets the accent Open → on the right.
+    if (hasOpen) expect(text).toContain('Open →');
+    expect(hostNodes(renderer, 'artifact-open')).toHaveLength(hasOpen ? 1 : 0);
   });
 
   it('shows the cached snapshot instead of re-rendering the page', async () => {

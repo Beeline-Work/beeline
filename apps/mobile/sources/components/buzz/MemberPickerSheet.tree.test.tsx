@@ -260,6 +260,19 @@ describe('MemberPickerSheet, mounted the way a Room mounts it', () => {
     expect(hostWithTestID(renderer, 'room-member-picker-add-agent')).toHaveLength(1);
   });
 
+  it('aligns action rows and empty copy to the sheet inset', () => {
+    const populated = render(<MemberPickerSheet {...baseProps(null)} />);
+    for (const id of ['room-member-picker-invite-person', 'room-member-picker-add-agent']) {
+      const row = hostWithTestID(populated, id)[0]!;
+      const style = Object.assign({}, ...[row.props.style].flat(Infinity).filter(Boolean));
+      expect(style.paddingHorizontal).toBe(HULL_SHEET_INSET);
+    }
+    const empty = render(<MemberPickerSheet {...baseProps(null)} candidates={[]} />);
+    const copy = hostWithTestID(empty, 'room-member-picker-empty')[0]!;
+    const style = Object.assign({}, ...[copy.props.style].flat(Infinity).filter(Boolean));
+    expect(style.paddingHorizontal).toBe(HULL_SHEET_INSET);
+  });
+
   it('survives the Room’s own open sequence: closed, then open and loading, then the roster lands', () => {
     const props = baseProps('person');
     const renderer = render(<MemberPickerSheet {...props} visible={false} candidates={null} />);

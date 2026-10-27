@@ -1,8 +1,0 @@
-{
-  "name": "beeline-member-sheets-proof",
-  "main": "index.js",
-  "private": true,
-  "dependencies": {
-    "react-native-svg": "15.15.3"
-  }
-}

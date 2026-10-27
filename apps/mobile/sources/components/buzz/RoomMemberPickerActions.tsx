@@ -2,6 +2,7 @@ import { HullActionSheetRow } from './HullActionSheet';
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { HULL_SHEET_INSET } from '@/buzz/hull-sheet-layout';
 import { Typography } from '@/constants/Typography';
 
 type RoomMemberPickerActionsProps = {
@@ -106,12 +107,12 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...hull.type.meta,
       paddingVertical: hull.space.md,
-      paddingHorizontal: hull.space.md,
+      paddingHorizontal: HULL_SHEET_INSET,
       color: hull.textMuted,
     },
     row: {
       minHeight: hull.layout.row,
-      paddingHorizontal: hull.space.md,
+      paddingHorizontal: HULL_SHEET_INSET,
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.sm,

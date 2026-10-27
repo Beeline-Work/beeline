@@ -122,7 +122,6 @@ describe('ACP turn liveness over real stdio', () => {
     await opened;
     vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
     vi.stubEnv('BEELINE_DAEMON_TOKEN', 'test-token');
-    vi.stubEnv('BEELINE_EXPLICIT_SILENT_RECEIPT', '1');
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
     vi.stubGlobal('fetch', fetch);
     expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent'))).toEqual({ acknowledged: true });

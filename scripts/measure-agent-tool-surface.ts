@@ -8,14 +8,14 @@ import { agentToolsFor } from '../apps/body/src/read-only-mcp.js';
 const output = resolve(process.argv[2] ?? '.minimal-surface');
 mkdirSync(output, { recursive: true });
 const surfaces = {
-  room: agentToolsFor(true, false, false, false, true, true, false, true),
-  repository: agentToolsFor(true, false, true, true, true, true, false, true),
-  repoless: agentToolsFor(true, false, true, false, true, true, false, true),
-  dm: agentToolsFor(true, true, false, false, true, true, false, true),
+  room: agentToolsFor(true, false, false, false, true, true, true),
+  repository: agentToolsFor(true, false, true, true, true, true, true),
+  repoless: agentToolsFor(true, false, true, false, true, true, true),
+  dm: agentToolsFor(true, true, false, false, true, true, true),
   // Claude without a Room sandbox: no command runner, one terminal receipt and bounded reads.
   shellless: [
     ...agentToolsFor(false, false),
-    ...agentToolsFor(true, false, false, false, false, true, true, false),
+    ...agentToolsFor(true, false, false, false, false, true, true),
   ],
 };
 for (const [surface, tools] of Object.entries(surfaces)) {

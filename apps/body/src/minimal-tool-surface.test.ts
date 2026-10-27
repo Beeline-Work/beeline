@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Check } from 'typebox/value';
 import { agentToolsFor, callAgentTool } from './read-only-mcp.js';
-import { harnessNeedsSilentReceipt } from './harness-capabilities.js';
 import { beelineManagedSkills } from './beeline-skill.js';
 import { SESSION_SECTIONS, TURN_SECTIONS } from './prompt-assembly.js';
 
@@ -128,20 +127,26 @@ describe('minimal agent surface', () => {
     [true, true],
   ])('has one stable vocabulary for DM=%s corner=%s', (dm, corner) => {
     expect(
-      agentToolsFor(true, dm, corner, corner, false, true, false, true).map((tool) => tool.name),
-    ).toEqual(names);
+      agentToolsFor(true, dm, corner, corner, false, true, true).map((tool) => tool.name),
+    ).toEqual([...names, 'no_reply_needed']);
   });
-  it('mounts only meaningful runner/receipt tools and one bounded repository fallback', () => {
+  it('mounts the silent receipt on every agent surface, harness included', () => {
+    // no_reply_needed is the only silence path, so every agent surface mounts
+    // it regardless of harness; the tool itself refuses human wakes.
+    for (const tools of [
+      agentToolsFor(true, false, false, false, false, true, true),
+      agentToolsFor(true, false, false, false, true, true, true),
+      agentToolsFor(true, true, true, true, true, true, true),
+    ]) {
+      expect(tools.map((tool) => tool.name)).toContain('no_reply_needed');
+    }
     expect(
-      agentToolsFor(true, false, false, false, true, true, false, true).map((tool) => tool.name),
-    ).toEqual([...names, 'run_granted_command']);
+      agentToolsFor(true, false, false, false, true, true, true).map((tool) => tool.name),
+    ).toEqual([...names, 'run_granted_command', 'no_reply_needed']);
     expect(
-      agentToolsFor(true, false, false, false, false, true, true, true).map((tool) => tool.name),
+      agentToolsFor(true, false, false, false, false, true, true).map((tool) => tool.name),
     ).toEqual([...names, 'no_reply_needed']);
     expect(agentToolsFor(false, false).map((tool) => tool.name)).toEqual(['repository_io']);
-    expect(harnessNeedsSilentReceipt('claude-agent-acp')).toBe(true);
-    expect(harnessNeedsSilentReceipt('pi-acp')).toBe(false);
-    expect(harnessNeedsSilentReceipt('codex-acp')).toBe(false);
   });
   it('routes approval, landing, human yes, holds and both close modes separately', async () => {
     await callAgentTool('approve_merge', { address: 'target', headSha: 'a'.repeat(40) }, 'a');

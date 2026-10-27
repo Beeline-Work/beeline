@@ -1,3 +1,4 @@
+import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 /**
  * The command-kind grant runner (Agent Grants, slice 2).
  *
@@ -457,10 +458,9 @@ export class GrantCommandRunner {
           'Ask with request_grant kind=command for the exact line so a human can read it.',
       );
     }
-    // Read once: the scratch directory is part of where a script may live, and
-    // the mount table below is built from the same answer.
+    // Use the same surface policy for the entire run.
     const policy = room.writePolicy();
-    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, policy.scratch, argv), argv);
+    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, argv, { ...(this.options.env ?? process.env), ...policy.toolEnv }), argv);
     const secrets = new Map<string, string>();
     for (const name of rule.secrets) {
       const value = await this.resolveSecret(name);
@@ -491,6 +491,8 @@ export class GrantCommandRunner {
     const spawn = runsOnHost
       ? { command: argv[0]!, args: argv.slice(1) }
       : roomSandboxCommand(policy, room.cwd, argv, sandboxMarker!);
+    // Re-check after secret resolution and Once consumption, immediately before exec.
+    await this.checkScriptBinding(grant, scriptCandidates(room.cwd, argv, env), argv);
     const outcome = await new Promise<{
       exitCode: number | null;
       signal?: string;
@@ -598,15 +600,20 @@ export class GrantCommandRunner {
     candidates: readonly string[],
     argv: readonly string[],
   ): Promise<void> {
-    const argument = interpreterScriptArgument(argv);
+    argv = resolveGrantCommand(argv, '.', {}).argv;
+    const argument = interpreterScriptArgument(argv, true);
     if (!argument) return;
     let bytes: Buffer | undefined;
     for (const candidate of candidates) {
       bytes = await readFile(candidate).catch(() => undefined);
       if (bytes) break;
     }
-    if (!bytes) return;
     const script = grant.script;
+    if (!bytes) {
+      if (script) throw new Error(`${argument.path} cannot be read. Ask with request_grant kind=command again.`);
+      return;
+    }
+    if (!script && argument.direct && isNativeGrantExecutable(bytes)) return;
     if (!script || script.path !== argument.path) {
       throw new Error(
         `${argument.path} is a script no human has read: this grant was approved without it. ` +
@@ -622,23 +629,19 @@ export class GrantCommandRunner {
   }
 }
 
-/**
- * Where a script argument may live, in the order `resolveAttachPath` tried at
- * request time: the checkout first, the session scratch second. Same order, so
- * the bytes re-hashed here are the bytes the card showed.
+/** Resolve exactly as exec does: relative script paths are relative to cwd.
+ * Scratch fallback could hash a different file than the interpreter executes.
  */
 function scriptCandidates(
   cwd: string,
-  scratch: string | undefined,
   argv: readonly string[],
+  env: NodeJS.ProcessEnv,
 ): string[] {
-  const argument = interpreterScriptArgument(argv);
+  const context = resolveGrantCommand(argv, cwd, env);
+  const argument = interpreterScriptArgument(context.argv, true);
   if (!argument) return [];
-  const paths = [
-    resolve(cwd, argument.path),
-    ...(scratch ? [resolve(scratch, argument.path)] : []),
-  ];
-  return [...new Set(paths)];
+  const path = resolveGrantScriptExecutable(argument, context.cwd, context.env);
+  return path ? [path] : [];
 }
 
 /** The bwrap-wrapped argv for a Room run, or a refusal when the host cannot wrap. */

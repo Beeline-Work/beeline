@@ -91,7 +91,9 @@ const post = async (id: string, text: string, author = WORKER, age = '0 hours') 
   VALUES($1,$2,$3,$4,'message',now()-$5::interval)`,
     [id, C, author, text, age],
   );
-const commanderFlags = async () => (await readAgentCommands(db, ROOM, COMMANDER)).commands;
+// The idle alert now wakes its opening commander inside the corner whenever
+// the commander has effective access (inherited parent-roster access counts).
+const commanderFlags = async () => (await readAgentCommands(db, C, COMMANDER)).commands;
 
 it('STARTUP-FAILURE-1: a bootstrap failure is idle immediately and visible in its corner', async () => {
   const command = await wake();
@@ -290,6 +292,19 @@ it('failing checks alone are idle immediately with one alert and no repair deadl
   expect(await commanderFlags()).toHaveLength(1);
   expect((await commanderFlags())[0]!.source.body).toBe('blocked: Corner Corner is idle. Resume it, set a hold, or close it.');
 });
+it('an agent commander with inherited corner access wakes inside it, not the parent Room', async () => {
+  await ci('failing');
+  expect(await state()).toBe('idle');
+  // Access comes only from the parent Room roster; no legacy corner-membership row.
+  await refreshCornerAttention(db, C);
+  const inCorner = (await readAgentCommands(db, C, COMMANDER)).commands
+    .filter(command => command.source.body.includes('is idle. Resume it'));
+  const inRoom = (await readAgentCommands(db, ROOM, COMMANDER)).commands
+    .filter(command => command.source.body.includes('is idle. Resume it'));
+  expect(inCorner).toHaveLength(1);
+  expect(inRoom).toHaveLength(0);
+});
+
 it('pending CI past 30 minutes schedules no expiry, including after a new head', async () => {
   await ci('pending');
   await db.query(

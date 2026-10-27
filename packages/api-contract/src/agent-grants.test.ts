@@ -258,8 +258,17 @@ describe('an interpreter grant is bound to its script', () => {
       path: 'deploy.sh',
     });
     // No file to bind: `python3 -V` is not a hard stop.
+    for (const option of [['-u', 'PATH'], ['--unset=PATH'], ['-C', '/tmp'], ['--chdir=/tmp']]) {
+      const argv = ['env', ...option, '/bin/echo', 'approved'];
+      expect(interpreterScriptArgument(argv, true)).toEqual({ index: option.length + 1, path: '/bin/echo', direct: true });
+      expect(interpreterScriptArgument(['env', ...option, 'python3', 'fix.py'])).toEqual({
+        index: option.length + 2, path: 'fix.py',
+      });
+    }
     expect(interpreterScriptArgument(['python3', '-V'])).toBeUndefined();
     expect(interpreterScriptArgument(['npm', 'test'])).toBeUndefined();
+    expect(interpreterScriptArgument(['custom-script'], true)).toEqual({ index: 0, path: 'custom-script', direct: true });
+    expect(interpreterScriptArgument(['env', 'FOO=1', 'custom-script'], true)).toEqual({ index: 2, path: 'custom-script', direct: true });
     expect(interpreterScriptArgument(['env', 'FOO=1', 'npm', 'test'])).toBeUndefined();
   });
 

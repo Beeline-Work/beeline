@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check, Errors } from 'typebox/value';
@@ -154,14 +155,16 @@ export function agentToolsFor(
   repositoryCorner = false,
   commandRunnerAvailable = true,
   institutionalMemoryEnabled = true,
-  explicitSilentReceipt = false,
   nativeIoProven = false,
 ): ToolDefinition[] {
   if (!agentSurface) return repositoryTools();
   const tools = minimalTools(cornerTurn).filter(tool =>
     institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
   if (commandRunnerAvailable) tools.push(RUNNER_TOOL);
-  if (explicitSilentReceipt) tools.push(SILENT_TOOL);
+  // no_reply_needed mounts on every harness: it is the only silence path, so a
+  // nonhuman wake must always be able to end without posting prose. The tool
+  // itself refuses human wakes.
+  tools.push(SILENT_TOOL);
   if (!nativeIoProven) tools.push(...scratchTools(cornerTurn && !repositoryCorner));
   return tools;
 }
@@ -173,7 +176,6 @@ const TOOLS = agentToolsFor(
   process.env.BEELINE_CORNER_REPOSITORY === '1',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
   true,
-  process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1',
   process.env.BEELINE_NATIVE_IO_PROVEN === '1',
 );
 
@@ -1953,6 +1955,8 @@ export interface AgentGrantDeps {
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
   /** Where a script argument may be read from: the checkout, then the scratch. */
   scriptRoots?: string[];
+  /** Execution environment used to resolve bare executable names. */
+  scriptEnv?: NodeJS.ProcessEnv;
   /** Test seam for reading those bytes. */
   readScript?: (path: string) => Buffer;
   /**
@@ -1992,13 +1996,26 @@ export function readGrantScript(
   rule: CommandGrantRule,
   deps: AgentGrantDeps,
 ): CommandGrantScript | undefined {
-  const argument = interpreterScriptArgument(rule.argv);
-  if (!argument) return undefined;
   const roots = deps.scriptRoots ?? [];
   if (!roots.length) return undefined;
+  const context = resolveGrantCommand(rule.argv, roots[0]!, deps.scriptEnv ?? process.env);
+  const argument = interpreterScriptArgument(context.argv, true);
+  if (!argument) return undefined;
+  const candidatePath = resolveGrantScriptExecutable(argument, context.cwd, context.env);
+  const executable = argument.direct ? candidatePath : undefined;
+  if (argument.direct && !executable) return undefined;
+  if (argument.direct) {
+    // Native executable paths do not need a script card, including binaries
+    // outside the attachment roots. Script paths still meet the root check below.
+    let candidate: Buffer;
+    try {
+      candidate = (deps.readScript ?? readFileSync)(executable!);
+    } catch { return undefined; }
+    if (isNativeGrantExecutable(candidate)) return undefined;
+  }
   let resolved: string;
   try {
-    resolved = resolveAttachPath(roots, argument.path);
+    resolved = resolveAttachPath(roots, candidatePath ?? argument.path);
   } catch (error) {
     // A script that exists but sits outside the checkout and the scratch cannot
     // be put in front of a human, so it is not approvable from here.
@@ -2013,6 +2030,8 @@ export function readGrantScript(
     return undefined;
   }
   const bytes = (deps.readScript ?? readFileSync)(resolved);
+  // Direct native executables retain ordinary command grant behavior.
+  if (argument.direct && isNativeGrantExecutable(bytes)) return undefined;
   const contents = bytes.toString('utf8');
   const lines = contents.split('\n').length;
   if (bytes.byteLength > GRANT_SCRIPT_MAX_BYTES || lines > GRANT_SCRIPT_MAX_LINES) {
@@ -2736,7 +2755,7 @@ async function daemonUploadArtifact(
 }
 
 function advertisedAgentTool(name: string): ToolDefinition {
-  const tool = agentToolsFor(true, process.env.BEELINE_AGENT_DM === '1', Boolean(process.env.BEELINE_DAEMON_CORNER_ID), process.env.BEELINE_CORNER_REPOSITORY === '1', Boolean(process.env.BEELINE_GRANT_RUNNER_URL), true, process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1', process.env.BEELINE_NATIVE_IO_PROVEN === '1').find(tool => tool.name === name);
+  const tool = agentToolsFor(true, process.env.BEELINE_AGENT_DM === '1', Boolean(process.env.BEELINE_DAEMON_CORNER_ID), process.env.BEELINE_CORNER_REPOSITORY === '1', Boolean(process.env.BEELINE_GRANT_RUNNER_URL), true, process.env.BEELINE_NATIVE_IO_PROVEN === '1').find(tool => tool.name === name);
   if (!tool) throw new Error(`unknown or unavailable tool: ${name}; use only advertised tools`);
   return tool;
 }

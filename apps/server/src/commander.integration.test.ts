@@ -1514,6 +1514,20 @@ it('R-onb-15: a free agent post stays visible and the paraphrased final becomes 
     .toContainEqual({text:final});
 });
 
+it('Reproduction ff0ec4df: a mid-turn post keeps its row while the closing narration folds', async () => {
+  const list = 'Groceries: rice, lentils, cardamom. Deliver to Mohammed before six.';
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: list }, RUBY);
+  const narration = 'Posted the list above and told Mohammed it is coming before six.';
+  const reply = await daemon.execute('postRoomMessage', { ...authority(order), text: narration }, RUBY);
+  const rows = (await db.query<{ id: string; text: string; presentation: string; version: number }>(
+    `SELECT id,text,presentation,version FROM messages WHERE id IN ($1,$2)`, [posted.id, reply.id])).rows;
+  expect(rows.find(row => row.id === posted.id)).toMatchObject({ text: list, presentation: 'message', version: 0 });
+  expect(rows.find(row => row.id === reply.id)).toMatchObject({ text: narration, presentation: 'activity', version: 1 });
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message').map(m => m.text))
+    .toEqual([list]);
+  console.info('Demonstrated Reproduction ff0ec4df: the demoted row is the closing reply (version 1); the posted list is untouched (version 0)');
+});
+
 it.each(['other-address', 'other-generation', 'other-request', 'deleted'] as const)('dedupe does not suppress a final after a post in %s', async scope => {
   const text = 'Google sign-in is merged.';
   const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: scope === 'other-address' ? ROOM : DM, text }, RUBY);

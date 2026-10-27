@@ -117,7 +117,7 @@ describe('Room guidance', () => {
   it('watches corner lifecycle with committed wakes rather than reminder loops', () => {
     const markdown = beelineWakesSkillMarkdown('test-release');
     expect(markdown).toContain('wake(action:create, trigger:lifecycle, address) on that corner address');
-    expect(markdown).toContain('no_reply_needed, when mounted, ends the turn');
+    expect(markdown).toContain('no_reply_needed ends the turn');
     expect(markdown).toContain('no reminder loops');
   });
 
@@ -609,11 +609,10 @@ function mountedTools(surface: PromptSurface): { always: Set<string>; sometimes:
   const { dm, corner, repository } = SESSION_FLAGS[surface];
   const variants: Set<string>[] = [];
   for (const runner of [false, true])
-    for (const silent of [false, true])
-      for (const nativeIo of [false, true])
-        variants.push(
-          new Set(agentToolsFor(true, dm, corner, repository, runner, true, silent, nativeIo).map((tool) => tool.name)),
-        );
+    for (const nativeIo of [false, true])
+      variants.push(
+        new Set(agentToolsFor(true, dm, corner, repository, runner, true, nativeIo).map((tool) => tool.name)),
+      );
   const sometimes = new Set(variants.flatMap((tools) => [...tools]));
   const always = new Set([...sometimes].filter((name) => variants.every((tools) => tools.has(name))));
   return { always, sometimes };

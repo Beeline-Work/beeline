@@ -37,7 +37,7 @@ describe('beeline-agent fetch_image', () => {
   it('is available through the IO fallback only when native IO is unproven', () => {
     const fallback = agentToolsFor(true, false).find(tool => tool.name === 'scratch_io');
     expect(fallback?.inputSchema.properties).toHaveProperty('url');
-    expect(agentToolsFor(true, false, false, false, true, true, false, true).map(tool => tool.name)).not.toContain('scratch_io');
+    expect(agentToolsFor(true, false, false, false, true, true, true).map(tool => tool.name)).not.toContain('scratch_io');
     expect(agentToolsFor(true, false).map(tool => tool.name)).not.toContain('fetch_image');
   });
 

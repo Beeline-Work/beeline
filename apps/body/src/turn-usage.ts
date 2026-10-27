@@ -21,6 +21,7 @@ export interface HarnessTurnUsage {
   /** Prompt tokens of the turn's final model call: input + cache reads + cache writes. */
   readonly inputTokens?: number;
   readonly totalInputTokens?: number;
+  readonly totalOutputTokens?: number;
   readonly modelCalls: number;
   readonly modelCallsWithoutUsage: number;
   /** The provider/model pi recorded for that call, for the operator's log only. */
@@ -39,8 +40,12 @@ function promptTokens(usage: Record<string, unknown>): number | undefined {
   return input + cacheRead + cacheWrite;
 }
 
+function outputTokens(usage: Record<string, unknown>): number | undefined {
+  return tokenCount(usage.output) ?? tokenCount(usage.outputTokens) ?? tokenCount(usage.output_tokens);
+}
+
 type UsageInput = { agentEnv: Record<string, string>; sessionId: string };
-type UsageCall = { inputTokens?: number; model?: string };
+type UsageCall = { inputTokens?: number; outputTokens?: number; model?: string };
 
 async function readUsageCalls(
   input: UsageInput,
@@ -63,13 +68,15 @@ async function readUsageCalls(
     if (entry.message.role === 'user' && latestTurn) calls.length = 0;
     if (entry.message.role !== 'assistant') continue;
     const usage = entry.message.usage;
-    const tokens =
-      usage && typeof usage === 'object' && !Array.isArray(usage)
-        ? promptTokens(usage as Record<string, unknown>)
-        : undefined;
+    const recorded = usage && typeof usage === 'object' && !Array.isArray(usage)
+      ? (usage as Record<string, unknown>)
+      : undefined;
+    const tokens = recorded ? promptTokens(recorded) : undefined;
+    const output = recorded ? outputTokens(recorded) : undefined;
     const model = entry.message.model;
     calls.push({
       ...(tokens !== undefined ? { inputTokens: tokens } : {}),
+      ...(output !== undefined ? { outputTokens: output } : {}),
       ...(typeof model === 'string' && model ? { model } : {}),
     });
   }
@@ -78,11 +85,17 @@ async function readUsageCalls(
 
 function summarize(calls: readonly UsageCall[]): HarnessTurnUsage | undefined {
   if (!calls.length) return undefined;
+  const last = calls[calls.length - 1]!;
   const measured = calls.filter((call) => call.inputTokens !== undefined);
+  const measuredOutput = calls.filter((call) => call.outputTokens !== undefined);
   return {
-    ...calls[calls.length - 1],
+    ...(last.inputTokens !== undefined ? { inputTokens: last.inputTokens } : {}),
+    ...(typeof last.model === 'string' && last.model ? { model: last.model } : {}),
     ...(measured.length
       ? { totalInputTokens: measured.reduce((sum, call) => sum + call.inputTokens!, 0) }
+      : {}),
+    ...(measuredOutput.length
+      ? { totalOutputTokens: measuredOutput.reduce((sum, call) => sum + call.outputTokens!, 0) }
       : {}),
     modelCalls: measured.length,
     modelCallsWithoutUsage: calls.length - measured.length,

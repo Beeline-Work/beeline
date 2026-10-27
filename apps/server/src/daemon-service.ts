@@ -4768,6 +4768,12 @@ export class DaemonService {
       (input.toolCalls ?? 0) <= 100_000
         ? input.toolCalls!
         : null;
+    const recordedTokens = (value: number | undefined) =>
+      typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 2_000_000_000
+        ? value
+        : null;
+    const inputTokens = recordedTokens(input.totalInputTokens ?? input.inputTokens);
+    const outputTokens = recordedTokens(input.outputTokens);
     let committedTurn: CommittedTurnLiveRow | undefined;
     let silence: { hiccupRestart: boolean; updateRequeued: boolean; attempt: number; reportDelivered?: boolean } | undefined;
     await this.database.transaction(async (database) => {
@@ -4798,15 +4804,17 @@ export class DaemonService {
         const written = await database.query<CommittedTurnLiveRow>(
           `WITH written AS (
              INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason,
-                                     tool_calls,completion_kind)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+                                     tool_calls,completion_kind,input_tokens,output_tokens)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
              ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
                status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
                failure_reason=EXCLUDED.failure_reason,created_at=now(),
                started_at=CASE WHEN EXCLUDED.status='working' AND agent_turns.status<>'working'
                  THEN now() ELSE agent_turns.started_at END,
                tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls),
-               completion_kind=COALESCE(agent_turns.completion_kind,EXCLUDED.completion_kind)
+               completion_kind=COALESCE(agent_turns.completion_kind,EXCLUDED.completion_kind),
+               input_tokens=COALESCE(EXCLUDED.input_tokens,agent_turns.input_tokens),
+               output_tokens=COALESCE(EXCLUDED.output_tokens,agent_turns.output_tokens)
              WHERE agent_turns.status<>'cancelled'
              RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
            )
@@ -4823,6 +4831,8 @@ export class DaemonService {
             reason,
             toolCalls,
             input.completionKind ?? null,
+            inputTokens,
+            outputTokens,
           ],
         );
         if (!written.rowCount) return;

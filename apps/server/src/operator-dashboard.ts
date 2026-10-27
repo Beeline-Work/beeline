@@ -7,6 +7,7 @@ import type { SqlDatabase } from './database.js';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
 import { dashboardPeriods, dashboardPlatformBreakdown } from './operator-dashboard-periods.js';
 import { dashboardOverview } from './operator-dashboard-overview.js';
+import { dashboardCoreMetrics, unavailableCoreMetrics } from './operator-dashboard-core-metrics.js';
 
 export const DASHBOARD_PLATFORMS = ['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const;
 export type DashboardPlatform = (typeof DASHBOARD_PLATFORMS)[number];
@@ -568,6 +569,9 @@ export async function readOperatorDashboard(
   ]);
   const xAds = await dashboardXAds(database, measuredAt).catch(sectionError);
   const overview = await dashboardOverview(database, platforms, measuredAt).catch(sectionError);
+  const coreMetrics = await dashboardCoreMetrics(database, platforms, measuredAt).catch(
+    unavailableCoreMetrics,
+  );
   const periods = await dashboardPeriods(database, measuredAt).catch(sectionError);
   const platformBreakdown = await dashboardPlatformBreakdown(database).catch(sectionError);
   const downloads = await dashboardDownloads(database, platforms, measuredAt).catch(sectionError);
@@ -629,6 +633,7 @@ export async function readOperatorDashboard(
         : overview,
     measuredAt,
     platforms: [...platforms],
+    coreMetrics,
     usage: usage.status === 'fulfilled' ? usage.value : sectionError(),
     health:
       health.status === 'fulfilled'

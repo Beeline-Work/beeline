@@ -1,4 +1,5 @@
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
+import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
@@ -613,6 +614,7 @@ export class MonolithRoomTurnLoop {
     modelCallsWithoutUsage?: number;
   } = {};
   private turnUsage = new TurnUsageAccumulator();
+  private harnessTokens: TurnTokenFigure | undefined;
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
   /** The one provider re-pinned after an empty completion, until the session ends. */
@@ -891,15 +893,6 @@ export class MonolithRoomTurnLoop {
   }
 
   /**
-   * What this turn really cost and did, read at the moment its prompt settled.
-   *
-   * The token count is the harness's own (pi records it; every other harness
-   * leaves it unknown) and the byte count is the prompt this process handed over
-   * — together they are the only way the rollout budget gate can measure the
-   * institutional block's share of a real prompt instead of a byte estimate.
-   * Missing numbers are omitted rather than zeroed.
-   */
-  /**
    * After a turn, refresh the owner's view of this agent's OpenRouter key
    * spend. `refused` marks a turn OpenRouter refused with 402.
    */
@@ -934,12 +927,7 @@ export class MonolithRoomTurnLoop {
   private async captureTurnMetrics() {
     this.publishOpenRouterSpend();
     this.publishHarnessQuota();
-    const { model: _model, ...usage } = this.turnUsage.usage ?? {};
-    const promptBytes = this.client?.lastPromptBytes;
-    return {
-      ...usage,
-      ...(promptBytes ? { promptBytes } : {}),
-    };
+    return mergeHarnessTurnMetrics(this.turnUsage.usage, this.harnessTokens, this.client?.lastPromptBytes);
   }
 
   /**
@@ -1747,6 +1735,7 @@ export class MonolithRoomTurnLoop {
     // number belonging to somebody else's prompt.
     this.turnMetrics = {};
     this.turnUsage = new TurnUsageAccumulator();
+    this.harnessTokens = undefined;
     const trace = this.beginTurnTrace(item.id);
     const traceGenerationId = this.commandContext.generationId;
     // Kicked off now, alongside activation rather than after it, so its own
@@ -2005,6 +1994,7 @@ export class MonolithRoomTurnLoop {
                           },
                         ),
                     );
+                    this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result?.tokenUsage);
                   } catch (error) {
                     promptError = error;
                   }

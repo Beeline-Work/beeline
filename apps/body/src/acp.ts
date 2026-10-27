@@ -20,6 +20,7 @@ import { watch, readFileSync, realpathSync, writeFileSync, type FSWatcher } from
 import { delimiter, dirname, isAbsolute } from 'node:path';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { explainAgentProgramFailure } from './agent-command.js';
+import { harnessTurnTokens, type TurnTokenFigure } from './harness-turn-tokens.js';
 import { piStartupEnvironment } from './pi-startup.js';
 import { PiSessionInstructions } from './pi-session-instructions.js';
 import { McpLaunchFiles } from './mcp-launch-files.js';
@@ -197,6 +198,8 @@ export interface PromptResult {
   /** Concatenated agent text from message chunks. */
   agentText: string;
   toolCalls: ToolCallEntry[];
+  /** Present only when the harness result included a token figure. */
+  tokenUsage?: TurnTokenFigure;
 }
 
 /** One `session/prompt` content block: text, or an inline image for a harness that advertises `promptCapabilities.image`. */
@@ -1488,12 +1491,14 @@ export class AcpClient extends EventEmitter {
 
       const toolCalls = toolCallEntries(updates);
       completed = !terminalReason;
+      const tokenUsage = harnessTurnTokens(result, updates);
 
       return {
         stopReason: terminalReason ?? result?.stopReason ?? 'end_turn',
         updates,
         agentText,
         toolCalls,
+        ...(tokenUsage ? { tokenUsage } : {}),
       };
     } finally {
       if (!completed) this.piSessionInstructions.failed(sessionId);

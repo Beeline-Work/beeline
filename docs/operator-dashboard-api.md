@@ -11,8 +11,8 @@ sourced spending, projections and durable daily snapshots. See the
 
 `apps/server/src/operator-dashboard.ts` owns the aggregate queries;
 `operator-dashboard.test.ts` covers authentication, cohort counts, platform
-selection, fixture exclusion, and partial failures. No content or identity IDs
-are returned.
+selection, fixture exclusion, partial failures, and `coreMetrics`. No content or
+identity IDs are returned.
 
 Usage accepts an optional comma-separated `platforms` selection: `ios`, `android`,
 `web`, `macos`, `windows`, `linux`. Coverage lists platforms actually observed in
@@ -114,6 +114,64 @@ lack sufficient samples. Questions-to-watch use the funnel, failure history,
 repeat-correction counts and observed telemetry coverage; no separate alert feed
 or unverified notification delivery is implied. Sentry and Beeline errors belong
 in Telegram.
+
+## Core metrics
+
+`coreMetrics` is one additive block on `GET /v1/admin/dashboard`. It uses the
+same eligible human cohort, platform filter, and America/New_York days as
+`overview`. Each of the five metrics is its own read: `{state:'measured',
+measuredAt, data}` or `{state:'unavailable', measuredAt:null}`. A failed read
+clears only that metric. Counts are distinct people. Token totals are sums.
+No message text, identity id, or per-person row is returned. `timeZone` on each
+metric is `America/New_York`. `daily` is 90 dates ending on the measurement
+date. `last7` and `prior7` are the trailing seven dates and the seven before
+those. People totals are distinct across the window, not the sum of the daily
+counts.
+
+- `invites.inviters`: people who created an invite or onboarding invite that
+  day. `invites.created_at` is new and is not backfilled, so dates before
+  `operator_metric_epochs.metric='invite'` are null, not zero. `since` is that
+  timestamp. A later date with no invites is a measured zero.
+  `invitesAccepted`: distinct inviters whose human invitee joined a production
+  Workspace that day (`memberships.invited_by`, workspace membership only).
+  That join ledger already has history, so its counts are numbers, including
+  zero.
+- `onboarding.completedOnboarding`: people created that day whose own or free
+  agent has a retained message in a production Room. `returnedNextDay`: of
+  those, people who sent a retained message on the next Eastern calendar day.
+  `eligible`: how many of the completed people have a next day that has fully
+  ended (signup date at least two Eastern dates before the measurement date).
+  Someone who returns before that next day has ended is not counted as returned.
+  The return message has to be in a production Room.
+- `ownAgents.connectAttempted`: people who created an agent pairing code that
+  day. `agent_pairing_codes.created_at` is new and is not backfilled; dates
+  before `operator_metric_epochs.metric='agent_pairing'` are null.
+  `connectSucceeded`: people whose own agent (not a free agent) received its
+  first unrevoked daemon token that day. A later token does not count again.
+  Revoked tokens do not count. This ledger already has `created_at`, so a quiet
+  day is zero.
+- `repositories.linkAttempted`: people shown a repository onboarding card
+  (`messages.card_type='repository-onboarding'` and `card.kind='repository'`,
+  the same cards the morning read compares with repositories linked). A starters
+  card does not count. `linkSucceeded`: people with a
+  `repository_link_successes` row that day. Both are measured zeros when empty.
+- `tokens.freeAgentTokens`: sum of numeric `detail.tokens` on
+  `free_agent_events` where `kind='model_usage'`, for eligible owners in
+  production Workspaces. A day with no such events is zero. Invalid token text
+  is ignored, not stored as zero and not fatal.
+  `ownAgentTokens`: sum of `input_tokens + output_tokens` on turns by people's
+  own agents. The daemon sends those totals when Claude Code, Codex, or pi
+  reports them. The fields are optional, so an older daemon leaves them null.
+  A turn with both null counts in `ownAgentTurnsUnmeasured` and adds nothing to
+  the sum. A day whose own-agent turns are all unmeasured has `ownAgentTokens:
+  null`. A day with no own-agent turns is zero. `change.dayOverDay` and
+  `change.weekOverWeek` are `(current - prior) / prior` for free-agent tokens
+  and own-agent tokens. The ratio is null when either side is null or the prior
+  total is zero.
+
+Internal Workspaces, hidden identities, and the Play Review identity stay out
+through the shared cohort. Fixture success in an internal Workspace does not
+count.
 
 ## Store downloads and signup comparison
 

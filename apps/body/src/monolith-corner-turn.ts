@@ -1,4 +1,5 @@
 import { modelContextWindowTokens } from './model-context-window.js';
+import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
@@ -524,6 +525,7 @@ export class MonolithCornerTurnLoop {
     modelCallsWithoutUsage?: number;
   } = {};
   private turnUsage = new TurnUsageAccumulator();
+  private harnessTokens: TurnTokenFigure | undefined;
   private modelContextTokens?: number;
   /** OpenRouter providers this activation pinned, in order (C92). */
   private pinnedProviders: string[] = [];
@@ -788,12 +790,7 @@ export class MonolithCornerTurnLoop {
   private async captureTurnMetrics() {
     this.publishOpenRouterSpend();
     this.publishHarnessQuota();
-    const { model: _model, ...usage } = this.turnUsage.usage ?? {};
-    const promptBytes = this.client?.lastPromptBytes;
-    return {
-      ...usage,
-      ...(promptBytes ? { promptBytes } : {}),
-    };
+    return mergeHarnessTurnMetrics(this.turnUsage.usage, this.harnessTokens, this.client?.lastPromptBytes);
   }
 
   /**
@@ -1717,6 +1714,7 @@ export class MonolithCornerTurnLoop {
               // the budget gate would read somebody else's prompt.
               this.turnMetrics = {};
               this.turnUsage = new TurnUsageAccumulator();
+              this.harnessTokens = undefined;
               await this.syncBranch();
               const reviewTurn = !activityTurn && isCornerReviewTurn(Boolean(this.reviewerInstructionInput), trigger);
               const [
@@ -2103,7 +2101,7 @@ export class MonolithCornerTurnLoop {
                 const scratchRoot = this.repositoryWork ? undefined : this.options.worktreePath;
                 const scratchAtStart = scratchRoot ? await allocatedDirectoryBytes(scratchRoot) : 0;
                 try {
-                  return await this.turnUsage.measure(
+                  const result = await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
                   () =>
                     this.client!.sessionPrompt(
@@ -2151,6 +2149,8 @@ export class MonolithCornerTurnLoop {
                       },
                     ),
                   );
+                  this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result.tokenUsage);
+                  return result;
                 } finally {
                   if (scratchRoot) {
                     const usage = await allocatedDirectoryBytes(scratchRoot);

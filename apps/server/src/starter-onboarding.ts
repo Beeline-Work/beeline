@@ -60,7 +60,7 @@ export async function postStarterGame(database: SqlDatabase, objects: ObjectServ
 const STARTER_EXPLANATION = `Most AI apps give you one assistant in a private chat. Beeline is a team.
 - **Several AIs, one chat.** Luna and I run on different models and can check each other's work.
 - **Your people too.** Invite friends or coworkers. Everyone sees the same conversation.
-- **Big jobs get a side thread.** We plan, do and check the work there, then bring you one thing to approve.`;
+- **Big jobs get their own corner.** We plan, do and check the work there, then bring you one thing to approve.`;
 
 const STARTER_OPTIONS = [
   { label: 'Give us a task' },

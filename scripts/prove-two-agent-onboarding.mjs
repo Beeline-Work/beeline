@@ -39,7 +39,9 @@ try {
   await recordOnboardingEvent(db, owner, 'welcome_shown');
   await phone.execute('answerChoice', { choiceId: card.choiceId, optionId: 'D' }, owner);
   const explained = await snapshot('explanation');
-  assert(explained.messages.some(m => m.text.startsWith('Most AI apps')));
+  const explanation = explained.messages.find(m => m.text.startsWith('Most AI apps')).text;
+  assert(explanation.includes('**Big jobs get their own corner.**'));
+  assert(!explanation.includes('side thread'));
   const second = explained.messages.find(m => m.choice?.status === 'open').choice;
   await phone.execute('answerChoice', { choiceId: second.choiceId, optionId: 'B' }, owner);
   const played = await snapshot('game');

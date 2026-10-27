@@ -170,6 +170,9 @@ describe('free starter agents', () => {
     const after = await phone.readRoom(workspace.roomId!, OWNER);
     expect(after!.messages.find(message => message.text.startsWith('Most AI apps give you one assistant'))?.text)
       .toContain("Luna and I run on different models and can check each other's work.");
+    const explanation = after!.messages.find(message => message.text.startsWith('Most AI apps'))!.text;
+    expect(explanation).toContain('**Big jobs get their own corner.**');
+    expect(explanation).not.toContain('side thread');
     const followup = after!.messages.find(message => message.choice?.status === 'open')!.choice!;
     expect(followup.options.map(option => option.optionId)).toEqual(['A', 'B', 'C']);
     expect((await db.query(`SELECT 1 FROM agent_commands`)).rowCount).toBe(0);

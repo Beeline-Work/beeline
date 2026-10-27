@@ -1,6 +1,6 @@
 # Two-agent onboarding evidence
 
-This is a feature, not a defect report. The governing assignment is brief revision 4.
+This is a feature, not a defect report. The governing assignment is brief revision 5.
 
 ## Demonstrated: ONBOARDING-2
 
@@ -73,3 +73,5 @@ cover the app surfaces; the dashboard corner owns its view and proof.
 - `npm run dead-code`, UI component policy and workflow-path checks.
 
 Revision 4 moves the question into the greeting, suppresses the welcome card title, removes option subtitles, and changes D to the owner-approved label. Invites are plain Beebee chat messages, with invite_shared recorded on the server when posted. No onboarding share sheet or forced review is used. The existing choice-label bound is raised to 48 characters to fit the exact D wording.
+
+Revision 5 uses the owner-approved “Big jobs get their own corner.” wording. The System-message lock records owner approval 672568db61fbb166f56637b7cf9b6a03d1cc9c80ec883c7b735efc3ada1dfc36 for the onboarding snapshots.

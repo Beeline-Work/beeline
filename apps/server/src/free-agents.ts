@@ -205,7 +205,7 @@ export const FREE_AGENT_HELLO =
 
 Three things to know:
 - **Talk to me here.** Tag @beebee, or just type while I'm the only agent in this Room.
-- **Big jobs get a corner.** That's a side thread where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.
+- **Big jobs get a corner.** That's where I plan, do and check the work, then bring you one thing to approve. Tap it to follow along.
 - **Connect once, use everywhere.** Link your apps in Connectors and every agent here can use them. You can also add your own agents, like Claude Code or Codex, from Members.
 
 What are you working on? Tell me, and I'll take the first step with you. If you'd rather not have me here, remove me from Members.`;

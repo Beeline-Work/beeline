@@ -307,14 +307,19 @@ are routed to the manual run on the server.
 After building the server, `npm run backfill:luna` prints the production target
 inventory without writes; provide `DATABASE_URL` through the operator's approved
 secret environment. `npm run backfill:luna -- --apply` requires the owner's
-approval of the dry-run list after release. The script enforces the four excluded
+approval of the dry-run list after release. The script enforces the six excluded
 workspace IDs in `apps/server/src/luna-backfill.ts` for the free-Beebee sweep.
 The explicitly assigned Room `289fbeab-3df5-4db3-9b70-d2fd3b937cae` is a separate
 exception inside Tubing Crew; no other Room in a skipped workspace is targeted.
 Its resolved workspace and explicit-Room label appear in the inventory. A missing
 explicit Room aborts the inventory rather than selecting a replacement.
-The draft intro is `LUNA_BACKFILL_HELLO` beside Beebee's hello; the CLI rejects
-`--apply` before opening a database connection while its approval constant is false.
+The owner approved `LUNA_BACKFILL_HELLO` beside Beebee's hello (approval relayed
+by Ruby, message ae9a4279). The CLI uses only the frozen workspace/Room pairs
+in `scripts/luna-backfill-approved.json`; new signups do not expand this run.
+A missing approved pair stops before writes and requires a new decision.
+The two additional exclusions are jellybean-beeline-test's team and Methoxine's
+team, both matched by workspace ID. Apply remains an operator action after merge
+and release; approval does not execute it.
 It serializes each workspace
 and owner, reuses normal free-agent provisioning and its owner cap, and commits
 Luna and a deterministic per-workspace intro message together. An existing Luna,

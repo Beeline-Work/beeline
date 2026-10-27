@@ -8,6 +8,8 @@ export const LUNA_BACKFILL_SKIP = [
   '8556a9be-d929-41e7-a0ef-d70af452a494', // Beeline Community
   '890f35b7-2838-4bbc-a536-bd55fddbcef9', // The Salon
   '011464ea-5481-4b65-9c0d-5a01fc3c0283', // Burd Nest
+  '7aa2a3bb-4248-403c-b3a0-df96f5e8b271', // jellybean-beeline-test's team
+  '50c8dee6-03b2-4934-a756-54d7af9a4839', // Methoxine's team
 ] as const;
 
 export const LUNA_BACKFILL_EXTRA_ROOM = '289fbeab-3df5-4db3-9b70-d2fd3b937cae';
@@ -47,16 +49,24 @@ export async function lunaBackfillTargets(database: SqlDatabase): Promise<LunaBa
 
 /** No Fly calls and no model turns. The ordinary wake path provisions on first use. */
 export async function backfillLuna(database: SqlDatabase, config: FreeAgentConfig | undefined,
-  options: { apply?: boolean },
+  options: { apply?: boolean; approvedTargets?: ReadonlyArray<{ workspace_id: string; room_id: string }> },
 ) {
-  const targets = await lunaBackfillTargets(database);
+  let targets = await lunaBackfillTargets(database);
+  if (options.approvedTargets) {
+    const approved = options.approvedTargets;
+    for (const target of approved) {
+      if (!targets.some(row => row.workspace_id === target.workspace_id && row.room_id === target.room_id))
+        throw new Error(`Approved target ${target.workspace_id}/${target.room_id} no longer resolves; stop for a new decision`);
+    }
+    targets = targets.filter(row => approved.some(target => target.workspace_id === row.workspace_id && target.room_id === row.room_id));
+  }
   const results: Array<LunaBackfillTarget & { result: string }> = [];
   for (const target of targets) {
     if (!options.apply) { results.push({ ...target, result: target.luna_id ? 'already present' : 'would add Luna' }); continue; }
     if (!config) throw new Error('Free-agent configuration is required for --apply');
     const result = await database.transaction(async db => {
       await db.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [target.workspace_id]);
-      const current = (await lunaBackfillTargets(db)).find(row => row.workspace_id === target.workspace_id);
+      const current = (await lunaBackfillTargets(db)).find(row => row.workspace_id === target.workspace_id && row.room_id === target.room_id);
       if (!current) return 'no longer eligible';
       if (current.luna_id) return 'already present';
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-create:${current.owner_id}`]);

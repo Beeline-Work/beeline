@@ -87,8 +87,8 @@ try {
   assert(extraView.messages.some(message => message.text.startsWith("Hi @backfill-owner, I'm Luna.")));
   const cli = spawnSync(process.execPath, ['scripts/backfill-luna.mjs', '--apply'], { encoding: 'utf8', env: { ...process.env, DATABASE_URL: '' } });
   assert.notEqual(cli.status, 0);
-  assert(cli.stderr.includes('intro text pending owner approval'));
-  console.log('LUNA-1 demonstrated: built migration dry-run → fixture apply → phone-read Luna intro in the explicit excluded-workspace Room → repeat with no duplicate; production CLI refuses --apply pending owner approval. Fixture writes only.');
+  assert(cli.stderr.includes('DATABASE_URL is required'));
+  console.log('LUNA-1 demonstrated: built migration dry-run → fixture apply → phone-read Luna intro in the explicit excluded-workspace Room → repeat with no duplicate; approved production CLI still requires an explicit database environment. Fixture writes only.');
   console.log('WELCOME-1 demonstrated: human mention → built MCP discovery/welcome → active-command HTTP adapter → built DaemonService → phone-read welcome → explanation → game → invite; manual telemetry only, no additional model turns. Isolated PGlite/storage and a minimal HTTP adapter stand in for production; no model or native Android run claimed.');
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));

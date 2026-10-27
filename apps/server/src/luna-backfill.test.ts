@@ -31,13 +31,17 @@ it('dry-runs without writes, adds the same model and team prompt once, and skips
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'other-room')`, [otherRoom, LUNA_BACKFILL_SKIP[0]]);
   const workspaceId = randomUUID();
   const { owner, room } = await seed(workspaceId, 'Tubing Crew');
+  const unapprovedWorkspace = randomUUID();
+  await seed(unapprovedWorkspace, 'New signup after approval');
+  const approvedTargets = [{workspace_id: workspaceId, room_id: room}, {workspace_id: LUNA_BACKFILL_SKIP[0], room_id: LUNA_BACKFILL_EXTRA_ROOM}];
+  await expect(backfillLuna(db, undefined, {approvedTargets: [{workspace_id: randomUUID(), room_id: randomUUID()}]})).rejects.toThrow('no longer resolves');
   const before = (await db.query(`SELECT count(*) FROM messages`)).rows;
-  const dry = await backfillLuna(db, undefined, {});
+  const dry = await backfillLuna(db, undefined, {approvedTargets});
   expect(dry.map(row => row.workspace_id).sort()).toEqual([workspaceId, LUNA_BACKFILL_SKIP[0]].sort());
   expect(dry.find(row => row.room_id === LUNA_BACKFILL_EXTRA_ROOM)!.target_kind).toBe('explicit Room');
   expect((await db.query(`SELECT count(*) FROM messages`)).rows).toEqual(before);
-  expect((await backfillLuna(db, config, { apply: true })).find(row => row.workspace_id === workspaceId)!.result).toBe('added Luna and intro');
-  expect((await backfillLuna(db, config, { apply: true })).find(row => row.workspace_id === workspaceId)!.result).toBe('already present');
+  expect((await backfillLuna(db, config, { apply: true, approvedTargets })).find(row => row.workspace_id === workspaceId)!.result).toBe('added Luna and intro');
+  expect((await backfillLuna(db, config, { apply: true, approvedTargets })).find(row => row.workspace_id === workspaceId)!.result).toBe('already present');
   const luna = (await db.query<{ model: string; selected_model: string; soul: { instructions: string } }>(
     `SELECT f.model,a.selected_model,a.soul FROM free_agents f JOIN agents a ON a.agent_id=f.agent_id
      WHERE f.workspace_id=$1 AND f.starter_role='luna'`, [workspaceId])).rows;
@@ -52,5 +56,6 @@ it('dry-runs without writes, adds the same model and team prompt once, and skips
     WHERE f.starter_role='luna' AND m.room_id=$1`, [otherRoom])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages m JOIN free_agents f ON f.agent_id=m.author_id
     WHERE f.starter_role='luna' AND m.room_id=$1 AND m.system_event IS NULL`, [LUNA_BACKFILL_EXTRA_ROOM])).rowCount).toBe(1);
+  expect((await db.query(`SELECT 1 FROM free_agents WHERE workspace_id=$1 AND starter_role='luna'`, [unapprovedWorkspace])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM agent_commands c JOIN free_agents f ON f.agent_id=c.agent_id WHERE f.starter_role='luna'`)).rowCount).toBe(0);
 });
